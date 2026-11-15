@@ -4,6 +4,7 @@ What changed on `main`, newest first. Updated automatically on every push to `ma
 
 ## 2026-11-15
 
+- Bring AGENTS.md up to date with the code ([`03615fe`](https://github.com/ServaboFidem/open-zenbot/commit/03615fe6a5b628847d5c7ea4d7ef5c1e1b9ce7b1))
 - Credit the Soundlore genre atlas and MusicBrainz data in the README ([`34bfa73`](https://github.com/ServaboFidem/open-zenbot/commit/34bfa7320837d841cea3974392fb2c0ccadf663b))
 - adding wiki as submodule ([`a0dafcf`](https://github.com/ServaboFidem/open-zenbot/commit/a0dafcf096a595f3d2663b2d07d999fdc193fc53))
 - housekeeping, adding the wiki ([`cec61f0`](https://github.com/ServaboFidem/open-zenbot/commit/cec61f00e4e697c944c695ebdf7d51d20bbd3521))
