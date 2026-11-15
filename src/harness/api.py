@@ -1865,6 +1865,13 @@ def create_app(h: Harness) -> FastAPI:
         d, _ = exclusion.redact_obj(h.conversations.start_new(bot_id).brief())
         return d
 
+    @app.get("/conversations")
+    async def recent_conversations(limit: int = 5) -> dict[str, Any]:
+        """The newest one-to-one conversations across every bot, for the Conversations page."""
+        recent = h.conversations.recent(set(h.bots), max(1, min(limit, 50)))
+        d, _ = exclusion.redact_obj({"conversations": [{**c.brief(), "owner": c.owner} for c in recent]})
+        return d
+
     @app.get("/conversations/{conv_id}")
     async def get_conversation(conv_id: str) -> dict[str, Any]:
         c = h.conversations.get(conv_id)

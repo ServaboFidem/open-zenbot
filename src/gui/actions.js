@@ -11,15 +11,24 @@ export function latestWins() {
 // A conversation in the picker: its title (or "New conversation" before the first message) and when it was last
 // used, as a time today or a short date otherwise.
 export function conversationLabel(c, now = new Date()) {
-  const title = String(c?.title || '').trim() || 'New conversation';
+  const title = conversationTitle(c);
+  const date = conversationWhen(c, now);
+  return date ? `${title} · ${date}` : title;
+}
+export const conversationTitle = c => String(c?.title || '').trim() || 'New conversation';
+// When a conversation was last used: a time today, a short date otherwise, '' when unknown.
+export function conversationWhen(c, now = new Date()) {
   const when = c?.updated_at || c?.created_at;
   const d = when ? new Date(when) : null;
-  if (!d || isNaN(d)) return title;
-  const sameDay = d.toDateString() === now.toDateString();
-  const date = sameDay
+  if (!d || isNaN(d)) return '';
+  return d.toDateString() === now.toDateString()
     ? `today ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
     : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  return `${title} · ${date}`;
+}
+// One row of the Conversations page's recent list: the bot's name, how many messages, when.
+export function recentConversationMeta(c, botName, now = new Date()) {
+  const n = Number(c?.exchanges) || 0;
+  return [botName || c?.owner || 'Unknown bot', `${n} ${n === 1 ? 'message' : 'messages'}`, conversationWhen(c, now)].filter(Boolean).join(' · ');
 }
 
 // An exchange that ended without a reply still says why, instead of an empty bubble. Same words as the

@@ -196,6 +196,12 @@ class Conversations:
         mine = [c for c in reversed(self._by_id.values()) if c.owner == owner]
         return sorted(mine, key=lambda c: (c.updated_at, c.created_at), reverse=True)
 
+    def recent(self, owners: set[str], limit: int) -> list[Conversation]:
+        """The newest `limit` one-to-one conversations with any of `owners` that have at least one exchange,
+        ordered as `for_owner` orders one bot's."""
+        mine = [c for c in reversed(self._by_id.values()) if c.kind == "bot" and c.owner in owners and c.exchanges]
+        return sorted(mine, key=lambda c: (c.updated_at, c.created_at), reverse=True)[:limit]
+
     def current(self, owner: str) -> Conversation | None:
         cid = self.store.current_for(owner)
         c = self._by_id.get(cid) if cid else None
