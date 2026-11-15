@@ -12,7 +12,7 @@ Inspired by grokbot, open-zenbot is a team of bots that live on your machine. Th
 
 ## Why run it
 
-- **It's yours.** The harness and the desktop app run locally, bound to `127.0.0.1`. Your memory, files, conversations and settings live under `~/.zen-agents/` on your own disk. You pick the model and pay the provider directly (OpenRouter today), with no subscription or middleman.
+- **It's yours.** The harness and the desktop app run locally, bound to `127.0.0.1`. Your memory, files, conversations and settings live under `~/.zen-agents/` on your own disk. You pick the models and pay the provider directly, or nothing at all: alongside OpenRouter it runs on NVIDIA NIM, vLLM, LM Studio, Ollama or any OpenAI-compatible server (see [Models and providers](#models-and-providers)).
 - **It learns with Hindsight.** Memory is a [Hindsight](https://github.com/vectorize-io/hindsight) knowledge graph the harness runs for you. It learns from a short first-run interview, the files you import, the web pages bots read for you, and facts that come up while you work. A bot recalls only what bears on the task in front of it, and nothing moves into memory every bot can see until you confirm it.
 - **It does the work, not just the talking.** Bots come with a shell, the filesystem, Office and PDF skills, image tools, web search and whatever MCP servers you add. Ask ZenBot for something and it either answers itself or opens a room with the specialist bots that fit the job. Routines run the jobs you repeat. You can record a task in the browser once and keep it as a skill.
 - **You stay in charge.** Risky actions wait in Approvals: a shell command that writes outside your allowed folders, touches the harness's private folders, or brings a new person into memory. Bots can reach only the vault and the folders you grant them, as Full Access or Read-Only. Keys and settings sit beside the vault, where no bot can read them.
@@ -78,6 +78,40 @@ Memory is a [Hindsight](https://github.com/vectorize-io/hindsight) 1.2.0 server 
 - **Ports taken?** If 18888 (API), 5556 (Postgres) or 9999 (dashboard) is already in use, memory does not start and says which port (a taken dashboard port leaves only the dashboard unavailable). Set `ZEN_HINDSIGHT_PORT`, `ZEN_HINDSIGHT_PG_PORT` or `ZEN_HINDSIGHT_UI_PORT` to free ports. On a port other than 9999 the dashboard opens in your browser instead of inside the app.
 
 Memory learns from the web through the `learn_page` tool and the `learn-company` skill: a bot hands over a page it fetched, and the harness keeps only what the page says about an organization, person, or product memory already knows (connected products, features, and places are written; new people and loose discoveries wait in Approvals; a page naming nothing known teaches nothing). The learn log and held discoveries live in `learn_log.json` and `learn_holds.json` under the vault.
+
+## Models and providers
+
+open-zenbot isn't tied to one model host. Add providers on Settings > Model providers. The add form has presets that fill in the address and whether a key is needed:
+
+| Provider | Default address | Key |
+| --- | --- | --- |
+| OpenRouter | `https://openrouter.ai/api` | Yes |
+| NVIDIA NIM (hosted) | `https://integrate.api.nvidia.com/v1` | Yes, free from [build.nvidia.com](https://build.nvidia.com) |
+| vLLM | `http://localhost:8000/v1` | Only if you started it with `--api-key` |
+| LM Studio | `http://localhost:1234/v1` | No |
+| Ollama | `http://localhost:11434/v1` | No |
+
+Any other server that speaks the OpenAI API (OpenAI, Groq, Together, DeepSeek, Mistral, llama.cpp and the rest) works too, through the same OpenAI-compatible adapter. Point a preset at another machine to use a GPU box on your network: an address on the local network or your Tailscale network counts as local. Models on local servers and on NVIDIA's hosted NIM show as **Free**.
+
+The adapter handles the ways these servers differ from the OpenAI API. It reads the reasoning that vLLM and NIM return in `reasoning_content`, and it rewrites MCP tool names such as `files.read_file` into the strict form NIM requires (`files__read_file`), then maps them back when the model calls one.
+
+Once a provider is added, choose a model for each job on Settings > Harness settings: **chat** for bots' work, **summary** for compaction and document summaries, and **decision** for the decider. Each bot can also run on its own model. For example, a coding bot can use a large hosted model while a note-taking bot uses a small one running in LM Studio. The decision model runs on OpenRouter's Decisions API, so the decider needs an OpenRouter key. Without one, the harness still runs, but it falls back to safe defaults: every attached skill loads, and every shell command that writes waits for your approval.
+
+### Model fingerprinting
+
+OpenRouter reports what each of its models can do. A plain OpenAI-compatible server lists only model ids. Model names can't be trusted ("embed" in an id proves nothing), so when you enable a model on such a server, the harness tests it directly and records what it actually does:
+
+| Test | What it sends | What counts as a pass |
+| --- | --- | --- |
+| Chat | "Reply with the word ok." | A reply. Thinking in the answer (`reasoning_content` or `<think>`) marks the model as one that reasons |
+| Embeddings | An embeddings request | A vector back (NIM's asymmetric models are retried with an `input_type`) |
+| Tools | A `get_weather` tool and a question that needs it (asked again with `tool_choice: required` for servers like LM Studio and llama.cpp that refuse a named tool choice) | An actual call to `get_weather`, not just an accepted request |
+| Structured output | A strict JSON schema for a colour | Valid JSON matching the schema |
+| Image input | A one-pixel red image: "What colour is this?" | An answer |
+
+Many servers accept `tools` or `response_format` and then quietly ignore it, so each test checks what came back, not whether the request was accepted. A reasoning model gets a larger token budget for the later tests, so its thinking doesn't crowd out the answer. A model's kind (text, embedding) comes from which tests it passes. A model the key can't run is hidden. If the server is rate-limited, times out or is down, the model isn't enabled at all, because half a fingerprint would mislead the harness about what the model can do.
+
+The results decide where a model can be used. Each job's picker offers only models of the right kind, and the model lists tag each one with **Vision**, **JSON**, **Tools**, reasoning and cost, so you can see at a glance which local model can drive a bot that calls tools and which is only fit for summaries.
 
 ## Music discovery
 
