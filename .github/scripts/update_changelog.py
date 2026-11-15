@@ -10,8 +10,8 @@ request into main, else the commit's subject, with links. Entries are grouped
 under a `## YYYY-MM-DD` heading (commit date, UTC), newest first. The range
 starts at the newest commit the file already records, so a cancelled or failed
 run leaves no gap: the next one catches up. A commit already in the file is
-skipped, so a rerun adds nothing twice. A commit whose
-message holds `[skip changelog]`, or that only touches CHANGELOG.md, is left out.
+skipped, so a rerun adds nothing twice. A commit with `[skip changelog]` in its
+subject or on a line of its own, or that only touches CHANGELOG.md, is left out.
 
 Standard library only. Without GITHUB_TOKEN (a local run) pull requests are not
 looked up and every entry uses the commit subject.
@@ -64,6 +64,12 @@ def commit_info(sha: str) -> dict:
     subject, date, body = git("show", "-s", "--format=%s%x00%cI%x00%b", sha).split("\x00", 2)
     files = git("show", "--first-parent", "--format=", "--name-only", sha).split()
     return {"sha": sha, "subject": subject.strip(), "date": date[:10], "body": body, "files": files}
+
+
+def skipped(info: dict) -> bool:
+    """The marker counts in the subject or on a line of its own, so a message that merely mentions it
+    (like the one that added this script) is not left out."""
+    return SKIP_MARK in info["subject"] or any(line.strip() == SKIP_MARK for line in info["body"].splitlines())
 
 
 def merged_pr(repo: str, sha: str, token: str, base: str) -> dict | None:
@@ -147,7 +153,7 @@ def main() -> int:
         if sha in seen:
             continue
         info = commit_info(sha)
-        if SKIP_MARK in info["subject"] or SKIP_MARK in info["body"]:
+        if skipped(info):
             continue
         if info["files"] and all(f == a.file for f in info["files"]):
             continue

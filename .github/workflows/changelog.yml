@@ -1,7 +1,7 @@
 # Adds every commit pushed to main, and every pull request merged into it, to CHANGELOG.md.
 # A merged pull request is a push to main too, so one trigger covers both.
 # The entry text comes from .github/scripts/update_changelog.py: the pull request's title, else the commit subject.
-# Put [skip changelog] in a commit message to leave it out.
+# Put [skip changelog] in a commit's subject, or on a line of its own in the message, to leave it out.
 #
 # The commit this workflow pushes uses GITHUB_TOKEN, and pushes made with that token do not start
 # workflows, so it never triggers itself.
