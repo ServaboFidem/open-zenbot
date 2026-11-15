@@ -1,0 +1,166 @@
+# open-zenbot
+
+<p align="center">
+  <img src="src/assets/zenbot-logo.png" alt="OpenZenBot logo" width="240">
+</p>
+
+An open-source AI harness that runs on your desktop, remembers what it learns, and helps you get real work done. Bring your own keys.
+
+> **Status: experimental.** open-zenbot is a passion project, not a product. Expect rough edges, breaking changes and features that are half-built. Full documentation is on the way. Until then, this README, `AGENTS.md` and `.env.example` are the best guides.
+
+Inspired by grokbot, open-zenbot is a team of bots that live on your machine. They work in a folder you can see, with tools you choose, and they know a little more each time you use them. It isn't a chat window over a model. Bots run commands, read and write documents, call MCP servers, hand work to each other in rooms, and run routines on a schedule, and every step lands in a ledger you can read.
+
+## Why run it
+
+- **It's yours.** The harness and the desktop app run locally, bound to `127.0.0.1`. Your memory, files, conversations and settings live under `~/.zen-agents/` on your own disk. You pick the model and pay the provider directly (OpenRouter today), with no subscription or middleman.
+- **It learns with Hindsight.** Memory is a [Hindsight](https://github.com/vectorize-io/hindsight) knowledge graph the harness runs for you. It learns from a short first-run interview, the files you import, the web pages bots read for you, and facts that come up while you work. A bot recalls only what bears on the task in front of it, and nothing moves into memory every bot can see until you confirm it.
+- **It does the work, not just the talking.** Bots come with a shell, the filesystem, Office and PDF skills, image tools, web search and whatever MCP servers you add. Ask ZenBot for something and it either answers itself or opens a room with the specialist bots that fit the job. Routines run the jobs you repeat. You can record a task in the browser once and keep it as a skill.
+- **You stay in charge.** Risky actions wait in Approvals: a shell command that writes outside your allowed folders, touches the harness's private folders, or brings a new person into memory. Bots can reach only the vault and the folders you grant them, as Full Access or Read-Only. Keys and settings sit beside the vault, where no bot can read them.
+
+## Design philosophy
+
+### Progressive disclosure
+
+A model works best when its context holds only what the task needs. Every tool schema, skill manual and remembered fact it doesn't need costs tokens and pulls its attention away from the job. So open-zenbot discloses capability step by step, not all up front:
+
+1. **The base prompt is small.** A bot starts with its identity and instructions from `bot-prompts/<id>.md` and nothing else.
+2. **Each capability is a one-line catalog entry.** Every skill and MCP server has a short catalog entry: its name, a `use` line saying when it helps, what it needs, and what it must not do. The bot never sees the catalog. The decider reads it.
+3. **The full body loads only when it's picked.** A skill's `SKILL.md` instructions and an MCP server's tool schemas reach the bot only when the router selects them for this task. A bot holding twenty skills might carry two into a given task.
+4. **Memory works the same way.** Recalled facts and knowledge-graph sentences are scored against the task too, so a bot gets the handful that matter, not everything it has ever learned.
+
+### How a bot gets its tools
+
+Routing is a scoring job, not a writing job. Before each task, the router asks the decider one yes/no question per catalog entry: *would loading this help with this task?* The decider is a calibrated scoring model (`microsoft/microsoft-decision-1` on the OpenRouter Decisions API), so each entry gets a real probability rather than a model's guess written out in prose.
+
+- **Skills compete.** Skills are kept in a band near the top score: every skill within 0.1 of the best, at most three. If even the best scores under 0.2, no skill loads and the bot works from its own instructions.
+- **MCP servers cooperate.** One server finds a photo and another edits it, so a high score for one says nothing against the other. Each server that clears an absolute floor (0.5) loads, up to the same cap.
+- **A bot's own servers always load.** The servers listed under `mcps` in a bot's file are part of who it is, so they aren't put to a vote.
+- **Routing is cached and re-scored on change.** A route is reused until the task, the bot's catalog or the agreed scope changes. A terse follow-up like "do the rest" is routed together with the session's notes, so it still gets the tools the work needs.
+- **It fails open, and says so.** If the decider is unreachable, every attached skill loads and the ledger records why, so a scoring outage never leaves a bot stranded without its tools.
+- **New skills wait for you.** When you add a skill, the decider suggests which bot should hold it: first by role, then, to break a tie, by what each bot has actually done. Nothing attaches until you confirm.
+
+### Keeping bots on track
+
+- **The task is protected.** The task and its constraints sit in a pinned block that compaction never summarizes. When a long session is compacted, older turns fold into a summary, but the goal stays word for word.
+- **Scope changes are confirmed.** When new text looks like a new goal or new constraints, the change waits for you before the pinned block is rewritten, and then every route is re-scored against the new scope.
+- **A supervisor watches the loop.** Every few steps it asks the decider whether the run is progressing, repeating itself, or done. Then it lets the run continue, nudges the bot with a single note, or pauses the session until you resume it. It never kills your work.
+- **Scoring and writing are separate.** The decider only scores fixed options and never writes prose. The generator writes summaries and compaction folds and never decides. Keeping the two apart makes every routing, recall and supervision choice a number you can inspect in the ledger.
+
+## Run the harness
+
+```sh
+uv sync --group dev
+export OPENROUTER_API_KEY=sk-or-...      # or ZEN_KEY_REF=vault:NAME with VAULT_NAME set
+export OPENROUTER_MODEL=...              # optional; default meta/muse-spark-1.3-contributor
+export ZEN_SUMMARY_MODEL=...             # optional; every summary, default scaledown/summarize
+export ZEN_HINDSIGHT_URL=...             # optional; an external Hindsight server: the harness starts none (default: it starts its own)
+export ZEN_HINDSIGHT_PORT=...            # optional; the API port of the server it starts, default 18888
+export ZEN_HINDSIGHT_PG_PORT=...         # optional; the embedded Postgres port, default 5556
+export ZEN_HINDSIGHT_LLM_MODEL=...       # optional; the model Hindsight extracts with, default google/gemma-4-31b-it
+export ZEN_HINDSIGHT_KEY_REF=...         # optional; the key Hindsight uses, default env:OPENROUTER_API_KEY; set, Settings cannot move it
+export ZEN_HINDSIGHT_UI=...              # optional; 0 skips the dashboard behind the Knowledge graph view, default 1
+export ZEN_HINDSIGHT_UI_PORT=...         # optional; the dashboard port, default 9999
+export ZEN_HINDSIGHT_READY_TIMEOUT=...   # optional; seconds to wait for the server to come up, default 300
+export EXA_API_KEY=...                   # optional; the exa MCP server runs keyless at a free rate limit without it
+export TOOLSMONK_API_KEY=tm_mcp_...      # the toolsmonk MCP server's bearer token; unset, it can search its catalog but not run tools
+export PEXELS_API_KEY=...                # the pexels MCP server's key (free at pexels.com/api); unset, its tools answer that the key is empty
+export ZEN_FS_ROOT=~/Documents           # optional; a second folder the filesystem MCP may read and write (the vault is always one)
+export ZEN_MEDIA_TRUSTED_HOSTS=...       # optional; comma-separated hosts whose media previews load at once, beside images/videos.pexels.com
+uv run python -m src.harness.main        # http://127.0.0.1:8765
+```
+
+Once, before the first start, run `scripts/install-deps.sh` (`scripts/install-deps.ps1` on Windows) to install the host tools MCP servers need (`--dry-run` shows what it would do). A server whose tool is missing shows "needs install" on the MCP servers page until you do.
+
+Instead of exporting, you can keep these in a `.env` at the repo root (start from `.env.example`). The harness and the desktop app each read it at start and print the names they loaded, never the values. A variable already set in the shell wins over the file. Restart both after editing `.env`.
+
+### Memory (Hindsight)
+
+Memory is a [Hindsight](https://github.com/vectorize-io/hindsight) 1.2.0 server the harness starts as a child process (`hindsight-api` with an embedded Postgres), bound to 127.0.0.1 and stopped with the harness.
+
+- **Node and `npx` are needed for the memory dashboard** (the Knowledge page's graph view runs Hindsight's control plane through `npx`). Without them memory still works; the dashboard says Node's npx was not found.
+- **The first start downloads models for two to four minutes.** The app opens with a loading overlay meanwhile. Later starts take about 35 s.
+- **Upgrading from cognee starts memory fresh.** Facts kept by cognee do not move over; the people and organization lists do. Documents and pages you imported or learned before are imported again the next time you import or learn them. After the first successful start you can delete `<vault>/memory/cognee`.
+- **Ports taken?** If 18888 (API), 5556 (Postgres) or 9999 (dashboard) is already in use, memory does not start and says which port (a taken dashboard port leaves only the dashboard unavailable). Set `ZEN_HINDSIGHT_PORT`, `ZEN_HINDSIGHT_PG_PORT` or `ZEN_HINDSIGHT_UI_PORT` to free ports. On a port other than 9999 the dashboard opens in your browser instead of inside the app.
+
+Memory learns from the web through the `learn_page` tool and the `learn-company` skill: a bot hands over a page it fetched, and the harness keeps only what the page says about an organization, person, or product memory already knows (connected products, features, and places are written; new people and loose discoveries wait in Approvals; a page naming nothing known teaches nothing). The learn log and held discoveries live in `learn_log.json` and `learn_holds.json` under the vault.
+
+## Music discovery
+
+Music is off until you turn it on. Open Music > Settings, switch it on and enter your Discogs username. A scan then reads your public collection and the Taste map shows your genres; the username is all it needs.
+
+The weekly digest also needs a Discogs personal access token (Discogs > Settings > Developers > Generate new token), pasted in the same place. It is saved to `vault-settings/music_keys.json`, owner-only, never to `.env` or the repo. With the token, the Weekly album digest routine (Routines page, or Run now) has the music-librarian bot pick albums you do not own, have not been shown and have not wanted, and each card links to YouTube Music and can be added to your Discogs wantlist. By default it runs on Fridays at 09:00 and picks 4 albums; change the day, time and count in Music > Settings. Without it you still get the Taste map, but no digest and no wantlist.
+
+Music data (database, genre atlas, covers) lives in `~/.zen-agents/vault-music/`, beside the vault and out of bots' reach. The atlas is downloaded on first use and checked against a hash. Soundlore's own data is CC0; the artist-genre links derived from MusicBrainz votes are CC BY-NC-SA 3.0, so this feature is for non-commercial use.
+
+## Run the app
+
+```powershell
+npm install
+.\scripts\dev.ps1            # harness + Electron; builds dist/ if missing; -Build to rebuild; -Port 9000
+```
+
+The script waits for `/health`, opens the window, and stops the harness when the window closes. Without a key in the environment the harness starts unbound and the Settings page binds one.
+
+Images, video, PDFs, diagrams and files in a bot's reply show under it as preview cards, in rooms and in one-to-one chat. Each card has Save…, which opens the system save dialog in the last folder you saved to (Pictures or Downloads the first time); images and video also have Open and Copy link, and PDFs and diagrams open larger with View. Remote media loads through the harness: hosts on the trusted list (Pexels, plus `ZEN_MEDIA_TRUSTED_HOSTS`) load at once, and any other host waits until you click Load. A bot shares a file it made with `attach_file`.
+
+On first launch, with nothing in memory yet, the Overview offers to introduce you to the ZenBot: a short interview (name, work, hobbies, people) whose answers every bot can recall, then buttons that import a single file, or a directory of your files after showing you the count. `ZEN_IMPORT_MAX_BYTES` (default 20 MB) caps the file size an import takes.
+
+Then, for example:
+
+```sh
+curl -s localhost:8765/bots
+curl -s -X POST localhost:8765/bots/<bot_id>/tasks -H 'content-type: application/json' \
+  -d '{"task":"Use the shell to run: uname -a. Report the kernel."}'
+curl -s localhost:8765/sessions/<session_id>
+curl -s localhost:8765/approvals?state=pending
+curl -s localhost:8765/ledger?n=20
+```
+
+The ledger is JSONL in a directory next to the vault (default
+`~/.zen-agents/vault-ledger/`). Set `ZEN_VAULT` to move it.
+
+## Test
+
+```sh
+uv run pytest            # offline, no key needed
+OPENROUTER_API_KEY=... uv run pytest -k live   # opt-in live check
+```
+
+## Layout
+
+| Path | What |
+| --- | --- |
+| `src/providers/` | Provider interface, registry, secrets, OpenRouter adapter |
+| `src/music/` | Music discovery: Discogs scan, taste profile, album gate, digests |
+| `src/skills/` | `SKILL.md` loader and the catalog |
+| `src/decider/` | Decider interface, scorer registry, band and supervisor logic, `adapters/` (microsoft-decision-1 on the OpenRouter Decisions API) |
+| `src/generation/` | Generator boundary: summaries, compaction folds, vault summaries. The only place prose is written |
+| `src/memory/` | Exclusion filter (secrets and approvals), ledger |
+| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API, entry point |
+| `skills/` | Shipped skills: a few of our own, plus vendored third-party skills (see [Credits](#credits)) |
+| `mcp.json` | MCP servers to connect at start (Claude Desktop shape); each tool registers as `<server>.<tool>` and the server is routed like a skill |
+| `bot-prompts/` | One markdown file per bot identity (ships `personal-assistant`, the onboarding bot): `name` and `role` in frontmatter, optional `skills` refs, instructions in the body. The file stem is the bot id. The harness loads it at start and writes it when a bot is created or edited in the app |
+| `src/gui/` | OpenZenBot workspace GUI: React + Fluent 2 renderer, built by `npm run build` into `dist/` |
+| `src/electron/` | Electron main and preload; serves `dist/` from the `app://openzenbot` origin |
+| `tests/gui/` | Node tests for the GUI client, adapters, and shell (`npm test`) |
+
+## About
+
+open-zenbot is built and maintained by Gordon Mott ([@ServaboFidem](https://github.com/ServaboFidem) · [gordon.mott@gmail.com](mailto:gordon.mott@gmail.com)). It began as a personal experiment in what a desktop AI harness could be: one that remembers, stays on task and keeps its context lean. It grew from there. It's a passion project, built in spare time, so it moves at the pace of curiosity rather than a roadmap. Issues, ideas and pull requests are welcome, but please treat it as the experiment it is and not as supported software.
+
+Full documentation is forthcoming. It will cover setup on each platform, writing bots and skills, adding MCP servers, and how the decider makes its choices.
+
+## Credits
+
+open-zenbot ships these skills from other projects, vendored with their
+instructions unchanged. Each folder keeps its upstream license and notices.
+
+| Skill(s) | Upstream | License |
+| --- | --- | --- |
+| `skills/anthropic/` (docx, pptx, xlsx, pdf, discernment-nudge, doc-coauthoring, skill-creator) | [anthropics/skills](https://github.com/anthropics/skills) by Anthropic | Apache-2.0 (`skills/anthropic/LICENSE.txt`) |
+| `skills/archify/` | [tt-a1i/archify](https://github.com/tt-a1i/archify) by tt-a1i and Cocoon AI | Apache-2.0 (`LICENSE.txt`, `NOTICE.txt`) |
+| `skills/prompt-master/` | [nidhinjs/prompt-master](https://github.com/nidhinjs/prompt-master) by Nidhin Joseph Nelson | MIT (`LICENSE`, `NOTICE.md`) |
+
+## License
+
+[MIT](LICENSE), except the vendored skills above, which keep their own licenses.

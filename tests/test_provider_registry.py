@@ -1,0 +1,72 @@
+"""provider-interface: registry slot and the no-direct-client rule."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+from src.providers import registry
+from src.providers.interface import Provider
+
+from .conftest import REPO, ScriptedProvider, completion
+
+
+@pytest.fixture(autouse=True)
+def _isolate_registry():
+    saved = dict(registry._factories)
+    registry.clear()
+    yield
+    registry.clear()
+    registry._factories.update(saved)
+
+
+def test_mock_adapter_registers_and_resolves():
+    registry.register("mock", lambda **kw: ScriptedProvider([completion("hi")]))
+    assert registry.kinds() == ["mock"]
+    assert registry.is_registered("mock")
+    p = registry.get("mock")
+    assert isinstance(p, Provider)
+    assert p.kind == "mock"
+
+
+def test_unknown_kind_is_a_clear_error():
+    with pytest.raises(KeyError, match="no provider registered"):
+        registry.get("nope")
+
+
+def test_factory_kind_mismatch_is_rejected():
+    class Wrong:
+        kind = "other"
+
+        async def complete(self, messages, *, tools=None, model=None, session_id=None): ...
+        async def probe(self): return True
+
+    registry.register("mock", lambda **kw: Wrong())
+    with pytest.raises(TypeError, match="kind"):
+        registry.get("mock")
+
+
+def test_empty_kind_rejected():
+    with pytest.raises(ValueError):
+        registry.register("  ", lambda **kw: ScriptedProvider())
+
+
+CLIENT_IMPORTS = re.compile(r"^\s*(import|from)\s+(httpx|requests|aiohttp|openai|anthropic)\b", re.M)
+
+
+def test_no_module_outside_providers_imports_a_provider_client():
+    offenders = []
+    for path in (REPO / "src").rglob("*.py"):
+        if "providers" in path.relative_to(REPO / "src").parts:
+            continue
+        if path.name == "hindsight_http.py":  # the memory server's client, not an LLM provider
+            continue
+        if path.relative_to(REPO / "src").as_posix() == "harness/media.py":  # fetch files and media, not an LLM provider
+            continue
+        if "music" in path.relative_to(REPO / "src").parts[:1]:  # music web APIs (Discogs, MusicBrainz), not LLM providers
+            continue
+        if CLIENT_IMPORTS.search(path.read_text(encoding="utf-8")):
+            offenders.append(str(path.relative_to(REPO)))
+    assert offenders == [], f"provider clients must stay behind src/providers/: {offenders}"

@@ -1,0 +1,115 @@
+{
+  "_note": "ILLUSTRATIVE. The shape is what the harness will send; the albums are plausible picks for the test collector's stated focus, but titles, tracks and numbers are hand-written placeholders, not verified. Design for the shape and for long or short values, not for these exact strings.",
+  "digest": {
+    "id": "2026-W46",
+    "week_of": "2026-11-13",
+    "generated_at": "2026-11-13T09:00:12",
+    "routine": {"name": "Weekly album digest", "schedule": "Fridays 9:00", "next_run": "2026-11-20T09:00:00"},
+    "focus": ["blues rock", "southern rock", "hard rock / metal", "R&B / soul", "country / americana"],
+    "cards": [
+      {
+        "id": "c1",
+        "artist": "Swamp Dogg",
+        "album": "Total Destruction to Your Mind",
+        "year": 1970,
+        "style": "Southern soul, R&B",
+        "focus_genre": "R&B / soul",
+        "era": "forgotten classic",
+        "standout_tracks": [
+          {"title": "Total Destruction to Your Mind", "plays": 2400000},
+          {"title": "Synthetic World", "plays": 610000}
+        ],
+        "why": "A Muscle Shoals soul record with a songwriter's bite: horns and grit up front, lyrics that are funny and furious at once. If the Stax side of your shelf gets the most spins, this is the oddball cousin you're missing.",
+        "obscurity": {"discogs_have": 4100, "discogs_want": 2900, "label": "hidden gem"},
+        "cover_url": "/music/covers/discogs/1234567",
+        "links": {
+          "youtube_music": "https://music.youtube.com/browse/MPREb_EXAMPLE1",
+          "discogs": "https://www.discogs.com/master/000001"
+        },
+        "checks": {"exists": true, "owned": false, "previously_suggested": false, "on_wantlist": false},
+        "sources": ["model", "soundlore"],
+        "similar_to_owned": ["Wilson Pickett", "Bobby Womack"],
+        "reaction": null
+      },
+      {
+        "id": "c2",
+        "artist": "Savoy Brown",
+        "album": "Looking In",
+        "year": 1970,
+        "style": "British blues, blues rock",
+        "focus_genre": "blues rock",
+        "era": "forgotten classic",
+        "standout_tracks": [
+          {"title": "Poor Girl", "plays": 380000},
+          {"title": "Looking In", "plays": 210000}
+        ],
+        "why": "The British blues boom record that sits between the Chicago sides you own and the heavier 70s rock you collect. Long, patient guitar work; the band split right after, which is why it slipped through.",
+        "obscurity": {"discogs_have": 6800, "discogs_want": 1500, "label": "under the radar"},
+        "cover_url": "/music/covers/discogs/2345678",
+        "links": {
+          "youtube_music": "https://music.youtube.com/browse/MPREb_EXAMPLE2",
+          "discogs": "https://www.discogs.com/master/000002"
+        },
+        "checks": {"exists": true, "owned": false, "previously_suggested": false, "on_wantlist": false},
+        "sources": ["soundlore", "model"],
+        "similar_to_owned": ["Canned Heat"],
+        "reaction": "wanted"
+      },
+      {
+        "id": "c3",
+        "artist": "Wet Willie",
+        "album": "Keep On Smilin'",
+        "year": 1974,
+        "style": "Southern rock, soul",
+        "focus_genre": "southern rock",
+        "era": "forgotten classic",
+        "standout_tracks": [
+          {"title": "Keep On Smilin'", "plays": 5200000},
+          {"title": "Country Side of Life", "plays": 290000}
+        ],
+        "why": "Capricorn Records' soul band: southern rock with a horn section and gospel harmonies. Everyone knows the single; the rest of the album is the reason to own it.",
+        "obscurity": {"discogs_have": 9300, "discogs_want": 800, "label": "under the radar"},
+        "cover_url": null,
+        "links": {
+          "youtube_music": "https://music.youtube.com/browse/MPREb_EXAMPLE3",
+          "discogs": "https://www.discogs.com/master/000003"
+        },
+        "checks": {"exists": true, "owned": false, "previously_suggested": false, "on_wantlist": false},
+        "sources": ["model"],
+        "similar_to_owned": [],
+        "reaction": "passed"
+      },
+      {
+        "id": "c4",
+        "artist": "Robert Jon & The Wreck",
+        "album": "Last Light on the Highway",
+        "year": 2020,
+        "style": "Southern rock, blues rock",
+        "focus_genre": "southern rock",
+        "era": "newer discovery",
+        "standout_tracks": [
+          {"title": "Do You Remember", "plays": 1900000},
+          {"title": "Oh Miss Carolina", "plays": 870000}
+        ],
+        "why": "A current band playing it straight: twin guitars, organ, songs that would have fit a 1975 Capricorn sampler. A good bridge from your 70s pressings to the 2020s ones.",
+        "obscurity": {"discogs_have": 900, "discogs_want": 400, "label": "hidden gem"},
+        "cover_url": "/music/covers/discogs/3456789",
+        "links": {
+          "youtube_music": "https://music.youtube.com/browse/MPREb_EXAMPLE4",
+          "discogs": "https://www.discogs.com/master/000004"
+        },
+        "checks": {"exists": true, "owned": false, "previously_suggested": false, "on_wantlist": false},
+        "sources": ["model", "youtube_music"],
+        "similar_to_owned": ["The Allman Brothers Band", "Blackberry Smoke"],
+        "reaction": null
+      }
+    ]
+  },
+  "reaction_values": {
+    "null": "not acted on yet",
+    "listened": "opened the YouTube Music link",
+    "wanted": "added to the Discogs wantlist from the card",
+    "passed": "not for me; the next digest learns from it",
+    "owned": "the user says they already have it (the collection check missed it)"
+  }
+}

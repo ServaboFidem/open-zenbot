@@ -1,0 +1,125 @@
+{
+ "pagination": {
+  "page": 3,
+  "pages": 3,
+  "per_page": 3,
+  "items": 8,
+  "urls": {}
+ },
+ "releases": [
+  {
+   "id": 18385729,
+   "instance_id": 1984606881,
+   "date_added": "2025-01-01T00:00:00-00:00",
+   "rating": 0,
+   "basic_information": {
+    "id": 18385729,
+    "master_id": 1055810,
+    "master_url": "https://api.discogs.com/masters/1055810",
+    "resource_url": "https://api.discogs.com/releases/18385729",
+    "thumb": "https://i.discogs.com/UkNLD_GO-lkHq_TFMn07_SFvCPuzKtr_w6WHfjxCThY/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTE4Mzg1/NzI5LTE3MzY5NzQ4/NzUtOTIxNy5qcGVn.jpeg",
+    "cover_image": "https://i.discogs.com/9kwqPNV-suEnXVhYF0nMHI3bEutJ_mBGwqe1b6YcL_c/rs:fit/g:sm/q:90/h:600/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTE4Mzg1/NzI5LTE3MzY5NzQ4/NzUtOTIxNy5qcGVn.jpeg",
+    "title": "Ghost Dog: The Way Of The Samurai (Music From The Motion Picture)",
+    "year": 2021,
+    "formats": [
+     {
+      "name": "Vinyl",
+      "qty": "1",
+      "descriptions": [
+       "LP",
+       "Album",
+       "Reissue"
+      ]
+     }
+    ],
+    "labels": [
+     {
+      "name": "36 Chambers",
+      "catno": "TSC011-LP",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 383553,
+      "resource_url": "https://api.discogs.com/labels/383553"
+     }
+    ],
+    "artists": [
+     {
+      "name": "RZA",
+      "anv": "The RZA",
+      "join": "",
+      "role": "",
+      "tracks": "",
+      "id": 25495,
+      "resource_url": "https://api.discogs.com/artists/25495"
+     }
+    ],
+    "genres": [
+     "Hip Hop",
+     "Stage & Screen"
+    ],
+    "styles": [
+     "Soundtrack",
+     "Conscious",
+     "Score"
+    ]
+   }
+  },
+  {
+   "id": 8867745,
+   "instance_id": 2116594657,
+   "date_added": "2025-01-01T00:00:00-00:00",
+   "rating": 0,
+   "basic_information": {
+    "id": 8867745,
+    "master_id": 286279,
+    "master_url": "https://api.discogs.com/masters/286279",
+    "resource_url": "https://api.discogs.com/releases/8867745",
+    "thumb": "https://i.discogs.com/KT9IBinebw4izxv95zEeMUH_4K5ql4wLtG47XNDUQIg/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTg4Njc3/NDUtMTQ3MDQyNTgz/OS0xNjU3LmpwZWc.jpeg",
+    "cover_image": "https://i.discogs.com/0KsPZ50EVadXaTbpQrA_qPxeO6ds3qQwbZNGqLybI4M/rs:fit/g:sm/q:90/h:500/w:500/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTg4Njc3/NDUtMTQ3MDQyNTgz/OS0xNjU3LmpwZWc.jpeg",
+    "title": "Louisiana Blues",
+    "year": 2016,
+    "formats": [
+     {
+      "name": "Vinyl",
+      "qty": "1",
+      "text": "Brown",
+      "descriptions": [
+       "LP",
+       "Album",
+       "Limited Edition",
+       "Reissue",
+       "Mono"
+      ]
+     }
+    ],
+    "labels": [
+     {
+      "name": "4 Men With Beards",
+      "catno": "4m193",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 36605,
+      "resource_url": "https://api.discogs.com/labels/36605"
+     }
+    ],
+    "artists": [
+     {
+      "name": "Robert Pete Williams",
+      "anv": "",
+      "join": "",
+      "role": "",
+      "tracks": "",
+      "id": 367077,
+      "resource_url": "https://api.discogs.com/artists/367077"
+     }
+    ],
+    "genres": [
+     "Blues"
+    ],
+    "styles": [
+     "Country Blues"
+    ]
+   }
+  }
+ ]
+}

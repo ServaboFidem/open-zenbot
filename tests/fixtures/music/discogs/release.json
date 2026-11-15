@@ -1,0 +1,40 @@
+{
+ "id": 249504,
+ "title": "Never Gonna Give You Up",
+ "year": 1987,
+ "genres": [
+  "Electronic",
+  "Pop"
+ ],
+ "styles": [
+  "Euro-Disco"
+ ],
+ "artists": [
+  {
+   "name": "Rick Astley",
+   "anv": "",
+   "join": "",
+   "role": "",
+   "tracks": "",
+   "id": 72872,
+   "resource_url": "https://api.discogs.com/artists/72872",
+   "thumbnail_url": "https://i.discogs.com/Bb1-_pHvbCPFZEZvwoX89glv8Vq7uR_pKeK85ZWhOhA/rs:fit/g:sm/q:90/h:434/w:448/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9BLTcyODcy/LTE3NjMyNzU4MjYt/NTY4My5qcGVn.jpeg"
+  }
+ ],
+ "master_id": 96559,
+ "uri": "https://www.discogs.com/release/249504-Rick-Astley-Never-Gonna-Give-You-Up",
+ "tracklist": [
+  {
+   "position": "A",
+   "type_": "track",
+   "title": "Never Gonna Give You Up",
+   "duration": "3:32"
+  },
+  {
+   "position": "B",
+   "type_": "track",
+   "title": "Never Gonna Give You Up (Instrumental)",
+   "duration": "3:30"
+  }
+ ]
+}

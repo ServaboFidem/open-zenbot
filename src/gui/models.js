@@ -1,0 +1,89 @@
+// Model providers and the models enabled on them, as Settings shows them. Pure: no React, no DOM.
+
+export const KIND_LABELS = { text: 'Text', image: 'Image', decision: 'Decision', embedding: 'Embedding', tts: 'Text to speech',
+  transcription: 'Speech to text', audio: 'Audio generation', video: 'Video', rerank: 'Rerank' };
+
+// What a model is known to support, as short tags; a flag that is false or unknown (null) shows nothing.
+const CAPABILITY_TAGS = [['image_input', 'Vision'], ['structured_output', 'JSON'], ['tools', 'Tools']];
+export const capabilityTags = m => CAPABILITY_TAGS.filter(([flag]) => m[flag] === true).map(([, label]) => label);
+
+// A picker's value for one provider's model. A provider id is a slug, so '::' never appears inside it.
+export const choiceKey = (provider, model) => (provider && model ? `${provider}::${model}` : '');
+
+/** { provider, model } from a picker's value; null for none. */
+export function parseChoice(key) {
+  const at = (key || '').indexOf('::');
+  return at > 0 ? { provider: key.slice(0, at), model: key.slice(at + 2) } : null;
+}
+
+/** One line for a model in a list or picker: name, then what it costs and whether it reasons, when known. */
+export function modelLabel(m) {
+  const extra = [m.cost, m.reasoning ? 'reasoning' : ''].filter(Boolean);
+  return extra.length ? `${m.name} — ${extra.join(' · ')}` : m.name;
+}
+
+/** Enabled models of one kind, grouped by provider, for a picker: [{ provider, name, models }]. `only` limits the providers. */
+export function enabledByKind(providers, kind, only = null) {
+  return (providers || [])
+    .filter(p => !only || only.includes(p.id))
+    .map(p => ({ provider: p.id, name: p.name, models: (p.models || []).filter(m => (m.kinds || []).includes(kind)) }))
+    .filter(g => g.models.length);
+}
+
+/** The provider list's models narrowed by a search, a kind, and enabled-only, enabled ones first. */
+export function filterModels(models, { q = '', kind = '', enabledOnly = false, enabled = new Set(), showUnusable = false } = {}) {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hit = m => words.every(w => m.id.toLowerCase().includes(w) || (m.name || '').toLowerCase().includes(w));
+  return (models || [])
+    .filter(m => (showUnusable || !m.unusable) && (!kind || (m.kinds || []).includes(kind)) && (!enabledOnly || enabled.has(m.id)) && hit(m))
+    .sort((a, b) => Number(enabled.has(b.id)) - Number(enabled.has(a.id)));
+}
+
+/** Where a provider's key comes from, in words. */
+export function keyLabel(p) {
+  if (!p.key_set && p.no_key) return 'No key needed';
+  if (!p.key_set) return p.key_source ? `No key: ${p.key_source} is not set` : 'No key';
+  return p.key_source === 'stored' ? 'Key saved in providers.json' : `Key from ${p.key_source}`;
+}
+
+export const presetOf = (presets, id) => (presets || []).find(x => x.id === id) || null;
+
+/** The add form after picking a preset: its name, kind, address and whether it needs a key; a key typed so far stays. */
+export function fromPreset(form, preset) {
+  if (!preset) return { ...form, preset: '' };
+  return { ...form, preset: preset.id, name: preset.name, kind: preset.kind, base_url: preset.base_url, no_key: !!preset.no_key };
+}
+
+/** A chosen model's display name from its provider's enabled list, or its id when not listed. */
+export function modelName(providers, choice) {
+  if (!choice) return '';
+  const m = (providers || []).find(p => p.id === choice.provider)?.models?.find(x => x.id === choice.model);
+  return m?.name || choice.model;
+}
+
+/** The bot picker's first option: the harness's chat model, which a bot without its own model runs on. */
+export function defaultModelLabel(providers, roles) {
+  return roles?.chat ? `Harness default (${modelName(providers, roles.chat)})` : 'Harness default';
+}
+
+// Testing a model as it is enabled (a provider that lists ids only): what the progress modal shows.
+export const PROBE_LABELS = { chat: 'Answers chat', tools: 'Calls tools', structured: 'Structured output', image: 'Image input', embeddings: 'Embeddings' };
+
+export const probeStart = (model, steps) => ({
+  model, total: steps.length, done: 0, end: null,
+  steps: steps.map(step => ({ step, label: PROBE_LABELS[step] || step, status: 'pending' })),
+});
+
+// One event from the probe's stream; `end` with state 'lost' is the stream giving up (a harness restart).
+export function probeReducer(st, e) {
+  if (e.kind === 'step') {
+    const steps = st.steps.map(s => (s.step === e.step ? { ...s, status: e.status, ...(e.detail ? { detail: e.detail } : {}) } : s));
+    return { ...st, steps, done: steps.filter(s => ['pass', 'fail', 'skip'].includes(s.status)).length };
+  }
+  if (e.kind === 'end') {
+    if (e.state === 'lost') return { ...st, end: { status: 'failed', error: 'The connection to the harness was lost.' } };
+    const { kind, ...end } = e;
+    return { ...st, end };
+  }
+  return st;
+}

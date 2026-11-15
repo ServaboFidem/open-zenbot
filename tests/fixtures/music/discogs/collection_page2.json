@@ -1,0 +1,247 @@
+{
+ "pagination": {
+  "page": 2,
+  "pages": 3,
+  "per_page": 3,
+  "items": 8,
+  "urls": {}
+ },
+ "releases": [
+  {
+   "id": 21678622,
+   "instance_id": 2026049369,
+   "date_added": "2025-01-01T00:00:00-00:00",
+   "rating": 0,
+   "basic_information": {
+    "id": 21678622,
+    "master_id": 2459920,
+    "master_url": "https://api.discogs.com/masters/2459920",
+    "resource_url": "https://api.discogs.com/releases/21678622",
+    "thumb": "https://i.discogs.com/OazhXUbU5R-GlXBGPQ9ut1eumWZA1MmmfLw945PpViA/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTIxNjc4/NjIyLTE3MzEwNDE1/OTMtNzQzNC5qcGVn.jpeg",
+    "cover_image": "https://i.discogs.com/ZKSR1kc-NunMD2sBN508gH712mChXIOSnMARZw1dO7Q/rs:fit/g:sm/q:90/h:593/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTIxNjc4/NjIyLTE3MzEwNDE1/OTMtNzQzNC5qcGVn.jpeg",
+    "title": "Wamono Groove: Shakuhachi & Koto Jazz Funk '76",
+    "year": 2022,
+    "formats": [
+     {
+      "name": "Vinyl",
+      "qty": "1",
+      "descriptions": [
+       "LP",
+       "Compilation",
+       "Stereo"
+      ]
+     }
+    ],
+    "labels": [
+     {
+      "name": "180g",
+      "catno": "180GWALP04",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 1373398,
+      "resource_url": "https://api.discogs.com/labels/1373398"
+     }
+    ],
+    "artists": [
+     {
+      "name": "Kiyoshi Yamaya",
+      "anv": "山屋 清",
+      "join": "=",
+      "role": "",
+      "tracks": "",
+      "id": 184950,
+      "resource_url": "https://api.discogs.com/artists/184950"
+     },
+     {
+      "name": "Kiyoshi Yamaya",
+      "anv": "",
+      "join": ",",
+      "role": "",
+      "tracks": "",
+      "id": 184950,
+      "resource_url": "https://api.discogs.com/artists/184950"
+     },
+     {
+      "name": "Toshiko Yonekawa",
+      "anv": "米川敏子",
+      "join": "=",
+      "role": "",
+      "tracks": "",
+      "id": 1028059,
+      "resource_url": "https://api.discogs.com/artists/1028059"
+     },
+     {
+      "name": "Toshiko Yonekawa",
+      "anv": "",
+      "join": ",",
+      "role": "",
+      "tracks": "",
+      "id": 1028059,
+      "resource_url": "https://api.discogs.com/artists/1028059"
+     },
+     {
+      "name": "Kifu Mitsuhashi",
+      "anv": "三橋貴風",
+      "join": "=",
+      "role": "",
+      "tracks": "",
+      "id": 1354787,
+      "resource_url": "https://api.discogs.com/artists/1354787"
+     },
+     {
+      "name": "Kifu Mitsuhashi",
+      "anv": "",
+      "join": "",
+      "role": "",
+      "tracks": "",
+      "id": 1354787,
+      "resource_url": "https://api.discogs.com/artists/1354787"
+     }
+    ],
+    "genres": [
+     "Jazz"
+    ],
+    "styles": [
+     "Fusion",
+     "Jazz-Funk"
+    ]
+   }
+  },
+  {
+   "id": 33221859,
+   "instance_id": 2039341203,
+   "date_added": "2025-01-01T00:00:00-00:00",
+   "rating": 0,
+   "basic_information": {
+    "id": 33221859,
+    "master_id": 3761397,
+    "master_url": "https://api.discogs.com/masters/3761397",
+    "resource_url": "https://api.discogs.com/releases/33221859",
+    "thumb": "https://i.discogs.com/jONAVieIDC39SOKB1EZHQa9JgMVRasg105TtpUvmw2U/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTMzMjIx/ODU5LTE3NDAyNzcy/MTktNDMxNy5qcGVn.jpeg",
+    "cover_image": "https://i.discogs.com/oFfxj8SxS-s-DeX4e4RCvBUGXhyGf__ghu1o1RP70x4/rs:fit/g:sm/q:90/h:600/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTMzMjIx/ODU5LTE3NDAyNzcy/MTktNDMxNy5qcGVn.jpeg",
+    "title": "Akasaka Soul Funk 1969-1977",
+    "year": 2025,
+    "formats": [
+     {
+      "name": "Vinyl",
+      "qty": "1",
+      "descriptions": [
+       "LP",
+       "Compilation"
+      ]
+     }
+    ],
+    "labels": [
+     {
+      "name": "180g",
+      "catno": "180GWALP07",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 1373398,
+      "resource_url": "https://api.discogs.com/labels/1373398"
+     }
+    ],
+    "artists": [
+     {
+      "name": "Various",
+      "anv": "",
+      "join": "",
+      "role": "",
+      "tracks": "",
+      "id": 194,
+      "resource_url": "https://api.discogs.com/artists/194"
+     }
+    ],
+    "genres": [
+     "Funk / Soul"
+    ],
+    "styles": [
+     "Funk",
+     "Soul",
+     "Disco"
+    ]
+   }
+  },
+  {
+   "id": 22724765,
+   "instance_id": 2039341029,
+   "date_added": "2025-01-01T00:00:00-00:00",
+   "rating": 0,
+   "basic_information": {
+    "id": 22724765,
+    "master_id": 2565887,
+    "master_url": "https://api.discogs.com/masters/2565887",
+    "resource_url": "https://api.discogs.com/releases/22724765",
+    "thumb": "https://i.discogs.com/LWwmI3L-P2lUnD5DPfQFCpyE8uTe2BmqvIrhLHjPggQ/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTIyNzI0/NzY1LTE2NTIzNTk3/NTQtNDIzNS5qcGVn.jpeg",
+    "cover_image": "https://i.discogs.com/IGlakA6DdfrFX87X_zOZdTwlBuOneu_vAUnvGxVfPVQ/rs:fit/g:sm/q:90/h:600/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTIyNzI0/NzY1LTE2NTIzNTk3/NTQtNDIzNS5qcGVn.jpeg",
+    "title": "Japanese Jazz Spectacle Vol. I (Deep, Heavy & Beautiful Jazz From Japan 1968-1984) ",
+    "year": 2022,
+    "formats": [
+     {
+      "name": "Vinyl",
+      "qty": "2",
+      "text": "180g",
+      "descriptions": [
+       "LP",
+       "Compilation"
+      ]
+     }
+    ],
+    "labels": [
+     {
+      "name": "180g",
+      "catno": "180GHMVLP01",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 1373398,
+      "resource_url": "https://api.discogs.com/labels/1373398"
+     },
+     {
+      "name": "Deep Jazz Reality",
+      "catno": "180GHMVLP01",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 419894,
+      "resource_url": "https://api.discogs.com/labels/419894"
+     },
+     {
+      "name": "Universounds",
+      "catno": "180GHMVLP01",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 219348,
+      "resource_url": "https://api.discogs.com/labels/219348"
+     },
+     {
+      "name": "HMV Record Shop",
+      "catno": "180GHMVLP01",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 768720,
+      "resource_url": "https://api.discogs.com/labels/768720"
+     }
+    ],
+    "artists": [
+     {
+      "name": "Various",
+      "anv": "",
+      "join": "",
+      "role": "",
+      "tracks": "",
+      "id": 194,
+      "resource_url": "https://api.discogs.com/artists/194"
+     }
+    ],
+    "genres": [
+     "Jazz"
+    ],
+    "styles": [
+     "Free Jazz",
+     "Hard Bop",
+     "Jazz-Funk",
+     "Jazz-Rock"
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,48 @@
+{
+ "id": 33228,
+ "title": "Powaqqatsi",
+ "year": 1988,
+ "genres": [
+  "Electronic",
+  "Classical",
+  "Stage & Screen"
+ ],
+ "styles": [
+  "Soundtrack",
+  "Modern Classical"
+ ],
+ "artists": [
+  {
+   "name": "Philip Glass",
+   "anv": "",
+   "join": "",
+   "role": "",
+   "tracks": "",
+   "id": 20691,
+   "resource_url": "https://api.discogs.com/artists/20691",
+   "thumbnail_url": "https://i.discogs.com/fl-VqB5rXVulJFSmn-R85NFoFqYjab0EWlPlEJ3uLjE/rs:fit/g:sm/q:90/h:600/w:474/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9BLTIwNjkx/LTEyNjUzODg5ODgu/anBlZw.jpeg"
+  }
+ ],
+ "main_release": 341048,
+ "uri": "https://www.discogs.com/master/33228-Philip-Glass-Powaqqatsi",
+ "tracklist": [
+  {
+   "position": "A1",
+   "type_": "track",
+   "title": "Serra Pelada",
+   "duration": "5:00"
+  },
+  {
+   "position": "A2",
+   "type_": "track",
+   "title": "The Title",
+   "duration": "0:25"
+  },
+  {
+   "position": "A3",
+   "type_": "track",
+   "title": "Anthem (Part 1)",
+   "duration": "6:22"
+  }
+ ]
+}

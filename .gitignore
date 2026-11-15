@@ -1,0 +1,21 @@
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+.opencode
+opencode.json
+graft/
+grok-bot
+# python
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+/node_modules/
+/dist/
+# local environment (secrets); .env.example is the template
+.env
+# brainstorm mockups and agent scratch from the superpowers workflow
+.superpowers/
+# images the image.generate tool writes into the workspace
+generated-images/
+# screenshots, page snapshots and console logs from the Playwright MCP browser
+.playwright-mcp/

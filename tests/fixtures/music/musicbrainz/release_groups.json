@@ -1,0 +1,22 @@
+{
+ "release-group-count": 2,
+ "release-group-offset": 0,
+ "release-groups": [
+  {
+   "id": "aaa",
+   "title": "The Wall",
+   "first-release-date": "1979-11-30",
+   "primary-type": "Album",
+   "secondary-types": []
+  },
+  {
+   "id": "bbb",
+   "title": "Echoes: The Best of Pink Floyd",
+   "first-release-date": "2001-11-05",
+   "primary-type": "Album",
+   "secondary-types": [
+    "Compilation"
+   ]
+  }
+ ]
+}

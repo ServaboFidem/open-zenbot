@@ -1,0 +1,203 @@
+{
+ "pagination": {
+  "page": 1,
+  "pages": 3,
+  "per_page": 3,
+  "items": 8,
+  "urls": {}
+ },
+ "releases": [
+  {
+   "id": 34079896,
+   "instance_id": 2044253004,
+   "date_added": "2025-01-01T00:00:00-00:00",
+   "rating": 0,
+   "basic_information": {
+    "id": 34079896,
+    "master_id": 3858238,
+    "master_url": "https://api.discogs.com/masters/3858238",
+    "resource_url": "https://api.discogs.com/releases/34079896",
+    "thumb": "https://i.discogs.com/xfHAD_ebulxZhGMvTuGX9KTBZGpTR4nWoyL9lpBfokk/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM0MDc5/ODk2LTE3NDgxOTAx/NTUtOTM3Ny5qcGVn.jpeg",
+    "cover_image": "https://i.discogs.com/cge0q5INCYl1K_ixPDqZfmAt9w5i8Yz6foxjaELKAaY/rs:fit/g:sm/q:90/h:599/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTM0MDc5/ODk2LTE3NDgxOTAx/NTUtOTM3Ny5qcGVn.jpeg",
+    "title": "Music 2",
+    "year": 2025,
+    "formats": [
+     {
+      "name": "Vinyl",
+      "qty": "1",
+      "text": "Baby Blue",
+      "descriptions": [
+       "LP",
+       "Stereo"
+      ]
+     }
+    ],
+    "labels": [
+     {
+      "name": "100% Electronica",
+      "catno": "170P",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 935509,
+      "resource_url": "https://api.discogs.com/labels/935509"
+     }
+    ],
+    "artists": [
+     {
+      "name": "FM Skyline",
+      "anv": "",
+      "join": "&",
+      "role": "",
+      "tracks": "",
+      "id": 6030968,
+      "resource_url": "https://api.discogs.com/artists/6030968"
+     },
+     {
+      "name": "Equip (3)",
+      "anv": "",
+      "join": "",
+      "role": "",
+      "tracks": "",
+      "id": 5317407,
+      "resource_url": "https://api.discogs.com/artists/5317407"
+     }
+    ],
+    "genres": [
+     "Electronic"
+    ],
+    "styles": [
+     "Vaporwave"
+    ]
+   }
+  },
+  {
+   "id": 15796599,
+   "instance_id": 2039340813,
+   "date_added": "2025-01-01T00:00:00-00:00",
+   "rating": 0,
+   "basic_information": {
+    "id": 15796599,
+    "master_id": 1798903,
+    "master_url": "https://api.discogs.com/masters/1798903",
+    "resource_url": "https://api.discogs.com/releases/15796599",
+    "thumb": "https://i.discogs.com/AZRfyZPXbvbg32mqIOG-MqeReQwUYqxSZBindVgqZPo/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTE1Nzk2/NTk5LTE3MTM3NjE2/NDktOTY2OC5qcGVn.jpeg",
+    "cover_image": "https://i.discogs.com/AgzNT0VIYBqGL38-Hxjg3LCjKgpxQ5YhUd_BSYgElFs/rs:fit/g:sm/q:90/h:597/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTE1Nzk2/NTk5LTE3MTM3NjE2/NDktOTY2OC5qcGVn.jpeg",
+    "title": "Wamono A To Z Vol. I (Japanese Jazz Funk & Rare Groove 1968-1980)",
+    "year": 2020,
+    "formats": [
+     {
+      "name": "Vinyl",
+      "qty": "1",
+      "text": "180g",
+      "descriptions": [
+       "LP",
+       "Compilation"
+      ]
+     }
+    ],
+    "labels": [
+     {
+      "name": "180g",
+      "catno": "180GWALP01",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 1373398,
+      "resource_url": "https://api.discogs.com/labels/1373398"
+     }
+    ],
+    "artists": [
+     {
+      "name": "DJ Yoshizawa Dynamite.jp",
+      "anv": "",
+      "join": "&",
+      "role": "",
+      "tracks": "",
+      "id": 4838175,
+      "resource_url": "https://api.discogs.com/artists/4838175"
+     },
+     {
+      "name": "Chintam",
+      "anv": "",
+      "join": "",
+      "role": "",
+      "tracks": "",
+      "id": 4838174,
+      "resource_url": "https://api.discogs.com/artists/4838174"
+     }
+    ],
+    "genres": [
+     "Jazz",
+     "Funk / Soul"
+    ],
+    "styles": [
+     "Jazz-Funk",
+     "Soul-Jazz"
+    ]
+   }
+  },
+  {
+   "id": 17347705,
+   "instance_id": 2039340902,
+   "date_added": "2025-01-01T00:00:00-00:00",
+   "rating": 0,
+   "basic_information": {
+    "id": 17347705,
+    "master_id": 1977223,
+    "master_url": "https://api.discogs.com/masters/1977223",
+    "resource_url": "https://api.discogs.com/releases/17347705",
+    "thumb": "https://i.discogs.com/mXAUa4uzqjb43lqQwSSAb45CdMNZByQ5a5_Yvl8Pq8M/rs:fit/g:sm/q:40/h:150/w:150/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTE3MzQ3/NzA1LTE2NTEzMTQ0/NTQtMzI3NS5qcGVn.jpeg",
+    "cover_image": "https://i.discogs.com/w3hU-L1cNa6h04ZqqztdJJm1Fqhy0scE7uH6l0HO73s/rs:fit/g:sm/q:90/h:594/w:600/czM6Ly9kaXNjb2dz/LWRhdGFiYXNlLWlt/YWdlcy9SLTE3MzQ3/NzA1LTE2NTEzMTQ0/NTQtMzI3NS5qcGVn.jpeg",
+    "title": "Wamono A To Z Vol. II (Japanese Funk 1970​-​1977)",
+    "year": 2021,
+    "formats": [
+     {
+      "name": "Vinyl",
+      "qty": "1",
+      "descriptions": [
+       "LP",
+       "Compilation"
+      ]
+     }
+    ],
+    "labels": [
+     {
+      "name": "180g",
+      "catno": "180GWALP02",
+      "entity_type": "1",
+      "entity_type_name": "Label",
+      "id": 1373398,
+      "resource_url": "https://api.discogs.com/labels/1373398"
+     }
+    ],
+    "artists": [
+     {
+      "name": "DJ Yoshizawa Dynamite.jp",
+      "anv": "",
+      "join": "&",
+      "role": "",
+      "tracks": "",
+      "id": 4838175,
+      "resource_url": "https://api.discogs.com/artists/4838175"
+     },
+     {
+      "name": "Chintam",
+      "anv": "Chintam (Blow Up)",
+      "join": "",
+      "role": "",
+      "tracks": "",
+      "id": 4838174,
+      "resource_url": "https://api.discogs.com/artists/4838174"
+     }
+    ],
+    "genres": [
+     "Jazz",
+     "Funk / Soul"
+    ],
+    "styles": [
+     "Jazz-Funk",
+     "Soul-Jazz"
+    ]
+   }
+  }
+ ]
+}

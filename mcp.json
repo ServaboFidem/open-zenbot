@@ -1,0 +1,118 @@
+{
+  "_comment": "MCP servers the harness connects at start. stdio: command + args (+ env); http: url (+ headers). `use` is the one line the decider scores. `${VAR}` in args, env, url, and headers expands from the environment, and `${ZEN_VAULT_ROOT}` from the harness; `${ZEN_ALLOWED_FOLDERS}` and `${ZEN_READ_ONLY_FOLDER_ARGS}`, each a whole arg, become the Full Access folders and `--read-only-dir <path>` pairs from Settings > Allowed Folders; an unset variable drops that arg or header. A `${VAR}` in env, headers or url is a key the MCP servers page asks for; one saved there wins over the environment. Keep keys out of this file. See AGENTS.md.",
+  "mcpServers": {
+    "exa": {
+      "url": "https://mcp.exa.ai/mcp",
+      "headers": {
+        "x-api-key": "${EXA_API_KEY}"
+      },
+      "use": "Search the live web and fetch page contents: current news, documentation, products, papers, anything not in the model's memory."
+    },
+    "time": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-time"
+      ],
+      "use": "The current date and time in any timezone, and conversions between timezones: anything that depends on knowing what time it is now."
+    },
+    "files": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem@2.3.0",
+        "${ZEN_READ_ONLY_FOLDER_ARGS}",
+        "--",
+        "${ZEN_VAULT_ROOT}",
+        "${ZEN_FS_ROOT}",
+        "${ZEN_ALLOWED_FOLDERS}"
+      ],
+      "requires": [
+        {
+          "bin": "node",
+          "min_version": "24",
+          "install": {"brew": "node", "winget": "OpenJS.NodeJS", "scoop": "nodejs", "apt": "nodejs", "dnf": "nodejs", "pacman": "nodejs", "choco": "nodejs"},
+          "manual": {
+            "linux": "Node.js 24 or newer: https://nodejs.org/en/download",
+            "darwin": "Node.js 24 or newer: https://nodejs.org/en/download",
+            "windows": "Node.js 24 or newer: https://nodejs.org/en/download"
+          }
+        }
+      ],
+      "use": "Read, write, search, and list files and folders under the vault and the folders the user allowed in Settings (and ZEN_FS_ROOT when set); folders the user marked Read-Only can be read but never changed: notes, docs, project files, and anything a bot should keep on disk."
+    },
+    "browser": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--browser",
+        "chrome",
+        "--output-dir",
+        "${ZEN_VAULT_ROOT}/browser"
+      ],
+      "use": "Drive a real Chrome window: open a page, read it as an accessibility snapshot, click, type, fill forms, take screenshots, sign in where a site asks; exa searches, this one browses."
+    },
+    "toolsmonk": {
+      "url": "https://toolsmonk.com/api/mcp",
+      "headers": {
+        "Authorization": "Bearer ${TOOLSMONK_API_KEY}"
+      },
+      "use": "A catalog of hundreds of ready-made utilities, found by describing the job and run by slug: calculators (business, finance, student), text and developer helpers, regex tools, document utilities, SEO and site checks, AI writing and image tools, and light file jobs on a PDF or image (merge, split, rotate, watermark, resize, convert, compress). Search it first when a task is a well-known small job; it does not search the web."
+    },
+    "hound": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "hound-mcp[all]",
+        "hound"
+      ],
+      "timeout": 180,
+      "use": "Read the web without an API key: fetch any URL as clean markdown (HTTP first, a local stealth browser when a site blocks bots), crawl a whole site page by page, read PDFs including scanned ones, and search ten public engines at once. The tool for crawling or reading a site in full; exa and this one both search, this one needs no key."
+    },
+    "pexels": {
+      "command": "uvx",
+      "args": [
+        "--with",
+        "mcp<2",
+        "pexels-mcp-server"
+      ],
+      "env": {
+        "PEXELS_API_KEY": "${PEXELS_API_KEY}"
+      },
+      "use": "Free stock photos and videos from Pexels: search photos or videos by subject, colour, orientation and size, browse curated photos, popular videos and featured collections, and get a photo or video by id with its download links and photographer credit."
+    },
+    "magick": {
+      "command": "magick-mcp",
+      "args": [
+        "mcp"
+      ],
+      "requires": [
+        {
+          "bin": "magick-mcp",
+          "install": {"cargo": "magick-mcp"}
+        },
+        {
+          "bin": "magick",
+          "setting": "imagemagick",
+          "min_version": "7",
+          "old_bins": ["convert"],
+          "install": {
+            "brew": "imagemagick",
+            "apt": "imagemagick",
+            "dnf": "ImageMagick",
+            "pacman": "imagemagick",
+            "winget": "ImageMagick.ImageMagick",
+            "choco": "imagemagick"
+          },
+          "manual": {
+            "linux": "ImageMagick 7 AppImage: https://imagemagick.org/script/download.php#linux",
+            "darwin": "https://imagemagick.org/script/download.php#macosx",
+            "windows": "Installer: https://imagemagick.org/script/download.php#windows"
+          }
+        }
+      ],
+      "guard": "magick",
+      "use": "Manipulate local images with ImageMagick: convert/optimize image files on this machine and edit them (resize, crop, rotate, flip, format change, compress, brightness, contrast, colour, black and white, blur, sharpen, borders, combine or tile images, inspect size and format); local edits to existing files, not hosted utilities, stock photos or new image synthesis."
+    }
+  }
+}

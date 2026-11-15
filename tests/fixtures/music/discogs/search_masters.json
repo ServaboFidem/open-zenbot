@@ -1,0 +1,25 @@
+{
+ "pagination": {
+  "page": 1,
+  "pages": 1,
+  "per_page": 100,
+  "items": 1
+ },
+ "results": [
+  {
+   "id": 33228,
+   "type": "master",
+   "master_id": 33228,
+   "title": "Philip Glass - Powaqqatsi",
+   "year": "1988",
+   "genre": [
+    "Classical"
+   ],
+   "style": [
+    "Contemporary"
+   ],
+   "cover_image": "https://i.discogs.com/example.jpeg",
+   "resource_url": "https://api.discogs.com/masters/33228"
+  }
+ ]
+}

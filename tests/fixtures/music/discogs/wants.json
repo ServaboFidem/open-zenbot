@@ -1,0 +1,28 @@
+{
+ "pagination": {
+  "page": 1,
+  "pages": 1,
+  "per_page": 100,
+  "items": 2
+ },
+ "wants": [
+  {
+   "id": 249504,
+   "rating": 0,
+   "basic_information": {
+    "id": 249504,
+    "master_id": 33228,
+    "title": "Powaqqatsi"
+   }
+  },
+  {
+   "id": 555,
+   "rating": 0,
+   "basic_information": {
+    "id": 555,
+    "master_id": 0,
+    "title": "No Master"
+   }
+  }
+ ]
+}

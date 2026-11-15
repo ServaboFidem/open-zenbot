@@ -1,0 +1,42 @@
+{
+  "name": "zen-agents-gui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenZenBot: the zen-agents workspace GUI (React, Fluent 2, Electron)",
+  "license": "MIT",
+  "main": "src/electron/main.cjs",
+  "scripts": {
+    "build": "node scripts/build-gui.mjs",
+    "start": "electron .",
+    "test": "node --test tests/gui/*.test.mjs",
+    "serve": "python -m http.server 8080 --bind 127.0.0.1 --directory dist"
+  },
+  "dependencies": {
+    "@fluentui/react-components": "9.75.1",
+    "@fluentui/react-icons": "2.0.345",
+    "@sentry/electron": "8.3.0",
+    "docx": "^9.15.3",
+    "pdfjs-dist": "4.10.38",
+    "pptxgenjs": "^4.0.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-markdown": "9.0.1",
+    "remark-gfm": "4.0.0",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "esbuild": "0.28.2"
+  },
+  "type": "module",
+  "productName": "OpenZenBot",
+  "overrides": {
+    "pptxgenjs": {
+      "image-size": "^2.0.3"
+    },
+    "@sentry/bundler-plugins": {
+      "glob": "^14.0.4"
+    }
+  }
+}

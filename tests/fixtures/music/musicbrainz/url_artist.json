@@ -1,0 +1,16 @@
+{
+ "resource": "https://www.discogs.com/artist/45467",
+ "relations": [
+  {
+   "type": "discogs",
+   "target-type": "artist",
+   "direction": "backward",
+   "artist": {
+    "id": "83d91898-7763-47d7-b03b-b92132375c47",
+    "name": "Pink Floyd",
+    "type": "Group"
+   }
+  }
+ ],
+ "id": "b0bbbe4b-967f-4124-87bb-163cf83d3ec3"
+}
