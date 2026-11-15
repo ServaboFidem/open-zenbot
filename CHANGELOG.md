@@ -4,6 +4,7 @@ What changed on `main`, newest first. Updated automatically on every push to `ma
 
 ## 2026-11-15
 
+- Credit the Soundlore genre atlas and MusicBrainz data in the README ([`34bfa73`](https://github.com/ServaboFidem/open-zenbot/commit/34bfa7320837d841cea3974392fb2c0ccadf663b))
 - adding wiki as submodule ([`a0dafcf`](https://github.com/ServaboFidem/open-zenbot/commit/a0dafcf096a595f3d2663b2d07d999fdc193fc53))
 - housekeeping, adding the wiki ([`cec61f0`](https://github.com/ServaboFidem/open-zenbot/commit/cec61f00e4e697c944c695ebdf7d51d20bbd3521))
 - squash-merge 'wiki-publish-check' (feat/wiki-init-03/wiki-publish-check) into integrate/wiki-init-03 ([`e1e0e5c`](https://github.com/ServaboFidem/open-zenbot/commit/e1e0e5c4147a888d85f578347530ba7d2169f882))
