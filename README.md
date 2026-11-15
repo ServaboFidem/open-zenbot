@@ -127,7 +127,7 @@ The digest is an ordinary routine, so it sits on the Routines page beside any yo
 
 ![The Routines page with the Weekly album digest routine](docs/screenshots/routines.png)
 
-Music data (database, genre atlas, covers) lives in `~/.zen-agents/vault-music/`, beside the vault and out of bots' reach. The atlas is downloaded on first use and checked against a hash. Soundlore's own data is CC0; the artist-genre links derived from MusicBrainz votes are CC BY-NC-SA 3.0, so this feature is for non-commercial use.
+Music data (database, genre atlas, covers) lives in `~/.zen-agents/vault-music/`, beside the vault and out of bots' reach. The atlas is the [Soundlore](https://github.com/aydearcas/Soundlore) genre data, downloaded on first use from a pinned commit and checked against a hash. Most of it is CC0, but the artist-genre links come from MusicBrainz genre votes and are CC BY-NC-SA 3.0, so this feature is for non-commercial use (see [Credits](#data)).
 
 ## Using the app
 
@@ -184,6 +184,8 @@ Full documentation is forthcoming. It will cover setup on each platform, writing
 
 ## Credits
 
+### Skills
+
 open-zenbot ships these skills from other projects, vendored with their
 instructions unchanged. Each folder keeps its upstream license and notices.
 
@@ -193,6 +195,20 @@ instructions unchanged. Each folder keeps its upstream license and notices.
 | `skills/archify/` | [tt-a1i/archify](https://github.com/tt-a1i/archify) by tt-a1i and Cocoon AI | Apache-2.0 (`LICENSE.txt`, `NOTICE.txt`) |
 | `skills/prompt-master/` | [nidhinjs/prompt-master](https://github.com/nidhinjs/prompt-master) by Nidhin Joseph Nelson | MIT (`LICENSE`, `NOTICE.md`) |
 
+### Data
+
+The music Taste map and genre lookups use the Soundlore genre atlas. Its files
+are not in this repo: the harness downloads them from a pinned commit
+(`src/music/atlas.py`) into `~/.zen-agents/vault-music/atlas/`.
+
+| Data | Source | License |
+| --- | --- | --- |
+| Genre atlas: genres, genre map, temperatures, concepts | [aydearcas/Soundlore](https://github.com/aydearcas/Soundlore) (commit `6ed7616`), built on [MusicBrainz](https://musicbrainz.org/) and [Wikidata](https://www.wikidata.org/) data | CC0 |
+| Artist data and Wikidata sitelinks and genres | MusicBrainz and Wikidata, via Soundlore | CC0 |
+| Artist-genre links from MusicBrainz genre votes, and the artist profiles, positions and similar artists Soundlore derives from them | MusicBrainz contributors, via Soundlore | [CC BY-NC-SA 3.0](https://creativecommons.org/licenses/by-nc-sa/3.0/) ([MusicBrainz data license](https://musicbrainz.org/doc/About/Data_License)) |
+
+Because of the CC BY-NC-SA 3.0 part, the music feature is for non-commercial use.
+
 ## License
 
-[MIT](LICENSE), except the vendored skills above, which keep their own licenses.
+[MIT](LICENSE), except the vendored skills and the downloaded data above, which keep their own licenses.
