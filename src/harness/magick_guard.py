@@ -7,7 +7,7 @@ rules:
 
 - every path a command reads is inside an allowed folder (Full Access or Read-Only); every path it writes is
   inside a Full Access one (the vault, ZEN_FS_ROOT, a Full Access folder) and not inside a Read-Only one;
-  nothing in the harness's own settings or ledger folders either way. Symlinks are resolved first.
+  nothing in the harness's own settings, ledger or music folders either way. Symlinks are resolved first.
 - the command is split exactly as the server splits it (on whitespace; no quotes, no shell: magick-mcp hands
   the pieces straight to `magick`), so the gate and ImageMagick see the same arguments.
 - options are an allow-list with their argument counts; anything else is refused, `-draw` and `-script`

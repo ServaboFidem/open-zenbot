@@ -68,7 +68,7 @@ def _now() -> str:
 
 def workspace_file(cwd: Path, path: str, folders: "Folders | None" = None) -> Path | str:
     """`path` (relative to `cwd`, or absolute) resolved, when it is a regular file inside `cwd` or, given
-    `folders`, inside one a bot may read; never inside the harness's own settings or ledger folders.
+    `folders`, inside one a bot may read; never inside the harness's own settings, ledger or music folders.
     Otherwise the refusal to hand back to the bot."""
     base = Path(cwd).resolve()
     target = Path(path).expanduser()

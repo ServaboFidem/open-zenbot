@@ -5,20 +5,24 @@ name each top-level system and run the harness and the tests.
 
 | Path | What |
 | --- | --- |
-| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`) and MCP keys (`mcp_keys.py`) |
-| `src/providers/` | Provider interface, registry, secrets, OpenRouter adapter |
-| `src/decider/` | Decider interface, scorer registry, band and supervisor logic, `adapters/` |
-| `src/generation/` | Generator boundary: summaries, compaction folds, vault summaries |
-| `src/memory/` | Exclusion filter (secrets and approvals), ledger (`ledger.py`), recall, ingest, Hindsight store |
+| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`) |
+| `src/providers/` | Provider interface, registry, provider store (`providers.json`) and secrets, OpenRouter and OpenAI-compatible adapters, model listing and probing, the image provider, Langfuse tracing |
+| `src/decider/` | Decider interface, scorer registry, skill and MCP routing (band and floor), skill-to-bot fit, supervisor, `adapters/` |
+| `src/context/` | Compaction, the protected (pinned) task, transcript rendering |
+| `src/generation/` | Generator boundary: compaction summaries and folds, vault summaries; the `image.generate` tool (`images.py`) |
+| `src/memory/` | Exclusion filter (secrets and approvals), ledger (`ledger.py`), recall, ingest, directory import, learning from a crawl, profile memory and store routing, Hindsight store and processes |
 | `src/rooms/` | Rooms, turns, handoff, orchestrator |
-| `src/music/` | Music discovery: Discogs scan, taste profile, the album gate, digests, `music_*` tools, `/music` routes |
+| `src/music/` | Music discovery: Discogs scan, taste profile, the Soundlore atlas, MusicBrainz and YouTube Music lookups, candidates, the album gate, digests, `music_*` tools, `/music` routes |
 | `src/skills/` | `SKILL.md` loader and catalog; recorder |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`) and Electron shell |
+| `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`) and Electron shell |
 | `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, and the host-dependency installers `install-deps.sh` / `install-deps.ps1` |
 | `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/` |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
-| `tests/` | Offline suite (`uv run pytest`); GUI node tests under `tests/gui/` (`npm test`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py` |
+| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`); GUI node tests under `tests/gui/` (`npm test`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py` |
+| `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
+| `.github/` | Workflows: `changelog.yml` appends every push to `main` to `CHANGELOG.md` (don't edit it by hand; `[skip changelog]` in a commit subject leaves it out), and `stale.yml` |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
 
 Run the harness with `uv sync --group dev`, then `uv run python -m src.harness.main`
@@ -36,7 +40,11 @@ temporarily. A key that lands there is public in git history and must be
 rotated.
 
 1. Pick one variable name per credential: `SERVICE_API_KEY` (or `_TOKEN`,
-   `_SECRET`). Not a name the harness supplies itself (`ZEN_VAULT_ROOT`).
+   `_SECRET`). The suffix matters: only the suffixes listed below are scrubbed
+   from stdio children, so a key named `SERVICE_KEY` would reach every stdio
+   server from `.env`. Not a name the harness supplies itself (`ZEN_VAULT_ROOT`,
+   `ZEN_ALLOWED_FOLDERS`, `ZEN_READ_ONLY_FOLDER_ARGS`): those win over saved keys
+   and the environment, and are never asked for.
 2. Reference it as `${VAR}` where the server reads it. It may sit inside a
    longer string:
    - stdio server, key via environment: `"env": {"PEXELS_API_KEY": "${PEXELS_API_KEY}"}`.
@@ -47,6 +55,9 @@ rotated.
    - HTTP server, key via header: `"headers": {"Authorization": "Bearer ${TOOLSMONK_API_KEY}"}`
      or `{"x-api-key": "${EXA_API_KEY}"}`.
    - HTTP server, key in the URL: `"url": "https://host/mcp?key=${SERVICE_API_KEY}"`.
+     Prefer a header: with the variable unset the whole URL drops and the
+     server fails to connect, rather than connecting keyless. HTTP servers get
+     no `env`, so their keys go in `headers` or `url`.
    - Not in `args`. `${VAR}` in args expands, but args are treated as paths,
      so the MCP servers page will not ask for it. If a server only takes its
      key as a CLI flag, say so to the user rather than committing the key.
@@ -65,7 +76,12 @@ rotated.
 4. Document the variable, without a value, in `.env.example` under
    "MCP servers (read by mcp.json)": what it is, where to get one, and what
    happens without it.
-5. Restart the harness (`mcp.json` is read only at start).
+5. Restart the harness. `mcp.json` is read at start and again on every
+   reconnect of one server (a key save, Recheck, a program path save, an
+   Allowed Folders change), but `.env` is read only at start. One broken
+   entry (no `command` or `url`, a malformed `requires`) makes the whole file
+   fail to load: at start every MCP server is dropped and the error goes to
+   the ledger; a later reconnect answers 422.
 
 How the key gets supplied. This is the user's job; don't ask them to paste
 keys into chat:
@@ -74,13 +90,16 @@ keys into chat:
   `headers` or `url` becomes a password field on its card. A save goes to
   `vault-settings/mcp_keys.json` (owner-only) and reconnects that server at
   once. A saved key wins over `.env` for that server only. API:
-  `GET /mcps` (each key's name, source and last four characters, never the
-  value), `PUT /mcps/{name}/keys` with `{"keys": {VAR: value}}`, and
+  `GET /mcps` (each key's name, its `source` (`saved`, `.env` meaning the
+  process environment, or empty) and its last four characters when it has
+  eight or more, never the value), `PUT /mcps/{name}/keys` with
+  `{"keys": {VAR: value}}` (a blank value keeps the saved key), and
   `DELETE /mcps/{name}/keys/{VAR}`.
 - **`.env`** (git-ignored): `VAR=value`, read at harness start. A variable
   already set in the shell wins over the file.
 
-An unset variable drops the header, env entry or arg that names it. The
+An unset variable drops the header, env entry or arg that names it (in `url`
+it drops the whole URL; see above). The
 server still connects keyless, so a missing key shows as tools answering
 "unauthorized" or "key empty", not as a failed connection. Check
 `GET /mcps`: a key with an empty `source` is unset. Tests for this path:
@@ -96,24 +115,30 @@ them to `mcp.json` as two list variables, each a whole arg on its own (inside a 
 as unset): `${ZEN_ALLOWED_FOLDERS}` (Full Access, one arg per folder) and `${ZEN_READ_ONLY_FOLDER_ARGS}`
 (`--read-only-dir <path>` pairs). Read-only flags must come before the `--` that ends the server's
 options; the server refuses every write inside a read-only folder, whatever else is allowed. Any server
-whose args name either variable is reconnected when the folders change. Nesting rules are
-`AllowedFolders.place`: a Read-Only folder may sit inside a Full Access one (or the vault); a Full Access
-folder inside a Read-Only one, or any same-access nesting, is refused with the reason. Don't write user folders into `mcp.json`. Broad folders (a drive root, the home folder or above
-it, system folders) are refused by `allowed_folders.check`, and so are the harness's settings and ledger
+whose args name either variable is reconnected when the folders change. Only folders that still exist
+are handed over (the server will not start on a missing one). Nesting rules are `AllowedFolders.place`:
+a Read-Only folder may sit inside a Full Access one (or the vault); a Full Access folder inside a
+Read-Only one, a Read-Only folder holding a Full Access one, or a folder inside one of the same access
+(Full Access inside the vault or `ZEN_FS_ROOT` too) is refused with the reason. Going the other way, a
+new parent with the same access as folders already inside it replaces them, since it covers them. Don't
+write user folders into `mcp.json`. Broad folders (a drive root, the home folder or above it, system
+folders) are refused by `allowed_folders.check`, and so are the harness's settings, ledger and music
 folders, anything inside them, and anything holding them (`private_folders`); keep both rules when adding
-other ways in.
+other ways in (`allowed_folders.reachable` gives the same readable, writable and private lists).
 
 ### What bots can and cannot reach
 
 The `files` server is rooted at the vault, so a bot can read **and write** anything inside it. Keep
-nothing there a bot must not see or change. The harness's own folders sit beside the vault instead:
+nothing there a bot must not see or change. The harness's own folders sit beside the vault instead. The
+vault is `ZEN_VAULT` (default `~/.zen-agents/vault`), and the others take its name: `ZEN_VAULT=~/x/notes`
+gives `notes-ledger/`, `notes-music/` and `notes-settings/`.
 
 | Folder (default under `~/.zen-agents/`) | Holds | Owned by |
 | --- | --- | --- |
-| `vault/` | Work docs (`docs/`), uploads, browser output, anything bots save; `workspace/` (the bots' working folder); memory, `sync.json`, learn logs | the vault; bots reach it |
-| `vault-ledger/` | Ledger, rooms, conversations | `src/memory/ledger.py` `ledger_path_for` |
+| `vault/` | Work docs (`docs/`), uploads, browser output (`browser/`), anything bots save; `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
+| `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations | `src/memory/ledger.py` `ledger_path_for` |
 | `vault-music/` | Music database (`music.db`), the Soundlore atlas, cover images | `src/music/settings.py` `music_dir`; bots never reach it (`allowed_folders.private_folders`) |
-| `vault-settings/` | Providers and their keys, MCP keys, tracing, model roles, bot models, tools, allowed folders | `src/vault_settings.py` `settings_dir` |
+| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
 
 A new setting goes in `settings_dir(vault_root) / "<name>.json"`, never under the vault. Secrets and
 `allowed_folders.json` (which decides what `files` may reach) must stay out of the vault: a bot that could
@@ -127,8 +152,11 @@ different old copy is left in place and reported). The desktop app reads `tracin
 The `music-librarian` bot finds albums with the `music_*` tools (`src/music/tools.py`). The gate
 (`src/music/check.py`) is the single authority on what reaches a digest: the bot proposes, the harness
 verifies, and a card that fails is refused. A suggested album must exist on Discogs, not be owned, not have
-been suggested before, not be on the wantlist, and be obscure enough. Don't add a path that saves a card
-without the gate. The Discogs token lives in `vault-settings/music_keys.json`; `vault-music/` is as private
+been suggested before, not be on the wantlist, and be obscure enough (by its Discogs `have` count; the
+obscurity setting picks the cutoff). `music_save_digest` runs the gate again on every card and also
+refuses duplicates in the batch and cards without exactly two standout tracks from the verified
+tracklist; a digest saves whole or not at all (`src/music/digest.py`). The `music_*` tools exist only
+when music is on and the Discogs token is set. Don't add a path that saves a card without the gate. The Discogs token lives in `vault-settings/music_keys.json`; `vault-music/` is as private
 as the settings and ledger folders, so keep it out of anything a bot can read or write.
 
 ### The shell and the workspace
@@ -137,10 +165,12 @@ The `shell` tool runs any command line as the user's account, so it gets three g
 (`src/harness/write_guard.py`):
 
 - **Workspace.** Commands start in `<vault>/workspace` (`HarnessConfig.shell_cwd`, created at start;
-  `ZEN_SHELL_CWD` overrides), and generated images land there too. `attach_file` takes a file in the
+  `ZEN_SHELL_CWD` overrides), with a scrubbed environment (the same one stdio MCP servers get), and
+  generated images land in its `generated-images/`. `attach_file` takes a file in the
   workspace or anywhere a bot may read (`Harness.attachable`: the vault, `ZEN_FS_ROOT`, Allowed Folders of
-  either access, never the settings or ledger folders), and serving an attachment checks the same again.
-  So a bot never needs to copy a file somewhere else to show it.
+  either access, never the settings, ledger or music folders), and serving an attachment checks the same
+  again. So a bot never needs to copy a file somewhere else to show it. It works only in a conversation
+  or a room turn, not in a routine.
 - **Protected folders.** The settings, ledger and music folders (`allowed_folders.private_folders`) hold
   keys and private data, and `files` never reaches them, but `shell` could. Before a `shell` call that no
   skill approval rule already caught, a command whose text names one of them (full path or folder name,
@@ -153,7 +183,8 @@ The `shell` tool runs any command line as the user's account, so it gets three g
 - **Write check.** In the same decider request, the loop (`TaskLoop._run_call`) asks `writes` (`inside` /
   `outside` / `unsure`), with the command, the working folder and the writable, read-only and protected
   folders as state (`allowed_folders.reachable` plus the workspace, read fresh). It runs at once only on
-  `inside` at or above `ZEN_SHELL_WRITE_PASS` (0.8). Anything else, a decider error or refusal, or no
+  `inside` at or above `ZEN_SHELL_WRITE_PASS` (0.8), and only once `reads` has passed (an answer with no
+  probabilities counts as passing). Anything else, a decider error or refusal, or no
   decider (scorer None) opens an approval (rule `shell:writes-outside-allowed-folders`, the verdict in its
   detail and in the `approval_request` ledger entry). A rejection tells the bot to save in its working
   folder or the vault.
@@ -172,26 +203,33 @@ and every call goes through `src/harness/magick_guard.py` first (`McpRegistry.ca
 Layer 1, the gate, is fixed rules and only refuses:
 
 - Paths: inputs inside the vault, `ZEN_FS_ROOT` or an allowed folder (either access); outputs inside a
-  Full Access one, not a Read-Only one; never the settings or ledger folders. The same folders the `files`
-  server gets, read on every call. Symlinks are resolved; `..`, `~`, quotes and shell characters are refused.
-  Relative paths need a `workspace`.
-- The command is split on whitespace exactly as magick-mcp splits it (no quoting, no shell). Options are an
-  allow-list with argument counts (`OPTIONS`); `-draw`, `-script` and anything unlisted are refused.
+  Full Access one, not a Read-Only one; never the settings, ledger or music folders. The same folders the
+  `files` server gets, read on every call (`guard_folders` in `api.py`); unlike the shell check this does
+  not add the shell workspace, so a `ZEN_SHELL_CWD` outside those folders is out of magick's reach.
+  Symlinks are resolved; `..`, `~`, quotes and shell characters are refused. Relative paths need a
+  `workspace`, an absolute folder the bot may read. Wildcards only in input names.
+- The command is split on whitespace exactly as magick-mcp splits it (no quoting, no shell). The leading
+  tool may be `identify`, `mogrify`, `montage`, `composite` or `compare` (not `convert`, `import`, `script`
+  and the like). Options are an allow-list with argument counts (`OPTIONS`); `-draw`, `-script` and
+  anything unlisted are refused.
 - Inputs must be raster images by their first bytes (SVG, MVG, MSL, PDF and text can make ImageMagick read
   other files). `coder:` prefixes other than generators (`xc:`, `label:`...) and raster formats, `@file`
-  and `|pipe` are refused. Outputs must be raster formats, `pdf`, or `txt` (others can run delegates).
+  and `|pipe` are refused. Outputs must be raster formats, `pdf`, `txt` or `info` (others can run
+  delegates); `-`, `null:` and `info:` send the output back to the bot.
 - `func_save`/`func_execute` names are slugs (magick-mcp builds a file path from the name, unchecked).
-  The gate runs `func_execute` itself, one checked command at a time.
+  `func_save` checks every rule but paths before it goes through. The gate runs `func_execute` itself,
+  reading the saved function from magick-mcp's data folder, one checked command at a time.
 - The gate runs `magick` itself (`MagickRunner`), never magick-mcp: the server clears its child's
   environment (all but `PATH`), so no `MAGICK_CONFIGURE_PATH` set in `mcp.json` could reach it. The runner
   passes the checked argument list (no shell), the workspace as working folder, a bare environment (`PATH`,
   temp and Windows system folders; no keys) and `MAGICK_CONFIGURE_PATH` = `vault-settings/magick/`, where
   it rewrites `policy.xml` (`policy_xml()`) before every run. The policy is ImageMagick's own second wall:
-  deny-all coders then the gate's lists, no delegates, no `@file` paths, the script modules off, and
-  memory, size and time limits. It leaves paths to the gate, and `ephemeral:` too (a read modifier, which
-  the policy cannot name). Check what ImageMagick loaded with `MAGICK_CONFIGURE_PATH=<that folder> magick
+  deny-all coders then the gate's lists, no delegates, no filters, no `@file` paths, the MSL, MVG, PS,
+  SVG, URL, XPS, EPHEMERAL, TEXT and HTML modules off, and memory, size and time limits. It leaves paths
+  to the gate. Check what ImageMagick loaded with `MAGICK_CONFIGURE_PATH=<that folder> magick
   -list policy`: the harness file should be listed first. magick-mcp still lists the tools and keeps
-  saved functions (`func_save` and `func_list` go through; the gate answers `check` with `magick -version`).
+  saved functions (`func_save` and `func_list` go through; the gate answers `check` with `magick -version`,
+  run in `vault-settings/magick/` when there is no workspace).
 - Which `magick` runs: the full path in Settings > Harness Tools > ImageMagick (`vault-settings/tools.json`
   `{"imagemagick": {"path": ...}}`, `src/harness/tool_paths.py`), which `scripts/install-deps` fills in.
   With none saved, the one on PATH; a saved path that is gone fails rather than falling back. The magick
@@ -209,12 +247,12 @@ runtime) declares it in its `mcp.json` entry as `requires`, a list of objects.
 | Field | Meaning |
 | --- | --- |
 | `bin` | Executable to find on `PATH` (required) |
-| `version_args` | Arguments that print its version; default `["--version"]`, `null` skips the version check |
+| `version_args` | Arguments that print its version; default `["--version"]`, `null` skips the version check (with `min_version` also set, `null` reports `probe_failed`) |
 | `min_version` | Oldest acceptable version, e.g. `"7"`; older is reported as too old |
-| `old_bins` | Names of an older tool that may be present instead (e.g. `convert` for `magick`) |
-| `install` | Map of package manager to package name (`cargo`, `brew`, `winget`, `scoop`, `apt`, `dnf`, `pacman`, `apk`, `choco`) |
-| `manual` | Map of OS (`linux`, `darwin`, `windows`) to a URL or instruction, shown for every unmet requirement, beside the manager fix |
-| `setting` | A Harness Tools path setting (a key of `tool_paths.PROGRAMS`, today `imagemagick`) for a binary the harness runs itself by full path. The probe tries the saved path first, then PATH, then the program's usual install folders; `install` saves the full path it finds there |
+| `old_bins` | Names of an older tool that may be found instead (e.g. `convert` for `magick`); a hit is reported `too_old` with no manager fix, so the installer leaves it and the user follows `manual` |
+| `install` | Map of package manager to package name (`cargo`, `brew`, `winget`, `scoop`, `apt`, `dnf`, `pacman`, `apk`, `choco`). Order is preference: the first manager that fits the OS and is present is the fix, even when it is privileged |
+| `manual` | Map of OS (`linux`, `darwin`, `windows`) to a URL or instruction. The CLI prints it for every unmet requirement; the MCP servers page shows it only as a link, when it holds a URL |
+| `setting` | A Harness Tools path setting (a key of `tool_paths.PROGRAMS`, today `imagemagick`; its `bin` must match) for a binary the harness runs itself by full path. The probe tries the saved path first, then PATH, then the program's usual install folders; `install` saves the full path it finds there |
 
 ```json
 "requires": [{"bin": "magick", "min_version": "7", "old_bins": ["convert"],
@@ -228,8 +266,10 @@ runtime) declares it in its `mcp.json` entry as `requires`, a list of objects.
   run `sudo`.
 - A probe times out after 10 s. A server with an unmet requirement is not
   spawned: its state is `needs_install` (not `failed`), it has no tools, and
-  `GET /mcps` reports `deps`. The harness prints `mcp <name>: needs install`
-  at start. The MCP servers page shows each unmet requirement with its fix and
+  `GET /mcps` reports `deps` (problems `missing`, `too_old`, `not_on_path`,
+  `probe_failed`). The harness prints `mcp <name>: needs install — <bin>:
+  <problem> — <fix>` at start. The probe uses the PATH the server's `env`
+  gives it, if any. The MCP servers page shows each unmet requirement with its fix and
   a Copy button, a link for `manual`, and a Recheck button
   (`POST /mcps/{name}/recheck` re-probes and reconnects that server).
 - Install from the repo root: `scripts/install-deps.sh` (or
@@ -237,8 +277,8 @@ runtime) declares it in its `mcp.json` entry as `requires`, a list of objects.
   for one server and `--dry-run` to show commands without running them. They
   run `install` only (`--config PATH` also works); the check is
   `uv run python -m src.harness.host_deps check`.
-  `check` exits 1 when anything is unmet; `install` exits 0 unless the manifest
-  is broken (2). Both read the saved paths of the vault the harness uses
+  `check` exits 1 when anything is unmet; both exit 2 for a broken manifest or
+  an unknown `--server`, and `install` otherwise exits 0. Both read the saved paths of the vault the harness uses
   (`ZEN_VAULT` from the shell or `.env`, default `~/.zen-agents/vault`; `--vault PATH`
   for another), and `install` writes the paths it finds there.
 - A host program the harness runs itself goes in `tool_paths.PROGRAMS` (its `bin`,
@@ -249,6 +289,8 @@ runtime) declares it in its `mcp.json` entry as `requires`, a list of objects.
 - A `not_on_path` requirement (installed, but its directory is not on PATH) needs
   a harness restart on Linux and macOS once PATH is fixed; on Windows Recheck is enough.
 - macOS and Windows install paths are untested on a real host.
+- Tests: `tests/test_host_deps.py`, `tests/test_mcp_client_requires.py`,
+  `tests/test_tool_paths.py`.
 
 <!-- graft:start -->
 ## Graft — repo context graph
@@ -291,3 +333,6 @@ re-read whole files.
 After big code changes, refresh the graph with `graft build` (deterministic,
 no API key, $0).
 <!-- graft:end -->
+
+`graft/` is git-ignored: a local cache, not committed. On a fresh clone it is
+missing until you run `graft build` (the graft CLI is not a repo dependency).

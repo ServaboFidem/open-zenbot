@@ -13,7 +13,7 @@ The vault and `ZEN_FS_ROOT` are reachable as before, with Full Access, and are n
 
 A folder must be absolute, exist, and not be too broad: a drive or filesystem root, the home folder or
 anything above it, or an operating system folder (or anything inside one) is refused, and so is the
-harness's settings or ledger folder, anything inside them, or anything holding them. How folders may nest
+harness's settings, ledger or music folder, anything inside them, or anything holding them. How folders may nest
 is `AllowedFolders.place`."""
 
 from __future__ import annotations
@@ -226,7 +226,7 @@ class Folders:
 
     full: list[Path] = field(default_factory=list)       # writable: the vault, ZEN_FS_ROOT, Full Access folders
     read_only: list[Path] = field(default_factory=list)  # Read-Only folders: readable, never written
-    private: list[Path] = field(default_factory=list)    # never reached: the harness's settings and ledger
+    private: list[Path] = field(default_factory=list)    # never reached: the harness's settings, ledger and music
 
     def readable(self, p: Path) -> bool:
         """Inside a Full Access or Read-Only folder, and not inside the harness's own folders."""
@@ -245,7 +245,7 @@ def _within(p: Path, roots: list[Path]) -> bool:
 
 def reachable(vault_root: Path, env: Mapping[str, str] | None = None) -> Folders:
     """The folders bots may reach now: the vault, ZEN_FS_ROOT and the user's Allowed Folders by access, with
-    the harness's settings and ledger folders kept out."""
+    the harness's settings, ledger and music folders kept out."""
     s = AllowedFolders.load(vault_root)
     return Folders(full=[*full_access_roots(vault_root, env), *map(Path, s.existing(FULL))],
                    read_only=[Path(p) for p in s.existing(READ_ONLY)],

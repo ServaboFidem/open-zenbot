@@ -50,7 +50,7 @@ def test_a_list_variable_that_is_a_whole_arg_becomes_one_arg_per_item(tmp_path: 
     assert empty.args == ["-y", "/v"]
 
 
-def test_the_harness_settings_and_ledger_folders_are_refused(tmp_path: Path):
+def test_the_harness_settings_ledger_and_music_folders_are_refused(tmp_path: Path):
     zen = tmp_path / ".zen-agents"
     vault = zen / "vault"
     private = af.private_folders(vault)
