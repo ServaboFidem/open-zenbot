@@ -13,12 +13,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python"
 ]
-[project.urls]
-Homepage = "https://zenandtheartofcode.com"
-Documentation = "https://zenandtheartofcode.com/zenbot"
-Repository = "https://github.com/ServaboFidem/open-zenbot.git"
-"Bug Tracker" = "https://github.com/ServaboFidem/open-zenbot/issues"
-Changelog = "https://github.com/ServaboFidem/open-zenbot/blob/main/CHANGELOG.md"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
@@ -38,6 +32,13 @@ dependencies = [
     "langfuse==5.2.0",
     "ytmusicapi==1.12.3",
 ]
+
+[project.urls]
+Homepage = "https://zenandtheartofcode.com"
+Documentation = "https://zenandtheartofcode.com/zenbot"
+Repository = "https://github.com/ServaboFidem/open-zenbot.git"
+"Bug Tracker" = "https://github.com/ServaboFidem/open-zenbot/issues"
+Changelog = "https://github.com/ServaboFidem/open-zenbot/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
