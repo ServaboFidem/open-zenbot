@@ -29,6 +29,14 @@ test('conversationLabel shows title and date', () => {
   assert.equal(conversationLabel({ id: 'c3', title: '  ' }), 'New conversation');
 });
 
+test('recentConversationMeta names the bot, counts messages, and says when', () => {
+  const now = new Date('2026-11-15T15:00:00Z');
+  const meta = actions.recentConversationMeta({ owner: 'bot1', exchanges: 3, updated_at: '2026-11-07T11:40:00Z' }, 'Researcher', now);
+  assert.equal(meta, 'Researcher · 3 messages · Nov 7');
+  assert.match(actions.recentConversationMeta({ owner: 'bot1', exchanges: 1, updated_at: now.toISOString() }, 'Researcher', now), /^Researcher · 1 message · today /);
+  assert.equal(actions.recentConversationMeta({ owner: 'gone-bot', exchanges: 2 }, undefined, now), 'gone-bot · 2 messages');
+});
+
 test('remember this goes to shared project memory with the session as source', () => {
   const p = rememberPayload({ id: 's1', result: 'uv is fast', task: 'what is uv' });
   assert.equal(p.namespace, 'shared'); assert.equal(p.tier, 'project'); assert.equal(p.text, 'uv is fast'); assert.equal(p.source, 'session:s1');

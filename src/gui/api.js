@@ -114,6 +114,7 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
       post(`/bots/${enc(botId)}/tasks`, { task, ...(conversationId ? { conversation_id: conversationId } : {}), conversation, ...(block ? { protected: block } : {}) }),
     // conversations
     conversations: botId => get(`/bots/${enc(botId)}/conversations`),
+    recentConversations: (limit = 5) => get(`/conversations?limit=${enc(limit)}`),  // newest one-to-one, across bots
     conversation: id => get(`/conversations/${enc(id)}`),
     newConversation: botId => post(`/bots/${enc(botId)}/conversations`),
     selectConversation: (botId, id) => post(`/bots/${enc(botId)}/conversations/${enc(id)}/current`),

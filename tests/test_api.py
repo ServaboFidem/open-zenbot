@@ -1123,6 +1123,34 @@ async def test_list_new_and_select_conversations(client, harness: Harness):
     assert (await client.get(f"/conversations/{new['id']}")).json()["exchanges"][0]["reply"] == "re: second"
 
 
+async def test_recent_conversations_across_bots(client, harness: Harness):
+    harness.add_bot(Bot(name="Writer", role="Write things", id="bot2"))
+    await _ask(client, harness, "oldest")
+    oldest = harness.conversations.current("bot1")
+    harness.conversations.start_new("bot1")
+    await _ask(client, harness, "middle", bot="bot2")
+    await _ask(client, harness, "newest")
+    harness.conversations.start_new("bot2")  # empty: not listed
+    # times are to the second, so pin them: the order under test is by last activity, not by creation
+    newest, middle = harness.conversations.current("bot1"), harness.conversations.for_owner("bot2")[-1]
+    for c, t in ((oldest, "09:00"), (middle, "10:00"), (newest, "11:00")):
+        c.updated_at = f"2026-11-15T{t}:00+00:00"
+
+    recent = (await client.get("/conversations")).json()["conversations"]
+    assert [(c["owner"], c["title"]) for c in recent] == [("bot1", "newest"), ("bot2", "middle"), ("bot1", "oldest")]
+    assert recent[-1]["id"] == oldest.id and recent[0]["exchanges"] == 1
+    capped = (await client.get("/conversations", params={"limit": 2})).json()["conversations"]
+    assert [c["title"] for c in capped] == ["newest", "middle"]
+
+
+async def test_recent_conversations_skip_removed_bots(client, harness: Harness):
+    harness.add_bot(Bot(name="Writer", role="Write things", id="bot2"))
+    await _ask(client, harness, "kept")
+    await _ask(client, harness, "gone", bot="bot2")
+    harness.bots.pop("bot2")
+    assert [c["title"] for c in (await client.get("/conversations")).json()["conversations"]] == ["kept"]
+
+
 async def test_conversations_are_redacted(client, harness: Harness):
     from src.memory.exclusion import exclusion
 
