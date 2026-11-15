@@ -18,6 +18,12 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+if (-not (Test-Path (Join-Path $root 'node_modules'))) {
+    Write-Host '== installing npm packages (node_modules is missing)'
+    npm install
+    if ($LASTEXITCODE -ne 0) { throw "npm install failed ($LASTEXITCODE)" }
+}
+
 Write-Host '== building the GUI'
 npm run build
 if ($LASTEXITCODE -ne 0) { throw "npm run build failed ($LASTEXITCODE)" }

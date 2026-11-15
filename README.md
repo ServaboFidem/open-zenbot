@@ -48,30 +48,25 @@ Routing is a scoring job, not a writing job. Before each task, the router asks t
 
 ## Run the harness
 
-```sh
-uv sync --group dev
-export OPENROUTER_API_KEY=sk-or-...      # or ZEN_KEY_REF=vault:NAME with VAULT_NAME set
-export OPENROUTER_MODEL=...              # optional; default meta/muse-spark-1.3-contributor
-export ZEN_SUMMARY_MODEL=...             # optional; every summary, default scaledown/summarize
-export ZEN_HINDSIGHT_URL=...             # optional; an external Hindsight server: the harness starts none (default: it starts its own)
-export ZEN_HINDSIGHT_PORT=...            # optional; the API port of the server it starts, default 18888
-export ZEN_HINDSIGHT_PG_PORT=...         # optional; the embedded Postgres port, default 5556
-export ZEN_HINDSIGHT_LLM_MODEL=...       # optional; the model Hindsight extracts with, default google/gemma-4-31b-it
-export ZEN_HINDSIGHT_KEY_REF=...         # optional; the key Hindsight uses, default env:OPENROUTER_API_KEY; set, Settings cannot move it
-export ZEN_HINDSIGHT_UI=...              # optional; 0 skips the dashboard behind the Knowledge graph view, default 1
-export ZEN_HINDSIGHT_UI_PORT=...         # optional; the dashboard port, default 9999
-export ZEN_HINDSIGHT_READY_TIMEOUT=...   # optional; seconds to wait for the server to come up, default 300
-export EXA_API_KEY=...                   # optional; the exa MCP server runs keyless at a free rate limit without it
-export TOOLSMONK_API_KEY=tm_mcp_...      # the toolsmonk MCP server's bearer token; unset, it can search its catalog but not run tools
-export PEXELS_API_KEY=...                # the pexels MCP server's key (free at pexels.com/api); unset, its tools answer that the key is empty
-export ZEN_FS_ROOT=~/Documents           # optional; a second folder the filesystem MCP may read and write (the vault is always one)
-export ZEN_MEDIA_TRUSTED_HOSTS=...       # optional; comma-separated hosts whose media previews load at once, beside images/videos.pexels.com
-uv run python -m src.harness.main        # http://127.0.0.1:8765
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Node.js](https://nodejs.org/) (with `npm`). From the repo root:
+
+### Windows
+
+```powershell
+.\scripts\install-deps.ps1      # once: host tools the MCP servers need
+.\scripts\dev.ps1               # start the harness and the app
 ```
 
-Once, before the first start, run `scripts/install-deps.sh` (`scripts/install-deps.ps1` on Windows) to install the host tools MCP servers need (`--dry-run` shows what it would do). A server whose tool is missing shows "needs install" on the MCP servers page until you do.
+### Linux
 
-Instead of exporting, you can keep these in a `.env` at the repo root (start from `.env.example`). The harness and the desktop app each read it at start and print the names they loaded, never the values. A variable already set in the shell wins over the file. Restart both after editing `.env`.
+```sh
+./scripts/install-deps.sh       # once: host tools the MCP servers need
+./scripts/dev.sh                # start the harness and the app
+```
+
+`dev` runs `npm install` on the first start (when `node_modules` is missing), builds the GUI, starts the harness on `http://127.0.0.1:8765`, waits for it to answer and opens the app window. Closing the window stops the harness. Use `-Port 9000` (`--port 9000` on Linux) to move it to another port. `install-deps` takes `--dry-run` to show what it would do. A server whose tool is still missing shows "needs install" on the MCP servers page, with the fix and a Recheck button.
+
+No key is needed to start. The harness starts unbound, and you add your OpenRouter key on the app's Settings page. To set anything else, copy `.env.example` to `.env` at the repo root. It lists every variable with its default. A variable already set in the shell wins over the file. Restart after editing `.env`.
 
 ### Memory (Hindsight)
 
@@ -88,24 +83,27 @@ Memory learns from the web through the `learn_page` tool and the `learn-company`
 
 Music is off until you turn it on. Open Music > Settings, switch it on and enter your Discogs username. A scan then reads your public collection and the Taste map shows your genres; the username is all it needs.
 
+![The Taste map: your collection placed on a genre atlas, with your strongest genres and formats beside it](docs/screenshots/music-taste-map.png)
+
 The weekly digest also needs a Discogs personal access token (Discogs > Settings > Developers > Generate new token), pasted in the same place. It is saved to `vault-settings/music_keys.json`, owner-only, never to `.env` or the repo. With the token, the Weekly album digest routine (Routines page, or Run now) has the music-librarian bot pick albums you do not own, have not been shown and have not wanted, and each card links to YouTube Music and can be added to your Discogs wantlist. By default it runs on Fridays at 09:00 and picks 4 albums; change the day, time and count in Music > Settings. Without it you still get the Taste map, but no digest and no wantlist.
+
+![A weekly digest: album cards with why each one fits your collection, tracks to start with, and Listen, Want it, Pass and I own this](docs/screenshots/music-suggestions.png)
+
+The digest is an ordinary routine, so it sits on the Routines page beside any you create, where you can switch it off, edit it or run it now.
+
+![The Routines page with the Weekly album digest routine](docs/screenshots/routines.png)
 
 Music data (database, genre atlas, covers) lives in `~/.zen-agents/vault-music/`, beside the vault and out of bots' reach. The atlas is downloaded on first use and checked against a hash. Soundlore's own data is CC0; the artist-genre links derived from MusicBrainz votes are CC BY-NC-SA 3.0, so this feature is for non-commercial use.
 
-## Run the app
-
-```powershell
-npm install
-.\scripts\dev.ps1            # harness + Electron; builds dist/ if missing; -Build to rebuild; -Port 9000
-```
-
-The script waits for `/health`, opens the window, and stops the harness when the window closes. Without a key in the environment the harness starts unbound and the Settings page binds one.
+## Using the app
 
 Images, video, PDFs, diagrams and files in a bot's reply show under it as preview cards, in rooms and in one-to-one chat. Each card has Save…, which opens the system save dialog in the last folder you saved to (Pictures or Downloads the first time); images and video also have Open and Copy link, and PDFs and diagrams open larger with View. Remote media loads through the harness: hosts on the trusted list (Pexels, plus `ZEN_MEDIA_TRUSTED_HOSTS`) load at once, and any other host waits until you click Load. A bot shares a file it made with `attach_file`.
 
 On first launch, with nothing in memory yet, the Overview offers to introduce you to the ZenBot: a short interview (name, work, hobbies, people) whose answers every bot can recall, then buttons that import a single file, or a directory of your files after showing you the count. `ZEN_IMPORT_MAX_BYTES` (default 20 MB) caps the file size an import takes.
 
-Then, for example:
+### HTTP API
+
+The app is a client of the harness's HTTP API, which you can also call directly:
 
 ```sh
 curl -s localhost:8765/bots

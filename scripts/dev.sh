@@ -31,6 +31,14 @@ done
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+if [[ ! -d node_modules ]]; then
+    echo '== installing npm packages (node_modules is missing)'
+    if ! npm install; then
+        echo 'npm install failed' >&2
+        exit 1
+    fi
+fi
+
 echo '== building the GUI'
 if ! npm run build; then
     echo 'npm run build failed' >&2
