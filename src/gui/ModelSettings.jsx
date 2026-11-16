@@ -225,14 +225,14 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
       {groups.length ? <select aria-label={roles.labels[role]} value={form[role]} disabled={disabled || !online} onChange={e => setForm(f => ({ ...f, [role]: e.target.value }))}>
         {(!form[role] || missing) && <option value={form[role]}>{missing ? `${current.model} (not enabled)` : 'Pick a model'}</option>}
         {groups.map(g => <optgroup key={g.provider} label={g.name}>{g.models.map(m => <option key={m.id} value={choiceKey(g.provider, m.id)}>{modelLabel(m)}</option>)}</optgroup>)}
-      </select> : <p className="field-hint">No {KIND_LABELS[kind]?.toLowerCase() || kind} models enabled{role === 'decision' ? ' on an OpenRouter provider' : ''}. <button type="button" className="text-link" onClick={openProviders}>Enable one on the Model providers tab</button>.</p>}
+      </select> : <p className="field-hint">No {KIND_LABELS[kind]?.toLowerCase() || kind} models enabled{role === 'decision' ? ' on an OpenRouter provider' : ''}. <button type="button" className="text-link" onClick={openProviders}>Enable one on the Model providers page</button>.</p>}
     </Field>;
   };
   return <>
     {status}
     <form className="resource-row editor-form" onSubmit={save}>
       <h3>Models the harness runs on</h3>
-      <p className="field-hint">Choose from the models enabled on the Model providers tab. Saving switches the harness over at once; running tasks finish on the model they started with.</p>
+      <p className="field-hint">Choose from the models enabled on the Model providers page. Saving switches the harness over at once; running tasks finish on the model they started with.</p>
       {picker('chat', "Runs your bots' tasks.")}
       {picker('summary', 'Compacts long tasks, folds old conversation turns, and summarizes imported documents.')}
       <Field label="Decider scorer" hint="Chooses skills and MCP servers per task, and watches long tasks. Without one, every skill and tool is offered.">

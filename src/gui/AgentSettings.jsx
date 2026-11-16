@@ -3,7 +3,7 @@ import { Badge, Button, Field, Input, Spinner, Switch } from '@fluentui/react-co
 import { ProgramPathSection } from './ProgramPathSettings';
 import { agentStatus } from './agents';
 
-// Settings > Harness Tools > Coding agents: which of Claude Code and Codex bots may hand work to, kept in
+// Settings > Coding agents: which of Claude Code and Codex bots may hand work to, kept in
 // vault-settings/agents.json. Each program's path is the ProgramPathSection under its card. ctx: { api, online, guard, notify }
 function AgentCard({ ctx, a, onChange, reload }) {
   const { api, online, guard, notify } = ctx;
@@ -44,7 +44,7 @@ export function CodingAgentsSection({ ctx }) {
   const [failed, setFailed] = useState(false);
   const load = () => { setFailed(false); return guard(() => api.agents(), { quiet: true }).then(r => r ? setAgents(r.agents) : setFailed(true)); };
   useEffect(() => { if (online) load(); }, [online]);
-  if (!online) return null;
+  if (!online) return <div className="resource-row"><p>The harness is offline.</p></div>;
   if (!agents && failed) return <div className="resource-row od-row"><p className="od-fill">Could not check for coding agents.</p><Button appearance="outline" onClick={load}>Retry</Button></div>;
   if (!agents) return <div className="resource-row"><Spinner size="tiny" label="Checking coding agents…"/></div>;
   const put = next => setAgents(list => list.map(x => x.id === next.id ? next : x));
