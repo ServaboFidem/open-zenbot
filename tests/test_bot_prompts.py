@@ -173,14 +173,14 @@ def test_picasso_writes_cards_and_explainer_attaches():
 
 
 def test_darkroom_edits_with_magick_and_shows_the_result():
-    """DarkroomBot reaches the magick tools only through routing, so its role must name them, and every
+    """ImageEditor (id darkroom-bot) reaches the magick tools only through routing, so its role must name them, and every
     option it suggests must be one the magick gate lets through."""
     import re
 
     from src.harness.magick_guard import OPTIONS
 
     [p] = [b for b in load_dir(REPO / "bot-prompts") if b.id == "darkroom-bot"]
-    assert p.name == "DarkroomBot" and "ImageMagick" in p.role and "magick" in p.role
+    assert p.name == "ImageEditor" and "ImageMagick" in p.role and "magick" in p.role
     assert p.skills == [] and p.mcps == ["files", "magick"]  # it always works on disk: never left to routing
     assert "attach_file" in p.instructions and "`workspace`" in p.instructions
     [edits] = [line for line in p.instructions.splitlines() if line.startswith("Common edits:")]
