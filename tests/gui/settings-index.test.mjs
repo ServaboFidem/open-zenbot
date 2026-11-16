@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PANELS, SECTIONS, anchorId, searchSettings } from '../../src/gui/settings-index.js';
+import { PANELS, SECTIONS, anchorId, liveSections, searchSettings } from '../../src/gui/settings-index.js';
 
 test('panels are the nine, in order', () => {
   assert.deepEqual(PANELS.map(p => p.id), ['harness', 'providers', 'tools', 'agents', 'folders', 'tracing', 'memory', 'apps', 'about']);
@@ -67,3 +67,26 @@ test('a panel and its section of the same name are one result', () => {
 });
 test('a panel is found by its description', () => assert.equal(searchSettings('mockup')[0].panel, 'apps'));
 test('the matched text holds a word that was typed', () => { for (const m of searchSettings('secret langfuse')) assert.match(m.text, /secret|langfuse/i); });
+
+test('a title hit in a later panel comes before a body hit in an earlier one', () => {
+  const r = searchSettings('memory');
+  assert.equal(r[0].panel, 'memory');
+  const title = r.findIndex(m => m.section === 'Rebuild memory'), body = r.findIndex(m => m.panel === 'harness');
+  assert.ok(title >= 0 && body >= 0 && title < body);
+});
+test("the page's own sentences are searchable", () => {
+  assert.ok(searchSettings('through the files tool').some(m => m.panel === 'folders'));
+  assert.ok(searchSettings('models the harness may use').some(m => m.panel === 'providers'));
+});
+test('live sections carry the id of their card', () => {
+  const live = liveSections([{ id: 'acme', name: 'Acme Router', models: [{ id: 'acme-large', name: 'Acme Large' }] }], [{ id: 'image', name: 'Image generation', summary: 'Makes pictures.' }]);
+  assert.deepEqual(live, [
+    { panel: 'providers', anchor: 'settings-providers-acme', title: 'Acme Router', words: ['acme-large', 'Acme Large'] },
+    { panel: 'tools', anchor: 'settings-tools-image', title: 'Image generation', words: ['Makes pictures.'] },
+  ]);
+  assert.equal(searchSettings('acme', live)[0].anchor, 'settings-providers-acme');
+});
+test('live sections survive nothing loaded and odd entries', () => {
+  assert.deepEqual(liveSections(null, null), []);
+  assert.deepEqual(liveSections([null, { id: 'x' }, { id: 'y', name: 'Y' }], undefined), [{ panel: 'providers', anchor: 'settings-providers-y', title: 'Y', words: [] }]);
+});

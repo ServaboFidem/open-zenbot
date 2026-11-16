@@ -43,8 +43,8 @@ export function ModelProvidersTab({ ctx, providers, kinds, presets = [], reload 
   }
 
   return <>
-    <div className="resource-row"><h3 id={anchorId('providers', 'Model providers')}>Model providers</h3><p>Each provider's key lives in the harness's providers.json, in your vault, readable by you only. Enable the models the harness may use; the Harness settings and Harness Tools pages pick from them.</p></div>
-    {providers.map(p => <div className="resource-row od-stack provider-row" key={p.id}>
+    <div className="resource-row intro-row" id={anchorId('providers', 'Model providers')}><p>Each provider's key lives in the harness's providers.json, in your vault, readable by you only. Enable the models the harness may use; the Harness settings and Harness Tools pages pick from them.</p></div>
+    {providers.map(p => <div className="resource-row od-stack provider-row" key={p.id} id={anchorId('providers', p.id)}>
       <div className="od-row-top provider-heading">
         <div className="od-field od-fill">
           <h3>{p.name} <Badge appearance="outline" size="small">{p.kind}</Badge></h3>

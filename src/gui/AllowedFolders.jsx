@@ -49,7 +49,7 @@ export function AllowedFoldersTab({ ctx }) {
 
   const fixedLabel = { vault: 'Vault · always allowed', '.env': 'ZEN_FS_ROOT · from .env' };
   return <>
-    <div className="resource-row"><h3 id={anchorId('folders', 'Allowed Folders')}>Allowed Folders</h3><p>Folders your bots can reach through the files tool, besides the vault. With Full Access a bot can read, change, or delete anything inside the folder; with Read-Only it can only read, list, and search. Add the folders you want it working in, not whole drives. A Read-Only folder can sit inside a Full Access one to protect that corner of it. Changes reconnect the files tool right away.</p></div>
+    <div className="resource-row intro-row" id={anchorId('folders', 'Allowed Folders')}><p>Folders your bots can reach through the files tool, besides the vault. With Full Access a bot can read, change, or delete anything inside the folder; with Read-Only it can only read, list, and search. Add the folders you want it working in, not whole drives. A Read-Only folder can sit inside a Full Access one to protect that corner of it. Changes reconnect the files tool right away.</p></div>
     <div className="list-panel">
       {s.fixed.map(f => <div className="resource-row od-row" key={f.path}><div className="od-field od-fill"><strong>{f.path}</strong><span className="quiet-label">{fixedLabel[f.source] || f.source}</span></div><Badge appearance="outline">Full Access</Badge></div>)}
       {s.folders.map(f => <div className="resource-row od-row-top" key={f.path}>

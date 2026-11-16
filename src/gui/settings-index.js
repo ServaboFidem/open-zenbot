@@ -32,7 +32,7 @@ export const SECTIONS = [
     'Decider scorer: chooses skills and MCP servers per task, and watches long tasks. Without one, every skill and tool is offered.',
     "Decision model: the scorer's model. Decision models come from OpenRouter.",
   ]),
-  section('providers', 'Model providers', ['Providers and their models', 'Enable models', 'Test a provider', 'Refresh the model list', 'OpenRouter', 'OpenAI-compatible']),
+  section('providers', 'Model providers', ["Each provider's key lives in the harness's providers.json, readable by you only. Enable the models the harness may use; the Harness settings and Harness Tools pages pick from them.", 'Test a provider', 'Refresh the model list', 'OpenRouter', 'OpenAI-compatible']),
   section('providers', 'Add a provider', [
     'Preconfigured provider', 'Hosted', 'Runs on your machine', 'Name', 'Kind', 'Provider kind',
     "Base URL: where the API's /chat/completions and /models live. Plain http works for this machine, your local network or a Tailscale peer.",
@@ -51,7 +51,7 @@ export const SECTIONS = [
     'Bots may hand work to it', 'Ask me before each run', "Model: leave empty to use the program's own default.",
     'Program path', 'Runs use your sign-in and send the job folder\'s contents to the vendor.', 'delegate',
   ]),
-  section('folders', 'Allowed Folders', ['Folders the files server may reach', 'Full Access', 'Read-Only', 'Remove a folder']),
+  section('folders', 'Allowed Folders', ['Folders your bots can reach through the files tool, besides the vault. With Full Access a bot can read, change, or delete anything inside the folder; with Read-Only it can only read, list, and search.', 'A Read-Only folder can sit inside a Full Access one to protect that corner of it. Changes reconnect the files tool right away.', 'Remove a folder']),
   section('folders', 'Add a folder', ['Access for the new folder', 'Folder path: the full path, like D:\\Projects\\site or /home/you/notes.']),
   section('tracing', 'Tracing', ['Where the harness sends errors and traces. Saved here, a setting wins over .env and is kept in vault-settings/tracing.json.']),
   section('tracing', 'Sentry (GlitchTip)', [
@@ -70,6 +70,16 @@ export const SECTIONS = [
   section('about', 'What this app does', ['Bots, skills, approvals, rooms, memory, and the ledger come from the zen-agents harness on localhost.']),
   section('about', 'Open source', ['Authored source is MIT licensed. See README.md for setup, source locations, and dependency licenses.', 'License']),
 ];
+
+// The sections headed by data, for the search: each provider and each harness tool, with the id its card carries.
+export function liveSections(providers, tools) {
+  const named = x => !!x && typeof x.name === 'string' && !!x.name && x.id != null;
+  return [
+    ...(providers || []).filter(named).map(p => ({ panel: 'providers', anchor: anchorId('providers', p.id), title: p.name,
+      words: (p.models || []).flatMap(m => [m?.id, m?.name]).filter(w => typeof w === 'string') })),
+    ...(tools || []).filter(named).map(t => ({ panel: 'tools', anchor: anchorId('tools', t.id), title: t.name, words: [t.summary].filter(w => typeof w === 'string') })),
+  ];
+}
 
 const MAX_RESULTS = 20;
 const panelOf = id => PANELS.find(p => p.id === id);

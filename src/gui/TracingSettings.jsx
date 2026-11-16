@@ -30,7 +30,7 @@ export function TracingSettingsTab({ ctx }) {
   const badge = sec => <Badge appearance="tint" color={sec.live ? 'success' : 'informative'}>{sec.live ? 'On' : 'Off'} · {sourceLabel(sec)}</Badge>;
 
   return <>
-    <div className="resource-row"><h3 id={anchorId('tracing', 'Tracing')}>Tracing</h3><p>Where the harness sends errors and traces. Saved here, a setting wins over .env and is kept in vault-settings/tracing.json beside your vault, readable by you only and out of your bots' reach. Clear a section to go back to .env.</p></div>
+    <div className="resource-row intro-row" id={anchorId('tracing', 'Tracing')}><p>Where the harness sends errors and traces. Saved here, a setting wins over .env and is kept in vault-settings/tracing.json beside your vault, readable by you only and out of your bots' reach. Clear a section to go back to .env.</p></div>
 
     <form className="resource-row editor-form" onSubmit={e => { e.preventDefault(); run('sentry', () => api.setSentrySettings(sentry.dsn.trim()), sentry.dsn.trim() ? 'Sentry DSN saved' : 'Sentry turned off'); }}>
       <div className="od-row-top tool-heading"><div className="od-field od-fill"><h3 id={anchorId('tracing', 'Sentry (GlitchTip)')}>Sentry (GlitchTip)</h3><p>Errors and request traces from the harness and the desktop app.</p></div>{badge(s.sentry)}</div>

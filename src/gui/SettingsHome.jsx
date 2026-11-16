@@ -20,12 +20,12 @@ export function SettingsHome({ query, setQuery, extra, onOpen }) {
         onChange={(e, d) => setQuery(d.value)} onKeyDown={e => { if (e.key === 'Escape') setQuery(''); }}/>
     </Field></div>
     {!searching && <div className="settings-grid">{PANELS.map(p => <button key={p.id} type="button" className="settings-tile" onClick={() => onOpen(p.id, '')}>
-      <span className="settings-tile-icon">{PANEL_ICONS[p.id]}</span><h3>{p.name}</h3><p>{p.description}</p>
+      <span className="settings-tile-icon">{PANEL_ICONS[p.id]}</span><strong>{p.name}</strong><span className="settings-tile-text">{p.description}</span>
     </button>)}</div>}
-    {searching && <>
-      <p className="field-hint settings-count" aria-live="polite">{results.length === 1 ? '1 match' : `${results.length} matches`}</p>
+    {/* always on the page, so a screen reader hears the first count too */}
+    <p className="field-hint settings-count" aria-live="polite">{!searching ? '' : !results.length ? `No settings match “${query.trim()}”.` : results.length === 1 ? '1 match' : `${results.length} matches`}</p>
+    {searching && !!results.length && <>
       <div className="settings-panel" role="list">
-        {!results.length && <div className="resource-row"><p>No settings match “{query.trim()}”.</p></div>}
         {results.map((m, i) => <div role="listitem" key={`${m.panel}:${m.anchor}:${m.section}:${i}`}><button type="button" className="settings-result" onClick={() => onOpen(m.panel, m.anchor)}>
           <span className="settings-tile-icon">{PANEL_ICONS[m.panel]}</span>
           <span className="od-field od-fill"><strong>{m.section === m.panelName ? m.panelName : `${m.panelName} › ${m.section}`}</strong>{m.text !== m.section && <span>{m.text}</span>}</span>
