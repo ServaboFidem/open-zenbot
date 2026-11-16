@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi import Request
 from starlette.background import BackgroundTask
 from uuid import uuid4
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.decider.fit import FitConfig, FitEngine
 from src.decider.interface import BandConfig, ConfirmState, Scorer
@@ -508,6 +508,7 @@ class Harness:
     def start_task(
         self, bot: Bot, task: str, *, conversation_id: str | None = None, in_conversation: bool = True,
         protected: dict[str, Any] | None = None, pinned_skills: list[str] | None = None,
+        comments: list[dict[str, str]] | None = None, addendum: str = "",
     ) -> Session:
         """Run a task for a bot. It joins the bot's current conversation (or
         the one named) unless `in_conversation` is False (routines): its
@@ -517,7 +518,8 @@ class Harness:
         session = Session(bot_id=bot.id, task=task, pinned_skills=list(pinned_skills or []))
         conv = None
         if in_conversation:
-            conv, _ = self.conversations.begin(bot.id, task, session_id=session.id, conv_id=conversation_id)
+            conv, _ = self.conversations.begin(bot.id, task, session_id=session.id, conv_id=conversation_id,
+                                               comments=comments, addendum=addendum)
             session.conversation_id = conv.id
             if self.turn_notes is not None and self.turn_notes.config.enabled:
                 session.note = conv.note  # what this bot's last task here found, made and left
@@ -534,7 +536,9 @@ class Harness:
                                 conv, self.compactor.generator, budget_chars=cfg.conversation_budget_chars, keep=cfg.conversation_keep)
                     history = conv.history(exclude=session.id)
                 try:
-                    await self.loop.run(bot, task, session, history=history, protected=protected)
+                    # the bot reads the comments after the task; the pinned task stays the user's words alone
+                    await self.loop.run(bot, f"{task}\n\n{addendum}" if addendum else task, session, history=history,
+                                        protected=protected or ({"task": task} if addendum else None))
                 except asyncio.CancelledError:
                     if session.state not in _ENDED:  # cancelled before the loop could mark it
                         session.state = SessionState.stopped
@@ -717,11 +721,21 @@ class ProtectedIn(BaseModel):
     constraints: list[str] = []
 
 
+class DesignCommentIn(BaseModel):
+    attachment_id: str
+    element_id: str = Field("", max_length=120)
+    selector: str = Field(min_length=1, max_length=300)
+    tag: str = Field(min_length=1, max_length=40)
+    text: str = Field("", max_length=160)
+    note: str = Field(min_length=1, max_length=1000)
+
+
 class TaskIn(BaseModel):
     task: str
     conversation_id: str | None = None  # omitted: the bot's current conversation
     conversation: bool = True  # False: the task joins no conversation (routines)
     protected: ProtectedIn | None = None  # a scope check's carried block; omitted: the task itself
+    design_comments: list[DesignCommentIn] = Field(default_factory=list, max_length=20)  # on the conversation's newest design revision
 
 
 class ScheduleIn(BaseModel):
@@ -859,6 +873,23 @@ def create_app(h: Harness) -> FastAPI:
         if rev:
             view["design"], view["version"] = rev[0], rev[1]
         return view
+
+    def _comment_addendum(bot: Bot, body: TaskIn, comments: list[dict[str, str]]) -> str:
+        """The block for a task's design comments, or a 422: they must name the newest design revision
+        of the conversation the task joins. Checked before anything is created."""
+        if not body.conversation:
+            raise HTTPException(422, "design comments need a conversation")
+        conv = h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
+        if conv is not None and conv.owner != bot.id:
+            conv = None
+        newest = next(((a, rev) for ex in reversed(conv.exchanges if conv else []) for a in reversed(ex.attachments)
+                       if (rev := design_studio.revision_of(h.config.vault_root, Path(a["path"])))), None)
+        if newest is None:
+            raise HTTPException(422, "this conversation has no design to comment on")
+        att, (slug, version, name) = newest
+        if any(c["attachment_id"] != att["id"] for c in comments):
+            raise HTTPException(422, "comments belong on the newest version of the design")
+        return design_studio.comment_block(h.config.vault_root.resolve() / "designs" / slug / name, version, comments)
 
     def serve_attachment(path: str, preview: bool = False, studio: bool = False) -> FileResponse | Response:
         """A file a bot attached, in a room or a one-to-one task. `preview` is the thumbnail the chat
@@ -1906,6 +1937,7 @@ def create_app(h: Harness) -> FastAPI:
         record = c.to_record()
         for ex in record["exchanges"]:  # the GUI gets a name to show, never the path on disk
             ex["attachments"] = [_attachment_view(a) for a in ex.get("attachments", [])]
+            ex.pop("addendum", None)  # what the bot read carries the file's path on disk
         d, _ = exclusion.redact_obj(record)
         return d
 
@@ -2020,10 +2052,14 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(422, "task is empty")
         if not h.bound:
             raise HTTPException(503, UnboundProvider.MESSAGE)
+        comments = [c.model_dump() for c in body.design_comments]
+        addendum = _comment_addendum(bot, body, comments) if comments else ""
         try:
             session = h.start_task(bot, body.task.strip(), conversation_id=body.conversation_id or None,
                                    in_conversation=body.conversation,
-                                   protected=body.protected.model_dump() if body.protected else None)
+                                   protected=body.protected.model_dump() if body.protected else None,
+                                   comments=[{k: v for k, v in c.items() if k != "attachment_id"} for c in comments],
+                                   addendum=addendum)
         except KeyError:
             raise HTTPException(404, "no such conversation") from None
         return {"session_id": session.id, "state": str(session.state)}

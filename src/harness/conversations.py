@@ -53,6 +53,8 @@ class Exchange:
     outcome: str = "pending"  # pending|done|failed|stopped|interrupted|routed
     at: str = field(default_factory=_now)
     attachments: list[dict[str, str]] = field(default_factory=list)  # {id, title, path}: files the bot attached; path never leaves the harness
+    comments: list[dict[str, str]] = field(default_factory=list)  # the user's design comments, as the chat shows them
+    addendum: str = ""  # the comment block the bot read after the user's text; the GUI never gets it
 
 
 def reply_text(ex: Exchange) -> str:
@@ -112,7 +114,7 @@ class Conversation:
         for ex in self.exchanges[self.folded :]:
             if exclude and ex.session_id == exclude:
                 continue
-            msgs.append(Message("user", ex.user))
+            msgs.append(Message("user", f"{ex.user}\n\n{ex.addendum}" if ex.addendum else ex.user))
             msgs.append(Message("assistant", reply_text(ex)))
         return msgs
 
@@ -226,7 +228,8 @@ class Conversations:
         self.store.save(c)
 
     def begin(
-        self, owner: str, user_text: str, session_id: str = "", conv_id: str | None = None
+        self, owner: str, user_text: str, session_id: str = "", conv_id: str | None = None,
+        comments: list[dict[str, str]] | None = None, addendum: str = "",
     ) -> tuple[Conversation, Exchange]:
         c = self.get(conv_id) if conv_id else self.current(owner)
         if conv_id and (c is None or c.owner != owner):
@@ -235,7 +238,7 @@ class Conversations:
             c = self.start_new(owner)
         if not c.title:
             c.title = title_of(user_text)
-        ex = Exchange(user=user_text, session_id=session_id)
+        ex = Exchange(user=user_text, session_id=session_id, comments=list(comments or []), addendum=addendum)
         c.exchanges.append(ex)
         self._touch(c)
         return c, ex

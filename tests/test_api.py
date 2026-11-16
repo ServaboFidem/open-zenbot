@@ -1459,3 +1459,82 @@ async def test_studio_flag_survives_a_bot_edit(monkeypatch, vault: Path, tmp_pat
         bots = {b["id"]: b for b in (await c.get("/bots")).json()}
     assert bots["designer"]["studio"] is True and bots["designer"]["role"] == "New role"
     assert "studio: true" in (prompts / "designer.md").read_text(encoding="utf-8")
+
+
+# design comments on a task
+
+def _comment(att_id: str, note: str = "Make this bigger") -> dict:
+    return {"attachment_id": att_id, "element_id": "hero", "selector": "body > h1", "tag": "h1", "text": "Hi", "note": note}
+
+
+async def _two_revisions(client, harness: Harness) -> tuple[str, dict, dict]:
+    harness.add_bot(Bot(name="Designer", role="Designs", id="des", studio=True))
+    cid, first = await _attach_design(client, harness, "des")
+    harness.provider.script = [
+        completion(calls=[("c2", "attach_file", {"path": "designs/landing/index.html", "title": "Landing"})]),
+        completion("Again."),
+    ]
+    sid = (await client.post("/bots/des/tasks", json={"task": "redo it"})).json()["session_id"]
+    await wait_for(client, sid, {"done"})
+    await harness.tasks[sid]
+    second = (await client.get(f"/conversations/{cid}")).json()["exchanges"][-1]["attachments"][0]
+    assert (first["version"], second["version"]) == (1, 2)
+    return cid, first, second
+
+
+async def test_task_with_comments_reaches_the_bot_and_the_next_history(client, harness: Harness):
+    cid, first, second = await _two_revisions(client, harness)
+    harness.provider.script = [completion("Done.")]
+    r = await client.post("/bots/des/tasks", json={"task": "tweak", "design_comments": [_comment(second["id"])]})
+    assert r.status_code == 202
+    sid = r.json()["session_id"]
+    await wait_for(client, sid, {"done"})
+    await harness.tasks[sid]
+    last = harness.provider.calls[-1][-1]
+    f = harness.config.vault_root / "designs" / "landing" / "index.html"
+    assert last.role == "user" and last.content.startswith("tweak\n\n")
+    assert f"Comments on the design ({f}, version 2):" in last.content
+    assert '1. [hero] <h1> "Hi": Make this bigger' in last.content and ".versions" not in last.content
+    assert harness.sessions[sid].task == "tweak" and harness.sessions[sid].protected["task"] == "tweak"
+    text = (await client.get(f"/conversations/{cid}")).text
+    ex = json.loads(text)["exchanges"][-1]
+    assert ex["user"] == "tweak" and len(ex["comments"]) == 1 and "addendum" not in ex
+    assert "addendum" not in text and str(harness.config.vault_root) not in text
+    harness.provider.script = [completion("Next.")]
+    sid = (await client.post("/bots/des/tasks", json={"task": "more"})).json()["session_id"]
+    await wait_for(client, sid, {"done"})
+    await harness.tasks[sid]
+    assert any(m.role == "user" and "Comments on the design (" in m.content for m in harness.provider.calls[-1][:-1])
+
+
+async def test_comments_on_the_wrong_attachment_are_refused_before_anything_starts(client, harness: Harness):
+    cid, first, second = await _two_revisions(client, harness)
+    harness.add_bot(Bot(name="Other", role="Designs", id="oth", studio=True))
+    _, other_att = await _attach_design(client, harness, "oth")
+    sessions, exchanges = len(harness.sessions), len(harness.conversations.get(cid).exchanges)
+    for att_id in (first["id"], other_att["id"], "nope"):
+        r = await client.post("/bots/des/tasks", json={"task": "tweak", "design_comments": [_comment(att_id)]})
+        assert r.status_code == 422, att_id
+    r = await client.post("/bots/des/tasks", json={"task": "tweak", "conversation": False,
+                                                   "design_comments": [_comment(second["id"])]})
+    assert r.status_code == 422
+    assert len(harness.sessions) == sessions and len(harness.conversations.get(cid).exchanges) == exchanges
+
+
+async def test_comments_need_a_design_revision_in_the_conversation(client, harness: Harness, tmp_path: Path):
+    r = await client.post("/bots/bot1/tasks", json={"task": "x", "design_comments": [_comment("abc")]})
+    assert r.status_code == 422  # an empty conversation
+    sid, cid = await _attach_task(client, harness, tmp_path)  # a plain, non-design attachment
+    plain = (await client.get(f"/conversations/{cid}")).json()["exchanges"][-1]["attachments"][0]
+    n = len(harness.sessions)
+    r = await client.post("/bots/bot1/tasks", json={"task": "x", "design_comments": [_comment(plain["id"])]})
+    assert r.status_code == 422 and len(harness.sessions) == n
+
+
+async def test_comment_caps(client, harness: Harness):
+    cid, first, second = await _two_revisions(client, harness)
+    n = len(harness.sessions)
+    for comments in ([_comment(second["id"])] * 21, [_comment(second["id"], "x" * 1001)], [_comment(second["id"], "")]):
+        r = await client.post("/bots/des/tasks", json={"task": "tweak", "design_comments": comments})
+        assert r.status_code == 422
+    assert len(harness.sessions) == n

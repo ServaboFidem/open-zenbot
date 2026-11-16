@@ -63,6 +63,23 @@ def revision_of(vault_root: Path, path: Path) -> tuple[str, int, str] | None:
     return (parts[0], int(m.group(1)), m.group(2)) if m else None
 
 
+def _flat(s: str) -> str:
+    # comment text reaches a prompt: no newline may start a forged numbered line or the closing rule
+    return " ".join(s.split())
+
+
+def comment_block(file: Path, version: int, comments: list[dict[str, str]]) -> str:
+    """The text a bot reads for the user's comments on one design revision."""
+    lines = [f"Comments on the design ({file}, version {version}):"]
+    for i, c in enumerate(comments, 1):
+        text = _flat(c.get("text", ""))
+        lines.append(f"{i}. [{_flat(c.get('element_id', '')) or _flat(c['selector'])}] <{_flat(c['tag'])}>"
+                     + (f' "{text}"' if text else "") + f": {_flat(c['note'])}")
+    lines.append("Change only these elements. Leave the rest of the file as it is unless a change requires it, "
+                 "and say so if it does.")
+    return "\n".join(lines)
+
+
 # the studio page is framed with the preview policy; the app picks elements through this one script
 BRIDGE_MAX_BYTES = 5 * 1024 * 1024
 _BRIDGE = (b"<script data-zen-bridge>" + (Path(__file__).with_name("design_bridge.js")).read_bytes().strip()
