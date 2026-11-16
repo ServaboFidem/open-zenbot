@@ -2,6 +2,10 @@
 
 What changed on `main`, newest first. Updated automatically on every push to `main`.
 
+## 2026-11-16
+
+- Design studio: a designer bot with a docked preview, point-and-comment, question forms and design systems ([#2](https://github.com/ServaboFidem/open-zenbot/pull/2), [`f1f6ebf`](https://github.com/ServaboFidem/open-zenbot/commit/f1f6ebf539650008d5dd21249f00fa4688c57b2a))
+
 ## 2026-11-15
 
 - Bring AGENTS.md up to date with the code ([`03615fe`](https://github.com/ServaboFidem/open-zenbot/commit/03615fe6a5b628847d5c7ea4d7ef5c1e1b9ce7b1))
