@@ -41,3 +41,10 @@ test('a section matching on several words is listed once', () => {
   assert.equal(r.filter(m => m.anchor === 'settings-tracing-langfuse').length, 1);
 });
 test('at most 20 results', () => assert.ok(searchSettings('e').length <= 20));
+
+import { readFileSync, readdirSync } from 'node:fs';
+test('every indexed section has its id on the page', () => {
+  const dir = new URL('../../src/gui/', import.meta.url);
+  const src = readdirSync(dir).filter(f => f.endsWith('.jsx')).map(f => readFileSync(new URL(f, dir), 'utf8')).join('\n');
+  for (const s of SECTIONS.filter(s => s.anchor)) assert.ok(src.includes(`anchorId('${s.panel}', ${JSON.stringify(s.title).replace(/^"|"$/g, "'")})`), `${s.panel}: ${s.title}`);
+});

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Badge, Button, Field, Input, Spinner, Switch } from '@fluentui/react-components';
 import { ProgramPathSection } from './ProgramPathSettings';
+import { anchorId } from './settings-index';
 import { agentStatus } from './agents';
 
 // Settings > Coding agents: which of Claude Code and Codex bots may hand work to, kept in
@@ -49,7 +50,7 @@ export function CodingAgentsSection({ ctx }) {
   if (!agents) return <div className="resource-row"><Spinner size="tiny" label="Checking coding agents…"/></div>;
   const put = next => setAgents(list => list.map(x => x.id === next.id ? next : x));
   return <>
-    <div className="resource-row"><div className="od-field"><h2>Coding agents</h2><p>Let bots hand a coding job to a program on this computer. The program works in one folder you allow, and you see what it changed.</p></div></div>
+    <div className="resource-row"><div className="od-field"><h2 id={anchorId('agents', 'Coding agents')}>Coding agents</h2><p>Let bots hand a coding job to a program on this computer. The program works in one folder you allow, and you see what it changed.</p></div></div>
     {agents.map(a => <AgentCard key={a.id} ctx={ctx} a={a} onChange={put} reload={load}/>)}
   </>;
 }

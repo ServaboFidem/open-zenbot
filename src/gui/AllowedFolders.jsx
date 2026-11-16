@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { anchorId } from './settings-index';
 import { Badge, Button, Field, Input, Spinner, ToggleButton } from '@fluentui/react-components';
 
 // Settings > Allowed Folders: the folders the files MCP server may reach, each Full Access (read and write) or
@@ -48,7 +49,7 @@ export function AllowedFoldersTab({ ctx }) {
 
   const fixedLabel = { vault: 'Vault · always allowed', '.env': 'ZEN_FS_ROOT · from .env' };
   return <>
-    <div className="resource-row"><h3>Allowed Folders</h3><p>Folders your bots can reach through the files tool, besides the vault. With Full Access a bot can read, change, or delete anything inside the folder; with Read-Only it can only read, list, and search. Add the folders you want it working in, not whole drives. A Read-Only folder can sit inside a Full Access one to protect that corner of it. Changes reconnect the files tool right away.</p></div>
+    <div className="resource-row"><h3 id={anchorId('folders', 'Allowed Folders')}>Allowed Folders</h3><p>Folders your bots can reach through the files tool, besides the vault. With Full Access a bot can read, change, or delete anything inside the folder; with Read-Only it can only read, list, and search. Add the folders you want it working in, not whole drives. A Read-Only folder can sit inside a Full Access one to protect that corner of it. Changes reconnect the files tool right away.</p></div>
     <div className="list-panel">
       {s.fixed.map(f => <div className="resource-row od-row" key={f.path}><div className="od-field od-fill"><strong>{f.path}</strong><span className="quiet-label">{fixedLabel[f.source] || f.source}</span></div><Badge appearance="outline">Full Access</Badge></div>)}
       {s.folders.map(f => <div className="resource-row od-row-top" key={f.path}>
@@ -63,7 +64,7 @@ export function AllowedFoldersTab({ ctx }) {
       </div>)}
     </div>
     <form className="resource-row editor-form" onSubmit={e => { e.preventDefault(); add(path); }}>
-      <h3>Add a folder</h3>
+      <h3 id={anchorId('folders', 'Add a folder')}>Add a folder</h3>
       <Field label="Access"><AccessToggle value={access} onChange={setAccess} disabled={!!busy} label="Access for the new folder"/></Field>
       {canPick && <div className="od-row"><Button appearance="primary" disabled={!!busy} onClick={pick}>{busy === 'add' ? 'Adding…' : 'Choose folder…'}</Button><span className="field-hint">or type its path below</span></div>}
       <Field label="Folder path" hint="The full path, like D:\Projects\site or /home/you/notes." validationMessage={error.at === 'add' ? error.text : undefined}>

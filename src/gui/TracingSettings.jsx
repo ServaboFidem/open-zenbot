@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Badge, Button, Field, Input, Spinner } from '@fluentui/react-components';
+import { anchorId } from './settings-index';
 import { langfuseBody, langfuseDirty, langfuseForm, secretHint, sentryDirty, sentryForm, sourceLabel } from './tracing.js';
 
 // Settings > Tracing: the Sentry (GlitchTip) DSN and Langfuse's keys, server and environment. Saved in the
@@ -29,10 +30,10 @@ export function TracingSettingsTab({ ctx }) {
   const badge = sec => <Badge appearance="tint" color={sec.live ? 'success' : 'informative'}>{sec.live ? 'On' : 'Off'} · {sourceLabel(sec)}</Badge>;
 
   return <>
-    <div className="resource-row"><h3>Tracing</h3><p>Where the harness sends errors and traces. Saved here, a setting wins over .env and is kept in vault-settings/tracing.json beside your vault, readable by you only and out of your bots' reach. Clear a section to go back to .env.</p></div>
+    <div className="resource-row"><h3 id={anchorId('tracing', 'Tracing')}>Tracing</h3><p>Where the harness sends errors and traces. Saved here, a setting wins over .env and is kept in vault-settings/tracing.json beside your vault, readable by you only and out of your bots' reach. Clear a section to go back to .env.</p></div>
 
     <form className="resource-row editor-form" onSubmit={e => { e.preventDefault(); run('sentry', () => api.setSentrySettings(sentry.dsn.trim()), sentry.dsn.trim() ? 'Sentry DSN saved' : 'Sentry turned off'); }}>
-      <div className="od-row-top tool-heading"><div className="od-field od-fill"><h3>Sentry (GlitchTip)</h3><p>Errors and request traces from the harness and the desktop app.</p></div>{badge(s.sentry)}</div>
+      <div className="od-row-top tool-heading"><div className="od-field od-fill"><h3 id={anchorId('tracing', 'Sentry (GlitchTip)')}>Sentry (GlitchTip)</h3><p>Errors and request traces from the harness and the desktop app.</p></div>{badge(s.sentry)}</div>
       <Field label="DSN" hint="From your GlitchTip or Sentry project's settings: https://<key>@<host>/<project id>. Leave empty and save to turn Sentry off." validationMessage={error.sentry || undefined}>
         <Input value={sentry.dsn} placeholder="https://…@glitchtip.example/1" onChange={(e, d) => setSentry({ dsn: d.value })} autoComplete="off" spellCheck={false}/>
       </Field>
@@ -45,7 +46,7 @@ export function TracingSettingsTab({ ctx }) {
     </form>
 
     <form className="resource-row editor-form" onSubmit={e => { e.preventDefault(); run('langfuse', () => api.setLangfuseSettings(langfuseBody(lf)), lf.public_key.trim() ? 'Langfuse settings saved' : 'Langfuse turned off'); }}>
-      <div className="od-row-top tool-heading"><div className="od-field od-fill"><h3>Langfuse</h3><p>Every agent run, model call and tool call, with thinking, tokens and cost.</p></div>{badge(s.langfuse)}</div>
+      <div className="od-row-top tool-heading"><div className="od-field od-fill"><h3 id={anchorId('tracing', 'Langfuse')}>Langfuse</h3><p>Every agent run, model call and tool call, with thinking, tokens and cost.</p></div>{badge(s.langfuse)}</div>
       <Field label="Public key" hint="Settings › API Keys in your Langfuse project. Leave empty and save to turn Langfuse off.">
         <Input value={lf.public_key} placeholder="pk-lf-…" onChange={(e, d) => setLf(f => ({ ...f, public_key: d.value }))} autoComplete="off" spellCheck={false}/>
       </Field>

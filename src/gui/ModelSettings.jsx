@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, ProgressBar, Spinner } from '@fluentui/react-components';
+import { anchorId } from './settings-index';
 import { KIND_LABELS, capabilityTags, choiceKey, probeReducer, probeStart, enabledByKind, filterModels, fromPreset, keyLabel, modelLabel, parseChoice, presetOf } from './models.js';
 
 const SHOWN = 150;  // rows a model list renders at once; a search narrows the rest
@@ -42,7 +43,7 @@ export function ModelProvidersTab({ ctx, providers, kinds, presets = [], reload 
   }
 
   return <>
-    <div className="resource-row"><h3>Model providers</h3><p>Each provider's key lives in the harness's providers.json, in your vault, readable by you only. Enable the models the harness may use; the Harness settings and Harness Tools tabs pick from them.</p></div>
+    <div className="resource-row"><h3 id={anchorId('providers', 'Model providers')}>Model providers</h3><p>Each provider's key lives in the harness's providers.json, in your vault, readable by you only. Enable the models the harness may use; the Harness settings and Harness Tools tabs pick from them.</p></div>
     {providers.map(p => <div className="resource-row od-stack provider-row" key={p.id}>
       <div className="od-row-top provider-heading">
         <div className="od-field od-fill">
@@ -61,7 +62,7 @@ export function ModelProvidersTab({ ctx, providers, kinds, presets = [], reload 
       {open === p.id && <ModelBrowser ctx={ctx} provider={p} reload={reload}/>}
     </div>)}
     {adding ? <form className="resource-row editor-form" onSubmit={add}>
-      <h3>Add a provider</h3>
+      <h3 id={anchorId('providers', 'Add a provider')}>Add a provider</h3>
       <Field label="Preconfigured" hint={presetOf(presets, adding.preset)?.note || 'Pick one to fill in its name and address, or set up any OpenAI-compatible API yourself.'}>
         <select aria-label="Preconfigured provider" value={adding.preset} onChange={e => setAdding(f => fromPreset(f, presetOf(presets, e.target.value)))}>
           <option value="">Custom</option>
@@ -231,7 +232,7 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
   return <>
     {status}
     <form className="resource-row editor-form" onSubmit={save}>
-      <h3>Models the harness runs on</h3>
+      <h3 id={anchorId('harness', 'Models the harness runs on')}>Models the harness runs on</h3>
       <p className="field-hint">Choose from the models enabled on the Model providers page. Saving switches the harness over at once; running tasks finish on the model they started with.</p>
       {picker('chat', "Runs your bots' tasks.")}
       {picker('summary', 'Compacts long tasks, folds old conversation turns, and summarizes imported documents.')}
