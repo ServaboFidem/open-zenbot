@@ -5,7 +5,7 @@ name each top-level system and run the harness and the tests.
 
 | Path | What |
 | --- | --- |
-| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`) |
+| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`); the design studio (`design_studio.py`: numbered copies, comment block, preview bridge `design_bridge.js`; `design_systems.py`: loading and checking design systems) |
 | `src/providers/` | Provider interface, registry, provider store (`providers.json`) and secrets, OpenRouter and OpenAI-compatible adapters, model listing and probing, the image provider, Langfuse tracing |
 | `src/decider/` | Decider interface, scorer registry, skill and MCP routing (band and floor), skill-to-bot fit, supervisor, `adapters/` |
 | `src/context/` | Compaction, the protected (pinned) task, transcript rendering |
@@ -15,12 +15,13 @@ name each top-level system and run the harness and the tests.
 | `src/music/` | Music discovery: Discogs scan, taste profile, the Soundlore atlas, MusicBrainz and YouTube Music lookups, candidates, the album gate, digests, `music_*` tools, `/music` routes |
 | `src/skills/` | `SKILL.md` loader and catalog; recorder |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`) and Electron shell |
-| `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`) and Electron shell (`frame-nav.cjs` limits where a framed page may go) |
+| `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`) |
+| `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, and the host-dependency installers `install-deps.sh` / `install-deps.ps1` |
-| `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/` |
+| `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/` and `skills/design-studio/` |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
-| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`); GUI node tests under `tests/gui/` (`npm test`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py` |
+| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
 | `.github/` | Workflows: `changelog.yml` appends every push to `main` to `CHANGELOG.md` (don't edit it by hand; `[skip changelog]` in a commit subject leaves it out), and `stale.yml` |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
@@ -135,7 +136,7 @@ gives `notes-ledger/`, `notes-music/` and `notes-settings/`.
 
 | Folder (default under `~/.zen-agents/`) | Holds | Owned by |
 | --- | --- | --- |
-| `vault/` | Work docs (`docs/`), uploads, browser output (`browser/`), anything bots save; `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
+| `vault/` | Work docs (`docs/`), uploads, browser output (`browser/`), anything bots save; `designs/` (studio designs) and `design-systems/` (the user's own); `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
 | `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations | `src/memory/ledger.py` `ledger_path_for` |
 | `vault-music/` | Music database (`music.db`), the Soundlore atlas, cover images | `src/music/settings.py` `music_dir`; bots never reach it (`allowed_folders.private_folders`) |
 | `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
@@ -158,6 +159,46 @@ refuses duplicates in the batch and cards without exactly two standout tracks fr
 tracklist; a digest saves whole or not at all (`src/music/digest.py`). The `music_*` tools exist only
 when music is on and the Discogs token is set. Don't add a path that saves a card without the gate. The Discogs token lives in `vault-settings/music_keys.json`; `vault-music/` is as private
 as the settings and ledger folders, so keep it out of anything a bot can read or write.
+
+### Design studio
+
+A bot whose prompt sets `studio: true` (`bot-prompts/designer.md`) designs one self-contained HTML file per
+design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`). The harness side is
+`src/harness/design_studio.py` and `src/harness/design_systems.py`.
+
+- **Where things live.** A design is `<vault>/designs/<slug>/<name>.html`, written by the bot through the
+  `files` server (so inside the vault, where bots may write). The harness keeps its own numbered copies
+  beside it: `<vault>/designs/<slug>/.versions/<n>.<name>` (`design_studio.snapshot`). Each attached design is
+  one fixed copy, so version 1 stays version 1 after the bot revises the file. Only a file exactly two
+  levels under `designs/` counts (compared resolved, so `..` and links cannot pass a file from elsewhere off
+  as a design), and a `.versions` that is a symlink is refused. A studio bot's relative `designs/...` path in
+  `attach_file` resolves against the vault root, then goes through the usual `attachable` check. No new
+  write path outside `allowed_folders.reachable`: the harness writes only under `<vault>/designs/`.
+- **The preview.** The frame gets exactly `PREVIEW_CSP` (`api.py`; sandboxed, `default-src 'none'`, inline
+  script and style, `data:` and `blob:` images, `data:` fonts, nothing loads from anywhere) plus one script,
+  the pick bridge (`design_bridge.js`, added by `design_studio.with_bridge`). A file over
+  `design_studio.BRIDGE_MAX_BYTES` (5 MB) or not HTML goes as it is, without the bridge.
+- **The GUI never trusts the frame.** A message from the framed page can only offer a pick (which element,
+  its selector and a short text, each capped); the GUI only ever adds a chip the user sees. Nothing
+  a framed page posts is sent to a bot, run or saved on its own. At most 20 comments go with a task; the
+  note is 1000 characters, the text 160, the selector 300. The comment block (`design_studio.comment_block`)
+  names the file relative to the vault, never a disk path. A bot reply can carry a question form (at most 5
+  questions); the answers go back as an ordinary message.
+- **Electron.** `src/electron/main.cjs` blocks a subframe navigating anywhere but this machine
+  (`frame-nav.cjs`, `will-frame-navigate`): a framed design can navigate its own frame, which `will-navigate`
+  never sees.
+- **Design systems.** A folder with `DESIGN.md` and optionally `tokens.css`: the shipped ones in
+  `design-systems/` (`ZEN_DESIGN_SYSTEMS`), the user's in `<vault>/design-systems/`, which bots can write, so
+  the files are untrusted text for a prompt. They grant nothing, so they may live in the vault. A conversation
+  picks one (`PUT /conversations/{id}/design-system`, `{"slug": ...}` or `null`; `GET /design-systems` lists
+  them with `source` `shipped` or `yours`), and the harness adds it to the context of every task there.
+  Every file must resolve inside its own folder: a system is refused when a file is a link, is hard-linked,
+  is over the size bound (40,000 characters for `DESIGN.md` and `tokens.css` together), or when
+  `<vault>/design-systems` itself is a link. A pick that fails answers 422 with the reason. A picked system that
+  stops loading later is recorded in the ledger (an `error` entry, `where: design_system`) while the task
+  still runs without it.
+- **Records.** The conversation routes return a record through `_conversation_view` (it carries
+  `design_system`, a slug or empty). Keep new conversation fields going through it.
 
 ### The shell and the workspace
 

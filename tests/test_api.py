@@ -223,6 +223,7 @@ async def test_key_never_appears_in_any_response(client, harness: Harness):
     ]
     sid = (await client.post("/bots/bot1/tasks", json={"task": "leak"})).json()["session_id"]
     await wait_for(client, sid, {"done"})
+    await _collect_ingest_refusal(harness)
     bodies = []
     for path in ["/health", "/bots", "/bots/bot1", "/skills", "/sessions", f"/sessions/{sid}", f"/sessions/{sid}/events", "/approvals", "/ledger"]:
         r = await client.get(path)
@@ -1101,6 +1102,13 @@ async def test_a_task_that_breaks_before_the_loop_records_failed(client, harness
     assert ex.outcome == "failed" and "selector down" in ex.reply
 
 
+async def _collect_ingest_refusal(harness: Harness) -> None:
+    # a result holding a registered secret is refused at ingest, which raises in the finished run task; collect
+    # it here, or it is logged as "never retrieved" whenever the task object is collected, in some later test
+    for r in await asyncio.gather(*harness.tasks.values(), return_exceptions=True):
+        assert not isinstance(r, BaseException) or "registered-secret" in str(r)
+
+
 async def _ask(client, harness: Harness, text: str, bot: str = "bot1") -> str:
     harness.provider.script = [completion("re: " + text)]
     sid = (await client.post(f"/bots/{bot}/tasks", json={"task": text})).json()["session_id"]
@@ -1157,6 +1165,7 @@ async def test_conversations_are_redacted(client, harness: Harness):
 
     exclusion.register_secret_value("hunter2222")
     await _ask(client, harness, "my secret hunter2222")
+    await _collect_ingest_refusal(harness)
     cid = harness.conversations.current("bot1").id
     assert "hunter2222" not in (await client.get(f"/conversations/{cid}")).text
 

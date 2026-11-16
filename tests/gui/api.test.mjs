@@ -124,6 +124,15 @@ test('startTask sends design comments only when there are some', async () => {
   assert.equal('design_comments' in calls[2].body, false);
 });
 
+test('design system routes list the systems and put the pick on the conversation', async () => {
+  const { fetch, calls } = fakeFetch();
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  await api.designSystems(); await api.setDesignSystem('c1', 'default'); await api.setDesignSystem('c1', null);
+  assert.deepEqual(calls.map(c => `${c.method} ${new URL(c.url).pathname}`), ['GET /design-systems', 'PUT /conversations/c1/design-system', 'PUT /conversations/c1/design-system']);
+  assert.deepEqual(calls[1].body, { slug: 'default' });
+  assert.deepEqual(calls[2].body, { slug: null });
+});
+
 test('conversation endpoints hit the right paths', async () => {
   const { fetch, calls } = fakeFetch();
   const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });

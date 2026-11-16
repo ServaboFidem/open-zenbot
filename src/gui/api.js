@@ -118,6 +118,8 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     recentConversations: (limit = 5) => get(`/conversations?limit=${enc(limit)}`),  // newest one-to-one, across bots
     conversation: id => get(`/conversations/${enc(id)}`),
     newConversation: botId => post(`/bots/${enc(botId)}/conversations`),
+    designSystems: async () => (await get('/design-systems'))?.design_systems ?? [],  // [{slug, name, source: 'shipped' | 'yours', summary}]
+    setDesignSystem: (convId, slug) => put(`/conversations/${enc(convId)}/design-system`, { slug: slug ?? null }),
     selectConversation: (botId, id) => post(`/bots/${enc(botId)}/conversations/${enc(id)}/current`),
     conversationAttachmentUrl: (convId, attId) => `${base}/conversations/${enc(convId)}/attachments/${enc(attId)}`,
     sessions: () => get('/sessions'),
