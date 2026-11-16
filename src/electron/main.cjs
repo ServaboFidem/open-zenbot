@@ -5,6 +5,7 @@ const { saveMedia } = require('./save-media.cjs');
 const { loadEnvFile } = require('./env-file.cjs');
 const { createArrival } = require('./arrival.cjs');
 const { applySavedDsn } = require('./tracing-settings.cjs');
+const { allowFrameNavigation } = require('./frame-nav.cjs');
 
 // first: every setting below reads the environment; the repo's .env fills what the shell left unset
 const envLoaded = loadEnvFile(path.join(__dirname, '..', '..', '.env'));
@@ -50,6 +51,10 @@ function createWindow() {
   });
   win.webContents.on('will-navigate', (event, url) => {
     if (url !== win.webContents.getURL()) event.preventDefault();
+  });
+  // a framed page (a bot's design) can navigate its own frame, which will-navigate never sees: keep every subframe on this machine
+  win.webContents.on('will-frame-navigate', (event) => {
+    if (!event.isMainFrame && !allowFrameNavigation(event.url)) event.preventDefault();
   });
   win.loadURL('app://openzenbot/index.html');
 }
