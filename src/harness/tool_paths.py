@@ -33,6 +33,9 @@ class Program:
     banner: str         # what its version output must say, so another program by the same name is refused
     version_args: tuple[str, ...]
     candidates: Callable[[], list[Path]]  # where installers put it, newest first, for when PATH does not have it
+    version_pattern: str | None = None  # one group holding the version, for output that does not read "<banner> <version>"
+    use_found: bool = False  # run an install-folder copy when nothing is saved and PATH has none
+    example: str = ""  # a full path to show in the "give the full path" hint
 
 
 def _imagemagick_candidates() -> list[Path]:
@@ -50,9 +53,32 @@ def _imagemagick_candidates() -> list[Path]:
             home / ".local" / "bin" / "magick", home / "bin" / "magick"]
 
 
+def _cli_candidates(name: str) -> Callable[[], list[Path]]:
+    """Where npm, the vendor installers and the usual package managers put a command-line program."""
+
+    def candidates() -> list[Path]:
+        home = Path.home()
+        appdata = os.environ.get("APPDATA")
+        folders = [home / ".local" / "bin", *([Path(appdata) / "npm"] if appdata else []), home / ".npm-global" / "bin",
+                   Path("/opt/homebrew/bin"), Path("/usr/local/bin"), home / ".volta" / "bin", home / ".bun" / "bin",
+                   home / "scoop" / "shims"]
+        names = [f"{name}.exe", f"{name}.cmd"] if sys.platform == "win32" else [name]
+        return [f / n for f in folders for n in names]
+
+    return candidates
+
+
 IMAGEMAGICK = Program(key="imagemagick", bin="magick", name="ImageMagick", min_version=(7,), banner="ImageMagick",
-                      version_args=("-version",), candidates=_imagemagick_candidates)
-PROGRAMS: dict[str, Program] = {p.key: p for p in (IMAGEMAGICK,)}
+                      version_args=("-version",), candidates=_imagemagick_candidates,
+                      example=r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe or /usr/bin/magick")
+CLAUDE_CODE = Program(key="claude-code", bin="claude", name="Claude Code", min_version=(0,), banner="Claude Code",
+                      version_args=("--version",), candidates=_cli_candidates("claude"),
+                      version_pattern=r"(\d+(?:\.\d+)+)\s+\(Claude Code\)", use_found=True,
+                      example=r"C:\Users\you\.local\bin\claude.exe or /usr/local/bin/claude")
+CODEX = Program(key="codex", bin="codex", name="Codex", min_version=(0,), banner="codex-cli",
+                version_args=("--version",), candidates=_cli_candidates("codex"), use_found=True,
+                example=r"C:\Users\you\AppData\Roaming\npm\codex.cmd or /usr/local/bin/codex")
+PROGRAMS: dict[str, Program] = {p.key: p for p in (IMAGEMAGICK, CLAUDE_CODE, CODEX)}
 
 
 # -- the saved setting --------------------------------------------------------------------------------------
@@ -95,7 +121,7 @@ def save(vault_root: Path, key: str, path: str | None) -> None:
 # -- checking a path ----------------------------------------------------------------------------------------
 
 PROBLEMS = {
-    "not_absolute": "Give the full path, like C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI\\magick.exe or /usr/bin/magick.",
+    "not_absolute": "Give the full path, like {example}.",
     "not_found": "There is no file at that path.",
     "not_program": "That file does not run as {name}: its version output does not say {banner}.",
     "too_old": "{name} {version} is too old; the harness needs {min} or newer.",
@@ -103,7 +129,7 @@ PROBLEMS = {
 
 
 def problem_text(prog: Program, problem: str, version: str | None = None) -> str:
-    return PROBLEMS[problem].format(name=prog.name, banner=prog.banner, version=version or "",
+    return PROBLEMS[problem].format(name=prog.name, banner=prog.banner, example=prog.example, version=version or "",
                                     min=".".join(map(str, prog.min_version)))
 
 
@@ -119,7 +145,7 @@ def verify(prog: Program, path: str, timeout: float = 10.0) -> dict[str, Any]:
     out = _run_version(str(p), list(prog.version_args), timeout)
     if out is None or prog.banner not in out:
         return {"ok": False, "version": None, "problem": "not_program"}
-    m = re.search(re.escape(prog.banner) + r"\s+(\d+(?:\.\d+)*(?:-\d+)?)", out)
+    m = re.search(prog.version_pattern or re.escape(prog.banner) + r"\s+(\d+(?:\.\d+)*(?:-\d+)?)", out)
     version = m.group(1) if m else None
     v = parse_version(version or "")
     if v is None or v < prog.min_version:
@@ -143,7 +169,7 @@ def path_for(vault_root: Path, key: str) -> str | None:
     s = saved(vault_root, key)
     if s:
         return s if Path(s).is_file() else None
-    return shutil.which(prog.bin)
+    return shutil.which(prog.bin) or (find(prog) if prog.use_found else None)
 
 
 def status(vault_root: Path, key: str) -> dict[str, Any]:
@@ -152,8 +178,10 @@ def status(vault_root: Path, key: str) -> dict[str, Any]:
     s = saved(vault_root, key)
     on_path = shutil.which(prog.bin)
     path, source = (s, "saved") if s else (on_path, "PATH") if on_path else (None, "")
-    v = verify(prog, path) if path else {"ok": False, "version": None, "problem": None}
     found = find(prog)
+    if not path and prog.use_found and found:
+        path, source, found = found, "found", None  # in use already, so nothing left to offer
+    v = verify(prog, path) if path else {"ok": False, "version": None, "problem": None}
     return {"id": key, "name": prog.name, "bin": prog.bin, "saved": s, "path": path, "source": source,
             "ok": v["ok"], "version": v["version"],
             "problem": problem_text(prog, v["problem"], v["version"]) if v["problem"] else None,
