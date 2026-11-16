@@ -18,6 +18,28 @@ def _bot_prompts_dir(monkeypatch, tmp_path_factory):
     """Bots created in tests persist under a scratch bot-prompts/, never the repo's."""
     monkeypatch.setenv("ZEN_BOT_PROMPTS", str(tmp_path_factory.mktemp("bot-prompts")))
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "real_agent_probe: run agent_clis.probe for real (against fake CLIs)")
+
+
+@pytest.fixture(autouse=True)
+def _agent_probes_inert(request, monkeypatch):
+    """The harness probes the claude and codex programs at start; a test never runs the real ones. They read as
+    not found, unless the test module is marked `real_agent_probe` (tests/test_agent_clis.py, which uses fake CLIs)."""
+    if request.node.get_closest_marker("real_agent_probe"):
+        return
+    from src.harness import agent_clis
+
+    def probe(vault_root, key, timeout=10.0):
+        a, sw = agent_clis.AGENTS[key], agent_clis.load_settings(vault_root)[key]
+        return {"id": key, "name": a.program.name, "vendor": a.vendor, "path": None, "source": "", "version": None,
+                "auth": "unknown", "confinable": False, "runnable": not agent_clis.RUNNABLE.get(key, ""),
+                "enabled": sw.enabled, "ask": sw.ask, "model": sw.model, "usable": False,
+                "reason": f"{a.program.name} was not found (probing is off in tests).", "sign_in": a.sign_in}
+
+    monkeypatch.setattr(agent_clis, "probe", probe)
+
+
 from src.memory.exclusion import exclusion
 from src.memory.ledger import Ledger
 from src.providers.interface import Completion, Message, ProviderError, ToolCall, Usage

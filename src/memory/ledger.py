@@ -59,6 +59,7 @@ class Kind(StrEnum):
     rebuild = "rebuild"
     image = "image"
     routine = "routine"
+    delegate = "delegate"
 
 
 def _on_loop(loop: asyncio.AbstractEventLoop) -> bool:

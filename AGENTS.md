@@ -5,7 +5,7 @@ name each top-level system and run the harness and the tests.
 
 | Path | What |
 | --- | --- |
-| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`); the design studio (`design_studio.py`: numbered copies, comment block, preview bridge `design_bridge.js`; `design_systems.py`: loading and checking design systems) |
+| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`); the design studio (`design_studio.py`: numbered copies, comment block, preview bridge `design_bridge.js`; `design_systems.py`: loading and checking design systems); coding agents: `agent_clis.py` (find, sign-in, switches), `delegation.py` (the `delegate` tool, runner, folder rules) |
 | `src/providers/` | Provider interface, registry, provider store (`providers.json`) and secrets, OpenRouter and OpenAI-compatible adapters, model listing and probing, the image provider, Langfuse tracing |
 | `src/decider/` | Decider interface, scorer registry, skill and MCP routing (band and floor), skill-to-bot fit, supervisor, `adapters/` |
 | `src/context/` | Compaction, the protected (pinned) task, transcript rendering |
@@ -15,13 +15,13 @@ name each top-level system and run the harness and the tests.
 | `src/music/` | Music discovery: Discogs scan, taste profile, the Soundlore atlas, MusicBrainz and YouTube Music lookups, candidates, the album gate, digests, `music_*` tools, `/music` routes |
 | `src/skills/` | `SKILL.md` loader and catalog; recorder |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`) and Electron shell (`frame-nav.cjs` limits where a framed page may go) |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the coding agents page `AgentSettings.jsx` + `agents.js`, program paths `program-paths.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go) |
 | `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`) |
 | `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, and the host-dependency installers `install-deps.sh` / `install-deps.ps1` |
-| `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/` and `skills/design-studio/` |
+| `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`) |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
-| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py` |
+| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
 | `.github/` | Workflows: `changelog.yml` appends every push to `main` to `CHANGELOG.md` (don't edit it by hand; `[skip changelog]` in a commit subject leaves it out), and `stale.yml` |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
@@ -136,10 +136,10 @@ gives `notes-ledger/`, `notes-music/` and `notes-settings/`.
 
 | Folder (default under `~/.zen-agents/`) | Holds | Owned by |
 | --- | --- | --- |
-| `vault/` | Work docs (`docs/`), uploads, browser output (`browser/`), anything bots save; `designs/` (studio designs) and `design-systems/` (the user's own); `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
+| `vault/` | Work docs (`docs/`), `delegated/` (job folders for `delegate`), uploads, browser output (`browser/`), anything bots save; `designs/` (studio designs) and `design-systems/` (the user's own); `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
 | `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations | `src/memory/ledger.py` `ledger_path_for` |
 | `vault-music/` | Music database (`music.db`), the Soundlore atlas, cover images | `src/music/settings.py` `music_dir`; bots never reach it (`allowed_folders.private_folders`) |
-| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
+| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
 
 A new setting goes in `settings_dir(vault_root) / "<name>.json"`, never under the vault. Secrets and
 `allowed_folders.json` (which decides what `files` may reach) must stay out of the vault: a bot that could
@@ -296,6 +296,99 @@ Layer 1, the gate, is fixed rules and only refuses:
 To widen what bots may do with magick, add to the allow-lists in `magick_guard.py` with a test in
 `tests/test_magick_guard.py`; never drop the guard from `mcp.json`. Layer 2 (the decider judging whether an
 allowed command fits the task, pausing for approval when it does not) is tabled, not built.
+
+### Delegating to coding agents
+
+The `delegate(agent, task, folder?)` tool (`src/harness/delegation.py`) hands a job to the Claude Code command-line
+program on the user's own subscription; `skills/delegation/` tells bots when to use it. The tool exists only while an
+agent is switched on (`Delegator.register`; its description names which), and a call in a routine is refused before any approval opens, a skill rule's included (the tool is still listed; it answers that `delegate` works only in a conversation or a room turn). In a room, a turn's time budget (600 s of running time, `ZEN_TURN_DEADLINE_S`, `src/rooms/room.py`) is shorter than a run's limit, so a long run there is cut off; long jobs belong in a one-to-one conversation. Settings > Harness Tools > Coding
+agents (`AgentSettings.jsx`; `GET /agents`, `PUT /settings/agents/{key}`) shows what `agent_clis.py` found: where the
+program is (`tool_paths.CLAUDE_CODE` and `CODEX`, keys `claude-code` and `codex`, with `use_found` so a copy in an
+install folder is used when nothing is saved and it is not on PATH), its version, and whether it is signed in
+(`read_auth`, from `auth status`; the harness never reads a CLI's credential files). The switches live in
+`vault-settings/agents.json`, never the vault: `enabled` (default off), `ask` (default on) and `model`. A model name
+comes only from there and must fully match `[A-Za-z0-9._-]{1,64}`. Saving or clearing the program path of
+`claude-code` or `codex` (`PUT`/`DELETE /settings/tools/programs/{key}`) probes that agent again and re-registers the
+tool. Harness shutdown stops every run in flight (`Runner.stop_all`, from the `lifespan`).
+
+- **The argument list is fixed** (`delegation.claude_argv`): `-p --restricted --strict-mcp-config --tools
+  Read,Write,Edit,Glob,Grep --permission-mode acceptEdits --output-format stream-json --verbose
+  --no-session-persistence`, plus `--model <m>` from Settings. The job goes in on stdin: nothing a bot wrote is ever a
+  command-line argument, and no shell runs. The child's environment is `run_env()` (the scrubbed one, minus every
+  `ANTHROPIC_*`, `OPENAI_*`, `CLAUDE_CODE_*` and `CODEX_*` variable, keeping `CLAUDE_CONFIG_DIR` and `CODEX_HOME`),
+  plus `NoDefaultCurrentDirectoryInExePath=1` on Windows, so a bare program name is never looked up in the job folder.
+- **No shim runs through `cmd.exe`** (`delegation.direct`): an npm install is `claude.cmd`, whose last line runs a bare
+  `node`, which `cmd.exe` would look for in the job folder (where the bot may have put a `node.bat`) before PATH. The
+  runner reads the shim instead and launches `[node.exe, <its node_modules\...\*.js>, *args]`: `node.exe` beside the
+  shim, else the first absolute PATH folder holding `node.exe`; both must be files outside the job folder. A `.cmd` or
+  `.bat` that cannot be resolved that way is refused, telling the user to install the native Claude Code or set its
+  path. The probes (`agent_clis._run`, `host_deps._run_version`) still run the shim as it is, in the harness's own
+  working folder, which may itself be a folder bots can write (a harness started from a repo that is also an Allowed
+  Folder). So on Windows they set `NoDefaultCurrentDirectoryInExePath=1` (`host_deps.no_cwd_search`), which stops
+  `cmd.exe` looking in the current folder before PATH; the runner sets it too. The before and after file listings
+  (`delegation.snapshot`) never walk through a link, a junction or any other redirect.
+- **The first-event check** (`check_init`): the run is stopped at once unless the start event lists only the five
+  tools, no MCP servers, the job folder as its working folder (the folder is resolved again at this point, so one
+  swapped for a link since it was checked fails), `permissionMode` `acceptEdits` when the event has that field, only
+  built-in plugins (`"path": "builtin"`, source `<name>@builtin`) and, when Settings showed a subscription sign-in,
+  `apiKeySource` of `none`. It fails closed: lines that are not JSON objects are skipped, and the first object event must be the start event with the expected fields or the run is refused. A CLI update that widens a run is
+  caught here rather than going unnoticed.
+- **The job folder** (`resolve_folder`): with no `folder`, a new `<vault>/delegated/<date>-<id>/` the harness makes;
+  otherwise a folder that exists (absolute, or relative to the vault). It must resolve (links followed) inside
+  `allowed_folders.reachable(...).full`, not inside a Read-Only folder, and neither inside nor holding a private or
+  Read-Only one. Too many entries to compare before and after is reported, not hidden. A folder the bot named is
+  scanned again just before the launch (`leads_out`, after the before-snapshot, same 50,000-entry bound): the run is
+  refused, naming the first offending entry, if it holds a link or junction that resolves outside it, a regular file
+  with more than one hard link, or more entries than the bound. A folder the harness made starts empty and is not
+  scanned.
+- **During the run**: any tool event that names a `file_path` or `path` resolving outside the folder (any tool, not
+  only Write and Edit; `~`, or a path starting `~/` or `~\`, counts as outside) ends the run at once, kills the tree, and fails it
+  with that path; the path is logged with `outside: true`.
+- **When the user is asked** (`Delegator.needs_approval`, via `TaskLoop._run_call` and `delegate_check`): a run in a
+  folder the bot named always asks; a run in a new folder the harness made asks unless "Ask me before each run" is off;
+  Codex would always ask. The approval shows the agent, folder, model and the whole task. A skill approval rule that
+  already asks gets the same detail. Stop ends the run (`Harness.stop`; `Runner` kills the whole process tree, with a
+  Windows Job Object; a run that cannot be put in one is refused, since nothing else there reaches children a CLI
+  leaves behind). Limits: task 20,000 characters, one run per conversation or room and two in the harness,
+  `ZEN_DELEGATE_TIMEOUT` seconds (default 900), at most 200 changed files listed, 2,000 characters of error (the
+  output tail, or the agent's own error text).
+- **The reply** starts with `Folder: <path>`, then the files added, changed or removed, then the agent's answer (last,
+  so a long answer cannot push the folder and the changes past the 20,000-character tool output cap). A failed,
+  timed-out, stopped or refused run raises its error followed by the same `Folder:` line and changes list, so the bot
+  still knows where the work is. The ledger gets kind `delegate` entries: `start`, `file` (each Write or Edit, and any
+  path outside the folder; a path is cut to 500 characters) and `end`. The bot treats the answer as data to check.
+- **What the harness enforces itself**: the argument list and environment, no shim through `cmd.exe`, the folder rules
+  above, the pre-launch scan of a bot-named folder, the first-event check, and ending a run whose tool events name a
+  path outside the folder. That last one acts on the stream as it arrives, so a single read or write that Claude Code
+  carries out may already have happened when the run is ended; it is a tripwire, not a wall.
+- **What is left to Claude Code's restricted mode** (`--restricted`): refusing each file tool call outside the working
+  folder, links and junctions included; and Claude Code itself (with the fixed arguments) not acting on a project's own
+  settings, hooks, MCP servers, `CLAUDE.md` imports or `.env`. Checked
+  by hand on 2026-11-16 with Claude Code 2.1.325 on Windows (`docs/superpowers/specs/2026-11-16-agent-delegation-design.md`,
+  "What was checked on this machine"): only the job folder (reads and writes), the five file tools, no commands, no
+  web, none of the user's MCP servers, hooks or plugins; a hook and an MCP server planted in the job folder did not
+  run; reads, listings and writes through a junction and through a file symlink were refused; a `CLAUDE.md` `@import` of
+  an outside file, `.claude/settings.json` `additionalDirectories` and a `.env` setting `ANTHROPIC_BASE_URL` had no
+  effect. A hard link was the one way out it did not catch: it read an outside file through one (its Edit replaced
+  the job folder's name rather than writing through), which is why the pre-launch scan refuses hard links. This is
+  what the bot could already do through `files`; the new things are spending and that the folder's contents go to
+  Anthropic under the user's account. Prompt injection in a file the bot copies in can still steer the agent within
+  that folder. A new Claude Code version can change any of this: re-run the checks when it does.
+- **Codex is detected only.** Tested on Windows (`docs/superpowers/specs/2026-11-16-codex-confinement-notes.md`): its
+  sandbox refused writes outside the job folder and its plugins could be switched off, but network access stayed open
+  (plain HTTP and raw TCP connections worked from inside the sandbox) and it can read any file the user's account can.
+  So `agent_clis.RUNNABLE["codex"]` holds a reason, Codex shows in Settings, and it cannot be switched on or run.
+  Making it runnable needs a proof that the network is closed, and the per-run approval the code already demands.
+
+Rules for contributors: never run either CLI with its checks off (`bypassPermissions`,
+`--dangerously-bypass-approvals-and-sandbox`, `danger-full-access`). Do not widen `CLAUDE_TOOLS` or drop `--restricted`
+or `--strict-mcp-config` without re-running the confinement checks and recording them. Keep `check_init` failing
+closed. Keep the job folder inside what bots may write and never inside or holding a private or Read-Only folder.
+Never launch a `.cmd` or `.bat` through `cmd.exe` with the job folder as its working folder. Tests
+never run the real programs: they use `tests/fixtures/fake_agent_cli.py`, and `tests/conftest.py` makes probing inert
+unless a module sets `pytestmark = pytest.mark.real_agent_probe`. Tests: `tests/test_agent_clis.py`,
+`tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, additions in `tests/test_tool_paths.py` and
+`tests/test_task_loop.py`; GUI `tests/gui/agents.test.mjs` and `program-paths.test.mjs`.
 
 ## Adding an MCP server that needs a host binary
 

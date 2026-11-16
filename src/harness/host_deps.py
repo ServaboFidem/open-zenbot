@@ -155,10 +155,17 @@ def parse_version(text: str) -> tuple[int, ...] | None:
     return tuple(int(p) for p in m.group().split(".")) if m else None
 
 
+def no_cwd_search(env: dict[str, str]) -> dict[str, str]:
+    """On Windows, stop cmd.exe looking in the current folder before PATH: an npm `.cmd` shim runs `node` by bare
+    name, and the harness may have been started in a folder bots can write, where a planted node.bat would win."""
+    return {**env, "NoDefaultCurrentDirectoryInExePath": "1"} if sys.platform == "win32" else env
+
+
 def _run_version(path: str, args: list[str], timeout: float) -> str | None:
     try:
         r = subprocess.run(
-            [path, *args], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout
+            [path, *args], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout,
+            env=no_cwd_search(dict(os.environ)),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

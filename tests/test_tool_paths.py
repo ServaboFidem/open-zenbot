@@ -17,7 +17,7 @@ from src.harness import host_deps, tool_paths
 from src.harness.api import Harness, create_app
 from src.harness.config import HarnessConfig
 from src.harness.host_deps import Host, Requirement, parse_requires, probe
-from src.harness.tool_paths import IMAGEMAGICK, canonical, find, path_for, save, saved, status, verify
+from src.harness.tool_paths import CLAUDE_CODE, CODEX, IMAGEMAGICK, canonical, find, path_for, save, saved, status, verify
 from src.memory.ledger import Ledger
 from src.skills.catalog import Catalog
 from src.vault_settings import settings_dir
@@ -25,14 +25,14 @@ from src.vault_settings import settings_dir
 FIXTURE = Path(__file__).parent / "fixtures" / "mcp_echo_server.py"
 
 
-def fake(d: Path, banner: str = "Version: ImageMagick 7.1.2-34 Q16-HDRI x64") -> Path:
-    """A stand-in magick that prints a version banner."""
+def fake(d: Path, banner: str = "Version: ImageMagick 7.1.2-34 Q16-HDRI x64", stem: str = "magick") -> Path:
+    """A stand-in program (magick unless `stem` says otherwise) that prints a version banner."""
     d.mkdir(parents=True, exist_ok=True)
     if sys.platform == "win32":
-        p = d / "magick.bat"
+        p = d / f"{stem}.bat"
         p.write_text(f"@echo off\r\necho {banner}\r\n", encoding="utf-8")
     else:
-        p = d / "magick"
+        p = d / stem
         p.write_text(f"#!/bin/sh\necho '{banner}'\n", encoding="utf-8")
         p.chmod(0o755)
     return p
@@ -72,6 +72,42 @@ def test_verify_runs_it_and_wants_imagemagick_7(tmp_path: Path):
     assert verify(IMAGEMAGICK, str(tmp_path / "nope.exe"))["problem"] == "not_found"
     assert verify(IMAGEMAGICK, "magick")["problem"] == "not_absolute"
     assert "6.9.12-98 is too old" in tool_paths.problem_text(IMAGEMAGICK, "too_old", "6.9.12-98")
+
+
+def test_verify_reads_a_version_printed_before_the_name(tmp_path: Path):
+    exe = fake(tmp_path / "c", "2.1.325 (Claude Code)", "claude")
+    assert verify(CLAUDE_CODE, str(exe)) == {"ok": True, "version": "2.1.325", "problem": None}
+
+
+def test_verify_codex_banner(tmp_path: Path):
+    exe = fake(tmp_path / "x", "codex-cli 0.163.0", "codex")
+    assert verify(CODEX, str(exe)) == {"ok": True, "version": "0.163.0", "problem": None}
+
+
+def test_verify_refuses_another_program_named_claude(tmp_path: Path):
+    assert verify(CLAUDE_CODE, str(fake(tmp_path / "c", "hello", "claude")))["problem"] == "not_program"
+
+
+def test_path_for_uses_an_install_folder_copy_when_use_found(tmp_path: Path, monkeypatch):
+    exe = fake(tmp_path / "npm", "codex-cli 0.163.0", "codex")
+    monkeypatch.setattr(tool_paths.shutil, "which", lambda b, path=None: None)
+    monkeypatch.setitem(tool_paths.PROGRAMS, "codex", dataclasses.replace(CODEX, candidates=lambda: [exe]))
+    vault = tmp_path / "vault"
+    assert path_for(vault, "codex") == canonical(str(exe))
+    st = status(vault, "codex")
+    assert (st["source"], st["path"], st["ok"], st["found"]) == ("found", canonical(str(exe)), True, None)
+
+
+def test_imagemagick_still_ignores_install_folders(tmp_path: Path, monkeypatch):
+    exe = fake(tmp_path / "IM")
+    monkeypatch.setattr(tool_paths.shutil, "which", lambda b, path=None: None)
+    monkeypatch.setitem(tool_paths.PROGRAMS, "imagemagick", dataclasses.replace(IMAGEMAGICK, candidates=lambda: [exe]))
+    assert path_for(tmp_path / "vault", "imagemagick") is None
+
+
+def test_not_absolute_text_names_this_program():
+    assert "magick" not in tool_paths.problem_text(CLAUDE_CODE, "not_absolute")
+    assert "magick.exe" in tool_paths.problem_text(IMAGEMAGICK, "not_absolute")
 
 
 def test_find_tries_path_then_install_folders(tmp_path: Path, no_magick, monkeypatch):

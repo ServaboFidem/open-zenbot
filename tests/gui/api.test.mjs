@@ -242,6 +242,15 @@ test('host program path routes read, save by body and clear one program', async 
   assert.deepEqual(calls[1].body, { path: 'C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI\\magick.exe' });
 });
 
+test('coding agent routes read the list and save one agent', async () => {
+  const { fetch, calls } = fakeFetch();
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  await api.agents();
+  await api.setAgent('claude-code', { enabled: true, model: 'sonnet' });
+  assert.deepEqual(calls.map(c => `${c.method} ${new URL(c.url).pathname}`), ['GET /agents', 'PUT /settings/agents/claude-code']);
+  assert.deepEqual(calls[1].body, { enabled: true, model: 'sonnet' });
+});
+
 test('model provider routes map to the harness paths', async () => {
   const { fetch, calls } = fakeFetch();
   const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });

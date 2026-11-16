@@ -152,6 +152,148 @@ async def test_stop_while_waiting_for_approval(bot: Bot, ledger: Ledger, tmp_pat
     assert ledger.tail(session_id=loop.ledger.tail(1)[0].session_id)[-1].data == {"event": "stopped", "by": "cancel"}
 
 
+def _delegating_loop(provider, ledger, tmp_path, approvals, check) -> tuple[TaskLoop, list[dict]]:
+    """A loop with a stand-in `delegate` tool that records each run."""
+    ran: list[dict] = []
+    loop = TaskLoop(provider, ledger, approvals, ToolRunner(tmp_path, timeout=10), max_steps=10, delegate_check=check)
+
+    async def delegate(agent: str, task: str, folder: str | None = None) -> str:
+        ran.append({"agent": agent, "task": task, "folder": folder})
+        return "Handed off."
+
+    loop.tools.register("delegate", "d", {"type": "object", "properties": {}}, delegate)
+    return loop, ran
+
+
+async def _pending(approvals: ApprovalStore):
+    while not approvals.list(ApprovalState.pending):
+        await asyncio.sleep(0.01)
+    return approvals.list(ApprovalState.pending)
+
+
+async def test_delegate_waits_for_approval_and_runs_when_approved(bot: Bot, ledger: Ledger, tmp_path: Path):
+    approvals, asked = ApprovalStore(), []
+    args = {"agent": "claude-code", "task": "Write the report."}
+    provider = ScriptedProvider([completion(calls=[("c1", "delegate", args)]), completion("Done.")])
+    loop, ran = _delegating_loop(provider, ledger, tmp_path, approvals,
+                                 lambda a, forced, session_id: asked.append((a, forced, session_id)) or
+                                 ("delegate:claude-code", "delegate: Claude Code: Write", "Hand this to Claude Code?"))
+    task = asyncio.create_task(loop.run(bot, "write it"))
+    pending = await _pending(approvals)
+    assert len(pending) == 1 and (pending[0].rule, pending[0].tool) == ("delegate:claude-code", "delegate")
+    assert pending[0].detail == "Hand this to Claude Code?" and pending[0].title == "delegate: Claude Code: Write"
+    assert asked == [(args, False, pending[0].session_id)]
+    assert ran == [] and not task.done()
+    approvals.decide(pending[0].id, approved=True)
+    s = await task
+    assert s.state == SessionState.done and s.approvals == [pending[0].id]
+    assert ran == [{**args, "folder": None}]
+    req = ledger.tail(kind="approval_request", session_id=s.id)[0].data
+    assert (req["rule"], req["tool"]) == ("delegate:claude-code", "delegate")
+
+
+async def test_delegate_rejected_runs_nothing_and_tells_the_bot(bot: Bot, ledger: Ledger, tmp_path: Path):
+    from src.harness.delegation import REJECTED
+
+    approvals = ApprovalStore()
+    provider = ScriptedProvider([completion(calls=[("c1", "delegate", {"agent": "codex", "task": "t"})]),
+                                 completion("I will do it myself.")])
+    loop, ran = _delegating_loop(provider, ledger, tmp_path, approvals,
+                                 lambda a, forced, session_id: ("delegate:codex", "delegate: Codex: t", "Codex?"))
+    task = asyncio.create_task(loop.run(bot, "write it"))
+    approvals.decide((await _pending(approvals))[0].id, approved=False)
+    s = await task
+    assert s.state == SessionState.done and ran == []
+    assert provider.calls[1][-1].content == REJECTED
+    assert not ledger.tail(kind="tool_call", session_id=s.id)
+
+
+async def test_delegate_without_a_check_result_runs_at_once(bot: Bot, ledger: Ledger, tmp_path: Path):
+    approvals = ApprovalStore()
+    provider = ScriptedProvider([completion(calls=[("c1", "delegate", {"agent": "claude-code", "task": "t"})]),
+                                 completion("Done.")])
+    loop, ran = _delegating_loop(provider, ledger, tmp_path, approvals, lambda a, forced, session_id: None)
+    s = await loop.run(bot, "write it")
+    assert s.state == SessionState.done and s.approvals == [] and approvals.list() == []
+    assert len(ran) == 1 and provider.calls[1][-1].content == "Handed off."
+
+
+def _real_delegator(tmp_path: Path, enabled: bool, ask: bool, in_routine=lambda session_id: False):
+    """A Delegator whose Claude Code is found and usable, with the switches given; its runner only records."""
+    from src.harness.agent_clis import Agents, AgentSettings, save_settings
+    from src.harness.allowed_folders import Folders
+    from src.harness.delegation import Delegator, Runner
+
+    class Recording(Runner):
+        async def run(self, *a, **kw):
+            self.calls.append(a)
+            raise AssertionError("nothing may be launched")
+
+    vault = tmp_path / "vault"
+    vault.mkdir(exist_ok=True)
+    agents = Agents(vault)
+    agents.statuses["claude-code"] = {"path": "claude", "usable": True}
+    save_settings(vault, "claude-code", AgentSettings(enabled=enabled, ask=ask))
+    runner = Recording(agents, None)
+    runner.calls = []
+    return Delegator(vault, agents, lambda: Folders(full=[vault]), runner, in_routine=in_routine)
+
+
+async def test_a_skill_rule_on_delegate_still_shows_the_hand_off(ledger: Ledger, tmp_path: Path):
+    from src.harness.delegation import REJECTED
+
+    b = Bot(name="Writer", role="Writes.")
+    b.attach_skill(parse_skill("---\nname: Careful\nuse: u\napprovals:\n  - delegate\n---\nAsk first.\n"))
+    d = _real_delegator(tmp_path, enabled=True, ask=False)  # the setting alone would not ask
+    task = "Write\nthe quarterly report " + "z" * 100
+    approvals = ApprovalStore()
+    provider = ScriptedProvider([completion(calls=[("c1", "delegate", {"agent": "claude-code", "task": task})]),
+                                 completion("Fine.")])
+    loop, ran = _delegating_loop(provider, ledger, tmp_path, approvals, d.needs_approval)
+    running = asyncio.create_task(loop.run(b, "write it"))
+    pending = (await _pending(approvals))[0]
+    assert pending.rule == "delegate"  # the skill's rule keeps its name
+    assert "Hand this job to Claude Code?" in pending.detail and task in pending.detail
+    assert pending.title == "delegate: Claude Code: " + ("Write the quarterly report " + "z" * 100)[:80]
+    approvals.decide(pending.id, approved=False)
+    await running
+    assert ran == [] and provider.calls[1][-1].content == REJECTED
+
+
+async def test_an_agent_switched_off_is_refused_without_an_approval(bot: Bot, ledger: Ledger, tmp_path: Path):
+    d = _real_delegator(tmp_path, enabled=False, ask=True)
+    approvals = ApprovalStore()
+    provider = ScriptedProvider([completion(calls=[("c1", "delegate", {"agent": "claude-code", "task": "t"})]),
+                                 completion("Understood.")])
+    loop = TaskLoop(provider, ledger, approvals, ToolRunner(tmp_path, timeout=10), max_steps=10,
+                    delegate_check=d.needs_approval)
+    # the bot was offered the tool before the switch went off: the function is still registered
+    loop.tools.register("delegate", "d", {"type": "object", "properties": {}}, d.delegate)
+    s = await loop.run(bot, "hand it off")
+    assert s.state == SessionState.done and approvals.list() == [] and s.approvals == []
+    assert "Claude Code is switched off in Settings." in provider.calls[1][-1].content
+    assert d.runner.calls == []
+
+
+async def test_a_routine_is_refused_before_any_approval_opens(ledger: Ledger, tmp_path: Path):
+    """Nobody is there to approve in a routine: not the hand-off's own approval, nor a skill rule's."""
+    b = Bot(name="Writer", role="Writes.")
+    b.attach_skill(parse_skill("---\nname: Careful\nuse: u\napprovals:\n  - delegate\n---\nAsk first.\n"))
+    seen: list[str] = []
+    d = _real_delegator(tmp_path, enabled=True, ask=True, in_routine=lambda session_id: seen.append(session_id) or True)
+    approvals = ApprovalStore()
+    provider = ScriptedProvider([completion(calls=[("c1", "delegate", {"agent": "claude-code", "task": "t",
+                                                                        "folder": "x"})]),
+                                 completion("Understood.")])
+    loop = TaskLoop(provider, ledger, approvals, ToolRunner(tmp_path, timeout=10), max_steps=10,
+                    delegate_check=d.needs_approval)
+    loop.tools.register("delegate", "d", {"type": "object", "properties": {}}, d.delegate)
+    s = await asyncio.wait_for(loop.run(b, "hand it off"), 10)
+    assert s.state == SessionState.done and approvals.list() == [] and s.approvals == []
+    assert "delegate works only in a conversation or a room turn." in provider.calls[1][-1].content
+    assert d.runner.calls == [] and seen and set(seen) == {s.id}
+
+
 def test_bot_skill_cap_is_config():
     b = Bot(name="x", role="y")
     a = parse_skill("---\nname: A\nuse: u\n---\n")

@@ -1,18 +1,25 @@
 import React, { useEffect, useState } from 'react';
 import { Badge, Button, Field, Input, Spinner } from '@fluentui/react-components';
+import { EXAMPLE } from './program-paths';
 
 // Settings > Harness Tools > ImageMagick (and any other host program the harness runs by full path): the path
 // is kept in vault-settings/tools.json, out of the bots' reach, and the harness runs that file rather than
 // whatever PATH holds. scripts/install-deps fills it in; saving here checks the file is the right program and
 // new enough, and reconnects the MCP servers that need it. ctx: { api, online, guard, notify }
 const SUMMARY = {
+  'claude-code': 'The Claude Code program that bots hand coding jobs to. The harness runs it from this path.',
+  codex: 'The Codex program that bots hand coding jobs to. The harness runs it from this path.',
   imagemagick: 'Runs the image edits behind the magick tool: resizing, format changes, crops, contact sheets. The harness runs ImageMagick from this path, under its own security policy, not from PATH.',
 };
-const EXAMPLE = {
-  imagemagick: 'Like C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI\\magick.exe or /opt/homebrew/bin/magick.',
+// What it means when no path is set. ImageMagick's installer fills it in; the coding agents are installed by the user.
+const UNSET = {
+  imagemagick: s => `The magick tool cannot run until a path is set. Run scripts/install-deps (install-deps.ps1 on Windows) to install ${s.name} ${s.min_version}+ and fill this in, or enter the path below.`,
 };
+const unset = s => (UNSET[s.key] || (x => `Bots cannot hand work to ${x.name} until a path is set. Install ${x.name}, then enter the path below.`))(s);
 
-export function ProgramPathSection({ ctx, programKey }) {
+const PROGRAM_NAMES = { imagemagick: 'ImageMagick', 'claude-code': 'Claude Code', codex: 'Codex' };
+
+export function ProgramPathSection({ ctx, programKey, onSaved }) {
   const { api, online, guard, notify } = ctx;
   const canPick = typeof window !== 'undefined' && typeof window.openzenbot?.pickFile === 'function';
   const [s, setS] = useState(null);
@@ -25,7 +32,7 @@ export function ProgramPathSection({ ctx, programKey }) {
 
   async function run(which, fn, done) {
     setBusy(which); setError('');
-    try { const r = await fn(); take(r); notify(done(r)); }
+    try { const r = await fn(); take(r); notify(done(r)); onSaved?.(); }
     catch (e) { setError(e?.message || 'Something went wrong.'); }
     finally { setBusy(''); }
   }
@@ -36,17 +43,18 @@ export function ProgramPathSection({ ctx, programKey }) {
   }
 
   if (!online) return null;
-  if (!s) return <div className="resource-row"><Spinner size="tiny" label="Checking ImageMagick…"/></div>;
+  if (!s) return <div className="resource-row"><Spinner size="tiny" label={`Checking ${PROGRAM_NAMES[programKey] || 'the program'}…`}/></div>;
 
   const dirty = path.trim() !== (s.saved || '');
   const badge = s.ok
-    ? <Badge appearance="tint" color="success">{s.version} · {s.source === 'saved' ? 'saved path' : 'from PATH'}</Badge>
+    ? <Badge appearance="tint" color="success">{s.version} · {s.source === 'saved' ? 'saved path' : s.source === 'found' ? 'found in its install folder' : 'from PATH'}</Badge>
     : s.path ? <Badge appearance="tint" color="danger">Not working</Badge>
     : <Badge appearance="tint" color="warning">Not set</Badge>;
   return <form className="resource-row editor-form" onSubmit={e => { e.preventDefault(); save(path); }}>
     <div className="od-row-top tool-heading"><div className="od-field od-fill"><h3>{s.name}</h3><p>{SUMMARY[programKey] || ''}</p></div>{badge}</div>
     {s.source === 'PATH' && s.ok && <p className="field-hint">No path is saved, so the harness uses the {s.bin} it finds on PATH: {s.path}. Save a path to keep using this copy whatever PATH says.</p>}
-    {!s.path && <p className="field-hint">The magick tool cannot run until a path is set. Run scripts/install-deps (install-deps.ps1 on Windows) to install {s.name} {s.min_version}+ and fill this in, or enter the path below.</p>}
+    {s.source === 'found' && s.ok && <p className="field-hint">No path is saved and it is not on PATH, so the harness uses the copy it found at {s.path}. Save a path to keep using this copy.</p>}
+    {!s.path && <p className="field-hint">{unset({ ...s, key: programKey })}</p>}
     {s.problem && <p className="form-error" role="alert">{s.source === 'saved' ? 'The saved path does not work: ' : ''}{s.problem}</p>}
     {s.found && <div className="od-row"><span className="field-hint od-fill">Found {s.name} at {s.found}</span><Button appearance="outline" disabled={!!busy} onClick={() => save(s.found)}>Use this</Button></div>}
     <Field label={`Path to ${s.bin}`} hint={`${EXAMPLE[programKey] || 'The full path to the program.'} Saving runs it once to check it is ${s.name} ${s.min_version} or newer.`} validationMessage={error || undefined}>
