@@ -9,7 +9,9 @@ import codecs
 import functools
 import json
 import os
+import re
 import signal
+import stat
 import subprocess
 import time
 from collections.abc import Callable
@@ -38,10 +40,11 @@ _EXIT_GRACE = 10.0              # how long a CLI that has ended gets to exit, an
 _DRAIN_GRACE = 2.0              # after the CLI exits, how long its last output gets to arrive
 SNAPSHOT_LIMIT = 50_000         # entries walked before a folder counts as too large to compare in full
 _FILE_TOOLS = ("Write", "Edit")
+_LOGGED_PATH = 500              # a path the agent names is cut to this in the ledger
 
 
 class DelegationError(Exception):
-    """A run that cannot start: no program, a bad model name, or the run limits."""
+    """A run that cannot start (no program, a bad model name, the run limits), or one that failed."""
 
 
 class FolderRefused(ValueError):
@@ -73,11 +76,34 @@ def check_init(event: dict, folder: Path, subscription: bool) -> str | None:
     if servers:
         names = [str(s.get("name")) for s in servers if isinstance(s, dict)] if isinstance(servers, list) else []
         return f"it started with MCP servers ({', '.join(names) or 'unnamed'}); a run may have none."
+    # resolved again now, not compared with itself: a folder swapped for a link since it was checked fails here
+    now = _norm(folder)
+    if os.path.normcase(str(now)) != os.path.normcase(str(folder)):
+        return f"its folder {folder} now leads to {now}."
     cwd = event.get("cwd")
     if not isinstance(cwd, str) or not cwd or not _same(Path(cwd), folder):
         return f"it started in another folder ({cwd}), not {folder}."
+    if "permissionMode" in event and event["permissionMode"] != "acceptEdits":
+        return f"it started in permission mode {event['permissionMode']}, not acceptEdits."
+    if (why := _plugins(event.get("plugins"))) is not None:
+        return why
     if subscription and event.get("apiKeySource") != "none":
         return f"it used {event.get('apiKeySource')} instead of the subscription sign-in Settings showed."
+    return None
+
+
+def _plugins(plugins: Any) -> str | None:
+    """Only Claude Code's own plugins may load (2.1.325 lists them as `"path": "builtin"`, source `<name>@builtin`):
+    one from the user's setup could add tools or hooks the other checks do not see."""
+    if not plugins:
+        return None
+    if not isinstance(plugins, list):
+        return "its start event listed its plugins in a form the harness does not know."
+    other = [p for p in plugins if not (isinstance(p, dict) and p.get("path") == "builtin"
+                                        and str(p.get("source", "")).endswith("@builtin"))]
+    if other:
+        names = [str(p.get("name") or p.get("source") or "unnamed") if isinstance(p, dict) else str(p) for p in other]
+        return f"it started with plugins that are not built in: {', '.join(names)}."
     return None
 
 
@@ -166,6 +192,46 @@ def snapshot(folder: Path, limit: int = SNAPSHOT_LIMIT) -> Snapshot:
             out.complete = False
             return out
     return out
+
+
+_REPARSE = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: a link, a junction, or another kind of redirect on Windows
+
+
+def leads_out(folder: Path, limit: int = SNAPSHOT_LIMIT) -> str | None:
+    """Why a folder the bot named must not be handed over, or None: the first link or junction in it that resolves
+    outside it, or the first file with more than one name (a hard link: its other name may be outside, and Claude
+    Code reads through one). Links are not followed. Up to `limit` entries; a larger folder is refused, since what
+    was not looked at could hold a way out."""
+    seen, stack = 0, [folder]
+    while stack:
+        here = stack.pop()
+        try:
+            entries = list(os.scandir(here))
+        except OSError:
+            continue  # unreadable: the agent cannot list it either
+        for entry in entries:
+            seen += 1
+            if seen > limit:
+                return f"it holds more than {limit:,} entries, too many to check for links that lead out of it."
+            p = Path(entry.path)
+            name = p.relative_to(folder).as_posix()
+            try:
+                st = os.lstat(p)
+            except OSError:
+                continue
+            if entry.is_symlink() or entry.is_junction() or getattr(st, "st_file_attributes", 0) & _REPARSE:
+                try:
+                    target = p.resolve()
+                except (OSError, RuntimeError):
+                    return f"{name} is a link the harness cannot follow."
+                if not (target == folder or target.is_relative_to(folder)):
+                    return f"{name} is a link or junction that leads outside the folder."
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                stack.append(p)
+            elif stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
+                return f"{name} is a hard link: the same file has another name, which may be outside the folder."
+    return None
 
 
 def changed(before: dict, after: dict) -> list[str]:
@@ -294,9 +360,60 @@ def _resume(pid: int) -> bool:
     return resumed > 0
 
 
+# -- npm shims ----------------------------------------------------------------------------------------------
+
+# the script an npm .cmd shim runs: `"%dp0%\node_modules\...\cli.js"` (or `%~dp0`, in older npm versions)
+_SHIM_SCRIPT = re.compile(r'"%~?dp0%?\\(node_modules\\[^"%]+?\.[cm]?js)"', re.IGNORECASE)
+SHIM_REFUSED = ("{name} is installed as a command script ({path}), which would run through the command prompt in the "
+                "job folder, and the harness could not find the program and script it starts. Install the native "
+                "{name}, or set the path to it in Settings > Harness Tools > Coding agents.")
+
+
+def _node_on_path() -> Path | None:
+    """node.exe from the harness's own PATH: absolute folders only, never the current one, never a script."""
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        d = d.strip().strip('"')
+        if d and Path(d).is_absolute() and (Path(d) / "node.exe").is_file():
+            return Path(d) / "node.exe"
+    return None
+
+
+def _outside(p: Path, folder: Path) -> bool:
+    p, folder = _norm(p), _norm(folder)
+    return not (p == folder or p.is_relative_to(folder))
+
+
+def direct(argv: list[str], folder: Path, name: str = "Claude Code") -> list[str]:
+    """The command with a Windows .cmd or .bat program (an npm shim) replaced by what it starts: node and its script.
+    A shim runs through cmd.exe, and its bare `node` is looked up in the current folder, the job folder the bot may
+    have filled, before PATH. Raises DelegationError when it cannot be resolved that way."""
+    shim = Path(argv[0])
+    if os.name != "nt" or shim.suffix.lower() not in (".cmd", ".bat"):
+        return argv
+    refused = DelegationError(SHIM_REFUSED.format(name=name, path=shim))
+    try:
+        text = shim.read_text(encoding="utf-8", errors="replace")[:65_536]
+    except OSError:
+        raise refused from None
+    m = _SHIM_SCRIPT.search(text)
+    beside = shim.parent / "node.exe"  # the shim's own first choice
+    node = beside if beside.is_file() else _node_on_path()
+    if m is None or node is None:
+        raise refused
+    script = _norm(shim.parent / m.group(1))
+    node = _norm(node)
+    if not (node.is_absolute() and node.is_file() and node.suffix.lower() == ".exe" and _outside(node, folder)
+            and script.is_file() and _outside(script, folder)):
+        raise refused
+    return [str(node), str(script), *argv[1:]]
+
+
 async def _launch(argv: list[str], folder: Path) -> tuple[asyncio.subprocess.Process, _Job | None]:
     """Start the CLI in a process group of its own. On Windows it starts suspended inside a kill-on-close job, so
     nothing it starts can slip out before it is in the job; without a job, taskkill is the fallback."""
+    env = run_env()
+    if os.name == "nt":  # a bare program name the CLI starts is never looked up in the job folder
+        env["NoDefaultCurrentDirectoryInExePath"] = "1"
     job = _Job.create() if os.name == "nt" else None
     if os.name == "nt":
         group: dict[str, Any] = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
@@ -305,7 +422,7 @@ async def _launch(argv: list[str], folder: Path) -> tuple[asyncio.subprocess.Pro
         group = {"start_new_session": True}
     try:
         proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=folder, env=run_env(), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            *argv, cwd=folder, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, limit=_LINE_LIMIT, **group)
     except BaseException:
         if job:
@@ -418,6 +535,8 @@ def _where(file_path: str, folder: Path) -> tuple[str, bool]:
     """The path relative to the folder, or the full path and True when it is outside (or cannot be resolved)."""
     if "\0" in file_path:  # names no file; resolve() raises on it on POSIX but not on Windows
         return file_path, True
+    if file_path == "~" or file_path.startswith(("~/", "~\\")):  # the agent may read it as the home folder
+        return file_path, True
     try:
         p = Path(file_path)
         p = (p if p.is_absolute() else folder / p).resolve()
@@ -452,7 +571,18 @@ class Runner:
         live.stop.set()
         return True
 
-    async def run(self, agent: str, folder: Path, task: str, bot_id: str, session_id: str) -> RunResult:
+    async def stop_all(self, within: float = 15.0) -> None:
+        """Stop every run (the harness is shutting down) and wait, bounded, for them to end and be logged."""
+        for live in list(self.live.values()):
+            live.stop.set()
+        end = time.monotonic() + within
+        while self.live and time.monotonic() < end:
+            await asyncio.sleep(0.05)
+
+    async def run(self, agent: str, folder: Path, task: str, bot_id: str, session_id: str,
+                  named: bool = False) -> RunResult:
+        """`named`: the bot named the folder (so it may have filled it), and it is checked for links just before
+        the launch. A folder the harness made starts empty."""
         if agent not in AGENTS:
             raise DelegationError(f"There is no agent called {agent}.")
         name = AGENTS[agent].program.name
@@ -463,24 +593,28 @@ class Runner:
             raise DelegationError("This conversation already has a run going. Wait for it to end.")
         if len(self.live) >= self.max_runs:
             raise DelegationError(f"{self.max_runs} runs are going already. Try again when one ends.")
-        argv = self.command(agent, st["path"], self.agents.settings(agent).model)
+        argv = direct(self.command(agent, st["path"], self.agents.settings(agent).model), folder, name)
         live = self.live[session_id] = _Live(agent, folder)  # claimed before the first await: no two calls both pass
         try:
             return await self._run(live, argv, name, _norm(Path(folder)), task, bot_id, session_id,
-                                   subscription=st.get("auth") == "subscription")
+                                   subscription=st.get("auth") == "subscription", named=named)
         finally:
             self.live.pop(session_id, None)
 
     async def _run(self, live: _Live, argv: list[str], name: str, folder: Path, task: str, bot_id: str,
-                   session_id: str, subscription: bool) -> RunResult:
+                   session_id: str, subscription: bool, named: bool) -> RunResult:
         before = await asyncio.to_thread(snapshot, folder)
         self.ledger.append(Kind.delegate, bot_id, session_id, event="start", agent=live.agent, folder=str(folder))
         t0 = time.monotonic()
         result = RunResult(False, "", error="The run was cancelled.")
         stopped = RunResult(False, "", error="Stopped by the user.")
         try:
+            # read last, just before the launch, so a link put there while the folder was read is caught too
+            why = await asyncio.to_thread(leads_out, folder) if named and not live.stop.is_set() else None
             if live.stop.is_set():  # Stop came while the folder was read: nothing is launched
                 result = stopped
+            elif why:
+                result = RunResult(False, "", error=f"The folder cannot be handed over: {why}")
             else:
                 try:
                     proc, job = await _launch(argv, folder)
@@ -580,7 +714,7 @@ class Runner:
                 continue
             if first:
                 first = False
-                problem = check_init(event, folder, subscription)
+                problem = await asyncio.to_thread(check_init, event, folder, subscription)  # it resolves paths
                 if problem:
                     error = f"{name} was stopped as it started: {problem}"
                     if event.get("type") == "system" and event.get("subtype") == "init":
@@ -592,7 +726,9 @@ class Runner:
                 continue
             kind = event.get("type")
             if kind == "assistant":
-                self._files(event, folder, bot_id, session_id)
+                if out := self._files(event, folder, bot_id, session_id):
+                    return "outside", RunResult(False, "", error=f"{name} reached for {out[:_LOGGED_PATH]}, outside its "
+                                                                 "folder, so the harness ended the run.")
             elif kind == "result":
                 usage = event.get("usage")
                 usage = usage if isinstance(usage, dict) else {}
@@ -602,19 +738,27 @@ class Runner:
                     return "result", RunResult(False, "", error=text or f"{name} reported an error.", usage=usage)
                 return "result", RunResult(True, text, usage=usage)
 
-    def _files(self, event: dict, folder: Path, bot_id: str, session_id: str) -> None:
-        """Each file the agent writes or edits goes to the ledger, so the activity feed shows the run moving."""
+    def _files(self, event: dict, folder: Path, bot_id: str, session_id: str) -> str | None:
+        """Each file the agent writes or edits goes to the ledger, so the activity feed shows the run moving. Returns
+        the first path any tool names (`file_path` or `path`) that is outside the folder, logged too, or None."""
         msg = event.get("message")
         content = msg.get("content") if isinstance(msg, dict) else None
         for block in content if isinstance(content, list) else []:
-            if not (isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in _FILE_TOOLS):
+            if not (isinstance(block, dict) and block.get("type") == "tool_use"):
                 continue
             args = block.get("input")
-            fp = args.get("file_path") if isinstance(args, dict) else None
-            if isinstance(fp, str) and fp:
+            tool = str(block.get("name"))[:40]
+            for key in ("file_path", "path"):
+                fp = args.get(key) if isinstance(args, dict) else None
+                if not (isinstance(fp, str) and fp):
+                    continue
                 path, outside = _where(fp, folder)
-                self.ledger.append(Kind.delegate, bot_id, session_id, event="file", tool=block["name"], path=path,
-                                   **({"outside": True} if outside else {}))
+                if outside or (key == "file_path" and tool in _FILE_TOOLS):
+                    self.ledger.append(Kind.delegate, bot_id, session_id, event="file", tool=tool,
+                                       path=path[:_LOGGED_PATH], **({"outside": True} if outside else {}))
+                if outside:
+                    return path
+        return None
 
 
 # -- the tool ------------------------------------------------------------------------------------------------
@@ -637,11 +781,14 @@ class Delegator:
         self.runner = runner
         self.in_routine = in_routine
 
-    def needs_approval(self, arguments: dict, forced: bool = False) -> tuple[str, str, str] | None:
+    def needs_approval(self, arguments: dict, forced: bool = False, session_id: str = "") -> tuple[str, str, str] | None:
         """(rule, title, detail) when this call must wait for the user, else None. Codex always (it can read
         outside its folder); Claude Code when Settings asks, and always for a folder the bot named, so only a run
         in a fresh folder the harness makes can go unasked. An agent that is not on asks nothing: the tool refuses
-        it. `forced` (a skill rule already asks) gives the title and detail whatever the agent and switches."""
+        it. `forced` (a skill rule already asks) gives the title and detail whatever the agent and switches. In a
+        routine nothing is asked, not even when forced: nobody is there to answer, and the tool refuses it."""
+        if session_id and self.in_routine(session_id):
+            return None
         agent = arguments.get("agent")
         known = isinstance(agent, str) and agent in AGENTS
         raw = "" if arguments.get("folder") is None else str(arguments["folder"]).strip()
@@ -652,7 +799,7 @@ class Delegator:
             if agent == "claude-code" and not settings.ask and not raw:
                 return None
         task = str(arguments.get("task") or "")
-        name = AGENTS[agent].program.name if known else str(agent)
+        name = AGENTS[agent].program.name if known else " ".join(str(agent).split())[:40]  # bot-written: one short line
         model = (settings.model if settings else "") or "the agent's default"
         lines = [f"Hand this job to {name}?", f"Folder: {self._shown(raw)}", f"Model: {model}"]
         if agent == "codex":
@@ -688,7 +835,8 @@ class Delegator:
         name = AGENTS[agent].program.name
         if not self.agents.settings(agent).enabled:
             return f"{name} is switched off in Settings."
-        return (self.agents.statuses.get(agent) or {}).get("reason") or f"{name} cannot run now. Check Settings > Agents."
+        return ((self.agents.statuses.get(agent) or {}).get("reason")
+                or f"{name} cannot run now. Check Settings > Harness Tools > Coding agents.")
 
     async def delegate(self, agent: str, task: str, folder: str | None = None) -> str:
         bot_id, session_id = current_call.get()
@@ -702,15 +850,18 @@ class Delegator:
             raise DelegationError(f"The task is {len(task):,} characters; the most is {MAX_TASK:,}. Shorten it.")
         stamp = f"{date.today().isoformat()}-{uuid4().hex[:6]}"
         try:
-            path, _ = resolve_folder(self.vault_root, self.folders(), (folder or "").strip(), stamp)
+            path, made = resolve_folder(self.vault_root, self.folders(), (folder or "").strip(), stamp)
         except FolderRefused as e:
             raise DelegationError(str(e)) from None
-        result = await self.runner.run(agent, path, task, bot_id, session_id)  # the runner adds the preamble
-        if not result.ok:
-            raise DelegationError(result.error)  # the loop's tool_call entry records it
-        # the folder first: the changes are listed relative to it, and a harness-made one has a fresh name
+        # the runner adds the preamble, and checks a folder the bot named for links just before the launch
+        result = await self.runner.run(agent, path, task, bot_id, session_id, named=not made)
+        # the folder first (the changes are listed relative to it, and a harness-made one has a fresh name), then the
+        # changes, so a long answer cannot push either past the tool output cap; a failed run says them too
         where = self._relative(_norm(path)) or str(path)
-        return f"Folder: {where}\n{result.text}\n\n{changes_text(result.changed, result.complete)}"
+        done = f"Folder: {where}\n{changes_text(result.changed, result.complete)}"
+        if not result.ok:
+            raise DelegationError(f"{result.error}\n\n{done}")  # the loop's tool_call entry records it
+        return f"{done}\n\n{result.text}"
 
     def register(self, tools: Any) -> bool:
         """Offer the tool while an agent is on, naming those agents; take it away otherwise. Safe to call again."""
@@ -746,3 +897,6 @@ class Delegator:
 
     def stop(self, session_id: str) -> bool:
         return self.runner.stop(session_id)
+
+    async def stop_all(self) -> None:
+        await self.runner.stop_all()

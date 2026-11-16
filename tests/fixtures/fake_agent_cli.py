@@ -93,11 +93,27 @@ def main() -> int:
         return 1
     elif mode == "odd_paths":
         emit(init())
-        outside = str(Path(os.getcwd()).parent / "elsewhere.txt")
+        outside = str(Path(os.getcwd()).parent / ("elsewhere-" + "x" * 1000 + ".txt"))  # long: the ledger caps it
         emit({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": "t1", "name": "Write", "input": {"file_path": outside, "content": "x"}},
             {"type": "tool_use", "id": "t2", "name": "Edit", "input": {"file_path": "bad\u0000name.txt"}}]}})
         success()
+    elif mode in ("reach_read", "reach_glob"):
+        # asks for a path outside its folder, then hangs with a child: the runner must end the run itself
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        record({**data, "child": child.pid})
+        emit(init())
+        up = Path(os.getcwd()).parent
+        name, args = (("Read", {"file_path": str(up / "secret.txt")}) if mode == "reach_read"
+                      else ("Glob", {"pattern": "**/*", "path": str(up)}))
+        emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": name, "input": args}]}})
+        time.sleep(120)
+    elif mode == "write_then_fail":
+        emit(init())
+        write_out()
+        emit({"type": "result", "subtype": "error_max_turns", "is_error": True, "result": "Ran out of turns",
+              "usage": {"input_tokens": 3, "output_tokens": 1}})
     elif mode == "hang":
         # the child first, so even a 1 s timeout finds a tree to kill
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"],
