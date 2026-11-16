@@ -86,14 +86,14 @@ def load_dir(path: Path, *, report: bool = False):
     return (prompts, errors) if report else prompts
 
 
-def save(path: Path, p: BotPrompt) -> BotPrompt:
+def save(path: Path, p: BotPrompt, taken: frozenset[str] | set[str] = frozenset()) -> BotPrompt:
     """Write the prompt. An empty id gets a slug from the name, uniquified
-    against existing files; a known id rewrites that file in place."""
+    against existing files and the ids in `taken`; a known id rewrites that file in place."""
     path.mkdir(parents=True, exist_ok=True)
     if not p.id:
         base = slugify(p.name)
         p.id, n = base, 2
-        while (path / f"{p.id}{SUFFIX}").exists():
+        while p.id in taken or (path / f"{p.id}{SUFFIX}").exists():
             p.id, n = f"{base}-{n}", n + 1
     (path / f"{p.id}{SUFFIX}").write_text(render(p), encoding="utf-8")
     return p

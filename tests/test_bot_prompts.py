@@ -255,3 +255,19 @@ async def test_without_user_content_bots_save_where_they_always_did(vault: Path,
     await _patch_b(vault, shipped, False)
     assert (shipped / "b.md").read_text() != before
     assert not user_bots_dir(vault).exists()
+
+
+async def test_a_new_bot_never_takes_a_shipped_bots_id_in_user_content_mode(monkeypatch, vault: Path, tmp_path: Path):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("ZEN_MEMORY_BACKEND", "local")
+    shipped = tmp_path / "shipped"
+    _bot_file(shipped, "designer", "Designer")
+    cfg = HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=shipped, user_content=True)
+    h = build_harness(cfg)
+    transport = httpx.ASGITransport(app=create_app(h))
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
+        r = await c.post("/bots", json={"name": "Designer", "role": "Mine", "instructions": ""})
+        assert r.status_code == 201 and r.json()["id"] == "designer-2"
+    assert set(h.bots) == {"designer", "designer-2"}
+    again = build_harness(cfg)
+    assert {b.id: b.role for b in again.bots.values()} == {"designer": "Role of Designer", "designer-2": "Mine"}
