@@ -4,7 +4,7 @@
 // preview cards under the text, and leave the text so nothing shows twice.
 // Each code block (where a bot hands over a prompt to paste elsewhere) has Copy under it, and the
 // reply has Copy reply, so nothing needs selecting by hand.
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from '@fluentui/react-components';
@@ -12,6 +12,8 @@ import { Checkmark20Regular, Copy20Regular } from '@fluentui/react-icons';
 import { codeText, copyText, isProse } from './copy.js';
 import { mediaItems, remarkMediaCards } from './media.js';
 import { MediaGrid } from './MediaCards';
+import QuestionForm from './QuestionForm';
+import { parseQuestionForm } from './question-form.js';
 
 /** Copy, then "Copied" (or "Couldn't copy") for a moment. */
 export function CopyButton({ text, label = 'Copy', title }) {
@@ -34,18 +36,31 @@ const Image = ({ src, alt }) => (src ? <a href={src} target="_blank" rel="noopen
 // Wide tables scroll inside the message rather than pushing the chat sideways.
 const Table = ({ children }) => <div className="md-table"><table>{children}</table></div>;
 
-// A code block with Copy under it: the block's text exactly, without the reply around it.
-const Code = ({ node, children }) => <div className={isProse(node) ? 'md-code prose' : 'md-code'}><pre>{children}</pre><div className="md-copy"><CopyButton text={codeText(node)} title="Copy this block"/></div></div>;
+// The reply's form settings ({ live, onAnswer }) reach Code through context, not react-markdown props.
+const FormContext = createContext(null);
+const codeLang = pre => {
+  const code = (pre.children || []).find(c => c.type === 'element' && c.tagName === 'code');
+  return (code?.properties?.className || []).map(String).find(c => c.startsWith('language-'))?.slice(9).toLowerCase();
+};
+
+// A code block with Copy under it: the block's text exactly, without the reply around it. A valid
+// `question-form` block is a form instead; one that does not parse stays a code block.
+const Code = ({ node, children }) => {
+  const ctx = useContext(FormContext);
+  const form = useMemo(() => (codeLang(node) === 'question-form' ? parseQuestionForm(codeText(node)) : null), [node]);
+  if (form) return <QuestionForm form={form} live={!!ctx?.live} onAnswer={ctx?.onAnswer}/>;
+  return <div className={isProse(node) ? 'md-code prose' : 'md-code'}><pre>{children}</pre><div className="md-copy"><CopyButton text={codeText(node)} title="Copy this block"/></div></div>;
+};
 
 const COMPONENTS = { a: Link, img: Image, table: Table, pre: Code };
 const PLUGINS = [remarkGfm, remarkMediaCards];
 
-export default function Markdown({ text, attachments = [] }) {
+export default function Markdown({ text, attachments = [], form = null }) {
   const fromText = useMemo(() => mediaItems(text || ''), [text]);
   const items = attachments.length ? [...fromText, ...attachments] : fromText;
-  return <div className="markdown">
+  return <FormContext.Provider value={form}><div className="markdown">
     {text ? <ReactMarkdown remarkPlugins={PLUGINS} components={COMPONENTS}>{text}</ReactMarkdown> : null}
     {items.length > 0 && <MediaGrid items={items}/>}
     {text?.trim() && <div className="md-reply-actions"><CopyButton text={text} label="Copy reply" title="Copy the whole reply"/></div>}
-  </div>;
+  </div></FormContext.Provider>;
 }
