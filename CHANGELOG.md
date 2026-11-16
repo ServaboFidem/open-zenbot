@@ -4,6 +4,7 @@ What changed on `main`, newest first. Updated automatically on every push to `ma
 
 ## 2026-11-16
 
+- Design studio: the harness picks each conversation's design folder ([`fcfa39f`](https://github.com/ServaboFidem/open-zenbot/commit/fcfa39f129e53338ba13e10fd4c8379d6fcdc690))
 - Design studio from ZenBot, a Design page, Skills and MCP servers in Settings ([`25789fc`](https://github.com/ServaboFidem/open-zenbot/commit/25789fc2e1d8a5c84c0afa34aa11afbf4f75102b))
 - Settings: jump to provider and tool cards, stop a late jump on input, drop doubled headings, tidy tile markup ([`b46204d`](https://github.com/ServaboFidem/open-zenbot/commit/b46204dbfc4eb5e2ae954f264571d65a4cd789ff))
 - Settings search: match a section by its own words; keep focus and the query; provider jumps ([`f980310`](https://github.com/ServaboFidem/open-zenbot/commit/f9803108dda81ad1bac0fbc7cfba4799aae044f4))
