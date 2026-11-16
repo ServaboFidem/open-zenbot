@@ -958,6 +958,7 @@ def create_app(h: Harness) -> FastAPI:
         finally:
             warming.cancel()
             refreshing.cancel()
+            await h.delegator.stop_all()  # every hand-off in flight ends, its tree killed and its end logged
             scheduler.stop()
             await scheduling
             if extracting is not None:  # the store in flight finishes; the rest of its job runs again at the next start
@@ -1051,6 +1052,9 @@ def create_app(h: Harness) -> FastAPI:
         for c in servers:
             if c.name in st and any(r.setting == key or r.bin == prog.bin for r in c.requires):
                 await reconnect_mcp(c.name)
+        if key in agent_clis.AGENTS:  # a coding agent: found, moved or gone now, so offered or withdrawn now
+            await h.agents.refresh(key)
+            h.delegator.register(h.tools)
         return await asyncio.to_thread(tool_paths.status, h.config.vault_root, key)
 
     @app.get("/settings/tools/programs/{key}")
@@ -1077,7 +1081,8 @@ def create_app(h: Harness) -> FastAPI:
         h.ledger.append(Kind.settings, "", "", event="tool", tool=key, path=None)
         return await program_changed(key)
 
-    # delegating to Claude Code and Codex (Settings > Agents): detection and switches; running is elsewhere
+    # delegating to Claude Code and Codex (Settings > Harness Tools > Coding agents): detection and switches; running
+    # is elsewhere
     @app.get("/agents")
     async def get_agents() -> dict[str, Any]:
         agents = await h.agents.refresh()

@@ -343,6 +343,48 @@ async def test_stop_while_the_approval_waits_launches_nothing(tmp_path, monkeypa
     assert not h.ledger.tail(kind="delegate", session_id=s.id) and h.delegator.runner.live == {}
 
 
+async def test_shutdown_stops_every_live_run(app_h, monkeypatch, tmp_path):
+    from src.harness import delegation
+
+    from .test_delegation import FAKE, FakeRunner, _all_dead, _child_recorded
+
+    app, h = app_h
+    record = tmp_path / "record.json"
+    real = delegation.run_env
+    monkeypatch.setattr(delegation, "run_env",
+                        lambda base=None: {**real(base), "FAKE_AGENT_RECORD": str(record), "FAKE_AGENT_MODE": "hang"})
+    h.agents.statuses["claude-code"] = {"path": str(FAKE), "auth": "subscription", "usable": True}
+
+    async def keep(key=None):  # the lifespan's start-up probe would replace the fake's status
+        return []
+
+    monkeypatch.setattr(h.agents, "refresh", keep)
+    h.delegator.runner = FakeRunner(h.agents, h.ledger, timeout=120)
+    job = h.config.vault_root / "job"
+    job.mkdir()
+    async with app.router.lifespan_context(app):
+        running = asyncio.create_task(h.delegator.runner.run("claude-code", job.resolve(), "Wait.", "b1", "s1"))
+        rec = await _child_recorded(record)
+    result = await asyncio.wait_for(running, 5)  # ended by the shutdown, not by its 120 s limit
+    assert not result.ok and h.delegator.runner.live == {}
+    assert await _all_dead([rec["pid"], rec["child"]])
+
+
+async def test_a_program_path_for_an_agent_refreshes_it_and_the_tool(app_h, tmp_path):
+    app, h = app_h
+    save_settings(h.config.vault_root, "claude-code", AgentSettings(enabled=True))
+    exe = fake_cli(tmp_path / "elsewhere", "claude", CLAUDE)  # not on PATH, not in an install folder
+    url = "/settings/tools/programs/claude-code"
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as c:
+        await c.get("/agents")
+        assert "delegate" not in h.tools.names()
+        assert (await c.put(url, json={"path": str(exe)})).status_code == 200
+        assert h.agents.statuses["claude-code"]["usable"] and "delegate" in h.tools.names()
+        assert (await c.delete(url)).status_code == 200
+        assert not h.agents.statuses["claude-code"]["usable"]
+    assert "delegate" not in h.tools.names()
+
+
 async def test_put_bad_model_422(app_h):
     app, h = app_h
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as c:

@@ -125,7 +125,7 @@ class TaskLoop:
         supervisor: "LoopSupervisor | None" = None,
         model_for: "Callable[[Bot], tuple[Provider, str | None]] | None" = None,
         write_check: "ShellWriteCheck | None" = None,
-        delegate_check: "Callable[[dict, bool], tuple[str, str, str] | None] | None" = None,
+        delegate_check: "Callable[[dict, bool, str], tuple[str, str, str] | None] | None" = None,
     ) -> None:
         self.provider = provider
         self.model_for = model_for  # a bot's own provider and model (Edit bot); None or (provider, None): the chat model
@@ -140,7 +140,8 @@ class TaskLoop:
         self.supervisor = supervisor
         self.write_check = write_check  # a shell command that may write outside the allowed folders waits for the user
         # (rule, title, detail) when a hand-off to Claude Code or Codex waits for the user; its second argument is
-        # true when a skill rule already asks, so the approval still shows the hand-off
+        # true when a skill rule already asks, so the approval still shows the hand-off; its third is the session, so
+        # a routine (nobody to approve) gets no approval at all and the tool refuses it
         self.delegate_check = delegate_check
 
     async def run(
@@ -324,9 +325,11 @@ class TaskLoop:
             from .delegation import REJECTED as DELEGATE_REJECTED
 
             # a skill rule that matched keeps its name, but the user still sees what is handed off and to whom
-            if asked := self.delegate_check(call.arguments, bool(rule)):
+            if asked := self.delegate_check(call.arguments, bool(rule), session.id):
                 rule, title, detail = rule or asked[0], asked[1], asked[2]
                 rejected = DELEGATE_REJECTED
+            else:  # nothing to approve, a skill rule included: it runs unasked, or the tool refuses it (a routine)
+                rule = None
         if rule:
             req = self.approvals.create(
                 bot.id, session.id,
