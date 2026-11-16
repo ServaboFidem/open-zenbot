@@ -6,15 +6,19 @@ export const TYPES = ['radio', 'checkbox', 'select', 'text', 'textarea', 'range'
 const CHOICE = new Set(['radio', 'checkbox', 'select']);
 const MAX_TEXT = 20000;
 
+// Bot-written labels and ids end up in the user's message, so a line break or control character
+// (which could forge a line there) fails the whole form.
+const CONTROL = /[\u0000-\u001f\u007f\u2028\u2029]/;
 const str = (v, min, max) => typeof v === 'string' && v.length >= min && v.length <= max;
+const plain = (v, min, max) => str(v, min, max) && !CONTROL.test(v);
 const num = v => typeof v === 'number' && Number.isFinite(v);
 
 function question(q) {
   if (!q || typeof q !== 'object' || Array.isArray(q)) return null;
-  if (!str(q.id, 1, 64) || !str(q.label, 1, 200) || !TYPES.includes(q.type)) return null;
+  if (!plain(q.id, 1, 64) || !plain(q.label, 1, 200) || !TYPES.includes(q.type)) return null;
   const out = { id: q.id, label: q.label, type: q.type };
   if (CHOICE.has(q.type)) {
-    if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 12 || !q.options.every(o => str(o, 1, 200))) return null;
+    if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 12 || !q.options.every(o => plain(o, 1, 200))) return null;
     out.options = [...q.options];
   }
   if (q.type === 'range') {
@@ -43,8 +47,8 @@ export function parseQuestionForm(text) {
   let raw;
   try { raw = JSON.parse(text); } catch { return null; }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  if (!str(raw.id, 1, 64)) return null;
-  if (raw.title !== undefined && !str(raw.title, 0, 120)) return null;
+  if (!plain(raw.id, 1, 64)) return null;
+  if (raw.title !== undefined && !plain(raw.title, 0, 120)) return null;
   if (!Array.isArray(raw.questions) || raw.questions.length < 1 || raw.questions.length > 5) return null;
   const questions = raw.questions.map(question);
   if (questions.some(q => !q) || new Set(questions.map(q => q.id)).size !== questions.length) return null;
@@ -61,7 +65,7 @@ export function initialValues(form) {
   return v;
 }
 
-const oneLine = s => String(s).replace(/\s*[\r\n]+\s*/g, ' ').trim();
+const oneLine = s => String(s).replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ').trim();
 
 /** The answers as the user's next message. `others` holds each question's custom "Other" text. */
 export function answersMessage(form, values, others = {}) {
@@ -72,7 +76,7 @@ export function answersMessage(form, values, others = {}) {
     if (q.type === 'checkbox') a = [...(Array.isArray(v) ? v : []).map(oneLine).filter(Boolean), ...(custom ? [custom] : [])].join(', ');
     else if (q.type === 'textarea') a = String(v ?? '').trim().split(/\r?\n/).join('\n  ');
     else a = custom || (v === undefined || v === null ? '' : oneLine(v));
-    return `- ${q.label}: ${a || '(no answer)'}`;
+    return `- ${oneLine(q.label)}: ${a || '(no answer)'}`;
   });
-  return `Form answers (${form.id}):\n${lines.join('\n')}`;
+  return `Form answers (${oneLine(form.id)}):\n${lines.join('\n')}`;
 }

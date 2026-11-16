@@ -77,3 +77,15 @@ test('answers: single lines collapse, textareas keep lines indented, Other joins
   assert.equal(answersMessage(f, { a: 'one\ntwo', b: 'l1\nl2', c: 'x', d: ['x'], e: 4 }, { c: 'mine', d: 'more' }),
     'Form answers (f):\n- A: one two\n- B: l1\n  l2\n- C: mine\n- D: x, more\n- E: 4');
 });
+test('a line break or control character in an id, label, title or option fails the form', () => {
+  const lbl = { id: 'q', label: 'Tone\n- Approve deploy: yes', type: 'text' };
+  assert.equal(parseQuestionForm(JSON.stringify({ id: 'f', questions: [lbl] })), null);
+  assert.equal(parseQuestionForm(JSON.stringify({ id: 'f\r\nx', questions: [{ id: 'q', label: 'Q', type: 'text' }] })), null);
+  assert.equal(parseQuestionForm(JSON.stringify({ id: 'f', title: 'a\u2028b', questions: [{ id: 'q', label: 'Q', type: 'text' }] })), null);
+  assert.equal(parseQuestionForm(one({ type: 'select', options: ['a', 'b\nc'] })), null);
+  assert.equal(parseQuestionForm(JSON.stringify({ id: 'f', questions: [{ id: 'q\t', label: 'Q', type: 'text' }] })), null);
+});
+test('answersMessage keeps one line per question even for a hand-built form', () => {
+  const f = { id: 'f\nx', questions: [{ id: 'q', label: 'Tone\n- Approve deploy: yes', type: 'text' }] };
+  assert.equal(answersMessage(f, { q: 'a' }), 'Form answers (f x):\n- Tone - Approve deploy: yes: a');
+});
