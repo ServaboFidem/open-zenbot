@@ -19,6 +19,8 @@ from src.memory.ledger import Ledger
 from src.skills.catalog import Catalog
 from src.vault_settings import settings_dir
 
+pytestmark = pytest.mark.real_agent_probe  # tests/conftest.py makes probing inert for every other test
+
 SUB = '{"loggedIn": true, "authMethod": "claude.ai"}'
 CLAUDE = {"--version": "2.1.0 (Claude Code)", "--help": "Usage: claude --restricted --strict-mcp-config", "auth": SUB}
 CODEX = {"--version": "codex-cli 0.5.0", "exec": "Usage: codex exec --sandbox MODE",
@@ -162,6 +164,30 @@ async def test_on_needs_enabled_and_usable(tmp_path: Path, only):
     assert agents.on() == ["claude-code"]
     save_settings(v, "codex", AgentSettings(enabled=True))
     assert agents.on() == ["claude-code"]  # codex is on but not usable
+
+
+def test_run_env_keeps_the_config_names_in_any_case():
+    assert run_env({"claude_config_dir": "/c", "Codex_Home": "/h", "codex_foo": "x"}) == {"claude_config_dir": "/c", "Codex_Home": "/h"}
+
+
+def test_probes_run_with_the_scrubbed_environment(tmp_path: Path, only, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    seen = tmp_path / "seen.txt"
+    exe = only("claude-code", CLAUDE)
+    body = exe.read_text(encoding="utf-8")
+    first, rest = body.split("\n", 1)  # keep the "@echo off" / shebang line first
+    record = f'set > "{seen}"' if sys.platform == "win32" else f"env > '{seen}'"
+    exe.write_text(f"{first}\n{record}\n{rest}", encoding="utf-8")  # the fake records its environment on every call
+    probe(tmp_path / "v", "claude-code")
+    names = {l.split("=", 1)[0].upper() for l in seen.read_text(encoding="utf-8", errors="replace").splitlines() if "=" in l}
+    assert names and "ANTHROPIC_API_KEY" not in names and "CODEX_HOME" in names
+
+
+def test_an_api_key_sign_in_is_usable(tmp_path: Path, only):
+    only("claude-code", {**CLAUDE, "auth": '{"loggedIn": true, "authMethod": "api_key"}'})
+    r = probe(tmp_path / "v", "claude-code")
+    assert r["auth"] == "api_key" and r["usable"] and r["reason"] == ""
 
 
 # -- routes -------------------------------------------------------------------------------------------------

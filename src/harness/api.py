@@ -927,7 +927,7 @@ def create_app(h: Harness) -> FastAPI:
             h.markdownify = lambda tool, filepath: reg.call("markdownify", tool, {"filepath": filepath})
             h.ingestor = None
             h.__post_init__()
-        await h.agents.refresh()
+        refreshing = asyncio.create_task(h.agents.refresh())  # a hung CLI must not hold startup; GET /agents waits for its own
         h.bootstrap_owner()
         h.learner.restore()  # learn holds waiting in Approvals come back after a restart
         scheduling = asyncio.create_task(scheduler.run())
@@ -938,6 +938,7 @@ def create_app(h: Harness) -> FastAPI:
             yield
         finally:
             warming.cancel()
+            refreshing.cancel()
             scheduler.stop()
             await scheduling
             if extracting is not None:  # the store in flight finishes; the rest of its job runs again at the next start
@@ -1073,13 +1074,12 @@ def create_app(h: Harness) -> FastAPI:
             model=cur.model if body.model is None else body.model.strip())
         if new.model and not agent_clis.MODEL.fullmatch(new.model):
             raise HTTPException(422, "A model name may hold only letters, digits, dots, dashes and underscores (64 at most).")
-        if body.enabled:  # a fresh look: it may have been signed out since the last one
-            now = await asyncio.to_thread(agent_clis.probe, h.config.vault_root, key)
-            if not now["usable"]:
-                raise HTTPException(422, now["reason"])
+        now = await asyncio.to_thread(agent_clis.probe, h.config.vault_root, key)  # fresh: it may have been signed out since
+        if body.enabled and not now["usable"]:
+            raise HTTPException(422, now["reason"])
         agent_clis.save_settings(h.config.vault_root, key, new)
         h.ledger.append(Kind.settings, "", "", event="agent", agent=key, enabled=new.enabled, ask=new.ask, model=new.model)
-        await h.agents.refresh(key)
+        h.agents.statuses[key] = {**now, "enabled": new.enabled, "ask": new.ask, "model": new.model}
         return h.agents.statuses[key]
 
     # tracing (Settings > Tracing): saved over .env, applied now; the desktop app reads the DSN at launch

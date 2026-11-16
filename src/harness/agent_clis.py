@@ -44,14 +44,14 @@ AGENTS: dict[str, AgentCli] = {
 RUNNABLE: dict[str, str] = {"claude-code": "", "codex": "Codex runs are not built yet."}
 
 _DROPPED = ("ANTHROPIC_", "OPENAI_", "CLAUDE_CODE_", "CODEX_")
-_KEPT = ("CLAUDE_CONFIG_DIR", "CODEX_HOME")
+_KEPT = ("CLAUDE_CONFIG_DIR", "CODEX_HOME")  # compared upper-case, like the prefixes
 
 
 def run_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     """The environment a CLI child gets: the scrubbed one, minus every vendor variable (keys, base URLs, tokens),
     so only its own sign-in (CLAUDE_CONFIG_DIR, CODEX_HOME) decides who it is."""
     env = dict(scrubbed_env() if base is None else base)
-    return {k: v for k, v in env.items() if k in _KEPT or not k.upper().startswith(_DROPPED)}
+    return {k: v for k, v in env.items() if k.upper() in _KEPT or not k.upper().startswith(_DROPPED)}
 
 
 def read_auth(key: str, output: str | None) -> str:
@@ -179,8 +179,10 @@ class Agents:
 
     async def refresh(self, key: str | None = None) -> list[dict[str, Any]]:
         """Probe in a thread (the programs may be slow); all agents, or just `key`."""
-        for k in [key] if key else list(AGENTS):
-            self.statuses[k] = await asyncio.to_thread(probe, self.vault_root, k)
+        keys = [key] if key else list(AGENTS)
+        # looked up here, not bound at import, so a test can swap `probe`
+        for k, st in zip(keys, await asyncio.gather(*(asyncio.to_thread(probe, self.vault_root, k) for k in keys))):
+            self.statuses[k] = st
         return [self.statuses[k] for k in AGENTS if k in self.statuses]
 
     def settings(self, key: str) -> AgentSettings:
