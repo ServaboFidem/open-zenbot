@@ -1498,7 +1498,7 @@ async def test_task_with_comments_reaches_the_bot_and_the_next_history(client, h
     assert harness.sessions[sid].task == "tweak" and harness.sessions[sid].protected["task"] == "tweak"
     text = (await client.get(f"/conversations/{cid}")).text
     ex = json.loads(text)["exchanges"][-1]
-    assert ex["user"] == "tweak" and len(ex["comments"]) == 1 and "addendum" not in ex
+    assert ex["user"] == "tweak" and ex["comments"] == [_comment(second["id"])] and "addendum" not in ex
     assert "addendum" not in text and str(harness.config.vault_root) not in text
     harness.provider.script = [completion("Next.")]
     sid = (await client.post("/bots/des/tasks", json={"task": "more"})).json()["session_id"]

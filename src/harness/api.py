@@ -2058,7 +2058,7 @@ def create_app(h: Harness) -> FastAPI:
             session = h.start_task(bot, body.task.strip(), conversation_id=body.conversation_id or None,
                                    in_conversation=body.conversation,
                                    protected=body.protected.model_dump() if body.protected else None,
-                                   comments=[{k: v for k, v in c.items() if k != "attachment_id"} for c in comments],
+                                   comments=comments,
                                    addendum=addendum)
         except KeyError:
             raise HTTPException(404, "no such conversation") from None
