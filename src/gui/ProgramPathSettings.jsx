@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Badge, Button, Field, Input, Spinner } from '@fluentui/react-components';
+import { EXAMPLE } from './program-paths';
 
 // Settings > Harness Tools > ImageMagick (and any other host program the harness runs by full path): the path
 // is kept in vault-settings/tools.json, out of the bots' reach, and the harness runs that file rather than
@@ -15,11 +16,6 @@ const UNSET = {
   imagemagick: s => `The magick tool cannot run until a path is set. Run scripts/install-deps (install-deps.ps1 on Windows) to install ${s.name} ${s.min_version}+ and fill this in, or enter the path below.`,
 };
 const unset = s => (UNSET[s.key] || (x => `Bots cannot hand work to ${x.name} until a path is set. Install ${x.name}, then enter the path below.`))(s);
-const EXAMPLE = {
-  'claude-code': 'Like C:\Users\you\.local\bin\claude.exe or /usr/local/bin/claude.',
-  codex: 'Like C:\Users\you\AppData\Roaming\npm\codex.cmd or /usr/local/bin/codex.',
-  imagemagick: 'Like C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI\\magick.exe or /opt/homebrew/bin/magick.',
-};
 
 const PROGRAM_NAMES = { imagemagick: 'ImageMagick', 'claude-code': 'Claude Code', codex: 'Codex' };
 

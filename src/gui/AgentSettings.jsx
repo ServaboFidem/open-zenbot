@@ -22,12 +22,13 @@ function AgentCard({ ctx, a, onChange, reload }) {
   const dirty = model.trim() !== (a.model || '');
   return <div className="resource-row editor-form">
     <div className="od-row-top tool-heading"><div className="od-field od-fill"><h3>{a.name}</h3></div><Badge appearance="tint" color={st.tone}>{st.text}</Badge></div>
-    {!a.usable && a.reason && <p className="field-hint">{a.reason}</p>}
+    {st.detail && <p className="field-hint">{st.detail}</p>}
+    {error && <p className="form-error" role="alert">{error}</p>}
     <Switch checked={a.enabled} disabled={!online || busy || (!a.usable && !a.enabled)} label={`Bots may hand work to ${a.name}`} onChange={(e, d) => save({ enabled: d.checked })}/>
     {asks ? <Switch checked={a.ask} disabled={!online || busy} label="Ask me before each run" onChange={(e, d) => save({ ask: d.checked })}/>
       : <p className="field-hint">Always asks: Codex can read files outside the job folder.</p>}
     <form className="od-row" onSubmit={e => { e.preventDefault(); save({ model: model.trim() }, `${a.name}: model saved`); }}>
-      <div className="od-fill"><Field label="Model" hint="Leave empty to use the program's own default." validationMessage={error || undefined}>
+      <div className="od-fill"><Field label="Model" hint="Leave empty to use the program's own default.">
         <Input value={model} placeholder="Default" onChange={(e, d) => setModel(d.value)} autoComplete="off" spellCheck={false}/>
       </Field></div>
       <Button appearance="primary" type="submit" disabled={!online || busy || !dirty}>Save</Button>
@@ -40,9 +41,11 @@ function AgentCard({ ctx, a, onChange, reload }) {
 export function CodingAgentsSection({ ctx }) {
   const { api, online, guard } = ctx;
   const [agents, setAgents] = useState(null);
-  const load = () => guard(() => api.agents(), { quiet: true }).then(r => r && setAgents(r.agents));
+  const [failed, setFailed] = useState(false);
+  const load = () => { setFailed(false); return guard(() => api.agents(), { quiet: true }).then(r => r ? setAgents(r.agents) : setFailed(true)); };
   useEffect(() => { if (online) load(); }, [online]);
   if (!online) return null;
+  if (!agents && failed) return <div className="resource-row od-row"><p className="od-fill">Could not check for coding agents.</p><Button appearance="outline" onClick={load}>Retry</Button></div>;
   if (!agents) return <div className="resource-row"><Spinner size="tiny" label="Checking coding agents…"/></div>;
   const put = next => setAgents(list => list.map(x => x.id === next.id ? next : x));
   return <>

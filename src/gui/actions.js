@@ -127,7 +127,7 @@ const agentName = id => AGENT_NAMES[id] || 'The coding agent';
 // A delegated run's ledger entries (kind "delegate": start, file, end) as rows that follow the delegate tool's row.
 function delegateRow(base, d, run) {
   if (d.event === 'start') { run.name = agentName(d.agent); return { ...base, icon: 'agent', status: 'info', title: `${run.name} started`, detail: clip(d.folder, 300), meta: '' }; }
-  if (d.event === 'file') return { ...base, icon: d.outside ? 'approval' : 'agent', status: d.outside ? 'waiting' : 'info', title: clip(d.tool, 40) || 'Touched a file', detail: clip(d.path, 300), meta: d.outside ? 'outside the job folder' : '' };
+  if (d.event === 'file') return { ...base, icon: d.outside ? 'error' : 'agent', status: d.outside ? 'error' : 'info', title: clip(d.tool, 40) || 'Touched a file', detail: clip(d.path, 300), meta: d.outside ? 'This file is outside the job folder' : '' };
   if (d.event === 'end') {
     const name = run.name || 'The coding agent', n = Array.isArray(d.changed) ? d.changed.length : 0;
     const detail = [d.seconds != null && `${Math.round(d.seconds)} s`, `${n} ${n === 1 ? 'file' : 'files'} changed`].filter(Boolean).join(' · ');
