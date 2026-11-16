@@ -177,3 +177,27 @@ test('rotateLog keeps harness.log and one harness.log.1', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('output arriving after "exit" but before "close" is still in detail, with an unterminated last line', async () => {
+  const { t, h } = rig();
+  t.onSleep = () => {
+    if (t.sleeps === 1) t.child.emit('exit', 1, null);
+    if (t.sleeps === 2) t.child.stderr.emit('data', 'Traceback (most recent call last):\n  File "x.py"\nImportError: no module');
+    if (t.sleeps === 3) t.child.emit('close', 1, null);
+  };
+  const r = await h.start();
+  assert.equal(r.reason, 'exited');
+  assert.deepEqual(r.detail.split('\n'), ['Traceback (most recent call last):', '  File "x.py"', 'ImportError: no module']);
+});
+
+test('a child whose streams never close does not hang start() or stop()', async () => {
+  const a = rig();
+  a.t.onSleep = () => { if (a.t.sleeps === 1) a.t.child.emit('exit', 1, null); };
+  assert.equal((await a.h.start()).reason, 'exited');
+
+  const b = rig({ healthy: t2 => t2.child !== null });
+  await b.h.start();
+  b.t.onSleep = () => b.t.child.emit('exit', 0, 'SIGTERM');
+  await b.h.stop();
+  assert.deepEqual(b.t.kills, [[-4242, 'SIGTERM']]);
+});

@@ -17,6 +17,8 @@ const POLL_MS = 500;
 const STOP_STEP_MS = 250;
 const STOP_STEPS = 180; // 45 s, as scripts/dev.sh
 const TAIL_LINES = 40;
+const GRACE_MS = 100;
+const GRACE_STEPS = 20;
 
 // Keep harness.log and one harness.log.1: call before opening the log for a new start.
 function rotateLog({ dir, fs, platform = process.platform }) {
@@ -35,6 +37,8 @@ function createHarness({ paths, platform, port = 8765, baseEnv = process.env, sp
   const url = `http://127.0.0.1:${port}`;
   let child = null;
   let exited = true;
+  let closed = true;
+  let flushAll = () => {};
   let stopping = false;
   let starting = null;
   let started = false;
@@ -67,16 +71,20 @@ function createHarness({ paths, platform, port = 8765, baseEnv = process.env, sp
     }
   }
 
+  // Returns a flush that moves a last line without a newline into the tail.
   function collect(stream) {
-    if (!stream || typeof stream.on !== 'function') return;
+    if (!stream || typeof stream.on !== 'function') return () => {};
     let partial = '';
+    const push = l => { tail.push(l); if (tail.length > TAIL_LINES) tail = tail.slice(-TAIL_LINES); };
     stream.on('data', chunk => {
       try { logStream.write(chunk); } catch { /* a broken log must not stop the harness */ }
       const lines = (partial + String(chunk)).split(/\r?\n/);
       partial = lines.pop();
-      for (const l of lines) tail.push(l);
-      if (tail.length > TAIL_LINES) tail = tail.slice(-TAIL_LINES);
+      lines.forEach(push);
     });
+    const flush = () => { if (partial) { push(partial); partial = ''; } };
+    stream.on('end', flush);
+    return flush;
   }
 
   function launch() {
@@ -84,6 +92,7 @@ function createHarness({ paths, platform, port = 8765, baseEnv = process.env, sp
     stopping = false;
     started = false;
     exited = false;
+    closed = false;
     const c = spawn(paths.python, ['-m', 'src.harness.main'], {
       cwd: paths.harness,
       env: childEnv(),
@@ -91,30 +100,40 @@ function createHarness({ paths, platform, port = 8765, baseEnv = process.env, sp
       windowsHide: true,
     });
     child = c;
-    collect(c.stdout);
-    collect(c.stderr);
-    const done = (why) => {
+    const flushes = [collect(c.stdout), collect(c.stderr)];
+    flushAll = () => flushes.forEach(f => f());
+    // 'exit' means the process is gone (stop() and onExit act on it); 'close' comes after its output streams end,
+    // so start() waits for that before it reads the tail.
+    const gone = () => {
       if (child !== c || exited) return;
       exited = true;
-      if (why) tail.push(why);
       if (started && !stopping) for (const cb of exitCallbacks) cb();
     };
-    c.on('exit', () => done(null));
-    c.on('error', err => done(`could not start: ${err && err.message}`));
+    c.on('exit', gone);
+    c.on('close', () => { gone(); flushAll(); closed = true; });
+    c.on('error', err => { gone(); tail.push(`could not start: ${err && err.message}`); closed = true; });
   }
 
   async function doStart() {
     if (await healthy()) return { ok: true, adopted: true };
     if (await portInUse(port)) return { ok: false, reason: 'port-in-use', detail: `Port ${port} is in use by another program.` };
     launch();
-    while (!exited) {
+    let grace = GRACE_STEPS;
+    while (!closed) {
+      if (exited) {
+        // gone, but its output may still be arriving: wait a little, never for ever
+        if (grace-- <= 0) break;
+        await sleep(GRACE_MS);
+        continue;
+      }
       if (await healthy()) {
-        if (exited) break;
+        if (exited) continue;
         started = true;
         return { ok: true, adopted: false };
       }
       await sleep(POLL_MS);
     }
+    flushAll();
     return { ok: false, reason: 'exited', detail: tail.slice(-TAIL_LINES).join('\n') };
   }
 
