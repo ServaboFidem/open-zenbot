@@ -2607,7 +2607,7 @@ def create_app(h: Harness) -> FastAPI:
 
 def _persist(h: Harness, bot: Bot) -> None:
     """The bot's identity lives in bot-prompts/<id>.md; a new bot gets its id from the file name."""
-    p = save_bot_prompt(h.config.bot_prompts_dir, BotPrompt(id=bot.id, name=bot.name, role=bot.role, instructions=bot.instructions, skills=[s.slug for s in bot.skills], mcps=list(bot.mcps) or None, studio=bot.studio))
+    p = save_bot_prompt(h.config.bots_write_dir, BotPrompt(id=bot.id, name=bot.name, role=bot.role, instructions=bot.instructions, skills=[s.slug for s in bot.skills], mcps=list(bot.mcps) or None, studio=bot.studio))
     bot.id = p.id
 
 

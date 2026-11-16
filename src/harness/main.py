@@ -67,9 +67,19 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
             h.apply_models(saved)
         except ProviderStoreError as e:
             print(f"vault-settings/harness.json not applied: {e}", file=sys.stderr)
-    prompts, errors = load_bot_prompts(config.bot_prompts_dir, report=True)
-    for err in errors:
-        print(f"bot-prompts: skipped {err}", file=sys.stderr)
+    folders = [config.bot_prompts_dir]
+    if config.user_content:
+        from src.vault_settings import user_bots_dir
+
+        folders.append(user_bots_dir(config.vault_root))
+    by_id = {}
+    for folder in folders:  # the user's folder loads last and wins on the same id
+        found, errors = load_bot_prompts(folder, report=True)
+        for err in errors:
+            print(f"{folder.name}: skipped {err}", file=sys.stderr)
+        for p in found:
+            by_id[p.id] = p
+    prompts = list(by_id.values())
     for p in prompts:
         bot = Bot(p.name, p.role, p.instructions, id=p.id, mcps=list(p.mcps or []), studio=p.studio)
         wanted = catalog.skills() if p.skills is None else [s for s in (catalog.skill(ref) for ref in p.skills) if s is not None]

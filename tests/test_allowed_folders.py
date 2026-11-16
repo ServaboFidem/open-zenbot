@@ -30,7 +30,7 @@ from src.harness.config import HarnessConfig
 from src.harness.mcp_client import load_config
 from src.memory.ledger import Ledger
 from src.skills.catalog import Catalog
-from src.vault_settings import settings_dir
+from src.vault_settings import settings_dir, user_bots_dir, user_skills_dir
 
 FIXTURE = Path(__file__).parent / "fixtures" / "mcp_echo_server.py"
 
@@ -54,7 +54,7 @@ def test_the_harness_settings_ledger_and_music_folders_are_refused(tmp_path: Pat
     zen = tmp_path / ".zen-agents"
     vault = zen / "vault"
     private = af.private_folders(vault)
-    assert private == [zen / "vault-settings", zen / "vault-ledger", zen / "vault-music"]
+    assert private == [zen / "vault-settings", zen / "vault-ledger", zen / "vault-music", zen / "vault-bots", zen / "vault-skills"]
     for d in (vault / "notes", *private, zen / "vault-settings" / "sub"):
         d.mkdir(parents=True, exist_ok=True)
     home = tmp_path / "home"
@@ -196,3 +196,9 @@ async def test_adding_and_removing_a_folder_reconnects_the_files_server(vault: P
             assert (await c.delete("/settings/folders", params={"path": str(work)})).status_code == 404
     events = [e.data for e in h.ledger.tail(50) if e.data.get("event") == "allowed_folders"]
     assert [sorted(e) for e in events] == [["access", "added", "event"], ["access", "event", "path"], ["event", "removed"]]
+
+
+def test_the_users_bots_and_skills_folders_are_private(tmp_path: Path):
+    vault = tmp_path / "vault"
+    private = af.private_folders(vault)
+    assert user_bots_dir(vault) in private and user_skills_dir(vault) in private
