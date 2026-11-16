@@ -362,11 +362,13 @@ async def test_child_environment_has_no_keys(rig, monkeypatch):
                  "CLAUDE_CODE_USE_BEDROCK", "CODEX_SANDBOX", "OPENROUTER_API_KEY", "GITHUB_TOKEN"):
         monkeypatch.setenv(name, "x")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", "C:/claude-config")
+    monkeypatch.setenv("CODEX_HOME", "C:/codex-home")
     runner, folder = rig("ok")
     await runner.run("claude-code", folder, "task", "b1", "s1")
     names = {n.upper() for n in json.loads(rig.record.read_text(encoding="utf-8"))["env"]}
-    assert "CLAUDE_CONFIG_DIR" in names
-    for n in names:
+    kept = {"CLAUDE_CONFIG_DIR", "CODEX_HOME"}  # where each CLI keeps its sign-in: the two names that stay
+    assert kept <= names
+    for n in names - kept:
         assert not n.startswith(("ANTHROPIC_", "OPENAI_", "CLAUDE_CODE_", "CODEX_")), n
         assert not n.endswith(("_API_KEY", "_TOKEN")), n
 
@@ -733,6 +735,49 @@ def test_snapshot_does_not_walk_through_a_junction(tmp_path):
     _junction(job, job / "loop")         # back into itself
     snap = snapshot(job)
     assert snap.complete and set(snap) == {"a.txt"}
+
+
+async def test_one_run_per_conversation_across_sessions(rig):
+    runner, folder = rig("hang")
+    first = asyncio.create_task(runner.run("claude-code", folder, "task", "b1", "s1", conversation="conversation:c1"))
+    while "s1" not in runner.live:
+        await asyncio.sleep(0.01)
+    with pytest.raises(DelegationError, match="already has a run going"):  # another task in the same conversation
+        await runner.run("claude-code", folder, "task", "b1", "s2", conversation="conversation:c1")
+    assert runner.stop("s1")
+    assert not (await first).ok and runner.live == {}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the Job Object is the Windows containment")
+@pytest.mark.parametrize("broken", ["create", "adopt"])
+async def test_no_job_no_run(rig, monkeypatch, broken):
+    """Without the job, children a CLI leaves behind could not be ended: the run is refused, and the CLI,
+    started suspended, never gets to run."""
+    runner, folder = rig("ok")
+    if broken == "create":
+        monkeypatch.setattr(delegation._Job, "create", classmethod(lambda cls: None))
+    else:
+        monkeypatch.setattr(delegation._Job, "adopt", lambda self, pid: False)
+    r = await runner.run("claude-code", folder, "task", "b1", "s1")
+    assert not r.ok and delegation.NO_JOB in r.error
+    assert not rig.record.exists() and not (folder / "out.txt").exists()
+    assert [e["event"] for e in _delegate_entries(rig.ledger)] == ["start", "end"] and runner.live == {}
+
+
+async def test_a_failed_runs_error_is_cut_and_the_folder_still_shows(rig):
+    runner, _ = rig("ok")
+    vault = runner.agents.vault_root
+    _switch(vault, enabled=True)
+
+    async def failing(agent, path, task, bot_id, session_id, named=False, conversation=""):
+        return delegation.RunResult(False, "", error="x" * 500_000, changed=["out.txt"])
+
+    runner.run = failing
+    with pytest.raises(DelegationError) as e:
+        await _delegator(runner, vault).delegate("claude-code", "Write hi.", folder="job")
+    text = str(e.value)
+    assert len(text) < delegation.ERROR_TAIL + 500 and "[cut]" in text
+    assert text.endswith("Folder: job\nFiles added, changed or removed:\n- out.txt")
 
 
 # -- the tool and its approval -------------------------------------------------------------------------------

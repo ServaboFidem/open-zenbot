@@ -6,7 +6,9 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import shutil
 import sys
+import threading
 from pathlib import Path
 
 import httpx
@@ -175,10 +177,11 @@ def test_probes_run_with_the_scrubbed_environment(tmp_path: Path, only, monkeypa
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
     seen = tmp_path / "seen.txt"
+    env_bin = shutil.which("env") or "/usr/bin/env"  # found now: `only` leaves nothing on PATH
     exe = only("claude-code", CLAUDE)
     body = exe.read_text(encoding="utf-8")
     first, rest = body.split("\n", 1)  # keep the "@echo off" / shebang line first
-    record = f'set > "{seen}"' if sys.platform == "win32" else f"env > '{seen}'"
+    record = f'set > "{seen}"' if sys.platform == "win32" else f"'{env_bin}' > '{seen}'"
     exe.write_text(f"{first}\n{record}\n{rest}", encoding="utf-8")  # the fake records its environment on every call
     probe(tmp_path / "v", "claude-code")
     names = {l.split("=", 1)[0].upper() for l in seen.read_text(encoding="utf-8", errors="replace").splitlines() if "=" in l}
@@ -225,6 +228,51 @@ async def test_put_enables_a_usable_agent(app_h, only):
     assert h.agents.on() == ["claude-code"]
     events = [e.data for e in h.ledger.tail(50) if e.data.get("event") == "agent"]
     assert events and events[-1]["agent"] == "claude-code" and events[-1]["enabled"] is True
+
+
+async def test_a_save_that_waited_on_its_probe_does_not_undo_a_switch_off(app_h, only, monkeypatch):
+    only("claude-code", CLAUDE)
+    app, h = app_h
+    save_settings(h.config.vault_root, "claude-code", AgentSettings(enabled=True))
+    real, hold, waiting, calls = agent_clis.probe, threading.Event(), threading.Event(), []
+
+    def slow_first(vault, key):
+        calls.append(key)
+        if len(calls) == 1:  # the model change's probe waits while the switch-off goes through
+            waiting.set()
+            assert hold.wait(20)
+        return real(vault, key)
+
+    monkeypatch.setattr(agent_clis, "probe", slow_first)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as c:
+        first = asyncio.create_task(c.put("/settings/agents/claude-code", json={"model": "sonnet"}))
+        assert await asyncio.to_thread(waiting.wait, 20)
+        assert (await c.put("/settings/agents/claude-code", json={"enabled": False})).status_code == 200
+        hold.set()
+        assert (await first).status_code == 200
+    assert load_settings(h.config.vault_root)["claude-code"] == AgentSettings(False, True, "sonnet")
+    assert h.agents.statuses["claude-code"]["enabled"] is False and h.agents.on() == []
+
+
+async def test_an_older_probe_does_not_replace_a_newer_one(tmp_path: Path, monkeypatch):
+    hold, waiting, calls = threading.Event(), threading.Event(), []
+
+    def fake(vault, key):
+        calls.append(key)
+        n = len(calls)
+        if n == 1:  # the first probe (an old program path) is still going when the second starts and ends
+            waiting.set()
+            assert hold.wait(20)
+        return {"id": key, "usable": n == 2, "probe": n}
+
+    monkeypatch.setattr(agent_clis, "probe", fake)
+    agents = Agents(tmp_path)
+    old = asyncio.create_task(agents.refresh("claude-code"))
+    assert await asyncio.to_thread(waiting.wait, 20)
+    await agents.refresh("claude-code")
+    hold.set()
+    await old
+    assert agents.statuses["claude-code"]["probe"] == 2
 
 
 async def test_put_refuses_enabling_an_unusable_agent_422(app_h, only):

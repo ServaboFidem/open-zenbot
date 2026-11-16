@@ -183,13 +183,28 @@ class Agents:
     def __init__(self, vault_root: Path) -> None:
         self.vault_root = vault_root
         self.statuses: dict[str, dict[str, Any]] = {}
+        self._probes: dict[str, int] = {}  # how many probes of each agent have started
+
+    def begin(self, key: str) -> int:
+        """Mark a probe of `key` as started; hand the number to `land` with its result."""
+        self._probes[key] = n = self._probes.get(key, 0) + 1
+        return n
+
+    def land(self, key: str, n: int, status: dict[str, Any]) -> bool:
+        """Keep a probe's result unless a later probe of the same agent has started since: a slow probe of
+        an old program path must not replace the answer for the new one."""
+        if self._probes.get(key) != n:
+            return False
+        self.statuses[key] = status
+        return True
 
     async def refresh(self, key: str | None = None) -> list[dict[str, Any]]:
         """Probe in a thread (the programs may be slow); all agents, or just `key`."""
         keys = [key] if key else list(AGENTS)
+        started = {k: self.begin(k) for k in keys}
         # looked up here, not bound at import, so a test can swap `probe`
         for k, st in zip(keys, await asyncio.gather(*(asyncio.to_thread(probe, self.vault_root, k) for k in keys))):
-            self.statuses[k] = st
+            self.land(k, started[k], st)
         return [self.statuses[k] for k in AGENTS if k in self.statuses]
 
     def settings(self, key: str) -> AgentSettings:

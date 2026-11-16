@@ -99,7 +99,7 @@ test('a delegate call is labelled with the agent and its run adds rows under it'
     ev('delegate', { event: 'start', agent: 'claude-code', folder: 'C:\\work\\app' }),
     ev('delegate', { event: 'file', tool: 'Write', path: 'src/a.py' }),
     ev('delegate', { event: 'file', tool: 'Edit', path: 'C:\\elsewhere\\b.py', outside: true }),
-    ev('delegate', { event: 'end', ok: true, seconds: 42, changed: ['src/a.py'] }),
+    ev('delegate', { event: 'end', ok: true, seconds: 42, changed: 1 }),
     ev('tool_call', { tool: 'delegate', arguments: { agent: 'claude-code' }, ok: true, output: 'done' }),
   ]);
   assert.equal(rows.length, 5);
@@ -124,7 +124,7 @@ test('a failed delegate run closes as an error and codex is named', () => {
   const rows = activityFeed([
     ev('tool_start', { tool: 'delegate', arguments: { agent: 'codex', task: 't' } }),
     ev('delegate', { event: 'start', agent: 'codex', folder: '/w' }),
-    ev('delegate', { event: 'end', ok: false, seconds: 3, changed: [] }),
+    ev('delegate', { event: 'end', ok: false, seconds: 3, changed: 0 }),
   ]);
   assert.equal(rows[0].title, 'Codex');
   assert.equal(rows[2].status, 'error');

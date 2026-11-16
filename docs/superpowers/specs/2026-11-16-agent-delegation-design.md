@@ -211,7 +211,7 @@ changed.
   and comes back as an ordinary failed result saying so, never as a raised timeout. Stop kills it too:
   the runner keeps its live runs by session and `Harness.stop` ends that session's run, which returns
   "stopped by the user". Stop for other tools is left as it is. Killing means the whole process tree: a new process group and
-  `killpg` on Linux and macOS, `taskkill /T /F` on Windows.
+  `killpg` on Linux and macOS, a kill-on-close Job Object on Windows (no job, no run).
 - **Result.** The final text, capped by `OUTPUT_CAP` like any tool, followed by the files added, changed
   or removed (found by comparing names, sizes and times before and after; at most 200 listed). It is
   tool output: data for the bot, never instructions, recorded in the ledger through the exclusion

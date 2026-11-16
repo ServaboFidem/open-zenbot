@@ -217,7 +217,7 @@ class Harness:
         if self.delegator is None:  # kept across a rebind, so a run in flight stays stoppable
             self.delegator = Delegator(c.vault_root, self.agents, self.reach,
                                        DelegateRunner(self.agents, self.ledger, timeout=c.delegate_timeout),
-                                       in_routine=self._in_routine)
+                                       in_routine=self._in_routine, conversation_of=self._conversation_of)
         self.loop = self.loop or TaskLoop(
             self.provider, self.ledger, self.approvals, self.tools, self.pause, selector=selector, max_steps=c.max_steps,
             compactor=self.compactor, supervisor=self.supervisor, recall=self.recall, model_for=self._model_for,
@@ -504,6 +504,15 @@ class Harness:
         there to approve or see a hand-off. The same sessions `attach` refuses, room turns aside."""
         session = self.sessions.get(session_id)
         return session is None or not (session.conversation_id or session.room_id)
+
+    def _conversation_of(self, session_id: str) -> str:
+        """What a session's hand-offs are counted against: its conversation or room, so two tasks in one
+        conversation cannot both have a run going."""
+        session = self.sessions.get(session_id)
+        if session is None:
+            return ""
+        return (f"conversation:{session.conversation_id}" if session.conversation_id
+                else f"room:{session.room_id}" if session.room_id else "")
 
     def reach(self) -> allowed_folders.Folders:
         """Where bots may reach now: the workspace (the shell's working folder) with Full Access, then the
@@ -1093,19 +1102,25 @@ def create_app(h: Harness) -> FastAPI:
     async def set_agent(key: str, body: AgentIn) -> dict[str, Any]:
         if key not in agent_clis.AGENTS:
             raise HTTPException(404, f"no agent named {key}")
+        model = None if body.model is None else body.model.strip()
+        if model and not agent_clis.MODEL.fullmatch(model):
+            raise HTTPException(422, "A model name may hold only letters, digits, dots, dashes and underscores (64 at most).")
+        started = h.agents.begin(key)
+        now = await asyncio.to_thread(agent_clis.probe, h.config.vault_root, key)  # fresh: it may have been signed out since
+        if body.enabled and not now["usable"]:
+            raise HTTPException(422, now["reason"])
+        # read and merged only now, with no await before the save: a request that waited on its probe while
+        # another switched the agent off must not write the old switch back
         cur = h.agents.settings(key)
         new = agent_clis.AgentSettings(
             enabled=cur.enabled if body.enabled is None else body.enabled,
             ask=cur.ask if body.ask is None else body.ask,
-            model=cur.model if body.model is None else body.model.strip())
-        if new.model and not agent_clis.MODEL.fullmatch(new.model):
-            raise HTTPException(422, "A model name may hold only letters, digits, dots, dashes and underscores (64 at most).")
-        now = await asyncio.to_thread(agent_clis.probe, h.config.vault_root, key)  # fresh: it may have been signed out since
-        if body.enabled and not now["usable"]:
-            raise HTTPException(422, now["reason"])
+            model=cur.model if model is None else model)
         agent_clis.save_settings(h.config.vault_root, key, new)
         h.ledger.append(Kind.settings, "", "", event="agent", agent=key, enabled=new.enabled, ask=new.ask, model=new.model)
-        h.agents.statuses[key] = {**now, "enabled": new.enabled, "ask": new.ask, "model": new.model}
+        switches = {"enabled": new.enabled, "ask": new.ask, "model": new.model}
+        if not h.agents.land(key, started, {**now, **switches}):  # a later probe has started: keep what it found
+            h.agents.statuses[key] = {**h.agents.statuses.get(key, now), **switches}
         h.delegator.register(h.tools)  # on, off, or another agent's name in the tool's list
         return h.agents.statuses[key]
 

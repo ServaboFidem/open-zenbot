@@ -290,8 +290,10 @@ tool. Harness shutdown stops every run in flight (`Runner.stop_all`, from the `l
   folder the bot named always asks; a run in a new folder the harness made asks unless "Ask me before each run" is off;
   Codex would always ask. The approval shows the agent, folder, model and the whole task. A skill approval rule that
   already asks gets the same detail. Stop ends the run (`Harness.stop`; `Runner` kills the whole process tree, with a
-  Windows Job Object). Limits: task 20,000 characters, one run per session and two in the harness,
-  `ZEN_DELEGATE_TIMEOUT` seconds (default 900), at most 200 changed files listed, 2,000 characters of error tail.
+  Windows Job Object; a run that cannot be put in one is refused, since nothing else there reaches children a CLI
+  leaves behind). Limits: task 20,000 characters, one run per conversation or room and two in the harness,
+  `ZEN_DELEGATE_TIMEOUT` seconds (default 900), at most 200 changed files listed, 2,000 characters of error (the
+  output tail, or the agent's own error text).
 - **The reply** starts with `Folder: <path>`, then the files added, changed or removed, then the agent's answer (last,
   so a long answer cannot push the folder and the changes past the 20,000-character tool output cap). A failed,
   timed-out, stopped or refused run raises its error followed by the same `Folder:` line and changes list, so the bot

@@ -35,6 +35,7 @@ _CLAUDE_ARGS = ("-p", "--restricted", "--strict-mcp-config", "--tools", ",".join
                 "--no-session-persistence")
 CHANGES_LISTED = 200
 ERROR_TAIL = 2_000
+NO_JOB = "Windows would not put the run in a job, so what it starts could not be stopped with it"
 _LINE_LIMIT = 32 * 1024 * 1024  # one event can carry a whole file the agent wrote
 _EXIT_GRACE = 10.0              # how long a CLI that has ended gets to exit, and a killed one to be reaped
 _DRAIN_GRACE = 2.0              # after the CLI exits, how long its last output gets to arrive
@@ -422,14 +423,16 @@ def direct(argv: list[str], folder: Path, name: str = "Claude Code") -> list[str
 
 async def _launch(argv: list[str], folder: Path) -> tuple[asyncio.subprocess.Process, _Job | None]:
     """Start the CLI in a process group of its own. On Windows it starts suspended inside a kill-on-close job, so
-    nothing it starts can slip out before it is in the job; without a job, taskkill is the fallback."""
+    nothing it starts can slip out before it is in the job. Without the job there is no run: nothing else there
+    reaches children a CLI leaves behind when it exits."""
     env = run_env()
     if os.name == "nt":  # a bare program name the CLI starts is never looked up in the job folder
         env["NoDefaultCurrentDirectoryInExePath"] = "1"
     job = _Job.create() if os.name == "nt" else None
     if os.name == "nt":
-        group: dict[str, Any] = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
-                                 | (0x00000004 if job else 0)}  # CREATE_SUSPENDED
+        if job is None:
+            raise OSError(NO_JOB)
+        group: dict[str, Any] = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000004}  # CREATE_SUSPENDED
     else:
         group = {"start_new_session": True}
     try:
@@ -441,34 +444,23 @@ async def _launch(argv: list[str], folder: Path) -> tuple[asyncio.subprocess.Pro
             job.close()
         raise
     if job:
-        if not job.adopt(proc.pid):
+        adopted = job.adopt(proc.pid)
+        # still suspended, so it has run nothing: not adopted, it is ended here rather than run outside the job;
+        # one that cannot be resumed would hang the run until the timeout
+        if not adopted or not _resume(proc.pid):
+            proc.kill()
             job.close()
-            job = None
-        if not _resume(proc.pid):  # suspended for good would hang the run until the timeout
-            if job:
-                job.close()
-            else:
-                proc.kill()
             await _exited(proc, _EXIT_GRACE)
-            raise OSError("it could not be resumed after starting")
+            raise OSError(NO_JOB if not adopted else "it could not be resumed after starting")
     return proc, job
 
 
 async def _kill_tree(proc: asyncio.subprocess.Process, job: _Job | None) -> None:
     """End the CLI and everything it started, whether or not the CLI itself is still running: the job on Windows
-    (taskkill /T, which needs a live parent to find the children, when there is no job), the process group on
-    POSIX (the group outlives its leader, so this reaches children left behind too)."""
+    (a run there always has one), the process group on POSIX (the group outlives its leader, so this reaches
+    children left behind too)."""
     if job is not None:
         job.close()
-    elif os.name == "nt" and proc.returncode is None:
-        taskkill = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "taskkill.exe"
-        try:
-            k = await asyncio.create_subprocess_exec(str(taskkill), "/T", "/F", "/PID", str(proc.pid),
-                                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                                     stderr=subprocess.DEVNULL)
-            await k.wait()
-        except OSError:
-            pass
     if os.name != "nt":
         try:
             os.killpg(proc.pid, signal.SIGKILL)
@@ -513,6 +505,7 @@ class RunResult:
 class _Live:
     agent: str
     folder: Path
+    conversation: str = ""
     stop: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -561,7 +554,8 @@ def _where(file_path: str, folder: Path) -> tuple[str, bool]:
 
 
 class Runner:
-    """Runs an agent CLI on one job in one folder: at most one run per session and `max_runs` in the harness."""
+    """Runs an agent CLI on one job in one folder: at most one run per session, one per conversation (when the
+    caller names it) and `max_runs` in the harness."""
 
     def __init__(self, agents: Agents, ledger: Any, timeout: float = 900.0, max_runs: int = 2) -> None:
         self.agents = agents
@@ -592,21 +586,23 @@ class Runner:
             await asyncio.sleep(0.05)
 
     async def run(self, agent: str, folder: Path, task: str, bot_id: str, session_id: str,
-                  named: bool = False) -> RunResult:
+                  named: bool = False, conversation: str = "") -> RunResult:
         """`named`: the bot named the folder (so it may have filled it), and it is checked for links just before
-        the launch. A folder the harness made starts empty."""
+        the launch. A folder the harness made starts empty. `conversation`: what the session belongs to; two
+        sessions of one conversation cannot both have a run going (they could be working in the same folder)."""
         if agent not in AGENTS:
             raise DelegationError(f"There is no agent called {agent}.")
         name = AGENTS[agent].program.name
         st = self.agents.statuses.get(agent) or {}
         if not st.get("path"):
             raise DelegationError(f"{name} was not found. Check Settings > Harness Tools.")
-        if session_id in self.live:
+        if session_id in self.live or (conversation and any(x.conversation == conversation for x in self.live.values())):
             raise DelegationError("This conversation already has a run going. Wait for it to end.")
         if len(self.live) >= self.max_runs:
             raise DelegationError(f"{self.max_runs} runs are going already. Try again when one ends.")
         argv = direct(self.command(agent, st["path"], self.agents.settings(agent).model), folder, name)
-        live = self.live[session_id] = _Live(agent, folder)  # claimed before the first await: no two calls both pass
+        # claimed before the first await: no two calls both pass
+        live = self.live[session_id] = _Live(agent, folder, conversation)
         try:
             return await self._run(live, argv, name, _norm(Path(folder)), task, bot_id, session_id,
                                    subscription=st.get("auth") == "subscription", named=named)
@@ -786,7 +782,9 @@ class Delegator:
     every call (Settings may change); `in_routine(session_id)` is true for a session with nobody to approve."""
 
     def __init__(self, vault_root: Path, agents: Agents, folders: Callable[[], Folders], runner: Runner,
-                 in_routine: Callable[[str], bool] = lambda session_id: False) -> None:
+                 in_routine: Callable[[str], bool] = lambda session_id: False,
+                 conversation_of: Callable[[str], str] = lambda session_id: "") -> None:
+        self.conversation_of = conversation_of
         self.vault_root = Path(vault_root)
         self.agents = agents
         self.folders = folders
@@ -866,13 +864,17 @@ class Delegator:
         except FolderRefused as e:
             raise DelegationError(str(e)) from None
         # the runner adds the preamble, and checks a folder the bot named for links just before the launch
-        result = await self.runner.run(agent, path, task, bot_id, session_id, named=not made)
+        result = await self.runner.run(agent, path, task, bot_id, session_id, named=not made,
+                                       conversation=self.conversation_of(session_id))
         # the folder first (the changes are listed relative to it, and a harness-made one has a fresh name), then the
         # changes, so a long answer cannot push either past the tool output cap; a failed run says them too
         where = self._relative(_norm(path)) or str(path)
         done = f"Folder: {where}\n{changes_text(result.changed, result.complete)}"
         if not result.ok:
-            raise DelegationError(f"{result.error}\n\n{done}")  # the loop's tool_call entry records it
+            # cut first: a failed tool call's text is not capped by the tool runner, and the agent's own error
+            # text can be as long as it likes; the folder and the changes stay whole after it
+            error = result.error if len(result.error) <= ERROR_TAIL else f"{result.error[:ERROR_TAIL]} [cut]"
+            raise DelegationError(f"{error}\n\n{done}")  # the loop's tool_call entry records it
         return f"{done}\n\n{result.text}"
 
     def register(self, tools: Any) -> bool:

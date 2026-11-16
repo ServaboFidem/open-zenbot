@@ -129,7 +129,7 @@ function delegateRow(base, d, run) {
   if (d.event === 'start') { run.name = agentName(d.agent); return { ...base, icon: 'agent', status: 'info', title: `${run.name} started`, detail: clip(d.folder, 300), meta: '' }; }
   if (d.event === 'file') return { ...base, icon: d.outside ? 'error' : 'agent', status: d.outside ? 'error' : 'info', title: clip(d.tool, 40) || 'Touched a file', detail: clip(d.path, 300), meta: d.outside ? 'This file is outside the job folder' : '' };
   if (d.event === 'end') {
-    const name = run.name || 'The coding agent', n = Array.isArray(d.changed) ? d.changed.length : 0;
+    const name = run.name || 'The coding agent', n = Number.isInteger(d.changed) && d.changed > 0 ? d.changed : 0;  // the runner logs a count
     const detail = [d.seconds != null && `${Math.round(d.seconds)} s`, `${n} ${n === 1 ? 'file' : 'files'} changed`].filter(Boolean).join(' · ');
     return { ...base, icon: d.ok ? 'done' : 'error', status: d.ok ? 'ok' : 'error', title: d.ok ? `${name} finished` : `${name} stopped`, detail, meta: '' };
   }
