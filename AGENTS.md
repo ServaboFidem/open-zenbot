@@ -174,6 +174,14 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
   as a design), and a `.versions` that is a symlink is refused. A studio bot's relative `designs/...` path in
   `attach_file` resolves against the vault root, then goes through the usual `attachable` check. No new
   write path outside `allowed_folders.reachable`: the harness writes only under `<vault>/designs/`.
+- **The folder is the harness's pick.** In a studio bot's own conversation the harness chooses the design folder,
+  not the bot (`Harness._design_folder`, `design_studio.fresh_folder`): at the conversation's first task it makes a
+  new, empty `<vault>/designs/<slug>/` from the brief's words, taking `<slug>-2`, `<slug>-3`... when the name is
+  already there, so a new design never writes over an old one. The slug is kept on the conversation
+  (`design_folder`), and every task there is told it in the context (`design_studio.folder_block`). A conversation
+  from before this keeps the folder of its newest design. `attach_file` there refuses a file in another design's
+  folder. This is told and checked at attach, not walled: the `files` server would still let the bot write into
+  another design's folder. In a room there is no such folder and the bot picks its own slug.
 - **The preview.** The frame gets exactly `PREVIEW_CSP` (`api.py`; sandboxed, `default-src 'none'`, inline
   script and style, `data:` and `blob:` images, `data:` fonts, nothing loads from anywhere) plus one script,
   the pick bridge (`design_bridge.js`, added by `design_studio.with_bridge`). A file over

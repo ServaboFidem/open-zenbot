@@ -1202,6 +1202,8 @@ async def _attach_design(client, harness: Harness, bot_id: str) -> tuple[str, di
     f = harness.config.vault_root / "designs" / "landing" / "index.html"
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text("<p>one</p>", encoding="utf-8")
+    conv = harness.conversations.current(bot_id) or harness.conversations.start_new(bot_id)
+    harness.conversations.set_design_folder(conv.id, "landing")  # the harness picks the folder; here it is this one
     harness.provider.script = [
         completion(calls=[("c1", "attach_file", {"path": "designs/landing/index.html", "title": "Landing"})]),
         completion("Here it is."),

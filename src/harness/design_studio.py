@@ -17,6 +17,52 @@ def _designs(vault_root: Path) -> Path:
     return vault_root.resolve() / "designs"
 
 
+_SLUG_MAX = 40
+_FILLER = {"a", "an", "the", "i", "im", "id", "we", "my", "our", "me", "to", "of", "for", "and", "or", "is", "it", "that", "this",
+           "want", "need", "would", "like", "please", "can", "could", "you", "help", "design", "create", "make", "build",
+           "new", "going", "thinking", "with", "in", "on"}
+
+
+def slug_of(text: str) -> str:
+    """A short kebab-case folder name from a brief's first line: its telling words, at most 40 characters."""
+    line = (text.strip().splitlines() or [""])[0].lower().replace("'", "").replace("\u2019", "")
+    words = [w for w in re.findall(r"[a-z0-9]+", line)]
+    kept = [w for w in words if w not in _FILLER] or words
+    slug = ""
+    for w in kept:
+        if len(slug) + len(w) + 1 > _SLUG_MAX:
+            break
+        slug = f"{slug}-{w}" if slug else w
+    return slug or (kept[0][:_SLUG_MAX] if kept else "design")
+
+
+def fresh_folder(vault_root: Path, brief: str) -> str:
+    """Make a new, empty `<vault>/designs/<slug>/` for one conversation's design and return the slug. A name
+    already there (another conversation's design, or anything else) is never reused: the next free
+    `<slug>-2`, `<slug>-3`... is made instead, so a new design cannot write over an old one. Raises
+    SnapshotRefused when `designs` is a link or not a folder, and OSError when the folder cannot be made."""
+    designs = vault_root / "designs"
+    if designs.is_symlink() or (designs.exists() and not designs.is_dir()):
+        raise SnapshotRefused("designs is a link or not a folder")
+    designs.mkdir(exist_ok=True)
+    base = slug_of(brief)
+    for n in range(1, 1000):
+        slug = base if n == 1 else f"{base}-{n}"
+        try:
+            (designs / slug).mkdir()  # exclusive: fails on anything already at the name, a link included
+            return slug
+        except FileExistsError:
+            continue
+    raise SnapshotRefused(f"no free folder name for designs/{base}")
+
+
+def folder_block(slug: str) -> str:
+    """What a studio bot reads about where this conversation's design lives."""
+    return (f"Design folder for this conversation: designs/{slug}/ (it already exists; do not create it).\n"
+            f"Write the design to designs/{slug}/index.html and attach that path. Use no other folder under designs/: "
+            "the others hold other conversations' designs.")
+
+
 def _fixed(p: Path) -> bool:
     """A regular file under one name only: a link (symbolic or hard) to the live design would change with it."""
     try:

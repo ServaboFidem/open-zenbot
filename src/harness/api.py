@@ -517,13 +517,33 @@ class Harness:
             "media_trusted_hosts": list(self.media.hosts) if self.media else [],
         }
 
+    def _design_folder(self, bot: Bot, conv: Any, brief: str, session_id: str) -> str:
+        """The slug of this studio conversation's own design folder. The harness picks it, not the bot, so two
+        designs with the same name never share a folder: an older conversation keeps the folder of its newest
+        design, a new one gets a fresh folder made now. Empty when none can be made (the ledger says why)."""
+        if conv.design_folder:
+            return conv.design_folder
+        slug = next((rev[0] for ex in reversed(conv.exchanges) for a in reversed(ex.attachments)
+                     if (rev := design_studio.revision_of(self.config.vault_root, Path(a["path"])))), "")
+        if not slug:
+            try:
+                slug = design_studio.fresh_folder(self.config.vault_root, brief)
+            except (OSError, design_studio.SnapshotRefused) as e:
+                why = str(e) if isinstance(e, design_studio.SnapshotRefused) else "the folder cannot be made"
+                self.ledger.append(Kind.error, bot.id, session_id, where="design_folder", error=why,
+                                   action="running without a design folder")
+                return ""
+        self.conversations.set_design_folder(conv.id, slug)
+        return slug
+
     def attach(self, session_id: str, path: str, title: str) -> str:
         """`attach_file` from a one-to-one task: the file joins the task's exchange when it ends. A room
         turn's attachments are the room's (RoomService); a routine has no conversation to show them in."""
         session = self.sessions.get(session_id)
         if session is None or not session.conversation_id or session.room_id:
             return "attach_file works only in a conversation or a room turn."
-        target = self.attach_target(session.bot_id, path)
+        conv = self.conversations.get(session.conversation_id)
+        target = self.attach_target(session.bot_id, path, folder=conv.design_folder if conv else "")
         if isinstance(target, str):
             return target
         att = Attachment(uuid4().hex[:10], title or Path(path).name, str(target))  # the file's own name, not its numbered copy's
@@ -552,9 +572,10 @@ class Harness:
         f.full.insert(0, self.tools.cwd)
         return f
 
-    def attach_target(self, bot_id: str, path: str) -> Path | str:
+    def attach_target(self, bot_id: str, path: str, folder: str = "") -> Path | str:
         """The file `attach_file` attaches for this bot, in a one-to-one task or a room turn, or the refusal.
-        A studio bot's relative `designs/...` path is the vault's, and its design is attached as a numbered copy."""
+        A studio bot's relative `designs/...` path is the vault's, and its design is attached as a numbered copy.
+        `folder` is the conversation's own design folder: a file in another design's folder is refused."""
         bot = self.bots.get(bot_id)
         studio = bot is not None and bot.studio
         if studio and not Path(path).is_absolute() and Path(path).parts[:1] == ("designs",):
@@ -562,6 +583,14 @@ class Harness:
         target = self.attachable(path)
         if isinstance(target, str) or not studio:
             return target
+        if folder:
+            try:
+                parts = target.resolve().relative_to(self.config.vault_root.resolve() / "designs").parts
+            except ValueError:
+                parts = ()
+            if parts and parts[0] != folder:
+                return (f"Not attached: this conversation's design folder is designs/{folder}/, and designs/{parts[0]}/ "
+                        f"belongs to another design. Write the file to designs/{folder}/{target.name}, then attach that.")
         # a design is attached as its fixed copy or not at all: the live file would change under the revision
         try:
             copy = design_studio.snapshot(self.config.vault_root, target)
@@ -607,6 +636,10 @@ class Harness:
                 # gone, no longer safe or replaced: the task runs without it, and the ledger says why (never a disk path)
                 self.ledger.append(Kind.error, bot.id, session.id, where="design_system",
                                    error=f"design system {conv.design_system}: {why}", action="running without the design system")
+        if conv is not None and bot.studio:
+            folder = self._design_folder(bot, conv, task, session.id)
+            if folder:  # first in the context, before any design system
+                session.design = "\n\n".join(p for p in (design_studio.folder_block(folder), session.design) if p)
         if addendum:
             session.recall_query = task  # recall searches the user's words, not the comment block
         self.sessions[session.id] = session

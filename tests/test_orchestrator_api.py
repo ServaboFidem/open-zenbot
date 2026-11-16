@@ -331,3 +331,43 @@ async def test_designs_lists_each_studio_conversations_designs_newest_first(vaul
          "version": 2, "versions": 2, "attachment_id": "a2", "updated_at": "2026-11-01T00:00:00+00:00"},
     ]
     assert str(vault) not in r.text
+
+
+async def test_a_studio_conversation_gets_its_own_design_folder(vault: Path, tmp_path: Path):
+    h = studio_harness(vault, tmp_path)
+    old = vault / "designs" / "honey-shop" / "index.html"
+    old.parent.mkdir(parents=True)
+    old.write_text("an older design")
+    designer = h.bots["designer"]
+    s1 = h.start_task(designer, "Honey shop")
+    await h.tasks[s1.id]
+    conv = h.conversations.current("designer")
+    assert conv.design_folder == "honey-shop-2" and (vault / "designs" / "honey-shop-2").is_dir()
+    assert "Design folder for this conversation: designs/honey-shop-2/" in s1.design
+    s2 = h.start_task(designer, "Make the hero bigger")  # the same conversation keeps its folder
+    assert "designs/honey-shop-2/" in s2.design and h.conversations.current("designer").design_folder == "honey-shop-2"
+    # its own folder attaches; another design's folder does not
+    mine = vault / "designs" / "honey-shop-2" / "index.html"
+    mine.write_text("<!doctype html>")
+    assert h.attach(s2.id, "designs/honey-shop-2/index.html", "").startswith("Attached")
+    said = h.attach(s2.id, "designs/honey-shop/index.html", "")
+    assert said.startswith("Not attached") and "designs/honey-shop-2/index.html" in said
+    await h.tasks[s2.id]
+    h.conversations.start_new("designer")
+    s3 = h.start_task(designer, "Honey shop")
+    assert h.conversations.current("designer").design_folder == "honey-shop-3"
+    await h.tasks[s3.id]
+    assert old.read_text() == "an older design"
+
+
+async def test_an_older_studio_conversation_keeps_the_folder_of_its_design(vault: Path, tmp_path: Path):
+    h = studio_harness(vault, tmp_path)
+    copy = vault / "designs" / "tea" / ".versions" / "1.index.html"
+    copy.parent.mkdir(parents=True)
+    copy.write_text("<!doctype html>")
+    conv = h.conversations.start_new("designer")
+    _, ex = h.conversations.begin("designer", "a tea room page", conv_id=conv.id)
+    ex.attachments, ex.outcome = [{"id": "a1", "title": "Tea", "path": str(copy)}], "done"
+    s = h.start_task(h.bots["designer"], "Warmer colours")
+    assert conv.design_folder == "tea" and sorted(p.name for p in (vault / "designs").iterdir()) == ["tea"]
+    await h.tasks[s.id]

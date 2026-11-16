@@ -87,6 +87,7 @@ class Conversation:
     folded: int = 0  # how many leading exchanges the summary already covers
     design_system: str = ""  # slug of the design system the user picked for this conversation; empty for none
     design_system_source: str = ""  # where the picked system came from ("shipped" or "yours"); empty on older records
+    design_folder: str = ""  # a studio bot's conversation: the slug of its own `<vault>/designs/<slug>/`, picked by the harness
     note: str = ""  # the owner bot's turn note: what its last task found, made and left (src/harness/turn_notes.py)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
@@ -263,6 +264,13 @@ class Conversations:
         c = self._by_id.get(conv_id)
         if c is not None:
             c.note = note
+            self.store.save(c)
+
+    def set_design_folder(self, conv_id: str, slug: str) -> None:
+        """Keep the conversation's design folder. Saved without touching `updated_at`, like the note."""
+        c = self._by_id.get(conv_id)
+        if c is not None:
+            c.design_folder = slug
             self.store.save(c)
 
     def set_design_system(self, conv_id: str, slug: str, source: str = "") -> None:
