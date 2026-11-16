@@ -26,8 +26,8 @@ Accent overuse is the biggest readability failure in generated pages.
 
 | Pair | Minimum |
 | --- | --- |
-| Body text (up to 16 px) on its background | 4.5:1 |
-| Large text (over 18 px, or 14 px bold) | 3:1 |
+| Text on its background | 4.5:1 |
+| Large text only: 24 px or more, or bold at 18.5 px or more | 3:1 |
 | UI components against neighbouring surfaces | 3:1 |
 
 If the brand colour fails as text, use a darker 600-level shade for text and keep

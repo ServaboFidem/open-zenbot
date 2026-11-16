@@ -2,6 +2,7 @@
 // untrusted, so the parser returns a fresh object of known keys only, or null; it never throws.
 // Pure helpers, so they test without a DOM.
 
+export const NO_COLOR = '#000000';  // what a colour input shows before the user picks
 export const TYPES = ['radio', 'checkbox', 'select', 'text', 'textarea', 'range', 'color'];
 const CHOICE = new Set(['radio', 'checkbox', 'select']);
 const MAX_TEXT = 20000;
@@ -32,9 +33,11 @@ function question(q) {
     if (typeof q.allow_custom !== 'boolean') return null;
     out.allow_custom = q.allow_custom;
   }
-  // A default that does not fit is dropped, not fatal.
+  // A default that does not fit is dropped, not fatal. A choice's default must be one of its options:
+  // one that is not would show as nothing selected and still be sent.
   const d = q.default;
-  if (q.type === 'checkbox' ? Array.isArray(d) && d.every(x => typeof x === 'string')
+  if (q.type === 'checkbox' ? Array.isArray(d) && d.every(x => out.options.includes(x))
+    : CHOICE.has(q.type) ? out.options.includes(d)
     : q.type === 'range' ? num(d)
       : q.type === 'color' ? typeof d === 'string' && /^#[0-9a-fA-F]{6}$/.test(d)
         : typeof d === 'string') out.default = Array.isArray(d) ? [...d] : d;
@@ -58,10 +61,11 @@ export function parseQuestionForm(text) {
   return out;
 }
 
-/** Starting answers: each question's default, else empty. */
+/** Starting answers: each question's default, else empty. A colour input always shows a colour, so a
+ *  colour question starts at the one shown: what the user sees is what is sent. */
 export function initialValues(form) {
   const v = {};
-  for (const q of form.questions) v[q.id] = q.default ?? (q.type === 'checkbox' ? [] : q.type === 'range' ? q.min : '');
+  for (const q of form.questions) v[q.id] = q.default ?? (q.type === 'checkbox' ? [] : q.type === 'range' ? q.min : q.type === 'color' ? NO_COLOR : '');
   return v;
 }
 

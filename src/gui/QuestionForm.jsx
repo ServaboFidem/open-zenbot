@@ -3,7 +3,7 @@
 // (an older exchange, a room, no connection): the answers stay visible but cannot be changed or sent.
 import React, { useId, useState } from 'react';
 import { Button, Checkbox, Field, Input, Radio, RadioGroup, Slider, Textarea } from '@fluentui/react-components';
-import { answersMessage, initialValues } from './question-form.js';
+import { answersMessage, initialValues, NO_COLOR } from './question-form.js';
 
 function Control({ q, value, onChange, disabled, id }) {
   if (q.type === 'radio') return <RadioGroup value={value} disabled={disabled} onChange={(e, d) => onChange(d.value)}>{q.options.map(o => <Radio key={o} value={o} label={o}/>)}</RadioGroup>;
@@ -11,7 +11,7 @@ function Control({ q, value, onChange, disabled, id }) {
   if (q.type === 'select') return <select id={id} value={value} disabled={disabled} onChange={e => onChange(e.target.value)}><option value="">Choose one</option>{q.options.map(o => <option key={o} value={o}>{o}</option>)}</select>;
   if (q.type === 'textarea') return <Textarea id={id} rows={3} resize="vertical" value={value} disabled={disabled} onChange={(e, d) => onChange(d.value)}/>;
   if (q.type === 'range') return <div className="od-row"><Slider id={id} min={q.min} max={q.max} step={q.step || 1} value={value} disabled={disabled} onChange={(e, d) => onChange(d.value)}/><span>{value}</span></div>;
-  if (q.type === 'color') return <input id={id} type="color" value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000'} disabled={disabled} onChange={e => onChange(e.target.value)}/>;
+  if (q.type === 'color') return <input id={id} type="color" value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : NO_COLOR} disabled={disabled} onChange={e => onChange(e.target.value)}/>;
   return <Input id={id} value={value} disabled={disabled} onChange={(e, d) => onChange(d.value)}/>;
 }
 
@@ -25,7 +25,10 @@ export default function QuestionForm({ form, live = false, onAnswer }) {
     {form.title && <h4 className="question-form-title">{form.title}</h4>}
     {form.questions.map(q => {
       const id = `${uid}-${q.id}`;
-      return <Field key={q.id} label={q.label} className="question-field">
+      // the label names the control by id: the native select and colour input take nothing from Field's context.
+      // A radio or checkbox group has no single control to point at.
+      const label = q.type === 'radio' || q.type === 'checkbox' ? q.label : { children: q.label, htmlFor: id };
+      return <Field key={q.id} label={label} className="question-field">
         <Control q={q} id={id} value={values[q.id]} onChange={v => set(q.id, v)} disabled={!live}/>
         {q.allow_custom && <Input aria-label={`Other: ${q.label}`} placeholder="Other" value={others[q.id] || ''} disabled={!live} onChange={(e, d) => setOthers(s => ({ ...s, [q.id]: d.value }))}/>}
       </Field>;

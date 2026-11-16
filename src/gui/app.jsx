@@ -453,7 +453,9 @@ function App() {
     const conversationId = conversation && conv?.botId === botId ? conv.current || undefined : undefined;
     const r = await guard(() => api.startTask(botId, task, { conversationId, conversation, protected: block, designComments }));
     if (!r) return;
-    if (conversation) { setComposer(''); setPicks([]); }  // only once the harness took it: a refusal leaves the picks
+    // only once the harness took it: a refusal leaves the picks. Only the picks that were sent: the user
+    // may have moved to another conversation and picked there while this was on its way
+    if (conversation) { setComposer(''); const sent = picks; setPicks(now => now.filter(p => !sent.includes(p))); }
     // a routine started while another task streams leaves that stream alone (the chat refetches when it ends);
     // the routine's activity still reaches the panel through the ledger trail
     if (!conversation && liveRef.current) { api.sessions().then(setSessions).catch(() => {}); log('Routine started', task); return; }

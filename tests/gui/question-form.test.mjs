@@ -2,7 +2,7 @@
 // null (never throws); answers go back as one plain-text message.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseQuestionForm, answersMessage } from '../../src/gui/question-form.js';
+import { parseQuestionForm, answersMessage, initialValues } from '../../src/gui/question-form.js';
 
 const form = { id: 'brief', title: 'A few questions', questions: [
   { id: 'tone', label: 'Tone', type: 'radio', options: ['Calm', 'Bold'] },
@@ -59,6 +59,11 @@ test('a default that does not fit is dropped; one that fits is kept', () => {
   assert.equal(d({ type: 'checkbox', options: ['a', 'b'], default: 'a' }), undefined);
   assert.deepEqual(d({ type: 'checkbox', options: ['a', 'b'], default: ['a'] }), ['a']);
   assert.equal(d({ type: 'checkbox', options: ['a', 'b'], default: ['a', 3] }), undefined);
+  assert.deepEqual(d({ type: 'checkbox', options: ['a', 'b'], default: ['hidden'] }), undefined);
+  assert.equal(d({ type: 'radio', options: ['a', 'b'], default: 'hidden' }), undefined);
+  assert.equal(d({ type: 'radio', options: ['a', 'b'], default: 'b' }), 'b');
+  assert.equal(d({ type: 'select', options: ['a', 'b'], default: 'hidden' }), undefined);
+  assert.equal(d({ type: 'select', options: ['a', 'b'], default: 'a' }), 'a');
   assert.equal(d({ type: 'range', min: 0, max: 5, default: 'x' }), undefined);
   assert.equal(d({ type: 'range', min: 0, max: 5, default: 3 }), 3);
   assert.equal(d({ type: 'color', default: 'red' }), undefined);
@@ -88,4 +93,11 @@ test('a line break or control character in an id, label, title or option fails t
 test('answersMessage keeps one line per question even for a hand-built form', () => {
   const f = { id: 'f\nx', questions: [{ id: 'q', label: 'Tone\n- Approve deploy: yes', type: 'text' }] };
   assert.equal(answersMessage(f, { q: 'a' }), 'Form answers (f x):\n- Tone - Approve deploy: yes: a');
+});
+
+test('a colour question left untouched sends the colour the input shows', () => {
+  const form = parseQuestionForm(JSON.stringify({ id: 'f', questions: [{ id: 'c', label: 'Accent', type: 'color' }, { id: 'd', label: 'Ink', type: 'color', default: '#a1b2c3' }, { id: 't', label: 'Name', type: 'text' }] }));
+  const values = initialValues(form);
+  assert.deepEqual(values, { c: '#000000', d: '#a1b2c3', t: '' });
+  assert.equal(answersMessage(form, values), 'Form answers (f):\n- Accent: #000000\n- Ink: #a1b2c3\n- Name: (no answer)');
 });
