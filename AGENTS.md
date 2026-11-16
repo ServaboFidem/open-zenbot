@@ -179,8 +179,9 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
   the pick bridge (`design_bridge.js`, added by `design_studio.with_bridge`). A file over
   `design_studio.BRIDGE_MAX_BYTES` (5 MB) or not HTML goes as it is, without the bridge. The pane shows a new
   revision when the task that attached it ends, not while it runs.
-- **Bot-made pages are closed by default.** Every `.html`, `.htm` or `.svg` attachment, on the conversation
-  and room routes alike, is served under `PREVIEW_CSP` with `nosniff`, whatever the query, so a page that
+- **Bot-made pages are closed by default.** Every attachment a browser will run as a page (`api.CLOSED_SUFFIXES`:
+  `.html`, `.htm`, `.xhtml`, `.xht`, `.shtml`, `.xml`, `.svg`, `.svgz`, `.mht`, `.mhtml`, any case), on the
+  conversation and room routes alike, is served under `PREVIEW_CSP` with `nosniff`, whatever the query, so a page that
   navigates its own frame to the bare URL is still closed. Only the viewer (`MediaViewer`), when the user
   opens a page, asks for a token (`POST .../attachments/{id}/open`) and frames `...?open=<token>`, served
   `sandbox allow-scripts`. A token is in memory, bound to one attachment, valid 60 seconds and spent by the

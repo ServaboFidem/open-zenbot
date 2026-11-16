@@ -98,7 +98,8 @@ from .turn_notes import TurnNotes, outcome_of
 PREVIEW_CSP = ("sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
                "img-src data: blob:; font-src data:")
 OPEN_POLICY = "sandbox allow-scripts"  # an opened page: off this origin, but its scripts may reach the network
-CLOSED_SUFFIXES = (".html", ".htm", ".svg")  # pages that run script: served under PREVIEW_CSP unless opened
+# every type a browser will run as a page (script, or markup that can carry it): served under PREVIEW_CSP unless opened
+CLOSED_SUFFIXES = (".html", ".htm", ".xhtml", ".xht", ".shtml", ".xml", ".svg", ".svgz", ".mht", ".mhtml")
 
 
 class OpenTokens:

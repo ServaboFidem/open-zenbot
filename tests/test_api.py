@@ -1385,6 +1385,15 @@ def test_the_token_store_keeps_the_newest_256():
     assert len(first) == 32  # secrets.token_urlsafe(24)
 
 
+@pytest.mark.parametrize("name", ["p.html", "p.htm", "p.xhtml", "p.xht", "p.shtml", "p.xml", "p.svg", "p.svgz",
+                                  "p.mht", "p.mhtml", "P.XHTML", "p.Mhtml"])
+async def test_every_type_a_browser_runs_as_a_page_is_closed_without_a_token(client, harness: Harness, tmp_path: Path, name: str):
+    cid, att = await _attach_named(client, harness, tmp_path, name, b"<p>page</p>")
+    r = await client.get(f"/conversations/{cid}/attachments/{att['id']}")
+    assert r.status_code == 200 and r.headers["content-security-policy"] == PREVIEW_CSP
+    assert r.headers["x-content-type-options"] == "nosniff"
+
+
 async def test_svg_is_closed_by_default_and_other_files_are_unchanged(client, harness: Harness, tmp_path: Path):
     cid, svg = await _attach_named(client, harness, tmp_path, "logo.SVG", b"<svg xmlns='http://www.w3.org/2000/svg'/>")
     assert (await client.get(f"/conversations/{cid}/attachments/{svg['id']}")).headers["content-security-policy"] == PREVIEW_CSP
