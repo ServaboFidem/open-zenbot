@@ -32,3 +32,15 @@ def test_snapshot_compares_resolved_paths(tmp_path):
 def test_revision_of_ignores_non_copies(tmp_path):
     assert revision_of(tmp_path, tmp_path / "designs" / "a" / "index.html") is None
     assert revision_of(tmp_path, tmp_path / "designs" / "a" / ".versions" / "x.index.html") is None
+
+
+def test_snapshot_refuses_a_symlinked_versions_folder(tmp_path):
+    f = tmp_path / "designs" / "a" / "index.html"; f.parent.mkdir(parents=True)
+    f.write_text("<p>x</p>", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"; elsewhere.mkdir()
+    try:
+        (f.parent / ".versions").symlink_to(elsewhere, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks cannot be created here")
+    assert snapshot(tmp_path, f) is None
+    assert list(elsewhere.iterdir()) == []

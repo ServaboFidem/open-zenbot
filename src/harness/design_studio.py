@@ -24,6 +24,9 @@ def snapshot(vault_root: Path, target: Path) -> Path | None:
     if len(parts) != 2 or parts[0].startswith(".") or real.suffix.lower() not in _SUFFIXES or not real.is_file():
         return None
     vdir = real.parent / ".versions"
+    # a symlinked .versions would send the copy elsewhere; refuse before any read, mkdir or write
+    if vdir.is_symlink() or (vdir.exists() and vdir.resolve() != vdir):
+        return None
     name = f"{real.stem}.html"
     have: list[tuple[int, Path]] = []
     if vdir.is_dir():
@@ -40,7 +43,11 @@ def snapshot(vault_root: Path, target: Path) -> Path | None:
         n = 0
     vdir.mkdir(exist_ok=True)
     copy = vdir / f"{n + 1}.{name}"
-    copy.write_bytes(data)
+    try:
+        with open(copy, "xb") as out:  # exclusive: never truncates or follows what is already at the name
+            out.write(data)
+    except FileExistsError:
+        return None
     return copy
 
 
