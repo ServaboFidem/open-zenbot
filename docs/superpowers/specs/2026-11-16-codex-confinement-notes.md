@@ -1,12 +1,13 @@
-# Codex confinement check (Task 5)
+# Codex confinement check
 
 Date: 2026-11-16. Machine: Windows 11 Pro, codex-cli 0.163.0 (npm `.cmd` shim), signed in with a ChatGPT
 subscription. The user's `~/.codex/config.toml` sets `[windows] sandbox = "elevated"` and enables plugins (a
 browser, computer use and others); the sandbox's offline account (`CodexSandboxOffline`) was set up earlier.
 
-**Verdict: the bar is not met. Codex stays detected only.** With the best argument set found, Codex starts no
-user plugin or MCP server and ignores everything planted in the job folder, and writes outside the folder are
-refused, but a sandboxed command can still reach the internet directly. Nothing on the command line closes that.
+**Verdict, for codex-cli 0.163.0 with this machine's sandbox setup: the bar is not met. Codex stays detected
+only.** With the best argument set found, Codex starts no user plugin or MCP server and ignores everything planted
+in the job folder, and writes outside the folder are refused, but a sandboxed command can still reach the internet
+directly. No switch that was tried closed that.
 
 ## How it was run
 

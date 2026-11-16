@@ -64,6 +64,28 @@ Both signed in with a subscription. Each line below was run, not read from docum
 - `claude auth status` prints JSON with `loggedIn` and `authMethod`.
 - `claude --version` prints `2.1.325 (Claude Code)`: the version comes before the name.
 
+**Claude Code, links and project files** (2026-11-16, final review), same arguments plus `--model haiku`, cwd the job
+folder, in a scratch `~/zen-claude-check/` (deleted afterwards) with a dummy file holding a marker string in `outside/`:
+
+- a. Junction (`mklink /J`) in the job folder to `outside/`: listing, reading and writing through it were refused
+  ("resolves through a symlink to ... --restricted confines the file tools to the working directory"); nothing written outside.
+- b. File symlink to the outside file (this machine allows creating one): reading it was refused the same way; a Write
+  to it was refused ("File has not been read yet"); the outside file was unchanged.
+- c. Hard link (`mklink /H`) to an outside file: **the read succeeded and the marker came back**. An Edit succeeded but
+  replaced the job folder's name (the link was broken), so the outside file was unchanged.
+- d. `CLAUDE.md` in the job folder holding `@<absolute path to the outside file>`: the marker did not reach the model;
+  asked to quote any text with the marker, it said there was none and that it had been given no project instruction file.
+- e. `job/.claude/settings.json` with `{"permissions":{"additionalDirectories":["<outside>"]}}`: the start event's
+  `additional_directories` stayed `[]`; reading and writing in `outside/` were refused.
+- f. `.env` in the job folder setting `ANTHROPIC_BASE_URL=http://127.0.0.1:9`: the run answered normally, so the
+  `.env` was not honoured.
+- g. The start event, as printed: `"permissionMode": "acceptEdits"` and
+  `"plugins": [{"name": "cc-plugin-agents-md", "path": "builtin", "source": "cc-plugin-agents-md@builtin"}, {"name": "cc-plugin-telemetry", "path": "builtin", "source": "cc-plugin-telemetry@builtin"}, {"name": "cc-plugin-privacy", "path": "builtin", "source": "cc-plugin-privacy@builtin"}, {"name": "cc-plugin-plugin-authoring", "path": "builtin", "source": "cc-plugin-plugin-authoring@builtin"}]`.
+
+So the hard link is the one way out restricted mode missed; the harness now refuses a bot-named folder holding a hard
+link or a link that leads out, checks `permissionMode` and the plugins at start, and adds no refusal for `CLAUDE.md`,
+`.claude/settings.json` or `.env`, since none of them changed what a run could reach.
+
 **Codex**, run as `codex exec --sandbox workspace-write --skip-git-repo-check --ephemeral --json -`,
 prompt on stdin:
 

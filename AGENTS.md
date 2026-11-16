@@ -243,41 +243,74 @@ allowed command fits the task, pausing for approval when it does not) is tabled,
 
 The `delegate(agent, task, folder?)` tool (`src/harness/delegation.py`) hands a job to the Claude Code command-line
 program on the user's own subscription; `skills/delegation/` tells bots when to use it. The tool exists only while an
-agent is switched on (`Delegator.register`; its description names which), and a call in a routine is refused (the tool is still listed; it answers that `delegate` works only in a conversation or a room turn). Settings > Harness Tools > Coding
+agent is switched on (`Delegator.register`; its description names which), and a call in a routine is refused before any approval opens, a skill rule's included (the tool is still listed; it answers that `delegate` works only in a conversation or a room turn). In a room, a turn's time budget (600 s of running time, `ZEN_TURN_DEADLINE_S`, `src/rooms/room.py`) is shorter than a run's limit, so a long run there is cut off; long jobs belong in a one-to-one conversation. Settings > Harness Tools > Coding
 agents (`AgentSettings.jsx`; `GET /agents`, `PUT /settings/agents/{key}`) shows what `agent_clis.py` found: where the
 program is (`tool_paths.CLAUDE_CODE` and `CODEX`, keys `claude-code` and `codex`, with `use_found` so a copy in an
 install folder is used when nothing is saved and it is not on PATH), its version, and whether it is signed in
 (`read_auth`, from `auth status`; the harness never reads a CLI's credential files). The switches live in
 `vault-settings/agents.json`, never the vault: `enabled` (default off), `ask` (default on) and `model`. A model name
-comes only from there and must fully match `[A-Za-z0-9._-]{1,64}`.
+comes only from there and must fully match `[A-Za-z0-9._-]{1,64}`. Saving or clearing the program path of
+`claude-code` or `codex` (`PUT`/`DELETE /settings/tools/programs/{key}`) probes that agent again and re-registers the
+tool. Harness shutdown stops every run in flight (`Runner.stop_all`, from the `lifespan`).
 
 - **The argument list is fixed** (`delegation.claude_argv`): `-p --restricted --strict-mcp-config --tools
   Read,Write,Edit,Glob,Grep --permission-mode acceptEdits --output-format stream-json --verbose
   --no-session-persistence`, plus `--model <m>` from Settings. The job goes in on stdin: nothing a bot wrote is ever a
   command-line argument, and no shell runs. The child's environment is `run_env()` (the scrubbed one, minus every
-  `ANTHROPIC_*`, `OPENAI_*`, `CLAUDE_CODE_*` and `CODEX_*` variable, keeping `CLAUDE_CONFIG_DIR` and `CODEX_HOME`).
+  `ANTHROPIC_*`, `OPENAI_*`, `CLAUDE_CODE_*` and `CODEX_*` variable, keeping `CLAUDE_CONFIG_DIR` and `CODEX_HOME`),
+  plus `NoDefaultCurrentDirectoryInExePath=1` on Windows, so a bare program name is never looked up in the job folder.
+- **No shim runs through `cmd.exe`** (`delegation.direct`): an npm install is `claude.cmd`, whose last line runs a bare
+  `node`, which `cmd.exe` would look for in the job folder (where the bot may have put a `node.bat`) before PATH. The
+  runner reads the shim instead and launches `[node.exe, <its node_modules\...\*.js>, *args]`: `node.exe` beside the
+  shim, else the first absolute PATH folder holding `node.exe`; both must be files outside the job folder. A `.cmd` or
+  `.bat` that cannot be resolved that way is refused, telling the user to install the native Claude Code or set its
+  path. The probes (`agent_clis._run`, `tool_paths.verify`) still run the shim as it is: they run in the harness's own
+  working folder, never a job folder.
 - **The first-event check** (`check_init`): the run is stopped at once unless the start event lists only the five
-  tools, no MCP servers, the job folder as its working folder and, when Settings showed a subscription sign-in,
+  tools, no MCP servers, the job folder as its working folder (the folder is resolved again at this point, so one
+  swapped for a link since it was checked fails), `permissionMode` `acceptEdits` when the event has that field, only
+  built-in plugins (`"path": "builtin"`, source `<name>@builtin`) and, when Settings showed a subscription sign-in,
   `apiKeySource` of `none`. It fails closed: lines that are not JSON objects are skipped, and the first object event must be the start event with the expected fields or the run is refused. A CLI update that widens a run is
   caught here rather than going unnoticed.
 - **The job folder** (`resolve_folder`): with no `folder`, a new `<vault>/delegated/<date>-<id>/` the harness makes;
   otherwise a folder that exists (absolute, or relative to the vault). It must resolve (links followed) inside
   `allowed_folders.reachable(...).full`, not inside a Read-Only folder, and neither inside nor holding a private or
-  Read-Only one. Too many entries to compare before and after is reported, not hidden.
+  Read-Only one. Too many entries to compare before and after is reported, not hidden. A folder the bot named is
+  scanned again just before the launch (`leads_out`, after the before-snapshot, same 50,000-entry bound): the run is
+  refused, naming the first offending entry, if it holds a link or junction that resolves outside it, a regular file
+  with more than one hard link, or more entries than the bound. A folder the harness made starts empty and is not
+  scanned.
+- **During the run**: any tool event that names a `file_path` or `path` resolving outside the folder (any tool, not
+  only Write and Edit; `~`, or a path starting `~/` or `~\`, counts as outside) ends the run at once, kills the tree, and fails it
+  with that path; the path is logged with `outside: true`.
 - **When the user is asked** (`Delegator.needs_approval`, via `TaskLoop._run_call` and `delegate_check`): a run in a
   folder the bot named always asks; a run in a new folder the harness made asks unless "Ask me before each run" is off;
   Codex would always ask. The approval shows the agent, folder, model and the whole task. A skill approval rule that
   already asks gets the same detail. Stop ends the run (`Harness.stop`; `Runner` kills the whole process tree, with a
   Windows Job Object). Limits: task 20,000 characters, one run per session and two in the harness,
   `ZEN_DELEGATE_TIMEOUT` seconds (default 900), at most 200 changed files listed, 2,000 characters of error tail.
-- **The reply** starts with `Folder: <path>`, then the agent's answer, then the files added, changed or removed. The
-  ledger gets kind `delegate` entries: `start`, `file` (each Write or Edit) and `end`. The bot treats the answer as
-  data to check.
-- **What Claude Code can reach**, checked on 2026-11-16 with Claude Code 2.1.325 on Windows: only the job folder
-  (reads and writes), the five file tools, no commands, no web, none of the user's MCP servers, hooks or plugins. A hook
-  and an MCP server planted in the job folder did not run. This is what the bot could already do through `files`; the
-  new things are spending and that the folder's contents go to Anthropic under the user's account. Prompt injection in
-  a file the bot copies in can still steer the agent within that folder.
+- **The reply** starts with `Folder: <path>`, then the files added, changed or removed, then the agent's answer (last,
+  so a long answer cannot push the folder and the changes past the 20,000-character tool output cap). A failed,
+  timed-out, stopped or refused run raises its error followed by the same `Folder:` line and changes list, so the bot
+  still knows where the work is. The ledger gets kind `delegate` entries: `start`, `file` (each Write or Edit, and any
+  path outside the folder; a path is cut to 500 characters) and `end`. The bot treats the answer as data to check.
+- **What the harness enforces itself**: the argument list and environment, no shim through `cmd.exe`, the folder rules
+  above, the pre-launch scan of a bot-named folder, the first-event check, and ending a run whose tool events name a
+  path outside the folder. That last one acts on the stream as it arrives, so a single read or write that Claude Code
+  carries out may already have happened when the run is ended; it is a tripwire, not a wall.
+- **What is left to Claude Code's restricted mode** (`--restricted`): refusing each file tool call outside the working
+  folder, links and junctions included; and Claude Code itself (with the fixed arguments) not acting on a project's own
+  settings, hooks, MCP servers, `CLAUDE.md` imports or `.env`. Checked
+  by hand on 2026-11-16 with Claude Code 2.1.325 on Windows (`docs/superpowers/specs/2026-11-16-agent-delegation-design.md`,
+  "What was checked on this machine"): only the job folder (reads and writes), the five file tools, no commands, no
+  web, none of the user's MCP servers, hooks or plugins; a hook and an MCP server planted in the job folder did not
+  run; reads, listings and writes through a junction and through a file symlink were refused; a `CLAUDE.md` `@import` of
+  an outside file, `.claude/settings.json` `additionalDirectories` and a `.env` setting `ANTHROPIC_BASE_URL` had no
+  effect. A hard link was the one way out it did not catch: it read an outside file through one (its Edit replaced
+  the job folder's name rather than writing through), which is why the pre-launch scan refuses hard links. This is
+  what the bot could already do through `files`; the new things are spending and that the folder's contents go to
+  Anthropic under the user's account. Prompt injection in a file the bot copies in can still steer the agent within
+  that folder. A new Claude Code version can change any of this: re-run the checks when it does.
 - **Codex is detected only.** Tested on Windows (`docs/superpowers/specs/2026-11-16-codex-confinement-notes.md`): its
   sandbox refused writes outside the job folder and its plugins could be switched off, but network access stayed open
   (plain HTTP and raw TCP connections worked from inside the sandbox) and it can read any file the user's account can.
@@ -287,7 +320,8 @@ comes only from there and must fully match `[A-Za-z0-9._-]{1,64}`.
 Rules for contributors: never run either CLI with its checks off (`bypassPermissions`,
 `--dangerously-bypass-approvals-and-sandbox`, `danger-full-access`). Do not widen `CLAUDE_TOOLS` or drop `--restricted`
 or `--strict-mcp-config` without re-running the confinement checks and recording them. Keep `check_init` failing
-closed. Keep the job folder inside what bots may write and never inside or holding a private or Read-Only folder. Tests
+closed. Keep the job folder inside what bots may write and never inside or holding a private or Read-Only folder.
+Never launch a `.cmd` or `.bat` through `cmd.exe` with the job folder as its working folder. Tests
 never run the real programs: they use `tests/fixtures/fake_agent_cli.py`, and `tests/conftest.py` makes probing inert
 unless a module sets `pytestmark = pytest.mark.real_agent_probe`. Tests: `tests/test_agent_clis.py`,
 `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, additions in `tests/test_tool_paths.py` and
