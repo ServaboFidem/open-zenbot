@@ -40,8 +40,13 @@ AGENTS: dict[str, AgentCli] = {
                       ("--sandbox",), "codex login"),
 }
 
-# Non-empty: why this agent can be found but not run yet.
-RUNNABLE: dict[str, str] = {"claude-code": "", "codex": "Codex runs are not built yet."}
+# Non-empty: why this agent can be found but not run yet. Codex: its sandbox left direct network connections open
+# (docs/superpowers/specs/2026-11-16-codex-confinement-notes.md).
+RUNNABLE: dict[str, str] = {
+    "claude-code": "",
+    "codex": "Codex is detected only: in testing on Windows its sandbox did not switch off network access, so a run "
+             "could send files out.",
+}
 
 _DROPPED = ("ANTHROPIC_", "OPENAI_", "CLAUDE_CODE_", "CODEX_")
 _KEPT = ("CLAUDE_CONFIG_DIR", "CODEX_HOME")  # compared upper-case, like the prefixes

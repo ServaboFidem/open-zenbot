@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from src.harness import delegation
-from src.harness.agent_clis import Agents, AgentSettings, save_settings
+from src.harness.agent_clis import RUNNABLE, Agents, AgentSettings, save_settings
 from src.harness.allowed_folders import Folders
 from src.harness.delegation import (CLAUDE_TOOLS, MAX_TASK, TOOL, DelegationError, Delegator, FolderRefused, Runner,
                                     changed, changes_text, check_init, claude_argv, job_text, resolve_folder, snapshot)
@@ -691,3 +691,17 @@ def test_register_follows_the_switch(tmp_path):
     d.register(tools)
     d.register(tools)  # again: still one tool
     assert tools.names().count(TOOL) == 1
+
+
+# -- Codex ---------------------------------------------------------------------------------------------------
+
+async def test_codex_stays_detected_only(rig):
+    """Codex's sandbox left the network open when checked on Windows
+    (docs/superpowers/specs/2026-11-16-codex-confinement-notes.md), so Codex is found but never run."""
+    assert RUNNABLE["codex"] == ("Codex is detected only: in testing on Windows its sandbox did not switch off network "
+                                 "access, so a run could send files out.")
+    runner, folder = rig("ok")
+    runner.agents.statuses["codex"] = {"path": str(FAKE), "auth": "subscription", "usable": True, "model": ""}
+    with pytest.raises(DelegationError):
+        await runner.run("codex", folder, "task", "b1", "s1")
+    assert runner.live == {} and not rig.record.exists() and _delegate_entries(rig.ledger) == []
