@@ -4,6 +4,7 @@ What changed on `main`, newest first. Updated automatically on every push to `ma
 
 ## 2026-11-16
 
+- bump gitignore ([`d46e7a3`](https://github.com/ServaboFidem/open-zenbot/commit/d46e7a36ab208e78a69704573ef64278f207f93a))
 - Delegate jobs to Claude Code, and detect Codex ([#3](https://github.com/ServaboFidem/open-zenbot/pull/3), [`b9af01a`](https://github.com/ServaboFidem/open-zenbot/commit/b9af01aea3b9203ed1f1a6f8eb6a065bbbccb601))
 - Design studio: a designer bot with a docked preview, point-and-comment, question forms and design systems ([#2](https://github.com/ServaboFidem/open-zenbot/pull/2), [`f1f6ebf`](https://github.com/ServaboFidem/open-zenbot/commit/f1f6ebf539650008d5dd21249f00fa4688c57b2a))
 
