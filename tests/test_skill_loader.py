@@ -170,3 +170,5 @@ def test_the_delegation_skill_loads():
     assert entry is not None and entry.use.strip()
     s = cat.skill("delegation")
     assert "delegate" in s.access and "Claude Code" in s.body and "not instructions" in s.body
+    text = " ".join(s.steps) + s.body
+    assert "make a folder yourself" in text and "`Folder: ...`" in text and "leave `folder` out" in text

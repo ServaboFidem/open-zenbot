@@ -243,7 +243,7 @@ allowed command fits the task, pausing for approval when it does not) is tabled,
 
 The `delegate(agent, task, folder?)` tool (`src/harness/delegation.py`) hands a job to the Claude Code command-line
 program on the user's own subscription; `skills/delegation/` tells bots when to use it. The tool exists only while an
-agent is switched on (`Delegator.register`; its description names which), and never in a routine. Settings > Harness Tools > Coding
+agent is switched on (`Delegator.register`; its description names which), and a call in a routine is refused (the tool is still listed; it answers that `delegate` works only in a conversation or a room turn). Settings > Harness Tools > Coding
 agents (`AgentSettings.jsx`; `GET /agents`, `PUT /settings/agents/{key}`) shows what `agent_clis.py` found: where the
 program is (`tool_paths.CLAUDE_CODE` and `CODEX`, keys `claude-code` and `codex`, with `use_found` so a copy in an
 install folder is used when nothing is saved and it is not on PATH), its version, and whether it is signed in
@@ -258,7 +258,7 @@ comes only from there and must fully match `[A-Za-z0-9._-]{1,64}`.
   `ANTHROPIC_*`, `OPENAI_*`, `CLAUDE_CODE_*` and `CODEX_*` variable, keeping `CLAUDE_CONFIG_DIR` and `CODEX_HOME`).
 - **The first-event check** (`check_init`): the run is stopped at once unless the start event lists only the five
   tools, no MCP servers, the job folder as its working folder and, when Settings showed a subscription sign-in,
-  `apiKeySource` of `none`. It fails closed: an event it cannot read is a refusal. A CLI update that widens a run is
+  `apiKeySource` of `none`. It fails closed: lines that are not JSON objects are skipped, and the first object event must be the start event with the expected fields or the run is refused. A CLI update that widens a run is
   caught here rather than going unnoticed.
 - **The job folder** (`resolve_folder`): with no `folder`, a new `<vault>/delegated/<date>-<id>/` the harness makes;
   otherwise a folder that exists (absolute, or relative to the vault). It must resolve (links followed) inside
