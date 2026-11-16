@@ -4,6 +4,7 @@ What changed on `main`, newest first. Updated automatically on every push to `ma
 
 ## 2026-11-16
 
+- Settings: jump to provider and tool cards, stop a late jump on input, drop doubled headings, tidy tile markup ([`b46204d`](https://github.com/ServaboFidem/open-zenbot/commit/b46204dbfc4eb5e2ae954f264571d65a4cd789ff))
 - Settings search: match a section by its own words; keep focus and the query; provider jumps ([`f980310`](https://github.com/ServaboFidem/open-zenbot/commit/f9803108dda81ad1bac0fbc7cfba4799aae044f4))
 - Coding agents is its own Settings panel: update messages and docs ([`0ff7433`](https://github.com/ServaboFidem/open-zenbot/commit/0ff743315b5b4981d777a50a2ca19aa1665b480d))
 - Settings search: open the panel at the matching section ([`aad9cce`](https://github.com/ServaboFidem/open-zenbot/commit/aad9cce9b0ae559332239b9a1a0b5fe7374c8bac))
