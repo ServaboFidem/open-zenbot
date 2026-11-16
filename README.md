@@ -67,19 +67,10 @@ You need [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Node
 **Ubuntu (23.10 and later): create an AppArmor profile for Electron once.** Ubuntu blocks unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns = 1`), which Chromium's sandbox needs. Without a profile, the app exits at start with `The SUID sandbox helper binary was found, but is not configured correctly` and the harness stops with it. The profile lets this one Electron binary use user namespaces, and it survives `npm install`:
 
 ```sh
-sudo tee /etc/apparmor.d/open-zenbot-electron >/dev/null <<EOF
-abi <abi/4.0>,
-include <tunables/global>
-
-profile open-zenbot-electron $PWD/node_modules/electron/dist/electron flags=(unconfined) {
-  userns,
-  include if exists <local/open-zenbot-electron>
-}
-EOF
-sudo apparmor_parser -r /etc/apparmor.d/open-zenbot-electron
+./scripts/ubuntu-apparmor-profile.sh   # asks for sudo; --dry-run shows the profile, --remove deletes it
 ```
 
-Run it from the repo root: the profile names the Electron binary by its full path, so make it again if the repo moves. Making `node_modules/electron/dist/chrome-sandbox` root-owned with mode 4755 also works, but `npm install` resets it. Don't start Electron with `--no-sandbox`: the design pane runs bot-made pages. Installable packages (`.deb`, AppImage, snap) will need to ship or install an equivalent profile for their own binary path.
+Run it from a real terminal (sudo asks for a password) after `npm install`. The profile names the Electron binary by its full path, so run it again if the repo moves. Making `node_modules/electron/dist/chrome-sandbox` root-owned with mode 4755 also works, but `npm install` resets it. Don't start Electron with `--no-sandbox`: the design pane runs bot-made pages. Installable packages (`.deb`, AppImage, snap) will need to ship or install an equivalent profile for their own binary path.
 
 `dev` runs `npm install` on the first start (when `node_modules` is missing), builds the GUI, starts the harness on `http://127.0.0.1:8765`, waits for it to answer and opens the app window. Closing the window stops the harness. Use `-Port 9000` (`--port 9000` on Linux) to move it to another port. `install-deps` takes `--dry-run` to show what it would do. A server whose tool is still missing shows "needs install" on the MCP servers page, with the fix and a Recheck button.
 
