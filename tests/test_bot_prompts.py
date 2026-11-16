@@ -203,5 +203,5 @@ def test_studio_must_be_a_boolean():
 def test_the_designer_bot_file_is_a_studio_bot():
     p = parse(Path("bot-prompts/designer.md").read_text(encoding="utf-8"), "designer")
     assert p.studio is True and p.skills == ["design-studio"] and p.mcps == ["files"]
-    for must in ("designs/", "data-zen-id", "attach_file", "question-form"):
+    for must in ("designs/", "data-zen-id", "attach_file", "question-form", "create_directory", "edit_file"):
         assert must in p.instructions

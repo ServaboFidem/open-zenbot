@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from src.harness.design_studio import comment_block, revision_of, snapshot, with_bridge
@@ -61,6 +63,12 @@ def test_bridge_goes_once_before_the_last_body_close(html, tail):
 
 def test_bridge_is_appended_when_there_is_no_body_close():
     assert with_bridge(b"<p>x</p>").startswith(b"<p>x</p>" + MARK)
+
+
+def test_bridge_caps_the_element_id_where_the_gui_and_harness_do():
+    # the GUI drops a pick whose elementId is over 120: a longer slice would lose the whole pick
+    src = (Path(__file__).resolve().parent.parent / "src" / "harness" / "design_bridge.js").read_text(encoding="utf-8")
+    assert "getAttribute('data-zen-id')).slice(0, 120)" in src
 
 
 def test_comment_block_is_exact(tmp_path):

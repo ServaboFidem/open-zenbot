@@ -24,7 +24,7 @@
   }
   function idOf(el) {
     var a = el.closest ? el.closest('[data-zen-id]') : null;
-    return a ? String(a.getAttribute('data-zen-id')).slice(0, 300) : '';
+    return a ? String(a.getAttribute('data-zen-id')).slice(0, 120) : '';
   }
   function target(e) { return e.target && e.target.nodeType === 1 ? e.target : null; }
   function hover(e) {
