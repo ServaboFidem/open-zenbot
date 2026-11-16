@@ -171,12 +171,27 @@ class Snapshot(dict):
     complete = True
 
 
+_REPARSE = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: a link, a junction, or another kind of redirect on Windows
+
+
+def _redirect(p: Path) -> bool:
+    """A symlink, a junction or any other reparse point: something a walk must not follow. Unreadable counts."""
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return True
+    return stat.S_ISLNK(st.st_mode) or p.is_junction() or bool(getattr(st, "st_file_attributes", 0) & _REPARSE)
+
+
 def snapshot(folder: Path, limit: int = SNAPSHOT_LIMIT) -> Snapshot:
     """Every file under the folder, up to `limit` entries (files and folders) walked. Links are not followed."""
     out, seen = Snapshot(), 0
     for root, dirs, files in os.walk(folder):
-        seen += len(dirs)
         base = Path(root)
+        # os.walk takes a junction for an ordinary folder: without this a junction planted in the job folder would
+        # list another folder's file names (or loop until the limit)
+        dirs[:] = [d for d in dirs if not _redirect(base / d)]
+        seen += len(dirs)
         for name in files:
             seen += 1
             if seen > limit:
@@ -192,9 +207,6 @@ def snapshot(folder: Path, limit: int = SNAPSHOT_LIMIT) -> Snapshot:
             out.complete = False
             return out
     return out
-
-
-_REPARSE = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: a link, a junction, or another kind of redirect on Windows
 
 
 def leads_out(folder: Path, limit: int = SNAPSHOT_LIMIT) -> str | None:

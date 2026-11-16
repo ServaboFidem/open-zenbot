@@ -724,6 +724,17 @@ def test_snapshot_stops_at_the_limit(tmp_path):
     assert "too large" not in changes_text(["f1.txt"])
 
 
+def test_snapshot_does_not_walk_through_a_junction(tmp_path):
+    job, outside = tmp_path / "job", tmp_path / "outside"
+    job.mkdir(), outside.mkdir()
+    (job / "a.txt").write_text("a")
+    (outside / "private-name.txt").write_text("x")
+    _junction(outside, job / "way-out")  # another folder
+    _junction(job, job / "loop")         # back into itself
+    snap = snapshot(job)
+    assert snap.complete and set(snap) == {"a.txt"}
+
+
 # -- the tool and its approval -------------------------------------------------------------------------------
 
 CODEX_READS_TEXT = "Codex can read any file your account can, not only this folder."

@@ -264,8 +264,11 @@ tool. Harness shutdown stops every run in flight (`Runner.stop_all`, from the `l
   runner reads the shim instead and launches `[node.exe, <its node_modules\...\*.js>, *args]`: `node.exe` beside the
   shim, else the first absolute PATH folder holding `node.exe`; both must be files outside the job folder. A `.cmd` or
   `.bat` that cannot be resolved that way is refused, telling the user to install the native Claude Code or set its
-  path. The probes (`agent_clis._run`, `tool_paths.verify`) still run the shim as it is: they run in the harness's own
-  working folder, never a job folder.
+  path. The probes (`agent_clis._run`, `host_deps._run_version`) still run the shim as it is, in the harness's own
+  working folder, which may itself be a folder bots can write (a harness started from a repo that is also an Allowed
+  Folder). So on Windows they set `NoDefaultCurrentDirectoryInExePath=1` (`host_deps.no_cwd_search`), which stops
+  `cmd.exe` looking in the current folder before PATH; the runner sets it too. The before and after file listings
+  (`delegation.snapshot`) never walk through a link, a junction or any other redirect.
 - **The first-event check** (`check_init`): the run is stopped at once unless the start event lists only the five
   tools, no MCP servers, the job folder as its working folder (the folder is resolved again at this point, so one
   swapped for a link since it was checked fails), `permissionMode` `acceptEdits` when the event has that field, only

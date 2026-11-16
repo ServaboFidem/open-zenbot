@@ -135,9 +135,11 @@ def save_settings(vault_root: Path, key: str, settings: AgentSettings) -> None:
 
 def _run(path: str, args: tuple[str, ...], timeout: float) -> str | None:
     """Like host_deps._run_version, but with the vendor-free environment. Output of both streams, or None."""
+    from .host_deps import no_cwd_search  # local: host_deps imports tool_paths, as this module does
+
     try:
         r = subprocess.run([path, *args], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout,
-                           env=run_env())
+                           env=no_cwd_search(run_env()))
     except (OSError, subprocess.TimeoutExpired):
         return None
     return (r.stdout or "") + "\n" + (r.stderr or "")

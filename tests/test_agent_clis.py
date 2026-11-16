@@ -390,3 +390,23 @@ async def test_put_bad_model_422(app_h):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as c:
         assert (await c.put("/settings/agents/codex", json={"model": "a b"})).status_code == 422
     assert load_settings(h.config.vault_root)["codex"].model == ""
+
+
+def test_probes_do_not_let_cmd_search_the_current_folder(monkeypatch):
+    """An npm `.cmd` shim runs `node` by bare name; started in a folder bots can write, a planted node.bat would win."""
+    import subprocess
+
+    from src.harness import host_deps
+
+    seen = []
+
+    def run(argv, **kw):
+        seen.append(kw.get("env") or {})
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.delenv("NoDefaultCurrentDirectoryInExePath", raising=False)
+    agent_clis._run("claude", ("--version",), 1.0)
+    host_deps._run_version("claude", ["--version"], 1.0)
+    want = "1" if sys.platform == "win32" else None
+    assert [e.get("NoDefaultCurrentDirectoryInExePath") for e in seen] == [want, want]
