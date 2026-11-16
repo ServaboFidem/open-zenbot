@@ -85,6 +85,7 @@ from src.music.service import MANAGED_BY as MUSIC_MANAGED_BY, MusicService
 from src.generation.images import DEFAULT_MODEL as DEFAULT_IMAGE_MODEL, ImageConfig, ImageGenerator
 from src.providers.models import ModelInfo, ModelLister, guess_kinds
 from src.providers.probe import ProbeJobs
+from src.providers.openrouter import OpenRouterHttp
 from src.providers.secrets import Secret
 from src.providers.store import KINDS as PROVIDER_KINDS, OPENROUTER_BASE, PRESETS as PROVIDER_PRESETS, ProviderStore, ProviderStoreError
 from .model_roles import ROLE_LABELS, ROLES, Choice, ModelRoles, load_bot_models, save_bot_models
@@ -1595,20 +1596,23 @@ def create_app(h: Harness) -> FastAPI:
     @app.post("/settings/openrouter-key")
     async def set_openrouter_key(body: OpenRouterKeyIn) -> dict[str, Any]:
         """The first-start screen's one step: check the key with OpenRouter, keep it in providers.json (so it
-        survives a restart) and bind the models on it. A refused or unchecked key leaves the store untouched."""
+        survives a restart) and bind the models on it. A refused or unchecked key leaves the store untouched; an
+        accepted key stays saved even when the models then fail to bind (422 with the reason)."""
         key = body.key.strip()
         if not key:
             raise HTTPException(422, "key is empty")
         exclusion.register_secret_value(key)  # before anything can log it
         store = h.provider_store
         entry = next((e for e in store.entries.values() if e.kind == "openrouter"), None)
-        pid = entry.id if entry else "openrouter"
-        try:
-            await h.model_lister.list(pid, "openrouter", OPENROUTER_BASE, Secret(key), refresh=True)
+        http = OpenRouterHttp(Secret(key), base_url=OPENROUTER_BASE, timeout=30.0, transport=h.model_lister.transport)
+        try:  # the authenticated key endpoint: the model list is public and would take any key
+            await http.check_key()
         except ProviderAuthError:
             raise HTTPException(422, "OpenRouter did not accept that key.") from None
         except ProviderError:
             raise HTTPException(503, "Could not reach OpenRouter. Check your connection and try again.") from None
+        finally:
+            await http.aclose()
         if entry is None:  # removed since the first start: add it back as the seed made it
             entry = store.add("OpenRouter", "openrouter", key=key)
             store.set_models(entry.id, default_models(h.config))

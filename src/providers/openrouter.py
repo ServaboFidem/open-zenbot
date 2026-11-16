@@ -119,6 +119,21 @@ class OpenRouterHttp:
             return False
         return r.status_code == 200
 
+    async def check_key(self, path: str = AUTH_PATH) -> None:
+        """Ask OpenRouter whether it accepts this key. Unlike `probe`, it tells a refusal from a failure: 200
+        returns; 401 or 403 raises ProviderAuthError; a network error, a timeout or any other status raises
+        ProviderUnavailable. No error text carries the key."""
+        try:
+            r = await self._client.get(path, timeout=10.0)
+        except httpx.TimeoutException as e:
+            raise ProviderUnavailable(f"openrouter key check unreachable: {type(e).__name__}", cause="timeout") from None
+        except httpx.HTTPError as e:
+            raise ProviderUnavailable(f"openrouter key check unreachable: {type(e).__name__}", cause="network") from None
+        if r.status_code in (401, 403):
+            raise ProviderAuthError(f"openrouter key check rejected the key (HTTP {r.status_code})")
+        if r.status_code != 200:
+            raise ProviderUnavailable(f"openrouter key check HTTP {r.status_code}", cause="server", status=r.status_code)
+
     async def aclose(self) -> None:
         await self._client.aclose()
 

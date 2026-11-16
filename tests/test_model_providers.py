@@ -431,12 +431,17 @@ async def test_a_bot_whose_model_was_disabled_falls_back_to_chat(client, harness
 # -- the OpenRouter key, from the first-start screen ----------------------------
 
 
-def _or_transport(status: int | None = None, offline: bool = False) -> httpx.MockTransport:
+def _or_transport(status: int = 200, offline: bool = False, timeout: bool = False, seen: list | None = None) -> httpx.MockTransport:
+    """OpenRouter as the key check sees it: the authenticated key endpoint answers `status`; the model list is public."""
     def handler(request: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(request)
         if offline:
             raise httpx.ConnectError("no route to host", request=request)
-        if status is not None:
-            return httpx.Response(status, json={"error": {"message": "no"}})
+        if timeout:
+            raise httpx.ReadTimeout("slow", request=request)
+        if request.url.path == "/api/v1/auth/key":
+            return httpx.Response(status, json={"data": {"label": "x"}} if status == 200 else {"error": {"message": "no"}})
         return httpx.Response(200, json=OR_MODELS)
     return httpx.MockTransport(handler)
 
@@ -471,6 +476,8 @@ async def test_settings_say_whether_an_openrouter_key_is_present(client_without_
 
 
 async def test_saving_an_openrouter_key_binds_the_decider_and_persists(client_without_key, harness_without_key: Harness, vault: Path):
+    seen: list[httpx.Request] = []
+    harness_without_key.model_lister = ModelLister(transport=_or_transport(seen=seen))
     r = await client_without_key.post("/settings/openrouter-key", json={"key": "  sk-or-good  "})
     assert r.status_code == 200, r.text
     assert r.json()["openrouter_key"] is True and r.json()["key_set"] is True
@@ -480,10 +487,13 @@ async def test_saving_an_openrouter_key_binds_the_decider_and_persists(client_wi
     assert "sk-or-good" not in _ledger_text(harness_without_key)
     assert "provider_changed" in _ledger_text(harness_without_key)
     assert ModelRoles.load(vault) is not None
+    [check] = [q for q in seen if q.url.path == "/api/v1/auth/key"]  # checked with the authenticated endpoint
+    assert check.headers["authorization"] == "Bearer sk-or-good"
 
 
-async def test_a_refused_key_is_not_saved(client_without_key, harness_without_key: Harness, vault: Path):
-    harness_without_key.model_lister = ModelLister(transport=_or_transport(status=401))
+@pytest.mark.parametrize("status", [401, 403])
+async def test_a_refused_key_is_not_saved(client_without_key, harness_without_key: Harness, vault: Path, status: int):
+    harness_without_key.model_lister = ModelLister(transport=_or_transport(status=status))
     r = await client_without_key.post("/settings/openrouter-key", json={"key": "sk-or-bad"})
     assert r.status_code == 422 and r.json()["detail"] == "OpenRouter did not accept that key."
     assert "sk-or-bad" not in _providers_text(vault)
@@ -491,15 +501,27 @@ async def test_a_refused_key_is_not_saved(client_without_key, harness_without_ke
     assert (await client_without_key.get("/settings")).json()["openrouter_key"] is False
 
 
-async def test_offline_is_503_and_nothing_is_saved(client_without_key, harness_without_key: Harness, vault: Path):
+@pytest.mark.parametrize("fault", [{"offline": True}, {"timeout": True}, {"status": 402}, {"status": 500}, {"status": 429}])
+async def test_offline_is_503_and_nothing_is_saved(client_without_key, harness_without_key: Harness, vault: Path, fault: dict):
     before = _providers_text(vault)
-    harness_without_key.model_lister = ModelLister(transport=_or_transport(offline=True))
+    harness_without_key.model_lister = ModelLister(transport=_or_transport(**fault))
     r = await client_without_key.post("/settings/openrouter-key", json={"key": "sk-or-offline"})
     assert r.status_code == 503
     assert r.json()["detail"] == "Could not reach OpenRouter. Check your connection and try again."
     assert _providers_text(vault) == before and "sk-or-offline" not in _providers_text(vault)
     assert "sk-or-offline" not in _ledger_text(harness_without_key)
     assert (await client_without_key.get("/settings")).json()["openrouter_key"] is False
+
+
+async def test_an_accepted_key_stays_saved_when_binding_fails(client_without_key, harness_without_key: Harness, vault: Path, monkeypatch):
+    """A decision, not an accident: OpenRouter accepted the key, so it is kept even when the models cannot bind."""
+    def refuse(roles):
+        raise ProviderStoreError("Chat model: not enabled")
+    monkeypatch.setattr(harness_without_key, "apply_models", refuse)
+    r = await client_without_key.post("/settings/openrouter-key", json={"key": "sk-or-kept"})
+    assert r.status_code == 422 and r.json()["detail"] == "Chat model: not enabled"
+    assert "sk-or-kept" in _providers_text(vault)
+    assert (await client_without_key.get("/settings")).json()["openrouter_key"] is True
 
 
 async def test_an_empty_key_is_422(client_without_key, vault: Path):
