@@ -1,0 +1,377 @@
+"""The delegation runner: Claude Code's argument list, the first-event check, the job folder rules, and runs of a
+fake CLI (tests/fixtures/fake_agent_cli.py). Nothing here starts the real `claude`."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+from src.harness import delegation
+from src.harness.agent_clis import Agents
+from src.harness.allowed_folders import Folders
+from src.harness.delegation import (CLAUDE_TOOLS, DelegationError, FolderRefused, Runner, changed, changes_text,
+                                    check_init, claude_argv, job_text, resolve_folder, snapshot)
+from src.memory.ledger import Kind, Ledger
+
+FAKE = Path(__file__).parent / "fixtures" / "fake_agent_cli.py"
+APPROVED = ["-p", "--restricted", "--strict-mcp-config", "--tools", "Read,Write,Edit,Glob,Grep", "--permission-mode",
+            "acceptEdits", "--output-format", "stream-json", "--verbose", "--no-session-persistence"]
+
+
+# -- the argument list and the first event -------------------------------------------------------------------
+
+def test_claude_argv_is_exactly_the_approved_list():
+    assert claude_argv("C:/bin/claude.exe") == ["C:/bin/claude.exe", *APPROVED]
+    assert CLAUDE_TOOLS == ("Read", "Write", "Edit", "Glob", "Grep")
+
+
+def test_claude_argv_adds_only_the_model():
+    assert claude_argv("claude", "claude-opus-4.5") == ["claude", *APPROVED, "--model", "claude-opus-4.5"]
+    with pytest.raises(DelegationError):
+        claude_argv("claude", "opus; rm -rf /")
+
+
+def _init(folder: Path, **over) -> dict:
+    return {"type": "system", "subtype": "init", "cwd": str(folder), "tools": ["Edit", "Glob", "Grep", "Read", "Write"],
+            "mcp_servers": [], "apiKeySource": "none", **over}
+
+
+@pytest.mark.parametrize("over, subscription, names", [
+    ({}, True, None),
+    ({"tools": ["Read", "Write", "Bash"]}, True, "Bash"),
+    ({"mcp_servers": [{"name": "gmail", "status": "connected"}]}, True, "MCP"),
+    ({"cwd": "ELSEWHERE"}, True, "folder"),
+    ({"apiKeySource": "ANTHROPIC_API_KEY"}, True, "ANTHROPIC_API_KEY"),
+    ({"apiKeySource": "ANTHROPIC_API_KEY"}, False, None),
+])
+def test_check_init(tmp_path, over, subscription, names):
+    if over.get("cwd") == "ELSEWHERE":
+        over = {"cwd": str(tmp_path.parent)}
+    problem = check_init(_init(tmp_path, **over), tmp_path, subscription)
+    if names is None:
+        assert problem is None
+    else:
+        assert problem and names in problem
+    if os.name == "nt" and names is None:  # Windows paths compare without case
+        assert check_init(_init(Path(str(tmp_path).upper()), **over), tmp_path, subscription) is None
+
+
+# -- the folder ----------------------------------------------------------------------------------------------
+
+def _folders(full: list[Path], read_only: list[Path] | None = None, private: list[Path] | None = None) -> Folders:
+    return Folders(full=full, read_only=read_only or [], private=private or [])
+
+
+def test_resolve_folder_makes_one_under_delegated(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    folder, made = resolve_folder(vault, _folders([vault]), "", "2026-11-16-ab12")
+    assert made is True
+    assert folder == (vault / "delegated" / "2026-11-16-ab12").resolve() and folder.is_dir()
+
+
+def test_resolve_folder_takes_a_folder_relative_to_the_vault(tmp_path):
+    vault = tmp_path / "vault"
+    (vault / "proj").mkdir(parents=True)
+    folder, made = resolve_folder(vault, _folders([vault]), "proj", "unused")
+    assert (folder, made) == ((vault / "proj").resolve(), False)
+    assert not (vault / "delegated").exists()
+
+
+def _refused(vault: Path, folders: Folders, raw: str) -> str:
+    with pytest.raises(FolderRefused) as e:
+        resolve_folder(vault, folders, raw, "stamp")
+    return str(e.value)
+
+
+def test_refuses_a_private_folder(tmp_path):
+    (tmp_path / "secret" / "x").mkdir(parents=True)
+    why = _refused(tmp_path, _folders([tmp_path], private=[tmp_path / "secret"]), str(tmp_path / "secret" / "x"))
+    assert "inside" in why and "private" in why
+
+
+def test_refuses_a_folder_holding_a_private_folder(tmp_path):
+    (tmp_path / "outer" / "secret").mkdir(parents=True)
+    why = _refused(tmp_path, _folders([tmp_path], private=[tmp_path / "outer" / "secret"]), "outer")
+    assert "holds" in why and "private" in why
+
+
+def test_refuses_a_read_only_folder(tmp_path):
+    (tmp_path / "ro" / "sub").mkdir(parents=True)
+    why = _refused(tmp_path, _folders([tmp_path], read_only=[tmp_path / "ro"]), str(tmp_path / "ro" / "sub"))
+    assert "inside" in why and "Read-Only" in why
+
+
+def test_refuses_a_folder_holding_a_read_only_folder(tmp_path):
+    (tmp_path / "a" / "ro").mkdir(parents=True)
+    why = _refused(tmp_path, _folders([tmp_path], read_only=[tmp_path / "a" / "ro"]), "a")
+    assert "holds" in why and "Read-Only" in why
+
+
+def test_refuses_outside_the_writable_folders(tmp_path):
+    vault, elsewhere = tmp_path / "vault", tmp_path / "elsewhere"
+    vault.mkdir()
+    elsewhere.mkdir()
+    assert "outside" in _refused(vault, _folders([vault]), str(elsewhere))
+
+
+def test_refuses_a_missing_folder(tmp_path):
+    assert "does not exist" in _refused(tmp_path, _folders([tmp_path]), "nope")
+
+
+def test_refuses_a_link_that_leads_out(tmp_path):
+    vault, elsewhere = tmp_path / "vault", tmp_path / "elsewhere"
+    vault.mkdir()
+    elsewhere.mkdir()
+    link = vault / "link"
+    try:
+        os.symlink(elsewhere, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        if os.name != "nt":
+            pytest.skip("cannot make a link here")
+        try:
+            import _winapi
+            _winapi.CreateJunction(str(elsewhere), str(link))
+        except OSError:
+            pytest.skip("cannot make a link or a junction here")
+    assert "outside" in _refused(vault, _folders([vault]), "link")
+
+
+# -- what changed --------------------------------------------------------------------------------------------
+
+def test_changed_finds_added_modified_and_removed(tmp_path):
+    (tmp_path / "keep.txt").write_text("a")
+    (tmp_path / "edit.txt").write_text("a")
+    (tmp_path / "gone.txt").write_text("a")
+    before = snapshot(tmp_path)
+    (tmp_path / "edit.txt").write_text("longer")
+    (tmp_path / "gone.txt").unlink()
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "new.txt").write_text("a")
+    assert changed(before, snapshot(tmp_path)) == ["edit.txt", "gone.txt", "sub/new.txt"]
+
+
+def test_changes_text_caps_at_200():
+    text = changes_text([f"f{i}.txt" for i in range(250)])
+    lines = text.splitlines()
+    listed = [ln for ln in lines if ln.startswith("- ")]
+    assert len(listed) == 200 and listed[-1] == "- f199.txt"
+    assert lines[-1] == "and 50 more"
+    assert "f200.txt" not in text
+
+
+# -- runs of the fake CLI ------------------------------------------------------------------------------------
+
+class FakeRunner(Runner):
+    """Runs the fake through this interpreter; the argument list after it is the production one."""
+
+    def command(self, agent: str, path: str, model: str) -> list[str]:
+        return [sys.executable, *super().command(agent, path, model)]
+
+
+@pytest.fixture
+def rig(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    record = tmp_path / "record.json"
+    state = {"mode": "ok"}
+    real = delegation.run_env
+    monkeypatch.setattr(delegation, "run_env",
+                        lambda base=None: {**real(base), "FAKE_AGENT_RECORD": str(record), "FAKE_AGENT_MODE": state["mode"]})
+    ledger = Ledger(vault)
+
+    def make(mode: str = "ok", auth: str = "subscription", timeout: float = 30.0, max_runs: int = 2,
+             folder: str = "job") -> tuple[Runner, Path]:
+        state["mode"] = mode
+        agents = Agents(vault)
+        agents.statuses["claude-code"] = {"path": str(FAKE), "auth": auth, "usable": True, "model": ""}
+        target = vault / folder
+        target.mkdir(exist_ok=True)
+        return FakeRunner(agents, ledger, timeout=timeout, max_runs=max_runs), target.resolve()
+
+    make.ledger, make.record = ledger, record
+    return make
+
+
+def _delegate_entries(ledger: Ledger) -> list[dict]:
+    return [{"event": e.data.get("event"), **e.data} for e in ledger.iter() if e.kind == Kind.delegate]
+
+
+def _alive(pid: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(k.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
+        finally:
+            k.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+async def _all_dead(pids: list[int], within: float = 5.0) -> bool:
+    end = time.monotonic() + within
+    while time.monotonic() < end:
+        if not any(_alive(p) for p in pids):
+            return True
+        await asyncio.sleep(0.1)
+    return False
+
+
+async def _child_recorded(record: Path, within: float = 15.0) -> dict:
+    end = time.monotonic() + within
+    while time.monotonic() < end:
+        try:
+            data = json.loads(record.read_text(encoding="utf-8"))
+            if "child" in data:
+                return data
+        except (OSError, ValueError):
+            pass
+        await asyncio.sleep(0.05)
+    raise AssertionError("the fake never recorded its child")
+
+
+async def test_run_returns_text_and_changed_files(rig):
+    runner, folder = rig("ok")
+    r = await runner.run("claude-code", folder, "Write hi to out.txt.", "b1", "s1")
+    assert r.ok and r.error == ""
+    assert r.text == "Made out.txt in the folder."
+    assert r.changed == ["out.txt"] and (folder / "out.txt").read_text() == "hi"
+    assert r.usage["output_tokens"] == 1955
+    events = _delegate_entries(rig.ledger)
+    assert [e["event"] for e in events] == ["start", "file", "end"]
+    assert events[0]["agent"] == "claude-code" and Path(events[0]["folder"]) == folder
+    assert events[1]["tool"] == "Write" and events[1]["path"] == "out.txt"
+    assert events[2]["ok"] is True and events[2]["changed"] == 1 and events[2]["usage"]["input_tokens"] == 10
+    assert isinstance(events[2]["seconds"], (int, float))
+    assert runner.live == {}
+
+
+async def test_task_text_is_never_an_argument(rig):
+    runner, folder = rig("ok")
+    task = "UNIQUE-TASK-TEXT: write a poem about {braces} into out.txt"
+    await runner.run("claude-code", folder, task, "b1", "s1")
+    rec = json.loads(rig.record.read_text(encoding="utf-8"))
+    assert rec["argv"] == APPROVED
+    assert not any("UNIQUE-TASK-TEXT" in a for a in rec["argv"])
+    assert rec["stdin"] == job_text(folder, task)
+    assert rec["stdin"].endswith(task) and rec["stdin"].index(str(folder)) < rec["stdin"].index(task)
+    assert Path(rec["cwd"]).resolve() == folder
+
+
+async def test_child_environment_has_no_keys(rig, monkeypatch):
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL",
+                 "CLAUDE_CODE_USE_BEDROCK", "CODEX_SANDBOX", "OPENROUTER_API_KEY", "GITHUB_TOKEN"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "C:/claude-config")
+    runner, folder = rig("ok")
+    await runner.run("claude-code", folder, "task", "b1", "s1")
+    names = {n.upper() for n in json.loads(rig.record.read_text(encoding="utf-8"))["env"]}
+    assert "CLAUDE_CONFIG_DIR" in names
+    for n in names:
+        assert not n.startswith(("ANTHROPIC_", "OPENAI_", "CLAUDE_CODE_", "CODEX_")), n
+        assert not n.endswith(("_API_KEY", "_TOKEN")), n
+
+
+@pytest.mark.parametrize("mode, names", [("extra_tool", "Bash"), ("mcp", "MCP"), ("api_key", "ANTHROPIC_API_KEY")])
+async def test_run_stops_on_a_bad_first_event(rig, mode, names):
+    runner, folder = rig(mode, auth="subscription")
+    r = await runner.run("claude-code", folder, "task", "b1", "s1")
+    assert not r.ok and names in r.error
+    assert not (folder / "out.txt").exists()
+    assert _delegate_entries(rig.ledger)[-1]["ok"] is False
+
+
+async def test_a_non_json_line_is_skipped(rig):
+    runner, folder = rig("garbage_line")
+    r = await runner.run("claude-code", folder, "task", "b1", "s1")
+    assert r.ok and r.changed == ["out.txt"]
+
+
+async def test_a_cut_off_stream_fails_with_the_tail(rig):
+    runner, folder = rig("cut_off")
+    r = await runner.run("claude-code", folder, "task", "b1", "s1")
+    assert not r.ok and "Something broke: connection reset" in r.error
+    assert len(r.error) <= 2000
+
+
+async def test_an_error_result_passes_the_cli_message_through(rig):
+    runner, folder = rig("error_result")
+    r = await runner.run("claude-code", folder, "task", "b1", "s1")
+    assert not r.ok and r.error == "Credit balance is too low"
+    assert r.usage["input_tokens"] == 3
+
+
+async def test_timeout_kills_the_tree_and_returns_a_plain_failure(rig):
+    runner, folder = rig("hang", timeout=1)
+    r = await runner.run("claude-code", folder, "task", "b1", "s1")
+    assert not r.ok and r.error == "Timed out after 1 s."
+    rec = json.loads(rig.record.read_text(encoding="utf-8"))
+    assert "child" in rec, "the fake was killed before it started its child; nothing proved about the tree"
+    assert await _all_dead([rec["pid"], rec["child"]])
+    assert runner.live == {}
+
+
+async def test_stop_kills_the_run(rig):
+    runner, folder = rig("hang")
+    task = asyncio.create_task(runner.run("claude-code", folder, "task", "b1", "s1"))
+    rec = await _child_recorded(rig.record)
+    assert runner.stop("other") is False
+    assert runner.stop("s1") is True
+    r = await task
+    assert not r.ok and r.error == "Stopped by the user."
+    assert await _all_dead([rec["pid"], rec["child"]])
+    assert runner.live == {}
+
+
+async def test_one_run_per_session(rig):
+    runner, folder = rig("hang")
+    first = asyncio.create_task(runner.run("claude-code", folder, "task", "b1", "s1"))
+    await asyncio.sleep(0)
+    with pytest.raises(DelegationError):
+        await runner.run("claude-code", folder, "task", "b1", "s1")
+    runner.stop("s1")
+    assert (await first).error == "Stopped by the user."
+
+
+async def test_two_runs_in_the_harness(rig):
+    runner, folder = rig("hang")
+    _, other = rig("hang", folder="job2")
+    runs = [asyncio.create_task(runner.run("claude-code", f, "task", "b1", s)) for f, s in ((folder, "s1"), (other, "s2"))]
+    await asyncio.sleep(0)
+    with pytest.raises(DelegationError):
+        await runner.run("claude-code", folder, "task", "b1", "s3")
+    assert runner.stop("s1") and runner.stop("s2")
+    assert [r.error for r in await asyncio.gather(*runs)] == ["Stopped by the user."] * 2
+    assert runner.live == {}
+
+
+async def test_a_folder_with_spaces_and_non_ascii_runs(rig):
+    runner, folder = rig("ok", folder="my job ü 日本")
+    r = await runner.run("claude-code", folder, "Écris « hi » dans out.txt.", "b1", "s1")
+    assert r.ok and r.changed == ["out.txt"]
+    rec = json.loads(rig.record.read_text(encoding="utf-8"))
+    assert rec["stdin"].endswith("Écris « hi » dans out.txt.")
+
+
+async def test_a_missing_program_is_refused(rig):
+    runner, folder = rig("ok")
+    runner.agents.statuses["claude-code"]["path"] = None
+    with pytest.raises(DelegationError):
+        await runner.run("claude-code", folder, "task", "b1", "s1")
+    assert runner.live == {}
