@@ -43,6 +43,11 @@ test('an unchanged file attached again is one revision, under its latest attachm
               { attachments: [{ id: 'c', title: 'L', design: 'landing', version: 2 }, { id: 'p', title: 'P', design: 'pricing', version: 2 }] }];
   assert.deepEqual(designRevisions(ex).map(r => [r.design, r.version, r.attId]), [['landing', 1, 'a'], ['landing', 2, 'c'], ['pricing', 2, 'p']]);
 });
+test('two files in one design with the same version number are separate revisions', () => {
+  const ex = [{ attachments: [{ id: 'a', title: 'Home', name: 'index.html', design: 'site', version: 1 }, { id: 'b', title: 'Details', name: 'details.html', design: 'site', version: 1 }] },
+              { attachments: [{ id: 'c', title: 'Home', name: 'index.html', design: 'site', version: 1 }] }];
+  assert.deepEqual(designRevisions(ex).map(r => r.attId), ['b', 'c']);
+});
 test('the studio frame url adds studio=1', () => {
   assert.equal(studioFrameUrl('http://h/conversations/c/attachments/a'), 'http://h/conversations/c/attachments/a?studio=1');
   assert.equal(studioFrameUrl('http://h/x?k=1'), 'http://h/x?k=1&studio=1');

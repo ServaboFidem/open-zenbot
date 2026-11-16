@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from src.harness.design_studio import comment_block, revision_of, snapshot, with_bridge
+from src.harness.design_studio import SnapshotRefused, comment_block, revision_of, snapshot, with_bridge
 
 
 def test_snapshot_numbers_copies_and_skips_an_unchanged_file(tmp_path):
@@ -44,8 +44,34 @@ def test_snapshot_refuses_a_symlinked_versions_folder(tmp_path):
         (f.parent / ".versions").symlink_to(elsewhere, target_is_directory=True)
     except OSError:
         pytest.skip("symlinks cannot be created here")
-    assert snapshot(tmp_path, f) is None
+    with pytest.raises(SnapshotRefused):  # a design, but no fixed copy: the caller must not attach the live file
+        snapshot(tmp_path, f)
     assert list(elsewhere.iterdir()) == []
+
+
+@pytest.mark.parametrize("name", ["index.htm", "Index.HTML", "page.html"])
+def test_snapshot_keeps_the_design_files_own_name(tmp_path, name):
+    f = tmp_path / "designs" / "a" / name; f.parent.mkdir(parents=True)
+    f.write_text("<p>x</p>", encoding="utf-8")
+    copy = snapshot(tmp_path, f)
+    assert copy.name == f"1.{name}" and revision_of(tmp_path, copy) == ("a", 1, name)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink"])
+def test_snapshot_never_reuses_a_link_to_the_live_file(tmp_path, kind):
+    """A `.versions/1.index.html` that is a link to the design has the same bytes, and would change with it."""
+    f = tmp_path / "designs" / "a" / "index.html"; f.parent.mkdir(parents=True)
+    f.write_text("<p>one</p>", encoding="utf-8")
+    planted = f.parent / ".versions" / "1.index.html"; planted.parent.mkdir()
+    try:
+        planted.symlink_to(f) if kind == "symlink" else planted.hardlink_to(f)
+    except OSError:
+        pytest.skip(f"a {kind} cannot be created here")
+    copy = snapshot(tmp_path, f)
+    assert copy.name == "2.index.html" and not copy.is_symlink() and copy.stat().st_nlink == 1  # 1 stays reserved
+    f.write_text("<p>two</p>", encoding="utf-8")
+    assert copy.read_text(encoding="utf-8") == "<p>one</p>"
+    assert snapshot(tmp_path, f).name == "3.index.html"
 
 
 MARK = b"<script data-zen-bridge>"

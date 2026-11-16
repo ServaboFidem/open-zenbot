@@ -1233,6 +1233,27 @@ async def test_a_design_attachment_is_titled_after_the_file_not_the_copy(harness
     assert [Path(a.path).name for a in atts] == ["1.index.html", "2.index.html"]
 
 
+async def test_a_design_whose_copy_cannot_be_kept_is_not_attached(harness: Harness, tmp_path: Path):
+    """No falling back to the live file: a later edit would change the revision already shown."""
+    from src.harness.loop import Session
+
+    harness.add_bot(Bot(name="Designer", role="Designs", id="des", studio=True))
+    f = harness.config.vault_root / "designs" / "landing" / "index.html"
+    f.parent.mkdir(parents=True)
+    f.write_text("<p>one</p>", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"; elsewhere.mkdir()
+    try:
+        (f.parent / ".versions").symlink_to(elsewhere, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks cannot be created here")
+    chat = Session(bot_id="des", task="t")
+    chat.conversation_id = "c1"
+    harness.sessions[chat.id] = chat
+    said = harness.attach(chat.id, "designs/landing/index.html", "")
+    assert said.startswith("Not attached:") and ".versions" in said
+    assert not harness.task_attachments.get(chat.id) and list(elsewhere.iterdir()) == []
+
+
 async def test_studio_attach_keeps_a_numbered_copy(client, harness: Harness):
     harness.add_bot(Bot(name="Designer", role="Designs", id="des", studio=True))
     cid, att = await _attach_design(client, harness, "des")

@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -72,7 +72,7 @@ from .config import HarnessConfig
 from .conversations import ConversationStore, Conversations
 from .loop import Session, SessionState, TaskLoop
 from .scheduler import Routine, RoutineError, RoutineStore, Schedule, Scheduler, next_run, parse_schedule
-from .media import MediaProxy, MediaRefused, trusted_hosts
+from .media import MediaConsent, MediaProxy, MediaRefused, trusted_hosts
 from .pause import PauseController
 from src.context.compaction import Compactor
 from src.context.protected import ProtectedBlock, ScopeGuard
@@ -518,8 +518,15 @@ class Harness:
             return target
         title = title or target.name  # the file's own name, before the swap to its numbered copy
         if bot is not None and bot.studio:
-            copy = design_studio.snapshot(self.config.vault_root, target)
-            if copy is not None and isinstance(self.attachable(str(copy)), Path):
+            # a design is attached as its fixed copy or not at all: the live file would change under the revision
+            try:
+                copy = design_studio.snapshot(self.config.vault_root, target)
+            except design_studio.SnapshotRefused as e:
+                return f"Not attached: {e}."
+            if copy is not None:
+                kept = self.attachable(str(copy))
+                if isinstance(kept, str):
+                    return kept
                 target = copy
         att = Attachment(uuid4().hex[:10], title, str(target))
         self.task_attachments.setdefault(session_id, []).append(att)
@@ -653,6 +660,10 @@ def _outcome(session: Session) -> tuple[str, str]:
 
 
 # -- request models -------------------------------------------------------
+
+
+class MediaConsentIn(BaseModel):
+    urls: list[Annotated[str, Field(max_length=4096)]] = Field(max_length=20)
 
 
 class SettingsIn(BaseModel):
@@ -1066,6 +1077,7 @@ def create_app(h: Harness) -> FastAPI:
 
     app = FastAPI(title="zen-agents harness", version="0.0.1", lifespan=lifespan)
     app.state.open_tokens = open_tokens = OpenTokens()
+    media_consent = MediaConsent()
     for router in app_routers:
         app.include_router(router)
     app.add_middleware(CORSMiddleware, allow_origins=list(h.config.gui_origins), allow_methods=["*"], allow_headers=["*"])
@@ -1080,13 +1092,22 @@ def create_app(h: Harness) -> FastAPI:
 
     @app.get("/media")
     async def get_media(url: str, request: Request, ok: str = "") -> StreamingResponse:
-        """A remote image, video or PDF for the chat. A host off the trusted list needs `ok=1`: the user clicked."""
+        """A remote image, video or PDF for the chat. A host off the trusted list needs `ok`, the consent
+        token for this URL from `POST /media/consent`: the user clicked."""
         try:
-            stream = await h.media.open(url, clicked=ok == "1", range_header=request.headers.get("range"))
+            stream = await h.media.open(url, clicked=media_consent.valid(url, ok), range_header=request.headers.get("range"))
         except MediaRefused as e:
             raise HTTPException(e.status, str(e)) from None
         return StreamingResponse(stream.body, status_code=stream.status, headers=stream.headers,
                                  background=BackgroundTask(stream.close))
+
+    @app.post("/media/consent")
+    async def post_media_consent(body: MediaConsentIn, request: Request) -> dict[str, Any]:
+        """The GUI, on the user's click: a consent token for each URL. JSON only: a page elsewhere can send
+        a form or plain text across origins without a preflight, never `application/json`."""
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            raise HTTPException(415, "send JSON")
+        return {"tokens": {u: media_consent.issue(u) for u in body.urls}}
 
     def image_providers() -> list[str]:
         return [e.id for e in h.provider_store.entries.values() if e.kind == "openrouter"]

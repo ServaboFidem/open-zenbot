@@ -127,6 +127,7 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
       if (typeof attUrl !== 'string' || !attUrl.startsWith(base + '/')) throw new HarnessError(0, 'That file is not served by the harness.');
       return (await post(`${attUrl.slice(base.length)}/open`))?.token || '';
     },
+    mediaConsent: async urls => (await post('/media/consent', { urls }))?.tokens || {},
     sessions: () => get('/sessions'),
     session: id => get(`/sessions/${enc(id)}`),
     stopSession: id => post(`/sessions/${enc(id)}/stop`),

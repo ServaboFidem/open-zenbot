@@ -215,6 +215,13 @@ test('an open token is asked for by POST to the attachment url itself, and only 
   assert.equal(calls.length, 1);
 });
 
+test('media consent asks for a token per url', async () => {
+  const { fetch, calls } = fakeFetch({ 'POST /media/consent': { status: 200, body: { tokens: { 'https://a/b.png': 'sig' } } } });
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  assert.deepEqual(await api.mediaConsent(['https://a/b.png']), { 'https://a/b.png': 'sig' });
+  assert.deepEqual(calls[0].body, { urls: ['https://a/b.png'] });
+});
+
 test('tool settings read and change one harness tool', async () => {
   const { fetch, calls } = fakeFetch({ 'GET /settings/tools': { status: 200, body: { tools: [{ id: 'image', enabled: true }] } } });
   const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });

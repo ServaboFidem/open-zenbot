@@ -11,13 +11,14 @@ const sameKeys = (o, keys) => { const k = Object.keys(o).sort(); return k.length
 const str = (v, min, max) => typeof v === 'string' && v.length >= min && v.length <= max;
 
 // Every design revision in the conversation, oldest first; a plain attachment has no version. Attaching an
-// unchanged file again gives the same copy: one entry per (design, version), its latest attachment, in its place.
+// unchanged file again gives the same copy: one entry per (design, file name, version), its latest attachment, in
+// its place. Copies are numbered per file, so two files in one design can each have a version 1.
 export function designRevisions(exchanges) {
   const byRev = new Map();
   for (const ex of exchanges || [])
     for (const a of ex.attachments || [])
       if (typeof a.version === 'number') {
-        const key = JSON.stringify([a.design, a.version]);
+        const key = JSON.stringify([a.design, a.name, a.version]);
         byRev.delete(key);  // re-inserted, so the latest attachment takes the newest place
         byRev.set(key, { attId: a.id, title: a.title, design: a.design, version: a.version });
       }

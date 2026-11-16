@@ -94,15 +94,16 @@ test('trust matches a host exactly or as a subdomain', () => {
 });
 
 test('preview urls go through the harness and only trusted or unlocked hosts load', () => {
-  const ctx = { base: 'http://127.0.0.1:8765', trusted: ['images.pexels.com'], unlocked: new Set(['https://cdn.x.net/a.png']) };
+  const ctx = { base: 'http://127.0.0.1:8765', trusted: ['images.pexels.com'], unlocked: new Map([['https://cdn.x.net/a.png', 't0k/n']]) };
   assert.equal(previewUrl('https://images.pexels.com/p/1.jpeg', ctx), 'http://127.0.0.1:8765/media?url=https%3A%2F%2Fimages.pexels.com%2Fp%2F1.jpeg');
-  assert.equal(previewUrl('https://cdn.x.net/a.png', ctx), 'http://127.0.0.1:8765/media?url=https%3A%2F%2Fcdn.x.net%2Fa.png&ok=1');
+  assert.equal(previewUrl('https://cdn.x.net/a.png', ctx), 'http://127.0.0.1:8765/media?url=https%3A%2F%2Fcdn.x.net%2Fa.png&ok=t0k%2Fn');
   assert.equal(previewUrl('https://cdn.x.net/b.png', ctx), null);
 });
 
-test('save urls always carry the click', () => {
+test('save urls carry the consent token for remote media', () => {
   const remote = { src: 'https://images.pexels.com/p/1.jpeg', local: false };
-  assert.equal(saveUrl(remote, 'http://h'), 'http://h/media?url=https%3A%2F%2Fimages.pexels.com%2Fp%2F1.jpeg&ok=1');
+  assert.equal(saveUrl(remote, 'http://h', 'abc'), 'http://h/media?url=https%3A%2F%2Fimages.pexels.com%2Fp%2F1.jpeg&ok=abc');
+  assert.equal(saveUrl(remote, 'http://h', ''), 'http://h/media?url=https%3A%2F%2Fimages.pexels.com%2Fp%2F1.jpeg');
   assert.equal(saveUrl({ src: 'http://h/rooms/r/attachments/a', local: true }, 'http://h'), 'http://h/rooms/r/attachments/a');
 });
 
