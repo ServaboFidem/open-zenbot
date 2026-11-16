@@ -205,6 +205,16 @@ test('conversation attachment urls are built like room ones', () => {
   assert.equal(api.conversationAttachmentUrl('c 1', 'a/1'), 'http://127.0.0.1:8765/conversations/c%201/attachments/a%2F1');
 });
 
+test('an open token is asked for by POST to the attachment url itself, and only on the harness', async () => {
+  const { fetch, calls } = fakeFetch({ 'POST /conversations/c1/attachments/a1/open': { status: 200, body: { token: 't0k' } } });
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  assert.equal(await api.openToken(api.conversationAttachmentUrl('c1', 'a1')), 't0k');
+  assert.deepEqual(calls.map(c => `${c.method} ${c.url}`), ['POST http://127.0.0.1:8765/conversations/c1/attachments/a1/open']);
+  await assert.rejects(api.openToken('https://evil.test/conversations/c1/attachments/a1'));
+  await assert.rejects(api.openToken('http://127.0.0.1:8765.evil.test/x'));
+  assert.equal(calls.length, 1);
+});
+
 test('tool settings read and change one harness tool', async () => {
   const { fetch, calls } = fakeFetch({ 'GET /settings/tools': { status: 200, body: { tools: [{ id: 'image', enabled: true }] } } });
   const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });

@@ -12,13 +12,17 @@ import base64
 import binascii
 import json
 import re
+import secrets
 import shutil
+import time
+from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -93,6 +97,31 @@ from .turn_notes import TurnNotes, outcome_of
 # A bot-made page shown as a thumbnail: its own inline script, style and images run; nothing loads from anywhere.
 PREVIEW_CSP = ("sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
                "img-src data: blob:; font-src data:")
+OPEN_POLICY = "sandbox allow-scripts"  # an opened page: off this origin, but its scripts may reach the network
+CLOSED_SUFFIXES = (".html", ".htm", ".svg")  # pages that run script: served under PREVIEW_CSP unless opened
+
+
+class OpenTokens:
+    """Single-use tokens that open one bot-made page under OPEN_POLICY. Only the viewer asks for one, on the
+    user's click; a page served closed cannot reach the harness to ask. In memory: a restart drops them all."""
+
+    def __init__(self, ttl: float = 60.0, cap: int = 256) -> None:
+        self.ttl, self.cap = ttl, cap
+        self.clock: Callable[[], float] = time.monotonic
+        self._tokens: OrderedDict[str, tuple[tuple[str, str, str], float]] = OrderedDict()
+
+    def issue(self, key: tuple[str, str, str]) -> str:
+        """A token for one attachment: `key` is (route kind, owner id, attachment id)."""
+        token = secrets.token_urlsafe(24)
+        self._tokens[token] = (key, self.clock())
+        while len(self._tokens) > self.cap:
+            self._tokens.popitem(last=False)  # the oldest goes first
+        return token
+
+    def redeem(self, token: str, key: tuple[str, str, str]) -> bool:
+        """Consumes `token` whatever it names: a page that reloads with a spent token is served closed."""
+        found = self._tokens.pop(token, None)
+        return found is not None and found[0] == key and self.clock() - found[1] <= self.ttl
 
 if TYPE_CHECKING:  # built only on a store that can attach
     from src.memory.extract_queue import ExtractQueue
@@ -916,10 +945,12 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(422, "comments belong on the newest version of the design")
         return design_studio.comment_block(f"designs/{slug}/{name}", version, comments)
 
-    def serve_attachment(path: str, preview: bool = False, studio: bool = False) -> FileResponse | Response:
-        """A file a bot attached, in a room or a one-to-one task. `preview` is the thumbnail the chat
-        frames on its own as a reply renders: that page may run its inline script and style but reach
-        no network, so a bot-made page cannot send anything out before the user chooses to open it."""
+    def serve_attachment(path: str, *, opened: bool = False, preview: bool = False, studio: bool = False) -> FileResponse | Response:
+        """A file a bot attached, in a room or a one-to-one task. A page that runs script (HTML, SVG) may run
+        its inline script and style but reach no network, so it cannot send anything out: not as a thumbnail,
+        not in the design pane, and not by navigating its own frame to the bare URL. Only `opened` (a valid
+        open token, which the viewer asks for on the user's click) serves it under OPEN_POLICY. `preview`
+        closes any other file type too; `studio` adds the pick bridge and is always closed."""
         # re-check at serve time: attach_file vetted the path, but it may have become a symlink or moved since
         try:
             target = Path(path).resolve(strict=True)
@@ -938,9 +969,11 @@ def create_app(h: Harness) -> FastAPI:
                 return Response(design_studio.with_bridge(target.read_bytes()), media_type="text/html",
                                 headers={**headers, "Content-Disposition": "inline"})
             preview = True
+        page = Path(path).suffix.lower() in CLOSED_SUFFIXES or target.suffix.lower() in CLOSED_SUFFIXES
+        closed = preview or (page and not opened)
         # shown inline, not downloaded; the sandbox keeps a bot-made page off this origin
         return FileResponse(target, filename=target.name, content_disposition_type="inline",
-                            headers={"Content-Security-Policy": PREVIEW_CSP if preview else "sandbox allow-scripts",
+                            headers={"Content-Security-Policy": PREVIEW_CSP if closed else OPEN_POLICY,
                                      "X-Content-Type-Options": "nosniff"})
 
     def mcp_vars() -> dict[str, str | list[str]]:
@@ -1021,6 +1054,7 @@ def create_app(h: Harness) -> FastAPI:
             await asyncio.to_thread(h.memory.close)
 
     app = FastAPI(title="zen-agents harness", version="0.0.1", lifespan=lifespan)
+    app.state.open_tokens = open_tokens = OpenTokens()
     for router in app_routers:
         app.include_router(router)
     app.add_middleware(CORSMiddleware, allow_origins=list(h.config.gui_origins), allow_methods=["*"], allow_headers=["*"])
@@ -1979,13 +2013,25 @@ def create_app(h: Harness) -> FastAPI:
         h.conversations.set_design_system(conv_id, body.slug or "")
         return {"design_system": body.slug or ""}
 
+    # Open tokens. A page served closed (PREVIEW_CSP) cannot obtain one: its fetch and XHR are blocked by
+    # `default-src 'none'`, and the sandbox (no allow-forms) refuses its form posts. So a closed page cannot
+    # open itself; only the GUI's viewer asks, when the user opens an attachment.
+    @app.post("/conversations/{conv_id}/attachments/{attachment_id}/open")
+    async def open_conversation_attachment(conv_id: str, attachment_id: str) -> dict[str, str]:
+        if h.conversations.attachment(conv_id, attachment_id) is None:
+            raise HTTPException(404, "no such attachment")
+        return {"token": open_tokens.issue(("conversation", conv_id, attachment_id))}
+
     @app.get("/conversations/{conv_id}/attachments/{attachment_id}")
     async def conversation_attachment(conv_id: str, attachment_id: str, preview: str = "",
-                                      studio: str = "") -> Response:
+                                      studio: str = "", open_: str = Query("", alias="open")) -> Response:
         att = h.conversations.attachment(conv_id, attachment_id)
         if att is None:
             raise HTTPException(404, "no such attachment")
-        return serve_attachment(att["path"], preview=preview == "1", studio=studio == "1")
+        # a token is spent by the first GET that shows it, even one it does not open (wrong file, studio)
+        opened = bool(open_) and open_tokens.redeem(open_, ("conversation", conv_id, attachment_id))
+        return serve_attachment(att["path"], opened=opened and studio != "1", preview=preview == "1",
+                                studio=studio == "1")
 
     @app.post("/bots/{bot_id}/conversations/{conv_id}/current")
     async def select_conversation(bot_id: str, conv_id: str) -> dict[str, Any]:
@@ -2260,13 +2306,24 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(404 if str(e).startswith("no room") else 409, str(e)) from None
         return Response(status_code=204)
 
-    @app.get("/rooms/{room_id}/attachments/{attachment_id}")
-    async def room_attachment(room_id: str, attachment_id: str, preview: str = "") -> FileResponse:
+    def _room_attachment(room_id: str, attachment_id: str) -> Attachment:
         room = _room_call(h.rooms.get, room_id)
         att = next((a for p in room.posts for a in p.attachments if a.id == attachment_id), None)
         if att is None:
             raise HTTPException(404, "no such attachment")
-        return serve_attachment(att.path, preview=preview == "1")
+        return att
+
+    @app.post("/rooms/{room_id}/attachments/{attachment_id}/open")
+    async def open_room_attachment(room_id: str, attachment_id: str) -> dict[str, str]:
+        _room_attachment(room_id, attachment_id)  # see open_conversation_attachment: a closed page cannot ask
+        return {"token": open_tokens.issue(("room", room_id, attachment_id))}
+
+    @app.get("/rooms/{room_id}/attachments/{attachment_id}")
+    async def room_attachment(room_id: str, attachment_id: str, preview: str = "",
+                              open_: str = Query("", alias="open")) -> FileResponse:
+        att = _room_attachment(room_id, attachment_id)
+        opened = bool(open_) and open_tokens.redeem(open_, ("room", room_id, attachment_id))
+        return serve_attachment(att.path, opened=opened, preview=preview == "1")
 
     @app.post("/rooms")
     async def create_room(body: RoomIn) -> dict[str, Any]:

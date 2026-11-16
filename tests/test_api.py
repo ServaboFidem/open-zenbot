@@ -1250,7 +1250,7 @@ async def test_one_to_one_attach_shows_on_the_exchange_and_serves(client, harnes
     assert str(tmp_path) not in r.text and '"path"' not in r.text
     f = await client.get(f"/conversations/{cid}/attachments/{atts[0]['id']}")
     assert f.status_code == 200 and f.text == "<svg>flow</svg>"
-    assert f.headers["content-security-policy"] == "sandbox allow-scripts"
+    assert f.headers["content-security-policy"] == PREVIEW_CSP  # a bot-made page is network-closed by default
     assert f.headers["x-content-type-options"] == "nosniff"
     assert (await client.get(f"/conversations/{cid}/attachments/nope")).status_code == 404
     assert (await client.get(f"/conversations/nope/attachments/{atts[0]['id']}")).status_code == 404
@@ -1288,8 +1288,123 @@ async def test_attachment_preview_is_served_network_closed(client, harness: Harn
     assert f.status_code == 200 and csp.startswith("sandbox allow-scripts;")
     assert "default-src 'none'" in csp and "connect-src" not in csp.replace("default-src 'none'", "")
     assert "http" not in csp  # no origin is named: nothing loads from anywhere
-    full = await client.get(f"/conversations/{cid}/attachments/{att['id']}")
-    assert full.headers["content-security-policy"] == "sandbox allow-scripts"  # View, on the user's click
+    plain = await client.get(f"/conversations/{cid}/attachments/{att['id']}")
+    assert plain.headers["content-security-policy"] == PREVIEW_CSP  # no query is the same: closed unless opened
+
+
+async def _open_token(client, url: str) -> str:
+    r = await client.post(f"{url}/open")
+    assert r.status_code == 200
+    return r.json()["token"]
+
+
+async def _attach_named(client, harness: Harness, tmp_path: Path, name: str, body: bytes) -> tuple[str, dict]:
+    (tmp_path / name).write_bytes(body)
+    harness.provider.script = [completion(calls=[("c1", "attach_file", {"path": name, "title": name})]), completion("Here.")]
+    sid = (await client.post("/bots/bot1/tasks", json={"task": f"attach {name}"})).json()["session_id"]
+    await wait_for(client, sid, {"done"})
+    await harness.tasks[sid]
+    cid = harness.conversations.current("bot1").id
+    return cid, (await client.get(f"/conversations/{cid}")).json()["exchanges"][-1]["attachments"][0]
+
+
+async def test_a_page_opens_only_with_a_fresh_single_use_token(client, harness: Harness, tmp_path: Path):
+    """A closed page that navigates itself to the bare URL stays closed: only the viewer, on the user's
+    click, asks for a token, and each token opens one attachment once."""
+    _, cid = await _attach_task(client, harness, tmp_path)
+    att = (await client.get(f"/conversations/{cid}")).json()["exchanges"][-1]["attachments"][0]
+    url = f"/conversations/{cid}/attachments/{att['id']}"
+    token = await _open_token(client, url)
+    opened = await client.get(f"{url}?open={token}")
+    assert opened.status_code == 200 and opened.text == "<svg>flow</svg>"
+    assert opened.headers["content-security-policy"] == "sandbox allow-scripts"
+    assert opened.headers["x-content-type-options"] == "nosniff"
+    again = await client.get(f"{url}?open={token}")  # reused: served, but closed
+    assert again.status_code == 200 and again.headers["content-security-policy"] == PREVIEW_CSP
+    bogus = await client.get(f"{url}?open=not-a-token")
+    assert bogus.status_code == 200 and bogus.headers["content-security-policy"] == PREVIEW_CSP
+    studio = await client.get(f"{url}?studio=1&open={await _open_token(client, url)}")  # the pane ignores open
+    assert studio.headers["content-security-policy"] == PREVIEW_CSP and "data-zen-bridge" in studio.text
+    assert (await client.post(f"/conversations/{cid}/attachments/nope/open")).status_code == 404
+    assert (await client.post(f"/conversations/nope/attachments/{att['id']}/open")).status_code == 404
+
+
+async def test_a_token_opens_only_its_own_attachment(client, harness: Harness, tmp_path: Path):
+    _, cid = await _attach_task(client, harness, tmp_path)
+    a = (await client.get(f"/conversations/{cid}")).json()["exchanges"][-1]["attachments"][0]
+    _, b = await _attach_named(client, harness, tmp_path, "other.html", b"<p>b</p>")
+    token = await _open_token(client, f"/conversations/{cid}/attachments/{a['id']}")
+    wrong = await client.get(f"/conversations/{cid}/attachments/{b['id']}?open={token}")
+    assert wrong.headers["content-security-policy"] == PREVIEW_CSP
+    spent = await client.get(f"/conversations/{cid}/attachments/{a['id']}?open={token}")  # consumed by the wrong GET
+    assert spent.headers["content-security-policy"] == PREVIEW_CSP
+
+
+async def test_a_token_older_than_a_minute_is_closed(harness: Harness, tmp_path: Path):
+    app = create_app(harness)
+    now = [1000.0]
+    app.state.open_tokens.clock = lambda: now[0]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client:
+        _, cid = await _attach_task(client, harness, tmp_path)
+        att = (await client.get(f"/conversations/{cid}")).json()["exchanges"][-1]["attachments"][0]
+        url = f"/conversations/{cid}/attachments/{att['id']}"
+        token = await _open_token(client, url)
+        now[0] += 61
+        assert (await client.get(f"{url}?open={token}")).headers["content-security-policy"] == PREVIEW_CSP
+        token = await _open_token(client, url)
+        now[0] += 59
+        assert (await client.get(f"{url}?open={token}")).headers["content-security-policy"] == "sandbox allow-scripts"
+
+
+def test_the_token_store_keeps_the_newest_256():
+    from src.harness.api import OpenTokens
+
+    tokens = OpenTokens()
+    first = tokens.issue(("conversation", "c", "a"))
+    rest = [tokens.issue(("conversation", "c", str(i))) for i in range(256)]
+    assert not tokens.redeem(first, ("conversation", "c", "a"))  # dropped as the oldest
+    assert tokens.redeem(rest[0], ("conversation", "c", "0"))
+    assert len(first) == 32  # secrets.token_urlsafe(24)
+
+
+async def test_svg_is_closed_by_default_and_other_files_are_unchanged(client, harness: Harness, tmp_path: Path):
+    cid, svg = await _attach_named(client, harness, tmp_path, "logo.SVG", b"<svg xmlns='http://www.w3.org/2000/svg'/>")
+    assert (await client.get(f"/conversations/{cid}/attachments/{svg['id']}")).headers["content-security-policy"] == PREVIEW_CSP
+    for name, body in (("report.pdf", b"%PDF-1.4"), ("photo.png", b"\x89PNG\r\n")):
+        cid, att = await _attach_named(client, harness, tmp_path, name, body)
+        r = await client.get(f"/conversations/{cid}/attachments/{att['id']}")
+        assert r.status_code == 200 and r.headers["content-security-policy"] == "sandbox allow-scripts", name
+        assert r.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_the_room_route_is_closed_by_default_and_opens_with_a_token(client, harness: Harness, tmp_path: Path):
+    from src.rooms.room import Attachment
+
+    _, cid = await _attach_task(client, harness, tmp_path)
+    conv_att = (await client.get(f"/conversations/{cid}")).json()["exchanges"][-1]["attachments"][0]
+    harness.add_bot(Bot(name="Second", role="Second opinions", id="bot2"))
+    room = harness.rooms.create("r", ["bot1", "bot2"])
+    (tmp_path / "d.html").write_text("<script>1</script>", encoding="utf-8")
+    (tmp_path / "e.htm").write_text("<p>e</p>", encoding="utf-8")
+    (tmp_path / "f.png").write_bytes(b"\x89PNG\r\n")
+    room.add_post(author="bot1", text="here", nonce=1).attachments = [
+        Attachment("a1", "D", str(tmp_path / "d.html")), Attachment("a2", "E", str(tmp_path / "e.htm")),
+        Attachment("a3", "F", str(tmp_path / "f.png"))]
+    url = f"/rooms/{room.id}/attachments/a1"
+    assert (await client.get(url)).headers["content-security-policy"] == PREVIEW_CSP
+    assert (await client.get(f"/rooms/{room.id}/attachments/a2")).headers["content-security-policy"] == PREVIEW_CSP
+    token = await _open_token(client, url)
+    assert (await client.get(f"/rooms/{room.id}/attachments/a2?open={token}")).headers["content-security-policy"] == PREVIEW_CSP
+    token = await _open_token(client, url)
+    assert (await client.get(f"{url}?open={token}")).headers["content-security-policy"] == "sandbox allow-scripts"
+    assert (await client.get(f"{url}?open={token}")).headers["content-security-policy"] == PREVIEW_CSP
+    assert (await client.get(f"/rooms/{room.id}/attachments/a3")).headers["content-security-policy"] == "sandbox allow-scripts"
+    assert (await client.post(f"/rooms/{room.id}/attachments/nope/open")).status_code == 404
+    # a conversation token does not open a room attachment, even with the same attachment id
+    room.posts[-1].attachments.append(Attachment(conv_att["id"], "Same id", str(tmp_path / "d.html")))
+    conv_token = await _open_token(client, f"/conversations/{cid}/attachments/{conv_att['id']}")
+    same_id = await client.get(f"/rooms/{room.id}/attachments/{conv_att['id']}?open={conv_token}")
+    assert same_id.headers["content-security-policy"] == PREVIEW_CSP
 
 
 async def test_studio_attachment_gets_the_bridge_under_the_preview_policy(client, harness: Harness, tmp_path: Path):
@@ -1300,7 +1415,7 @@ async def test_studio_attachment_gets_the_bridge_under_the_preview_policy(client
     assert f.headers["x-content-type-options"] == "nosniff" and f.text.count("data-zen-bridge") == 1
     plain = await client.get(f"/conversations/{cid}/attachments/{att['id']}")
     assert "data-zen-bridge" not in plain.text and plain.text == "<svg>flow</svg>"
-    assert plain.headers["content-security-policy"] == "sandbox allow-scripts"
+    assert plain.headers["content-security-policy"] == PREVIEW_CSP
 
 
 async def test_studio_attachment_over_the_cap_is_served_unchanged(client, harness: Harness, tmp_path: Path):

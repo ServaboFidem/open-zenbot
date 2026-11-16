@@ -2,13 +2,14 @@
 // link under each; PDFs, diagrams and other files as compact cards with Save… and View; a viewer that
 // shows an item large inside the app. Remote media loads through the harness (media.js previewUrl);
 // a host off the trusted list waits for the user's click, and that click unlocks only that URL, for
-// as long as the conversation is open. Bot-made pages are framed sandboxed, never same-origin.
+// as long as the conversation is open. Bot-made pages are framed sandboxed, never same-origin, and
+// network-closed; only the viewer, once the user opens one, asks the harness for a single-use open token.
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Spinner } from '@fluentui/react-components';
 import { ArrowDownload20Regular, Copy20Regular, Dismiss24Regular, DocumentPdf24Regular, DocumentText24Regular, Eye20Regular, Flowchart24Regular, Image24Regular, Open20Regular, Video24Regular } from '@fluentui/react-icons';
-import { previewFrameUrl, previewUrl, saveUrl } from './media.js';
+import { previewFrameUrl, previewUrl, saveUrl, viewerFrameUrl } from './media.js';
 import { loadPdf, renderPage, usingPdf } from './pdf.js';
-import { harnessUrl } from './api';
+import { createApi, harnessUrl } from './api';
 
 const DEFAULT_TRUSTED = ['images.pexels.com', 'videos.pexels.com'];
 const MAX_VIEWER_PAGES = 50;
@@ -154,16 +155,30 @@ function PdfPages({ url }) {
   return <div className="media-viewer-pages" ref={box}>{!state.pages && <Spinner/>}{Array.from({ length: state.pages }, (_, i) => <canvas key={i} data-page={i + 1} aria-label={`Page ${i + 1}`}/>)}</div>;
 }
 
+// The user opened this page: ask for its single-use token. Until it comes, or if the ask fails, the page stays closed.
+function useOpenToken(src, wanted, base) {
+  const [token, setToken] = useState({ src: null, value: '' });
+  useEffect(() => {
+    setToken({ src: null, value: '' });  // a token is spent once used: each opening asks afresh
+    if (!wanted || !src) return undefined;
+    let alive = true;
+    createApi({ baseUrl: base }).openToken(src).then(value => { if (alive) setToken({ src, value }); }, () => {});
+    return () => { alive = false; };
+  }, [src, wanted, base]);
+  return token.src === src ? token.value : '';
+}
+
 function MediaViewer({ item, onClose }) {
   const ctx = useMedia();
   const src = item ? srcOf(item.src, item, ctx) : null;
   const poster = item ? srcOf(item.poster, item, ctx) : null;
+  const token = useOpenToken(src, item?.kind === 'diagram' && item.local, ctx.base);
   let body = null;
   if (item && !src) body = <p className="media-viewer-note">Loading…</p>;
   else if (item?.kind === 'image') body = <img className="media-viewer-image" src={src} alt={captionText(item)}/>;
   else if (item?.kind === 'video') body = <video className="media-viewer-image" src={src} poster={poster || undefined} controls autoPlay/>;
   else if (item?.kind === 'pdf') body = <PdfPages url={src}/>;
-  else if (item?.kind === 'diagram') body = <iframe className="media-viewer-frame" sandbox="allow-scripts" src={src} title={item.name}/>;
+  else if (item?.kind === 'diagram') body = <iframe className="media-viewer-frame" sandbox="allow-scripts" src={item.local ? viewerFrameUrl(src, token) : src} title={item.name}/>;
   return <Dialog open={!!item} onOpenChange={(e, d) => { if (!d.open) onClose(); }}>
     <DialogSurface className="media-viewer">
       {item && <DialogBody>

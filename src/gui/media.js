@@ -121,8 +121,12 @@ export function attachmentItem(att, url) {
 }
 
 /** Where a bot-made page's thumbnail frame loads from: the harness serves it network-closed, since it
- *  runs as the reply renders. View frames `src` itself, after the user's click. */
+ *  runs as the reply renders. */
 export const previewFrameUrl = src => `${src}${src.includes('?') ? '&' : '?'}preview=1`;
+
+/** Where the viewer frames a bot-made page: opened with the single-use token it asked for on the user's
+ *  click, or `src` itself (which the harness serves network-closed) while it waits or when none came. */
+export const viewerFrameUrl = (src, token) => (token ? `${src}${src.includes('?') ? '&' : '?'}open=${encodeURIComponent(token)}` : src);
 
 /** The URL's host is a trusted host or a subdomain of one. */
 export function isTrusted(url, hosts) {

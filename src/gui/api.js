@@ -122,6 +122,11 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     setDesignSystem: (convId, slug) => put(`/conversations/${enc(convId)}/design-system`, { slug: slug ?? null }),
     selectConversation: (botId, id) => post(`/bots/${enc(botId)}/conversations/${enc(id)}/current`),
     conversationAttachmentUrl: (convId, attId) => `${base}/conversations/${enc(convId)}/attachments/${enc(attId)}`,
+    // a single-use token that opens one attachment (conversation or room) with its scripts' network reach; the viewer asks on the user's click
+    openToken: async attUrl => {
+      if (typeof attUrl !== 'string' || !attUrl.startsWith(base + '/')) throw new HarnessError(0, 'That file is not served by the harness.');
+      return (await post(`${attUrl.slice(base.length)}/open`))?.token || '';
+    },
     sessions: () => get('/sessions'),
     session: id => get(`/sessions/${enc(id)}`),
     stopSession: id => post(`/sessions/${enc(id)}/stop`),
