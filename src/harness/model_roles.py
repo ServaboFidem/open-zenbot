@@ -1,5 +1,5 @@
 """Which provider and model the harness uses for each job, chosen in Settings > Harness settings from the
-models enabled on the Model providers tab. Kept in `vault-settings/harness.json`.
+models enabled on the Model providers page. Kept in `vault-settings/harness.json`.
 
 - chat: bots' tasks (a text model)
 - summary: compaction, conversation folds, vault-doc summaries (a text model)

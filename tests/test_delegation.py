@@ -1017,7 +1017,7 @@ async def test_delegate_points_at_the_settings_page_for_an_agent_that_cannot_run
     vault = runner.agents.vault_root
     _switch(vault, enabled=True)
     runner.agents.statuses["claude-code"].update(usable=False)
-    with pytest.raises(DelegationError, match=r"Check Settings > Harness Tools > Coding agents\.$"):
+    with pytest.raises(DelegationError, match=r"Check Settings > Coding agents\.$"):
         await _delegator(runner, vault).delegate("claude-code", "Write hi.")
 
 

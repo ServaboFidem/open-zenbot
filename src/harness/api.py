@@ -1182,7 +1182,7 @@ def create_app(h: Harness) -> FastAPI:
             m = h.provider_store.entries[provider].model(model)
             if m is None or "image" not in m.kinds:
                 raise HTTPException(422, f"{model} is not an enabled image model on {h.provider_store.entries[provider].name}; "
-                                         "enable it on the Model providers tab")
+                                         "enable it on the Model providers page")
         new = ImageConfig(provider=provider, model=model, enabled=cur.enabled if body.enabled is None else body.enabled)
         new.save(h.config.vault_root)
         h.images.reconfigure(new)
@@ -1238,7 +1238,7 @@ def create_app(h: Harness) -> FastAPI:
         h.ledger.append(Kind.settings, "", "", event="tool", tool=key, path=None)
         return await program_changed(key)
 
-    # delegating to Claude Code and Codex (Settings > Harness Tools > Coding agents): detection and switches; running
+    # delegating to Claude Code and Codex (Settings > Coding agents): detection and switches; running
     # is elsewhere
     @app.get("/agents")
     async def get_agents() -> dict[str, Any]:
@@ -1373,7 +1373,7 @@ def create_app(h: Harness) -> FastAPI:
         if provider_id not in h.provider_store.entries:
             raise HTTPException(404, f"no provider {provider_id!r}")
         if used := in_use(provider_id):
-            raise HTTPException(409, f"in use by {', '.join(used)}; pick other models on the Harness settings tab first")
+            raise HTTPException(409, f"in use by {', '.join(used)}; pick other models on the Harness settings page first")
         h.provider_store.remove(provider_id)
         h.model_lister.forget(provider_id)
         h.ledger.append(Kind.settings, "", "", event="provider_removed", provider=provider_id)
@@ -1409,7 +1409,7 @@ def create_app(h: Harness) -> FastAPI:
                                      f"enable one at a time ({', '.join(new)})")
         dropped = [m.id for m in e.models if m.id not in wanted]
         if blocked := [f"{mid} ({', '.join(u)})" for mid in dropped if (u := in_use(provider_id, mid))]:
-            raise HTTPException(409, f"in use: {'; '.join(blocked)}; pick other models on the Harness settings tab first")
+            raise HTTPException(409, f"in use: {'; '.join(blocked)}; pick other models on the Harness settings page first")
         try:
             listed = {m.id: m for m in await h.model_lister.list(e.id, e.kind, e.base_url, h.provider_store.secret(e.id))}
         except ProviderError:
