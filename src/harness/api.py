@@ -1080,7 +1080,9 @@ def create_app(h: Harness) -> FastAPI:
     # delegating to Claude Code and Codex (Settings > Agents): detection and switches; running is elsewhere
     @app.get("/agents")
     async def get_agents() -> dict[str, Any]:
-        return {"agents": await h.agents.refresh()}
+        agents = await h.agents.refresh()
+        h.delegator.register(h.tools)  # an agent found, signed in or out since start is offered or withdrawn now
+        return {"agents": agents}
 
     @app.put("/settings/agents/{key}")
     async def set_agent(key: str, body: AgentIn) -> dict[str, Any]:

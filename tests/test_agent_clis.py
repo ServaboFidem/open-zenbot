@@ -254,6 +254,19 @@ async def test_put_enable_registers_the_tool_and_disable_removes_it(app_h, only)
     assert "delegate" not in h.tools.names()
 
 
+async def test_get_agents_offers_or_withdraws_the_tool_without_a_restart(app_h, only):
+    app, h = app_h
+    save_settings(h.config.vault_root, "claude-code", AgentSettings(enabled=True))
+    assert "delegate" not in h.tools.names()  # switched on, but not found yet
+    only("claude-code", CLAUDE)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as c:
+        await c.get("/agents")
+        assert "delegate" in h.tools.names()
+        only("claude-code", {**CLAUDE, "auth": '{"loggedIn": false}'})  # signed out since
+        await c.get("/agents")
+    assert "delegate" not in h.tools.names()
+
+
 async def test_stop_ends_a_delegated_run(app_h, monkeypatch, tmp_path):
     from src.harness import delegation
     from src.harness.loop import Session
@@ -286,6 +299,48 @@ async def test_stop_ends_a_delegated_run(app_h, monkeypatch, tmp_path):
     assert session.stop_requested
     assert await _all_dead([rec["pid"], rec["child"]])
     assert h.delegator.runner.live == {}
+
+
+async def test_stop_while_the_approval_waits_launches_nothing(tmp_path, monkeypatch, only):
+    """Between the approval and the launch nothing awaits, so a Stop lands either on the waiting approval (the
+    task is cancelled) or on the run itself; here it lands on the approval."""
+    from src.harness import delegation
+    from src.harness.approvals import ApprovalState
+    from src.harness.bot import Bot
+    from src.harness.loop import SessionState
+
+    from .conftest import ScriptedProvider, completion
+    from .test_delegation import FAKE, FakeRunner
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    cfg = HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", mcp_config=tmp_path / "mcp.json")
+    cfg.validate()
+    call = ("c1", "delegate", {"agent": "claude-code", "task": "Write hi."})
+    h = Harness(config=cfg, provider=ScriptedProvider([completion(calls=[call]), completion("ok")]),
+                ledger=Ledger(vault), catalog=Catalog())
+    record = tmp_path / "record.json"
+    real = delegation.run_env
+    monkeypatch.setattr(delegation, "run_env", lambda base=None: {**real(base), "FAKE_AGENT_RECORD": str(record)})
+    h.agents.statuses["claude-code"] = {"path": str(FAKE), "auth": "subscription", "usable": True}
+    save_settings(vault, "claude-code", AgentSettings(enabled=True, ask=True))
+    h.delegator.runner = FakeRunner(h.agents, h.ledger, timeout=60)
+    h.delegator.register(h.tools)
+    h.add_bot(Bot(name="Writer", role="writes", id="writer"))
+    s = h.start_task(h.bots["writer"], "hand it off")
+    for _ in range(500):
+        if h.approvals.list(ApprovalState.pending, session_id=s.id):
+            break
+        await asyncio.sleep(0.01)
+    assert h.approvals.list(ApprovalState.pending, session_id=s.id)
+    h.stop(s.id)
+    try:
+        await asyncio.wait_for(h.tasks[s.id], 5)
+    except asyncio.CancelledError:
+        pass
+    assert s.state == SessionState.stopped
+    assert not record.exists() and not (vault / "delegated").exists()
+    assert not h.ledger.tail(kind="delegate", session_id=s.id) and h.delegator.runner.live == {}
 
 
 async def test_put_bad_model_422(app_h):

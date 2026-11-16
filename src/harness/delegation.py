@@ -477,13 +477,25 @@ class Runner:
         self.ledger.append(Kind.delegate, bot_id, session_id, event="start", agent=live.agent, folder=str(folder))
         t0 = time.monotonic()
         result = RunResult(False, "", error="The run was cancelled.")
+        stopped = RunResult(False, "", error="Stopped by the user.")
         try:
-            try:
-                proc, job = await _launch(argv, folder)
-            except OSError as e:
-                result = RunResult(False, "", error=f"{name} could not start: {e}")
+            if live.stop.is_set():  # Stop came while the folder was read: nothing is launched
+                result = stopped
             else:
-                result = await self._watch(proc, job, live, name, folder, task, bot_id, session_id, subscription)
+                try:
+                    proc, job = await _launch(argv, folder)
+                except OSError as e:
+                    result = RunResult(False, "", error=f"{name} could not start: {e}")
+                else:
+                    if live.stop.is_set():  # Stop came while it was starting: killed before it is given the job
+                        if proc.stdin is not None:
+                            proc.stdin.close()
+                        await _kill_tree(proc, job)
+                        await _exited(proc, _EXIT_GRACE)
+                        result = stopped
+                    else:
+                        result = await self._watch(proc, job, live, name, folder, task, bot_id, session_id,
+                                                   subscription)
         finally:  # the end is logged however the run ends, a cancelled one included
             try:
                 after = await asyncio.to_thread(snapshot, folder)  # a failed run may have written too
@@ -625,20 +637,23 @@ class Delegator:
         self.runner = runner
         self.in_routine = in_routine
 
-    def needs_approval(self, arguments: dict) -> tuple[str, str] | None:
-        """(rule, detail) when this call must wait for the user, else None. Codex always (it can read outside its
-        folder); Claude Code when Settings asks, and always for a folder the bot named, so only a run in a fresh
-        folder the harness makes can go unasked. An unknown agent is refused by the tool, so it asks nothing."""
+    def needs_approval(self, arguments: dict, forced: bool = False) -> tuple[str, str, str] | None:
+        """(rule, title, detail) when this call must wait for the user, else None. Codex always (it can read
+        outside its folder); Claude Code when Settings asks, and always for a folder the bot named, so only a run
+        in a fresh folder the harness makes can go unasked. An agent that is not on asks nothing: the tool refuses
+        it. `forced` (a skill rule already asks) gives the title and detail whatever the agent and switches."""
         agent = arguments.get("agent")
-        if not isinstance(agent, str) or agent not in AGENTS:
-            return None
+        known = isinstance(agent, str) and agent in AGENTS
         raw = "" if arguments.get("folder") is None else str(arguments["folder"]).strip()
-        settings = self.agents.settings(agent)
-        if agent == "claude-code" and not settings.ask and not raw:
-            return None
+        settings = self.agents.settings(agent) if known else None
+        if not forced:
+            if not known or agent not in self.agents.on():
+                return None
+            if agent == "claude-code" and not settings.ask and not raw:
+                return None
         task = str(arguments.get("task") or "")
-        name = AGENTS[agent].program.name
-        model = settings.model or "the agent's default"
+        name = AGENTS[agent].program.name if known else str(agent)
+        model = (settings.model if settings else "") or "the agent's default"
         lines = [f"Hand this job to {name}?", f"Folder: {self._shown(raw)}", f"Model: {model}"]
         if agent == "codex":
             if named := named_protected(task, self.folders().private):
@@ -646,25 +661,41 @@ class Delegator:
                                 "(its settings and keys, ledger or music data).")
             lines.append(CODEX_READS)
         lines += ["", "The task:", task]
-        return f"delegate:{agent}", "\n".join(lines)
+        title = f"{TOOL}: {name}: {' '.join(task.split())[:80]}"
+        return f"delegate:{agent}" if known else TOOL, title, "\n".join(lines)
+
+    def _relative(self, full: Path) -> str | None:
+        """The resolved folder relative to the vault, with forward slashes, when it is strictly inside it."""
+        vault = _norm(self.vault_root)
+        return full.relative_to(vault).as_posix() if full != vault and full.is_relative_to(vault) else None
 
     def _shown(self, raw: str) -> str:
         """The folder as the user should see it: relative to the vault when it lands inside it, else in full."""
         if not raw:
             return "a new folder under delegated/"
         p = Path(raw)
-        full, vault = _norm(p if p.is_absolute() else self.vault_root / p), _norm(self.vault_root)
-        if full == vault:
+        full = _norm(p if p.is_absolute() else self.vault_root / p)
+        if full == _norm(self.vault_root):
             return "the whole vault"
-        return full.relative_to(vault).as_posix() if full.is_relative_to(vault) else str(full)
+        return self._relative(full) or str(full)
+
+    def _refusal(self, agent: str) -> str | None:
+        """Why this agent cannot take a job now, or None when it is on."""
+        if agent in self.agents.on():
+            return None
+        if not isinstance(agent, str) or agent not in AGENTS:
+            return f"There is no agent called {agent}."
+        name = AGENTS[agent].program.name
+        if not self.agents.settings(agent).enabled:
+            return f"{name} is switched off in Settings."
+        return (self.agents.statuses.get(agent) or {}).get("reason") or f"{name} cannot run now. Check Settings > Agents."
 
     async def delegate(self, agent: str, task: str, folder: str | None = None) -> str:
         bot_id, session_id = current_call.get()
         if self.in_routine(session_id):
             raise DelegationError("delegate works only in a conversation or a room turn.")
-        if agent not in self.agents.on():
-            name = AGENTS[agent].program.name if agent in AGENTS else agent
-            raise DelegationError(f"{name} is switched off in Settings.")
+        if why := self._refusal(agent):
+            raise DelegationError(why)
         if not task.strip():
             raise DelegationError("The task is empty. Write the whole job into it.")
         if len(task) > MAX_TASK:
@@ -677,7 +708,9 @@ class Delegator:
         result = await self.runner.run(agent, path, task, bot_id, session_id)  # the runner adds the preamble
         if not result.ok:
             raise DelegationError(result.error)  # the loop's tool_call entry records it
-        return f"{result.text}\n\n{changes_text(result.changed, result.complete)}"
+        # the folder first: the changes are listed relative to it, and a harness-made one has a fresh name
+        where = self._relative(_norm(path)) or str(path)
+        return f"Folder: {where}\n{result.text}\n\n{changes_text(result.changed, result.complete)}"
 
     def register(self, tools: Any) -> bool:
         """Offer the tool while an agent is on, naming those agents; take it away otherwise. Safe to call again."""

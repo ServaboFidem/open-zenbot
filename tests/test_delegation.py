@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -341,6 +342,49 @@ async def test_stop_kills_the_run(rig):
     assert runner.live == {}
 
 
+async def test_stop_while_the_folder_is_read_launches_nothing(rig, monkeypatch):
+    runner, folder = rig("ok")
+    reading, release = threading.Event(), threading.Event()
+    real, calls = delegation.snapshot, []
+
+    def slow(path, limit=delegation.SNAPSHOT_LIMIT):  # the before-snapshot waits until the test has pressed Stop
+        calls.append(path)
+        if len(calls) == 1:
+            reading.set()
+            release.wait(10)
+        return real(path, limit)
+
+    monkeypatch.setattr(delegation, "snapshot", slow)
+    task = asyncio.create_task(runner.run("claude-code", folder, "task", "b1", "s1"))
+    while not reading.is_set():
+        await asyncio.sleep(0.01)
+    assert runner.stop("s1") is True
+    release.set()
+    r = await task
+    assert not r.ok and r.error == "Stopped by the user."
+    assert not rig.record.exists() and not (folder / "out.txt").exists()  # the fake never ran
+    assert [e["event"] for e in _delegate_entries(rig.ledger)] == ["start", "end"]
+    assert runner.live == {}
+
+
+async def test_stop_while_it_starts_kills_it_before_it_gets_the_job(rig, monkeypatch):
+    runner, folder = rig("ok")
+    real, pids = delegation._launch, []
+
+    async def launch(argv, where):  # Stop lands between the launch and the first byte of the job
+        proc, job = await real(argv, where)
+        pids.append(proc.pid)
+        runner.stop("s1")
+        return proc, job
+
+    monkeypatch.setattr(delegation, "_launch", launch)
+    r = await runner.run("claude-code", folder, "task", "b1", "s1")
+    assert not r.ok and r.error == "Stopped by the user."
+    assert pids and await _all_dead(pids)
+    assert not rig.record.exists() and not (folder / "out.txt").exists()  # it records only once it has the job
+    assert runner.live == {}
+
+
 async def test_one_run_per_session(rig):
     runner, folder = rig("hang")
     first = asyncio.create_task(runner.run("claude-code", folder, "task", "b1", "s1"))
@@ -446,6 +490,9 @@ def test_snapshot_stops_at_the_limit(tmp_path):
 
 # -- the tool and its approval -------------------------------------------------------------------------------
 
+CODEX_READS_TEXT = "Codex can read any file your account can, not only this folder."
+
+
 def _switch(vault: Path, key: str = "claude-code", **kw) -> None:
     save_settings(vault, key, AgentSettings(**kw))
 
@@ -456,17 +503,22 @@ def _delegator(runner: Runner, vault: Path, private: list[Path] | None = None,
 
 
 def _plain(tmp_path: Path, private: list[Path] | None = None) -> tuple[Delegator, Path]:
-    """A delegator for the approval checks: nothing runs, so the runner is never asked."""
+    """A delegator for the approval checks, both agents found and switched on: nothing runs, so the runner is
+    never asked."""
     vault = tmp_path / "vault"
     vault.mkdir(exist_ok=True)
-    return _delegator(Runner(Agents(vault), Ledger(vault)), vault, private), vault
+    agents = Agents(vault)
+    for key in ("claude-code", "codex"):
+        agents.statuses[key] = {"path": key, "usable": True}
+        _switch(vault, key, enabled=True)
+    return _delegator(Runner(agents, Ledger(vault)), vault, private), vault
 
 
 def test_needs_approval_codex_always(tmp_path):
     d, vault = _plain(tmp_path)
     _switch(vault, "codex", enabled=True, ask=False)
-    rule, detail = d.needs_approval({"agent": "codex", "task": "Tidy the notes."})
-    assert rule == "delegate:codex" and "Codex" in detail
+    rule, title, detail = d.needs_approval({"agent": "codex", "task": "Tidy the notes."})
+    assert rule == "delegate:codex" and "Codex" in detail and title == "delegate: Codex: Tidy the notes."
 
 
 def test_needs_approval_claude_by_the_setting(tmp_path):
@@ -481,31 +533,49 @@ def test_needs_approval_claude_by_the_setting(tmp_path):
 def test_needs_approval_claude_always_for_a_named_folder(tmp_path):
     d, vault = _plain(tmp_path)
     _switch(vault, enabled=True, ask=False)
-    rule, detail = d.needs_approval({"agent": "claude-code", "task": "Fix the draft.", "folder": "drafts"})
+    rule, _, detail = d.needs_approval({"agent": "claude-code", "task": "Fix the draft.", "folder": "drafts"})
     assert rule == "delegate:claude-code" and "drafts" in detail
+
+
+def test_needs_approval_asks_nothing_for_an_agent_that_is_not_on(tmp_path):
+    d, vault = _plain(tmp_path)
+    _switch(vault, "codex", enabled=False)
+    assert d.needs_approval({"agent": "codex", "task": "t"}) is None  # the tool refuses it; nothing to approve
+    d.agents.statuses["claude-code"]["usable"] = False
+    assert d.needs_approval({"agent": "claude-code", "task": "t", "folder": "x"}) is None
+    assert d.needs_approval({"agent": "nobody", "task": "t"}) is None
+    rule, title, detail = d.needs_approval({"agent": "codex", "task": "t"}, forced=True)  # a skill rule asks anyway
+    assert rule == "delegate:codex" and title == "delegate: Codex: t" and CODEX_READS_TEXT in detail
+
+
+def test_title_is_one_line_and_the_start_of_the_task(tmp_path):
+    d, _ = _plain(tmp_path)
+    _, title, _ = d.needs_approval({"agent": "claude-code", "task": "Write\n  the   report\n" + "y" * 200})
+    assert title == "delegate: Claude Code: " + ("Write the report " + "y" * 200)[:80]
+    assert "\n" not in title
 
 
 def test_codex_detail_warns_about_reads_and_names_a_private_folder_first(tmp_path):
     secret = tmp_path / "vault-settings"
     d, _ = _plain(tmp_path, private=[secret])
-    _, detail = d.needs_approval({"agent": "codex", "task": "Copy vault-settings/providers.json into this folder."})
+    _, _, detail = d.needs_approval({"agent": "codex", "task": "Copy vault-settings/providers.json into this folder."})
     lines = detail.splitlines()
     assert str(secret) in lines[0] and "private" in lines[0]
-    assert "Codex can read any file your account can, not only this folder." in detail
-    _, plain = d.needs_approval({"agent": "codex", "task": "Tidy the notes."})
-    assert str(secret) not in plain and "Codex can read any file your account can, not only this folder." in plain
+    assert CODEX_READS_TEXT in detail
+    _, _, plain = d.needs_approval({"agent": "codex", "task": "Tidy the notes."})
+    assert str(secret) not in plain and CODEX_READS_TEXT in plain
 
 
 def test_detail_carries_the_whole_task(tmp_path):
     d, vault = _plain(tmp_path)
     (vault / "proj").mkdir()
     task = "start " + "x" * 19_000 + " END-OF-TASK"
-    _, detail = d.needs_approval({"agent": "claude-code", "task": task, "folder": str(vault / "proj")})
+    _, _, detail = d.needs_approval({"agent": "claude-code", "task": task, "folder": str(vault / "proj")})
     assert task in detail
     assert "Claude Code" in detail and "proj" in detail and str(vault) not in detail  # relative to the vault
     assert "the agent's default" in detail
     _switch(vault, enabled=True, ask=True, model="sonnet")
-    _, fresh = d.needs_approval({"agent": "claude-code", "task": task})
+    _, _, fresh = d.needs_approval({"agent": "claude-code", "task": task})
     assert "a new folder under delegated/" in fresh and "sonnet" in fresh
 
 
@@ -560,12 +630,38 @@ async def test_delegate_returns_text_then_changes(rig):
         out = await _delegator(runner, vault).delegate("claude-code", task)
     finally:
         current_call.reset(token)
-    assert out == "Made out.txt in the folder.\n\nFiles added, changed or removed:\n- out.txt"
     made = list((vault / "delegated").iterdir())
     assert len(made) == 1 and (made[0] / "out.txt").read_text() == "hi"
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}-[0-9a-f]{6}", made[0].name)
+    assert out == (f"Folder: delegated/{made[0].name}\nMade out.txt in the folder.\n\n"
+                   "Files added, changed or removed:\n- out.txt")
     assert json.loads(rig.record.read_text(encoding="utf-8"))["stdin"] == job_text(made[0].resolve(), task)  # wrapped once
     assert [e.session_id for e in rig.ledger.iter() if e.kind == Kind.delegate] == ["s1"] * 3
+
+
+async def test_delegate_names_a_folder_outside_the_vault_in_full(rig, tmp_path):
+    runner, _ = rig("ok")
+    vault = runner.agents.vault_root
+    _switch(vault, enabled=True)
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    d = Delegator(vault, runner.agents, lambda: _folders([vault, outside]), runner)
+    out = await d.delegate("claude-code", "Write hi.", folder=str(outside))
+    assert out.splitlines()[0] == f"Folder: {outside.resolve()}"
+    out = await d.delegate("claude-code", "Write hi.", folder="job")
+    assert out.splitlines()[0] == "Folder: job"
+
+
+async def test_delegate_gives_the_reason_an_enabled_agent_cannot_run(rig):
+    runner, _ = rig("ok")
+    vault = runner.agents.vault_root
+    _switch(vault, enabled=True)
+    runner.agents.statuses["claude-code"].update(usable=False, reason="Claude Code is not signed in. Run `claude`.")
+    with pytest.raises(DelegationError, match="^Claude Code is not signed in"):
+        await _delegator(runner, vault).delegate("claude-code", "Write hi.")
+    with pytest.raises(DelegationError, match="^There is no agent called nobody."):
+        await _delegator(runner, vault).delegate("nobody", "Write hi.")
+    assert not rig.record.exists()
 
 
 async def test_delegate_raises_the_reason_a_run_failed(rig):
