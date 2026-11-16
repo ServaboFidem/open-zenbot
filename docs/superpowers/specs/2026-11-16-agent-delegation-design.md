@@ -1,6 +1,6 @@
 # Delegating to Claude Code and Codex
 
-Status: draft for approval. Date: 2026-11-16.
+Status: approved 2026-11-16; built. Date: 2026-11-16.
 
 ## Intent
 
@@ -68,8 +68,8 @@ Both signed in with a subscription. Each line below was run, not read from docum
 prompt on stdin:
 
 - Wrote a file in its working folder. A write one folder up was denied by the operating system. Its
-  commands ran as a separate offline account (`whoami` gave `CodexSandboxOffline`) and could not reach the
-  network.
+  commands ran as a separate offline account (`whoami` gave `CodexSandboxOffline`). An HTTPS request from
+  them failed, which at first looked like a block; Task 5 later showed plain HTTP and raw TCP connections succeed.
 - **It read a file outside its working folder.** The sandbox limits writes and the network, not reads.
 - **The temp folder is writable** as well as the working folder.
 - It loaded Gordon's own Codex setup: his plugins (which on this machine include computer use and a
@@ -179,6 +179,7 @@ changed.
   checks sign-in again before each Codex run. **If the bar cannot be met, Codex ships as detected-only
   in this project and the switch explains why.** Where it is met only on Windows, the switch says the
   other systems are unchecked.
+  Outcome, 2026-11-16: the bar was not met; Codex ships detected-only. See the confinement notes.
 - **Progress.** The runner reads the event stream line by line. Each start, each file the agent touches
   (path relative to the folder) and the end go to the ledger under a new kind, `delegate`, so the
   activity feed shows a run moving. A line that is not valid JSON is skipped; a stream that ends without
@@ -224,7 +225,7 @@ changed.
 - Claude Code, as run here, can read and write only the job folder, which the bot could already do
   through `files`. With "Ask me before each run" off, a run in a harness-made folder adds no reach; it
   adds spending and sends what the bot put in that folder to Anthropic under Gordon's account.
-- Codex can write only the job folder and the temp folder and cannot reach the network, but it can read
+- Codex can write only the job folder and the temp folder, but the network is not closed to it (a failed HTTPS request was not a block; plain HTTP and raw TCP connected), and it can read
   anything Gordon's account can, including `vault-settings/`. A task that asked it to copy a key file
   into the job folder would put that key where the bot can read it. The approval on every Codex run,
   showing the full task, is the guard. Like the shell checks, that is a judgment, not a sandbox.
