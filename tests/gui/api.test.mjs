@@ -112,6 +112,18 @@ test('startTask sends the conversation fields', async () => {
   assert.ok(calls.every(c => new URL(c.url).pathname === '/bots/b/tasks' && c.method === 'POST'));
 });
 
+test('startTask sends design comments only when there are some', async () => {
+  const { fetch, calls } = fakeFetch();
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  const comments = [{ attachment_id: 'a2', element_id: 'hero', selector: 'body > h1', tag: 'h1', text: 'Hi', note: 'bigger' }];
+  await api.startTask('b', 'See my comments on the design.', { conversationId: 'c1', designComments: comments });
+  await api.startTask('b', 'go on', { conversationId: 'c1', designComments: [] });
+  await api.startTask('b', 'go on', { conversationId: 'c1' });
+  assert.deepEqual(calls[0].body, { task: 'See my comments on the design.', conversation_id: 'c1', conversation: true, design_comments: comments });
+  assert.equal('design_comments' in calls[1].body, false);
+  assert.equal('design_comments' in calls[2].body, false);
+});
+
 test('conversation endpoints hit the right paths', async () => {
   const { fetch, calls } = fakeFetch();
   const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });

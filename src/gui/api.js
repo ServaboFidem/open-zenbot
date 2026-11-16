@@ -110,8 +110,9 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     createBot: body => post('/bots', body),
     patchBot: (id, body) => call('PATCH', `/bots/${enc(id)}`, body),
     // A task joins the bot's current conversation (or the one named); a routine passes conversation: false.
-    startTask: (botId, task, { conversationId, conversation = true, protected: block } = {}) =>
-      post(`/bots/${enc(botId)}/tasks`, { task, ...(conversationId ? { conversation_id: conversationId } : {}), conversation, ...(block ? { protected: block } : {}) }),
+    // designComments: notes on elements of the newest design revision, sent only when there are some.
+    startTask: (botId, task, { conversationId, conversation = true, protected: block, designComments } = {}) =>
+      post(`/bots/${enc(botId)}/tasks`, { task, ...(conversationId ? { conversation_id: conversationId } : {}), conversation, ...(block ? { protected: block } : {}), ...(designComments?.length ? { design_comments: designComments } : {}) }),
     // conversations
     conversations: botId => get(`/bots/${enc(botId)}/conversations`),
     recentConversations: (limit = 5) => get(`/conversations?limit=${enc(limit)}`),  // newest one-to-one, across bots
