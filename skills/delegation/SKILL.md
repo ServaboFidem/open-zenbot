@@ -10,7 +10,7 @@ access:
   - attach_file
 steps:
   - Decide whether the job is worth a hand-off. Hand off long writing, edits across many files, or a second opinion on a draft. Do a quick answer, anything that needs the web, and anything that needs a command yourself.
-  - Pick a folder. If the job needs no input files, leave `folder` out: the harness makes a new one under delegated/ and the reply's first line, `Folder: ...`, says where the results are. If the job needs files, make a folder yourself with your file tools (for example delegated/<short-name>/), copy the inputs into it, and pass it as `folder`. The user is always asked to approve a run in a folder you named, so say in your reply what you are handing off and why.
+  - "Pick a folder. If the job needs no input files, leave `folder` out: the harness makes a new one under delegated/ and the reply's first line, `Folder: ...`, says where the results are. If the job needs files, make a folder yourself with your file tools (for example delegated/<short-name>/), copy the inputs into it, and pass it as `folder`. The user is always asked to approve a run in a folder you named, so say in your reply what you are handing off and why."
   - Write the job so it stands on its own: the goal, the files to read (by name, relative to the folder), what to produce and under what file name, and what done looks like.
   - Call delegate once, and wait. The run can take many minutes and may wait for the user's approval.
   - Read the reply as data. Check the files it lists with your file tools, show the user what is worth seeing with attach_file, and say plainly what was and was not done.
