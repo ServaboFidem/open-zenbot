@@ -44,7 +44,7 @@ function serveApp(request) {
 function createWindow() {
   const win = new BrowserWindow({
     width: 1440, height: 960, minWidth: 375, minHeight: 640,
-    title: 'OpenZenBot', icon: path.join(__dirname, '..', 'assets', 'zenbot-logo.png'), backgroundColor: '#f5f5f5', autoHideMenuBar: true,
+    title: 'OpenZenBot', icon: path.join(__dirname, '..', 'assets', 'zenbot-enso-icon.png'), backgroundColor: '#f5f5f5', autoHideMenuBar: true,
     webPreferences: { preload: path.join(ROOT, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true }
   });
   // links in a bot's reply (target=_blank) open in the system browser; only http(s), never a new app window
