@@ -515,11 +515,12 @@ class Harness:
         target = self.attachable(path)
         if isinstance(target, str):
             return target
+        title = title or target.name  # the file's own name, before the swap to its numbered copy
         if bot is not None and bot.studio:
             copy = design_studio.snapshot(self.config.vault_root, target)
             if copy is not None and isinstance(self.attachable(str(copy)), Path):
                 target = copy
-        att = Attachment(uuid4().hex[:10], title or target.name, str(target))
+        att = Attachment(uuid4().hex[:10], title, str(target))
         self.task_attachments.setdefault(session_id, []).append(att)
         return f"Attached {att.title!r}; it will show under your reply."
 
@@ -553,12 +554,19 @@ class Harness:
             if self.turn_notes is not None and self.turn_notes.config.enabled:
                 session.note = conv.note  # what this bot's last task here found, made and left
         if conv is not None and conv.design_system:
+            why = ""
             try:
-                session.design = design_systems.block(
-                    design_systems.load(self.config.design_systems_dir, self.config.vault_root, conv.design_system))
+                ds = design_systems.load(self.config.design_systems_dir, self.config.vault_root, conv.design_system)
+                if conv.design_system_source and ds.source != conv.design_system_source:
+                    # a bot can write <vault>/design-systems/<slug>/, replacing the shipped one the user picked
+                    why = (f"changed from {conv.design_system_source} to {ds.source} since it was picked; "
+                           "pick it again to use it")
+                else:
+                    session.design = design_systems.block(ds)
             except (KeyError, OSError, design_systems.DesignSystemError) as e:
-                # gone or no longer safe: the task runs without it, and the ledger says why (never a disk path)
                 why = "no longer exists" if isinstance(e, KeyError) else str(e) if isinstance(e, design_systems.DesignSystemError) else "cannot be read"
+            if why:
+                # gone, no longer safe or replaced: the task runs without it, and the ledger says why (never a disk path)
                 self.ledger.append(Kind.error, bot.id, session.id, where="design_system",
                                    error=f"design system {conv.design_system}: {why}", action="running without the design system")
         if addendum:
@@ -576,9 +584,11 @@ class Harness:
                                 conv, self.compactor.generator, budget_chars=cfg.conversation_budget_chars, keep=cfg.conversation_keep)
                     history = conv.history(exclude=session.id)
                 try:
-                    # the bot reads the comments after the task; the pinned task stays the user's words alone
+                    # the bot reads the comments after the task; the pinned task stays the user's words alone, and
+                    # the comment block's lines are pinned as constraints so a mid-task compaction cannot fold them away
+                    pinned = protected or ({"task": task, "constraints": addendum.splitlines()} if addendum else None)
                     await self.loop.run(bot, f"{task}\n\n{addendum}" if addendum else task, session, history=history,
-                                        protected=protected or ({"task": task} if addendum else None))
+                                        protected=pinned)
                 except asyncio.CancelledError:
                     if session.state not in _ENDED:  # cancelled before the loop could mark it
                         session.state = SessionState.stopped
@@ -2003,14 +2013,15 @@ def create_app(h: Harness) -> FastAPI:
     async def set_design_system(conv_id: str, body: DesignSystemIn) -> dict[str, str]:
         if h.conversations.get(conv_id) is None:
             raise HTTPException(404, "no such conversation")
+        source = ""
         if body.slug is not None:  # picking loads it, so a too-large or unsafe one is refused now with its reason
             try:
-                design_systems.load(h.config.design_systems_dir, h.config.vault_root, body.slug)
+                source = design_systems.load(h.config.design_systems_dir, h.config.vault_root, body.slug).source
             except KeyError:
                 raise HTTPException(404, "no such design system") from None
             except design_systems.DesignSystemError as e:
                 raise HTTPException(422, str(e)) from None
-        h.conversations.set_design_system(conv_id, body.slug or "")
+        h.conversations.set_design_system(conv_id, body.slug or "", source)
         return {"design_system": body.slug or ""}
 
     # Open tokens. A page served closed (PREVIEW_CSP) cannot obtain one: its fetch and XHR are blocked by
