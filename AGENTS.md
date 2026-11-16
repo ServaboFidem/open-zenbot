@@ -177,28 +177,44 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
 - **The preview.** The frame gets exactly `PREVIEW_CSP` (`api.py`; sandboxed, `default-src 'none'`, inline
   script and style, `data:` and `blob:` images, `data:` fonts, nothing loads from anywhere) plus one script,
   the pick bridge (`design_bridge.js`, added by `design_studio.with_bridge`). A file over
-  `design_studio.BRIDGE_MAX_BYTES` (5 MB) or not HTML goes as it is, without the bridge.
+  `design_studio.BRIDGE_MAX_BYTES` (5 MB) or not HTML goes as it is, without the bridge. The pane shows a new
+  revision when the task that attached it ends, not while it runs.
+- **Bot-made pages are closed by default.** Every `.html`, `.htm` or `.svg` attachment, on the conversation
+  and room routes alike, is served under `PREVIEW_CSP` with `nosniff`, whatever the query, so a page that
+  navigates its own frame to the bare URL is still closed. Only the viewer (`MediaViewer`), when the user
+  opens a page, asks for a token (`POST .../attachments/{id}/open`) and frames `...?open=<token>`, served
+  `sandbox allow-scripts`. A token is in memory, bound to one attachment, valid 60 seconds and spent by the
+  first GET that shows it (`api.OpenTokens`). A closed page cannot ask for one: its fetch is blocked by
+  `default-src 'none'` and its forms by the sandbox. Thumbnails and the design pane never ask. Don't add a
+  route that serves a bot-made page open without a token.
 - **The GUI never trusts the frame.** A message from the framed page can only offer a pick (which element,
   its selector and a short text, each capped); the GUI only ever adds a chip the user sees. Nothing
   a framed page posts is sent to a bot, run or saved on its own. At most 20 comments go with a task; the
   note is 1000 characters, the text 160, the selector 300. The comment block (`design_studio.comment_block`)
-  names the file relative to the vault, never a disk path. A bot reply can carry a question form (at most 5
-  questions); the answers go back as an ordinary message.
-- **Electron.** `src/electron/main.cjs` blocks a subframe navigating anywhere but this machine
-  (`frame-nav.cjs`, `will-frame-navigate`): a framed design can navigate its own frame, which `will-navigate`
-  never sees.
+  names the file relative to the vault, never a disk path. Its lines are also pinned as the task's
+  constraints (the protected block), so a mid-task compaction cannot summarise them away; the pinned task
+  stays the user's words. A bot reply can carry a question form (at most 5 questions); the answers go back
+  as an ordinary message, without the scope-change check.
+- **Electron.** `src/electron/main.cjs` cancels a subframe navigation (`will-frame-navigate`; a framed design
+  can navigate its own frame, which `will-navigate` never sees) unless `frame-nav.cjs` allows it: the
+  harness's own origin (`ZEN_HARNESS_URL`, default `http://127.0.0.1:8765`) or http(s) on `127.0.0.1`,
+  `localhost` or `[::1]` (the memory dashboard). This guards the desktop app only; the harness's closed
+  default above is what keeps a page off the network.
 - **Design systems.** A folder with `DESIGN.md` and optionally `tokens.css`: the shipped ones in
   `design-systems/` (`ZEN_DESIGN_SYSTEMS`), the user's in `<vault>/design-systems/`, which bots can write, so
   the files are untrusted text for a prompt. They grant nothing, so they may live in the vault. A conversation
   picks one (`PUT /conversations/{id}/design-system`, `{"slug": ...}` or `null`; `GET /design-systems` lists
   them with `source` `shipped` or `yours`), and the harness adds it to the context of every task there.
-  Every file must resolve inside its own folder: a system is refused when a file is a link, is hard-linked,
-  is over the size bound (40,000 characters for `DESIGN.md` and `tokens.css` together), or when
-  `<vault>/design-systems` itself is a link. A pick that fails answers 422 with the reason. A picked system that
-  stops loading later is recorded in the ledger (an `error` entry, `where: design_system`) while the task
-  still runs without it.
+  Every file must resolve inside its own folder: a system is refused when a file resolves outside its own
+  folder, is hard-linked, is over the size bound (40,000 characters for `DESIGN.md` and `tokens.css`
+  together), or when `<vault>/design-systems` itself is a link. A pick that fails answers 422 with the
+  reason. The pick also keeps the system's `source` (`design_system_source`): a folder of yours written later
+  with the same slug replaces a shipped one, so a system whose source has changed since the pick is not
+  used until it is picked again. A picked system that stops loading or has changed source is recorded in the
+  ledger (an `error` entry, `where: design_system`) while the task still runs without it. The context block
+  says the system governs looks only and ends with `End of design system: <name>.`.
 - **Records.** The conversation routes return a record through `_conversation_view` (it carries
-  `design_system`, a slug or empty). Keep new conversation fields going through it.
+  `design_system`, a slug or empty, and `design_system_source`). Keep new conversation fields going through it.
 
 ### The shell and the workspace
 
