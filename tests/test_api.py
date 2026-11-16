@@ -1188,6 +1188,50 @@ async def _attach_task(client, harness: Harness, tmp_path: Path) -> tuple[str, s
     return sid, harness.conversations.current("bot1").id
 
 
+async def _attach_design(client, harness: Harness, bot_id: str) -> tuple[str, dict]:
+    f = harness.config.vault_root / "designs" / "landing" / "index.html"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("<p>one</p>", encoding="utf-8")
+    harness.provider.script = [
+        completion(calls=[("c1", "attach_file", {"path": "designs/landing/index.html", "title": "Landing"})]),
+        completion("Here it is."),
+    ]
+    sid = (await client.post(f"/bots/{bot_id}/tasks", json={"task": "design it"})).json()["session_id"]
+    await wait_for(client, sid, {"done"})
+    await harness.tasks[sid]
+    f.write_text("<p>two</p>", encoding="utf-8")
+    cid = harness.conversations.current(bot_id).id
+    att = (await client.get(f"/conversations/{cid}")).json()["exchanges"][-1]["attachments"][0]
+    return cid, att
+
+
+async def test_studio_attach_keeps_a_numbered_copy(client, harness: Harness):
+    harness.add_bot(Bot(name="Designer", role="Designs", id="des", studio=True))
+    cid, att = await _attach_design(client, harness, "des")
+    assert {k: att[k] for k in ("design", "version", "name")} == {"design": "landing", "version": 1, "name": "index.html"}
+    assert (await client.get(f"/conversations/{cid}/attachments/{att['id']}")).text == "<p>one</p>"
+
+
+async def test_non_studio_attach_serves_the_live_file(client, harness: Harness, tmp_path: Path):
+    # a non-studio bot's relative path still resolves against the working folder
+    wf = tmp_path / "designs" / "landing" / "index.html"
+    wf.parent.mkdir(parents=True)
+    wf.write_text("<p>work</p>", encoding="utf-8")
+    harness.provider.script = [
+        completion(calls=[("c1", "attach_file", {"path": "designs/landing/index.html", "title": "Landing"})]),
+        completion("Here it is."),
+    ]
+    sid = (await client.post("/bots/bot1/tasks", json={"task": "show it"})).json()["session_id"]
+    await wait_for(client, sid, {"done"})
+    await harness.tasks[sid]
+    cid = harness.conversations.current("bot1").id
+    att = (await client.get(f"/conversations/{cid}")).json()["exchanges"][-1]["attachments"][0]
+    assert "version" not in att and att["name"] == "index.html"
+    wf.write_text("<p>live</p>", encoding="utf-8")
+    assert (await client.get(f"/conversations/{cid}/attachments/{att['id']}")).text == "<p>live</p>"
+    assert not (harness.config.vault_root / "designs").exists()
+
+
 async def test_one_to_one_attach_shows_on_the_exchange_and_serves(client, harness: Harness, tmp_path: Path):
     _, cid = await _attach_task(client, harness, tmp_path)
     r = await client.get(f"/conversations/{cid}")

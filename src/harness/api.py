@@ -60,7 +60,7 @@ from . import allowed_folders, tracing_settings
 from .allowed_folders import AllowedFolders
 from .magick_guard import Folders as GuardFolders, MagickGuard, MagickRunner
 from .write_guard import ShellWriteCheck
-from . import tool_paths
+from . import design_studio, tool_paths
 from src.vault_settings import settings_dir
 from src.providers import tracing as llm_tracing
 from .onboarding import ASSISTANT_ID, NEW_TOPICS, TOPICS, Interviewer
@@ -480,9 +480,16 @@ class Harness:
         session = self.sessions.get(session_id)
         if session is None or not session.conversation_id or session.room_id:
             return "attach_file works only in a conversation or a room turn."
+        bot = self.bots.get(session.bot_id)
+        if bot is not None and bot.studio and not Path(path).is_absolute() and Path(path).parts[:1] == ("designs",):
+            path = str(self.config.vault_root / path)  # designs live in the vault, not the working folder
         target = self.attachable(path)
         if isinstance(target, str):
             return target
+        if bot is not None and bot.studio:
+            copy = design_studio.snapshot(self.config.vault_root, target)
+            if copy is not None and isinstance(self.attachable(str(copy)), Path):
+                target = copy
         att = Attachment(uuid4().hex[:10], title or target.name, str(target))
         self.task_attachments.setdefault(session_id, []).append(att)
         return f"Attached {att.title!r}; it will show under your reply."
@@ -845,6 +852,14 @@ def _looks_like_text(raw: bytes) -> bool:
 
 
 def create_app(h: Harness) -> FastAPI:
+    def _attachment_view(a: dict[str, Any]) -> dict[str, Any]:
+        """What the GUI sees of an attachment: a name, never the path; a design copy gives its original name."""
+        rev = design_studio.revision_of(h.config.vault_root, Path(a["path"]))
+        view: dict[str, Any] = {"id": a["id"], "title": a["title"], "name": rev[2] if rev else Path(a["path"]).name}
+        if rev:
+            view["design"], view["version"] = rev[0], rev[1]
+        return view
+
     def serve_attachment(path: str, preview: bool = False) -> FileResponse:
         """A file a bot attached, in a room or a one-to-one task. `preview` is the thumbnail the chat
         frames on its own as a reply renders: that page may run its inline script and style but reach
@@ -1879,7 +1894,7 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(404, "no such conversation")
         record = c.to_record()
         for ex in record["exchanges"]:  # the GUI gets a name to show, never the path on disk
-            ex["attachments"] = [{"id": a["id"], "title": a["title"], "name": Path(a["path"]).name} for a in ex.get("attachments", [])]
+            ex["attachments"] = [_attachment_view(a) for a in ex.get("attachments", [])]
         d, _ = exclusion.redact_obj(record)
         return d
 
