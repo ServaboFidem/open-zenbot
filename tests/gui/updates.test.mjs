@@ -26,3 +26,9 @@ test('updatesApi is null in a browser', () => {
   const u = { get() {} };
   assert.equal(updatesApi({ openzenbot: { updates: u } }), u);
 });
+test('statusLine: a failed check says so even when nothing has ever succeeded', () => {
+  assert.equal(statusLine({ checkedAt: null, error: 'x' }), 'Could not check for updates.');
+});
+test('statusLine: a known newer version wins over a later failed check', () => {
+  assert.equal(statusLine({ checkedAt: 1, newer: true, latest: '0.2.0', error: 'offline' }), 'Version 0.2.0 is available.');
+});

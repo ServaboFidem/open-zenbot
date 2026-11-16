@@ -11,9 +11,11 @@ export function noticeOf(state) {
 }
 
 export function statusLine(state) {
-  if (!state || !state.checkedAt) return 'Not checked yet.';
-  if (state.error) return 'Could not check for updates.';
+  if (!state) return 'Not checked yet.';
+  // A newer version found by an earlier check still stands when a later check fails.
   if (state.newer) return `Version ${state.latest} is available.`;
+  if (state.error) return 'Could not check for updates.';
+  if (!state.checkedAt) return 'Not checked yet.';
   return 'You have the latest version.';
 }
 
