@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -23,6 +24,12 @@ from .config import HarnessConfig
 from .model_roles import ModelRoles
 
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"  # the repo's .env, wherever the harness is started from
+
+
+def env_file(env: Mapping[str, str] = os.environ) -> Path:
+    """ZEN_ENV_FILE when set and non-empty (the installed app keeps its .env outside the repo), else the repo's."""
+    moved = env.get("ZEN_ENV_FILE")
+    return Path(moved) if moved else ENV_FILE
 
 
 def load_env_file(path: Path) -> list[str]:
@@ -84,9 +91,10 @@ def main() -> int:
     from .telemetry import DSN_ENV, init_tracing
 
     # first: the settings below, the provider key, and the MCP servers' ${VAR}s all read the environment
-    loaded = load_env_file(ENV_FILE)
+    env_path = env_file()
+    loaded = load_env_file(env_path)
     if loaded:
-        print(f"{ENV_FILE.name}: {len(loaded)} {'setting' if len(loaded) == 1 else 'settings'} ({', '.join(sorted(loaded))})", file=sys.stderr)
+        print(f"{env_path.name}: {len(loaded)} {'setting' if len(loaded) == 1 else 'settings'} ({', '.join(sorted(loaded))})", file=sys.stderr)
     from src.providers import tracing as llm_tracing
     from src.vault_settings import migrate, settings_dir
 
