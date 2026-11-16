@@ -14,6 +14,15 @@ await build({
   assetNames: 'assets/[name]',
   logLevel: 'info',
 });
+// The installed app's setup page: a plain script of its own, no React (src/gui/setup.html)
+await build({
+  entryPoints: ['src/gui/setup.js'],
+  bundle: true,
+  minify: true,
+  format: 'iife',
+  outfile: 'dist/setup.js',
+  logLevel: 'info',
+});
 // The preload runs sandboxed, where require() reaches only electron: bundle what it loads.
 await build({
   entryPoints: ['src/electron/preload.cjs'],
@@ -25,5 +34,8 @@ await build({
   logLevel: 'info',
 });
 copyFileSync('src/gui/index.html', 'dist/index.html');
+copyFileSync('src/gui/setup.html', 'dist/setup.html');
+mkdirSync('dist/assets', { recursive: true });
+copyFileSync('src/assets/zenbot-enso.svg', 'dist/assets/zenbot-enso.svg');
 // pdf.js parses PDFs in a worker the page loads from its own origin (CSP worker-src 'self')
 copyFileSync('node_modules/pdfjs-dist/build/pdf.worker.min.mjs', 'dist/pdf.worker.mjs');

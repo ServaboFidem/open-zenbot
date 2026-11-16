@@ -6,9 +6,21 @@ const { loadEnvFile } = require('./env-file.cjs');
 const { createArrival } = require('./arrival.cjs');
 const { applySavedDsn } = require('./tracing-settings.cjs');
 const { allowFrameNavigation } = require('./frame-nav.cjs');
+const { createUpdateChecker } = require('./update-check.cjs');
+const { runtimePaths } = require('./runtime-paths.cjs');
 
-// first: every setting below reads the environment; the repo's .env fills what the shell left unset
-const envLoaded = loadEnvFile(path.join(__dirname, '..', '..', '.env'));
+// The installed app (or ZEN_MANAGED=1 from the repo) sets itself up, runs its own harness and checks for updates
+// (managed-app.cjs); a developer run does none of that. Its bundled uv and harness are in <resources>: from the repo
+// only ZEN_RESOURCES points at them, else a folder that does not exist, so setup fails at its first uv step.
+const managed = app.isPackaged || process.env.ZEN_MANAGED === '1';
+// one window: a second launch hands over to the first ('second-instance' below) and quits
+if (managed && !app.requestSingleInstanceLock()) { app.quit(); return; }
+const resources = app.isPackaged ? process.resourcesPath : (process.env.ZEN_RESOURCES || path.join(__dirname, 'no-bundled-resources'));
+const paths = managed ? runtimePaths({ userData: app.getPath('userData'), resources, platform: process.platform }) : null;
+
+// first: every setting below reads the environment; the .env (the repo's, or <userData>/.env for the installed
+// app) fills what the shell left unset
+const envLoaded = loadEnvFile(managed ? paths.envFile : path.join(__dirname, '..', '..', '.env'));
 if (envLoaded.length) console.log(`.env: ${envLoaded.length} ${envLoaded.length === 1 ? 'setting' : 'settings'} (${envLoaded.sort().join(', ')})`);
 
 // Settings > Tracing's saved DSN wins over .env (and '' saved turns it off); the preload reads the same env
@@ -41,11 +53,16 @@ function serveApp(request) {
   return net.fetch(pathToFileURL(file).toString());
 }
 
-function createWindow() {
+// page: index.html (the workspace) or setup.html (the installed app's setup and start screen)
+function createWindow(page = 'index.html') {
   const win = new BrowserWindow({
     width: 1440, height: 960, minWidth: 375, minHeight: 640,
     title: 'OpenZenBot', icon: path.join(__dirname, '..', 'assets', 'zenbot-enso-icon.png'), backgroundColor: '#f5f5f5', autoHideMenuBar: true,
-    webPreferences: { preload: path.join(ROOT, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true }
+    webPreferences: {
+      preload: path.join(ROOT, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true,
+      // the sandboxed preload cannot read package.json: it reads these from process.argv
+      additionalArguments: [`--zen-version=${app.getVersion()}`, `--zen-managed=${managed ? '1' : '0'}`],
+    }
   });
   // links in a bot's reply (target=_blank) open in the system browser; only http(s), never a new app window
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -60,10 +77,43 @@ function createWindow() {
   win.webContents.on('will-frame-navigate', (event) => {
     if (!event.isMainFrame && !allowFrameNavigation(event.url, harnessBase())) event.preventDefault();
   });
-  win.loadURL('app://openzenbot/index.html');
+  win.loadURL(`app://openzenbot/${page}`);
+  return win;
 }
+// IPC from this app's own pages only (never a framed page or another origin)
+const fromApp = (event, page = '') => String(event.senderFrame?.url || '').startsWith(`app://openzenbot/${page}`);
+// The update check, on GitHub Releases: Settings checks by hand in every run; the installed app also checks at launch
+// and daily (update-check.cjs). open() opens only this repo's release pages.
+const updateStore = () => path.join(app.getPath('userData'), 'update-check.json');
+const checker = createUpdateChecker({
+  version: app.getVersion(),
+  fetch: (url, opts) => net.fetch(url, opts),
+  readStore: () => JSON.parse(require('node:fs').readFileSync(updateStore(), 'utf8')),
+  writeStore: s => require('node:fs').writeFileSync(updateStore(), JSON.stringify(s)),
+  openExternal: url => shell.openExternal(url),
+});
+function handleUpdates() {
+  const handle = (channel, fn) => ipcMain.handle(channel, (event, arg) => {
+    if (!fromApp(event)) throw new Error('not allowed');
+    return fn(arg);
+  });
+  handle('updates:get', () => checker.get());
+  handle('updates:check', () => checker.check());
+  handle('updates:skip', v => {
+    if (typeof v !== 'string' || v.length > 32) throw new Error('a version is a short string');
+    return checker.skip(v);
+  });
+  handle('updates:set-auto', on => {
+    if (typeof on !== 'boolean') throw new Error('on is true or false');
+    return checker.setAuto(on);
+  });
+  handle('updates:open', () => checker.open());
+}
+let arrivalStarted = false;
 // A new weekly digest: poll the harness every 60 s; the notice's click brings the window forward and opens Music > This week.
 function startArrivalPolling() {
+  if (arrivalStarted) return;
+  arrivalStarted = true;
   const base = harnessBase();
   const store = path.join(app.getPath('userData'), 'arrival-notified.json');
   const fs = require('node:fs');
@@ -90,8 +140,9 @@ function startArrivalPolling() {
 }
 app.whenReady().then(() => {
   protocol.handle('app', serveApp);
-  // The app's only IPC channels (Sentry adds its own when the DSN is set): the renderer asks for a directory or a file, the user
-  // picks one in the OS dialog; or it asks to save a preview, and the user picks where in the OS save dialog.
+  // The app's IPC channels (Sentry adds its own when the DSN is set): the renderer asks for a directory or a file, the user
+  // picks one in the OS dialog; or it asks to save a preview, and the user picks where in the OS save dialog. Then the
+  // update check's updates:* (handleUpdates) and, in the installed app, the setup page's setup:* (managed-app.cjs).
   ipcMain.handle('pick-directory', async () => {
     const r = await dialog.showOpenDialog({ properties: ['openDirectory'] });
     return r.canceled ? null : r.filePaths[0];
@@ -109,6 +160,11 @@ app.whenReady().then(() => {
     paths: { pictures: app.getPath('pictures'), downloads: app.getPath('downloads') },
     fs: require('node:fs'),
   }));
+  handleUpdates();
+  if (managed) {
+    require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, fromApp, startArrivalPolling });
+    return;
+  }
   createWindow();
   startArrivalPolling();
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });

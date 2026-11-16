@@ -5,11 +5,27 @@
 // those dialogs. The renderer talks to the harness itself over fetch
 // and EventSource, under the page's CSP. Bundled into dist/ by build-gui, so the
 // sandboxed preload can carry Sentry's IPC bridge.
+// Also the app's version, whether it is the installed (managed) app, the update check (updates.*) and the setup
+// page's few calls (setup.*; the main process answers them from setup.html only). The version and the managed
+// switch come from the main process as --zen-* arguments (webPreferences.additionalArguments), since a sandboxed
+// preload cannot read package.json.
 const { contextBridge, ipcRenderer } = require('electron');
 const harnessUrl = (process.env.ZEN_HARNESS_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
+const zenArg = name => {
+  const prefix = `--zen-${name}=`;
+  const found = (process.argv || []).find(a => a.startsWith(prefix));
+  return found ? found.slice(prefix.length) : '';
+};
+const subscribe = (channel, cb) => {
+  const handler = (_event, value) => cb(value);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+};
 contextBridge.exposeInMainWorld('openzenbot', Object.freeze({
   harnessUrl,
   origin: 'app://openzenbot',
+  version: zenArg('version'),
+  managed: zenArg('managed') === '1',
   pickDirectory: () => ipcRenderer.invoke('pick-directory'),
   pickFile: () => ipcRenderer.invoke('pick-file'),
   saveMedia: (url, name) => ipcRenderer.invoke('save-media', { url, name }),
@@ -19,6 +35,21 @@ contextBridge.exposeInMainWorld('openzenbot', Object.freeze({
     ipcRenderer.on('open-music', handler);
     return () => ipcRenderer.removeListener('open-music', handler);
   },
+  updates: Object.freeze({
+    get: () => ipcRenderer.invoke('updates:get'),
+    check: () => ipcRenderer.invoke('updates:check'),
+    skip: version => ipcRenderer.invoke('updates:skip', version),
+    setAuto: on => ipcRenderer.invoke('updates:set-auto', on),
+    open: () => ipcRenderer.invoke('updates:open'),
+  }),
+  setup: Object.freeze({
+    state: () => ipcRenderer.invoke('setup:state'),
+    onState: cb => subscribe('setup:state', cb),
+    retry: () => ipcRenderer.invoke('setup:retry'),
+    proceed: () => ipcRenderer.invoke('setup:proceed'),
+    openLogs: () => ipcRenderer.invoke('setup:open-logs'),
+    restartHarness: () => ipcRenderer.invoke('setup:restart-harness'),
+  }),
 }));
 // ZEN_GLITCHTIP_DSN set: the bridge Sentry's renderer SDK sends its events over, IPC to the main process
 if ((process.env.ZEN_GLITCHTIP_DSN || '').trim()) require('@sentry/electron/preload');
