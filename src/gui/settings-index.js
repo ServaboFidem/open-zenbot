@@ -78,6 +78,7 @@ export const SECTIONS = [
   section('memory', 'About you', ['Your name', 'Also called: nicknames, separated by commas', 'Owner']),
   section('memory', 'Rebuild memory', ["Re-learn everything shared under the current knowledge model: people, organizations, and how they relate. Your facts and each bot's private memory stay."]),
   whole('apps', ["Mockup: connected apps don't work yet. Connect only marks an app as connected in this window.", 'Connect app', 'Disconnect']),
+  section('about', 'Version and updates', ['Version', 'Check for updates', 'Check for updates automatically', 'Update to the newest release, or skip a version.']),
   section('about', 'What this app does', ['Bots, skills, approvals, rooms, memory, and the ledger come from the zen-agents harness on localhost.']),
   section('about', 'Open source', ['Authored source is MIT licensed. See README.md for setup, source locations, and dependency licenses.', 'License']),
 ];

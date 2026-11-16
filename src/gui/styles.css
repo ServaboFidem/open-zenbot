@@ -49,3 +49,4 @@
 @media(max-width:767px){.conversation-layout:has(>.design-pane),.conversation-layout:has(>.design-pane.open){grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.design-pane{order:-1;border-left:0;border-bottom:1px solid var(--line)}.design-pane:not(.open){align-items:flex-end}.design-pane.open{height:45vh}}
 
 .question-form{display:flex;flex-direction:column;gap:var(--s4);margin:0 0 var(--s4);padding:var(--s4);background:#f3f5f7;border:1px solid var(--line);border-radius:var(--small-radius)}.question-form.readonly{opacity:.7}.question-form-title{margin:0}.question-form-actions{display:flex;justify-content:flex-end}.question-field .od-row{gap:var(--s3)}
+.update-notice .od-row{gap:var(--s3);flex-wrap:wrap}.update-notes{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;margin:var(--s2) 0 0;font:inherit;font-size:var(--small)}

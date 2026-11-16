@@ -1,7 +1,10 @@
 // Bundle the renderer into dist/ and copy its page beside it. Electron and
 // a static dev server both serve dist/ as the app's root.
 import { build } from 'esbuild';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
+
+// The version shown in Settings > About when the page runs in a browser (no Electron preload to ask)
+const appVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
 
 mkdirSync('dist', { recursive: true });
 await build({
@@ -9,7 +12,7 @@ await build({
   bundle: true,
   minify: true,
   outfile: 'dist/app.js',
-  define: { 'process.env.NODE_ENV': '"production"' },
+  define: { 'process.env.NODE_ENV': '"production"', __APP_VERSION__: JSON.stringify(appVersion) },
   loader: { '.svg': 'file', '.png': 'file' },
   assetNames: 'assets/[name]',
   logLevel: 'info',

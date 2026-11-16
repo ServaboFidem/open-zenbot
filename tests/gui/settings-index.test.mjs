@@ -103,3 +103,7 @@ test('MCP servers and skills are settings panels, found by name and by their car
   assert.equal(searchSettings('photos_search', live)[0].anchor, 'settings-mcps-pexels');
   assert.equal(searchSettings('research brief', live)[0].anchor, 'settings-skills-research-brief');
 });
+test('update finds the About panel\'s Version and updates section', () => {
+  const m = searchSettings('update').find(x => x.panel === 'about');
+  assert.ok(m); assert.equal(m.section, 'Version and updates'); assert.equal(m.anchor, 'settings-about-version-and-updates');
+});
