@@ -4,6 +4,7 @@ What changed on `main`, newest first. Updated automatically on every push to `ma
 
 ## 2026-11-16
 
+- Add scripts/ubuntu-apparmor-profile.sh for Electron on Ubuntu ([`a421e3f`](https://github.com/ServaboFidem/open-zenbot/commit/a421e3f934d08786ae69e88668807b07a51e4d29))
 - README: AppArmor profile for Electron on Ubuntu ([`0d680f0`](https://github.com/ServaboFidem/open-zenbot/commit/0d680f0f4242af6d4c05cdd076946369f4f19cac))
 - Allow esbuild install script in package.json ([`41673ed`](https://github.com/ServaboFidem/open-zenbot/commit/41673ed301bccd20d1ad308696a0418f9ecdeb17))
 - bump gitignore ([`d46e7a3`](https://github.com/ServaboFidem/open-zenbot/commit/d46e7a36ab208e78a69704573ef64278f207f93a))
