@@ -48,3 +48,22 @@ test('every indexed section has its id on the page', () => {
   const src = readdirSync(dir).filter(f => f.endsWith('.jsx')).map(f => readFileSync(new URL(f, dir), 'utf8')).join('\n');
   for (const s of SECTIONS.filter(s => s.anchor)) assert.ok(src.includes(`anchorId('${s.panel}', ${JSON.stringify(s.title).replace(/^"|"$/g, "'")})`), `${s.panel}: ${s.title}`);
 });
+
+test('a section is not matched by words that belong to its panel or to a sibling', () => {
+  assert.ok(!searchSettings('sentry').some(m => m.anchor === 'settings-tracing-langfuse'));
+  assert.ok(!searchSettings('langfuse').some(m => m.anchor === 'settings-tracing-sentry-glitchtip'));
+  assert.ok(!searchSettings('name').some(m => m.section === 'Rebuild memory'));
+});
+test('the section that holds the word comes first', () => assert.equal(searchSettings('license')[0].section, 'Open source'));
+test('a live entry is matched by its own words only', () => {
+  const extra = [{ panel: 'providers', anchor: '', title: 'Acme Router', words: ['acme-large'] }];
+  assert.ok(!searchSettings('key', extra).some(m => m.section === 'Acme Router'));
+  assert.ok(!searchSettings('model', extra).some(m => m.section === 'Acme Router'));
+});
+test('a panel and its section of the same name are one result', () => {
+  assert.equal(searchSettings('claude').filter(m => m.panel === 'agents').length, 1);
+  assert.equal(searchSettings('claude')[0].anchor, 'settings-agents-coding-agents');
+  assert.equal(searchSettings('tracing').filter(m => m.section === 'Tracing').length, 1);
+});
+test('a panel is found by its description', () => assert.equal(searchSettings('mockup')[0].panel, 'apps'));
+test('the matched text holds a word that was typed', () => { for (const m of searchSettings('secret langfuse')) assert.match(m.text, /secret|langfuse/i); });

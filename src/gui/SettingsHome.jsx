@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Field, Input } from '@fluentui/react-components';
 import { Apps24Regular, BrainCircuit24Regular, Cloud24Regular, Code24Regular, Database24Regular, Folder24Regular, Info24Regular, Pulse24Regular, Search24Regular, Wrench24Regular } from '@fluentui/react-icons';
 import { PANELS, searchSettings } from './settings-index';
@@ -9,13 +9,13 @@ export const PANEL_ICONS = {
 };
 
 // The Settings home screen: a tile per panel, and a search that lists the panels and sections holding the words typed.
+// query, setQuery: what is typed, kept by the page so it is still there after a look at one result;
 // extra: live sections for the search (settings-index.js); onOpen(panelId, anchor) opens a panel, at a section when anchor is set.
-export function SettingsHome({ extra, onOpen }) {
-  const [query, setQuery] = useState('');
+export function SettingsHome({ query, setQuery, extra, onOpen }) {
   const searching = !!query.trim();
   const results = searching ? searchSettings(query, extra) : [];
   return <>
-    <div className="search-field"><Field label="Search settings">
+    <div className="search-field settings-search"><Field label="Search settings">
       <Input type="search" contentBefore={<Search24Regular/>} value={query} placeholder="A setting, a key, a program…"
         onChange={(e, d) => setQuery(d.value)} onKeyDown={e => { if (e.key === 'Escape') setQuery(''); }}/>
     </Field></div>

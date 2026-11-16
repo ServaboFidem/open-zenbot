@@ -76,19 +76,31 @@ const panelOf = id => PANELS.find(p => p.id === id);
 const usable = s => !!s && typeof s.title === 'string' && !!panelOf(s.panel);
 
 // Matches for what the user typed, best first. `extra` is more sections in the same shape, built from live data.
+// A panel is matched by its own name and description; a section only by its own title and words, so a result
+// always names the place that holds the words.
 export function searchSettings(query, extra = []) {
   const terms = String(query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
   if (!terms.length) return [];
+  const wholes = new Map(SECTIONS.filter(s => !s.anchor).map(s => [s.panel, s.words]));
+  const entries = [
+    ...PANELS.map(p => ({ panel: p.id, anchor: '', title: p.name, words: [p.description, ...(wholes.get(p.id) || [])], whole: true })),
+    ...SECTIONS.filter(s => s.anchor),
+    ...(Array.isArray(extra) ? extra : []).filter(usable),
+  ];
   const found = [];
-  for (const s of [...SECTIONS, ...(Array.isArray(extra) ? extra : []).filter(usable)]) {
+  for (const s of entries) {
     const panel = panelOf(s.panel);
     const words = (Array.isArray(s.words) ? s.words : []).filter(w => typeof w === 'string');
-    const name = panel.name.toLowerCase(), title = s.title.toLowerCase();
-    const all = [name, panel.description, title, ...words].join('\n').toLowerCase();
+    const title = s.title.toLowerCase();
+    const all = [title, ...words].join('\n').toLowerCase();
     if (!terms.every(t => all.includes(t))) continue;
-    const rank = terms.every(t => name.includes(t)) ? 0 : terms.every(t => title.includes(t)) ? 1 : 2;
-    const text = rank < 2 ? s.title : words.find(w => w.toLowerCase().includes(terms[0])) || panel.description;
-    found.push({ rank, match: { panel: panel.id, panelName: panel.name, section: s.title, anchor: typeof s.anchor === 'string' ? s.anchor : '', text } });
+    const named = terms.every(t => title.includes(t));
+    const rank = named ? (s.whole ? 0 : 1) : s.whole ? 3 : 2;   // a section that holds the words comes before a panel that only mentions them
+    const text = named ? s.title : words.find(w => terms.some(t => w.toLowerCase().includes(t))) || s.title;
+    found.push({ rank, whole: !!s.whole, match: { panel: panel.id, panelName: panel.name, section: s.title, anchor: typeof s.anchor === 'string' ? s.anchor : '', text } });
   }
-  return found.sort((a, b) => a.rank - b.rank).slice(0, MAX_RESULTS).map(f => f.match);
+  // A panel and its section of the same name (Tracing, Coding agents) are one place: keep the section, which has the anchor.
+  const sectionNamed = new Set(found.filter(f => !f.whole).map(f => `${f.match.panel}\n${f.match.section}`));
+  return found.filter(f => !f.whole || !sectionNamed.has(`${f.match.panel}\n${f.match.section}`))
+    .sort((a, b) => a.rank - b.rank).slice(0, MAX_RESULTS).map(f => f.match);
 }
