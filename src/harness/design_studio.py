@@ -68,8 +68,9 @@ def _flat(s: str) -> str:
     return " ".join(s.split())
 
 
-def comment_block(file: Path, version: int, comments: list[dict[str, str]]) -> str:
-    """The text a bot reads for the user's comments on one design revision."""
+def comment_block(file: str, version: int, comments: list[dict[str, str]]) -> str:
+    """The text a bot reads for the user's comments on one design revision. `file` is vault-relative with
+    forward slashes: the block reaches the ledger and the session API, so it carries no path on disk."""
     lines = [f"Comments on the design ({file}, version {version}):"]
     for i, c in enumerate(comments, 1):
         text = _flat(c.get("text", ""))

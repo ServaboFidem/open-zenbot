@@ -1491,9 +1491,13 @@ async def test_task_with_comments_reaches_the_bot_and_the_next_history(client, h
     await wait_for(client, sid, {"done"})
     await harness.tasks[sid]
     last = harness.provider.calls[-1][-1]
-    f = harness.config.vault_root / "designs" / "landing" / "index.html"
+    root = str(harness.config.vault_root)
     assert last.role == "user" and last.content.startswith("tweak\n\n")
-    assert f"Comments on the design ({f}, version 2):" in last.content
+    assert "Comments on the design (designs/landing/index.html, version 2):" in last.content
+    assert root not in last.content and root not in (await client.get(f"/sessions/{sid}")).text
+    starts = [e for e in harness.ledger.iter() if e.session_id == sid and e.data.get("event") == "start"]
+    assert starts and all(root not in json.dumps(e.data) for e in starts)
+    assert harness.sessions[sid].recall_query == "tweak"
     assert '1. [hero] <h1> "Hi": Make this bigger' in last.content and ".versions" not in last.content
     assert harness.sessions[sid].task == "tweak" and harness.sessions[sid].protected["task"] == "tweak"
     text = (await client.get(f"/conversations/{cid}")).text
@@ -1538,3 +1542,14 @@ async def test_comment_caps(client, harness: Harness):
         r = await client.post("/bots/des/tasks", json={"task": "tweak", "design_comments": comments})
         assert r.status_code == 422
     assert len(harness.sessions) == n
+
+
+async def test_select_conversation_hides_addendum_and_paths(client, harness: Harness):
+    cid, first, second = await _two_revisions(client, harness)
+    harness.provider.script = [completion("Done.")]
+    body = {"task": "tweak", "design_comments": [_comment(second["id"])]}
+    sid = (await client.post("/bots/des/tasks", json=body)).json()["session_id"]
+    await wait_for(client, sid, {"done"})
+    await harness.tasks[sid]
+    r = await client.post(f"/bots/des/conversations/{cid}/current")
+    assert r.status_code == 200 and '"addendum"' not in r.text and '"path"' not in r.text

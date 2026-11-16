@@ -523,6 +523,8 @@ class Harness:
             session.conversation_id = conv.id
             if self.turn_notes is not None and self.turn_notes.config.enabled:
                 session.note = conv.note  # what this bot's last task here found, made and left
+        if addendum:
+            session.recall_query = task  # recall searches the user's words, not the comment block
         self.sessions[session.id] = session
 
         async def _run() -> Session:
@@ -874,6 +876,16 @@ def create_app(h: Harness) -> FastAPI:
             view["design"], view["version"] = rev[0], rev[1]
         return view
 
+    def _conversation_view(c: Any) -> dict[str, Any]:
+        """A conversation as any route returns it: attachments by name (never the path on disk), and
+        no addendum (what the bot read after the user's text)."""
+        record = c.to_record()
+        for ex in record["exchanges"]:
+            ex["attachments"] = [_attachment_view(a) for a in ex.get("attachments", [])]
+            ex.pop("addendum", None)
+        d, _ = exclusion.redact_obj(record)
+        return d
+
     def _comment_addendum(bot: Bot, body: TaskIn, comments: list[dict[str, str]]) -> str:
         """The block for a task's design comments, or a 422: they must name the newest design revision
         of the conversation the task joins. Checked before anything is created."""
@@ -889,7 +901,7 @@ def create_app(h: Harness) -> FastAPI:
         att, (slug, version, name) = newest
         if any(c["attachment_id"] != att["id"] for c in comments):
             raise HTTPException(422, "comments belong on the newest version of the design")
-        return design_studio.comment_block(h.config.vault_root.resolve() / "designs" / slug / name, version, comments)
+        return design_studio.comment_block(f"designs/{slug}/{name}", version, comments)
 
     def serve_attachment(path: str, preview: bool = False, studio: bool = False) -> FileResponse | Response:
         """A file a bot attached, in a room or a one-to-one task. `preview` is the thumbnail the chat
@@ -1934,12 +1946,7 @@ def create_app(h: Harness) -> FastAPI:
         c = h.conversations.get(conv_id)
         if c is None:
             raise HTTPException(404, "no such conversation")
-        record = c.to_record()
-        for ex in record["exchanges"]:  # the GUI gets a name to show, never the path on disk
-            ex["attachments"] = [_attachment_view(a) for a in ex.get("attachments", [])]
-            ex.pop("addendum", None)  # what the bot read carries the file's path on disk
-        d, _ = exclusion.redact_obj(record)
-        return d
+        return _conversation_view(c)
 
     @app.get("/conversations/{conv_id}/attachments/{attachment_id}")
     async def conversation_attachment(conv_id: str, attachment_id: str, preview: str = "",
@@ -1956,8 +1963,7 @@ def create_app(h: Harness) -> FastAPI:
             c = h.conversations.select(bot_id, conv_id)
         except KeyError:
             raise HTTPException(404, "no such conversation") from None
-        d, _ = exclusion.redact_obj(c.to_record())
-        return d
+        return _conversation_view(c)
 
     @app.post("/bots", status_code=201)
     async def create_bot(body: BotIn) -> dict[str, Any]:
