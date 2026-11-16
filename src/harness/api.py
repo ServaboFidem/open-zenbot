@@ -60,7 +60,7 @@ from . import allowed_folders, tracing_settings
 from .allowed_folders import AllowedFolders
 from .magick_guard import Folders as GuardFolders, MagickGuard, MagickRunner
 from .write_guard import ShellWriteCheck
-from . import design_studio, tool_paths
+from . import design_studio, design_systems, tool_paths
 from src.vault_settings import settings_dir
 from src.providers import tracing as llm_tracing
 from .onboarding import ASSISTANT_ID, NEW_TOPICS, TOPICS, Interviewer
@@ -523,6 +523,12 @@ class Harness:
             session.conversation_id = conv.id
             if self.turn_notes is not None and self.turn_notes.config.enabled:
                 session.note = conv.note  # what this bot's last task here found, made and left
+        if conv is not None and conv.design_system:
+            try:
+                session.design = design_systems.block(
+                    design_systems.load(self.config.design_systems_dir, self.config.vault_root, conv.design_system))
+            except (KeyError, design_systems.DesignSystemError):
+                pass  # gone or no longer safe: the task runs without it
         if addendum:
             session.recall_query = task  # recall searches the user's words, not the comment block
         self.sessions[session.id] = session
@@ -730,6 +736,10 @@ class DesignCommentIn(BaseModel):
     tag: str = Field(min_length=1, max_length=40)
     text: str = Field("", max_length=160)
     note: str = Field(min_length=1, max_length=1000)
+
+
+class DesignSystemIn(BaseModel):
+    slug: str | None
 
 
 class TaskIn(BaseModel):
@@ -1947,6 +1957,24 @@ def create_app(h: Harness) -> FastAPI:
         if c is None:
             raise HTTPException(404, "no such conversation")
         return _conversation_view(c)
+
+    @app.get("/design-systems")
+    async def list_design_systems() -> dict[str, Any]:
+        return {"design_systems": design_systems.available(h.config.design_systems_dir, h.config.vault_root)}
+
+    @app.put("/conversations/{conv_id}/design-system")
+    async def set_design_system(conv_id: str, body: DesignSystemIn) -> dict[str, str]:
+        if h.conversations.get(conv_id) is None:
+            raise HTTPException(404, "no such conversation")
+        if body.slug is not None:  # picking loads it, so a too-large or unsafe one is refused now with its reason
+            try:
+                design_systems.load(h.config.design_systems_dir, h.config.vault_root, body.slug)
+            except KeyError:
+                raise HTTPException(404, "no such design system") from None
+            except design_systems.DesignSystemError as e:
+                raise HTTPException(422, str(e)) from None
+        h.conversations.set_design_system(conv_id, body.slug or "")
+        return {"design_system": body.slug or ""}
 
     @app.get("/conversations/{conv_id}/attachments/{attachment_id}")
     async def conversation_attachment(conv_id: str, attachment_id: str, preview: str = "",

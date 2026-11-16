@@ -85,6 +85,7 @@ class Conversation:
     exchanges: list[Exchange] = field(default_factory=list)
     summary: str = ""
     folded: int = 0  # how many leading exchanges the summary already covers
+    design_system: str = ""  # slug of the design system the user picked for this conversation; empty for none
     note: str = ""  # the owner bot's turn note: what its last task found, made and left (src/harness/turn_notes.py)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
@@ -261,6 +262,13 @@ class Conversations:
         c = self._by_id.get(conv_id)
         if c is not None:
             c.note = note
+            self.store.save(c)
+
+    def set_design_system(self, conv_id: str, slug: str) -> None:
+        """Keep the picked design system's slug. Saved without touching `updated_at`: a pick is not a new message."""
+        c = self._by_id.get(conv_id)
+        if c is not None:
+            c.design_system = slug
             self.store.save(c)
 
     def attachment(self, conv_id: str, attachment_id: str) -> dict[str, str] | None:

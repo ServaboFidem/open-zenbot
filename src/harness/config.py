@@ -15,6 +15,7 @@ class HarnessConfig:
     vault_root: Path = field(default_factory=lambda: Path(os.environ.get("ZEN_VAULT", "~/.zen-agents/vault")).expanduser())
     skills_dir: Path = field(default_factory=lambda: Path(os.environ.get("ZEN_SKILLS", "skills")))
     bot_prompts_dir: Path = field(default_factory=lambda: Path(os.environ.get("ZEN_BOT_PROMPTS", "bot-prompts")))  # one identity file per bot
+    design_systems_dir: Path = field(default_factory=lambda: Path(os.environ.get("ZEN_DESIGN_SYSTEMS", "design-systems")))  # the shipped starters; the user's live in <vault>/design-systems
     mcp_config: Path = field(default_factory=lambda: Path(os.environ.get("ZEN_MCP_CONFIG", "mcp.json")))  # servers to connect at start
     provider_kind: str = field(default_factory=lambda: os.environ.get("ZEN_PROVIDER", "openrouter"))
     model: str | None = field(default_factory=lambda: os.environ.get("OPENROUTER_MODEL") or None)

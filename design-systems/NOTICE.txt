@@ -1,0 +1,8 @@
+The two starter design systems in this folder (default and warm-editorial) are adapted from the
+design-systems/default and design-systems/warm-editorial starters of OpenDesign
+(https://github.com/nexu-io/open-design, commit 59e4f2a), which is licensed under the Apache License,
+Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
+
+Changes: the text was condensed and reworded, the tokens were rewritten as a single :root block that
+matches the palette in DESIGN.md, web fonts were replaced with system font stacks (the studio preview has
+no network), and references to the original's own tooling were removed.

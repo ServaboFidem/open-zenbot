@@ -1553,3 +1553,77 @@ async def test_select_conversation_hides_addendum_and_paths(client, harness: Har
     await harness.tasks[sid]
     r = await client.post(f"/bots/des/conversations/{cid}/current")
     assert r.status_code == 200 and '"addendum"' not in r.text and '"path"' not in r.text
+
+
+# design systems
+
+def _make_design_system(root: Path, slug: str, design: str = "# Acme\n\nCalm and plain.\n") -> None:
+    d = root / "design-systems" / slug
+    d.mkdir(parents=True)
+    (d / "DESIGN.md").write_text(design, encoding="utf-8")
+    (d / "tokens.css").write_text(":root { --ink: #111; }", encoding="utf-8")
+
+
+async def _conversation(client, harness: Harness) -> str:
+    harness.provider.script = [completion("Hi.")]
+    sid = (await client.post("/bots/bot1/tasks", json={"task": "hello"})).json()["session_id"]
+    await wait_for(client, sid, {"done"})
+    await harness.tasks[sid]
+    return harness.conversations.current("bot1").id
+
+
+async def _task_calls(client, harness: Harness, task: str = "go") -> list:
+    harness.provider.script = [completion("Done.")]
+    sid = (await client.post("/bots/bot1/tasks", json={"task": task})).json()["session_id"]
+    await wait_for(client, sid, {"done"})
+    await harness.tasks[sid]
+    return harness.provider.calls[-1]
+
+
+async def test_design_systems_list_the_shipped_starters(client, harness: Harness):
+    harness.config.design_systems_dir = Path(__file__).resolve().parent.parent / "design-systems"
+    got = (await client.get("/design-systems")).json()["design_systems"]
+    assert {d["slug"] for d in got} >= {"default", "warm-editorial"} and all(d["source"] == "shipped" for d in got)
+
+
+async def test_a_picked_design_system_reaches_the_context_not_the_system_prompt(client, harness: Harness):
+    _make_design_system(harness.config.vault_root, "acme")
+    cid = await _conversation(client, harness)
+    r = await client.put(f"/conversations/{cid}/design-system", json={"slug": "acme"})
+    assert r.status_code == 200 and r.json() == {"design_system": "acme"}
+    assert (await client.get(f"/conversations/{cid}")).json()["design_system"] == "acme"
+    calls = await _task_calls(client, harness)
+    ctx = [m for m in calls if m.role == "user" and "Design system: Acme." in m.content]
+    assert len(ctx) == 1 and "--ink: #111" in ctx[0].content and ctx[0].content != "go"
+    assert all("Design system" not in m.content for m in calls if m.role == "system")
+    assert str(harness.config.vault_root) not in (await client.get(f"/conversations/{cid}")).text
+
+
+async def test_a_null_slug_clears_the_design_system(client, harness: Harness):
+    _make_design_system(harness.config.vault_root, "acme")
+    cid = await _conversation(client, harness)
+    await client.put(f"/conversations/{cid}/design-system", json={"slug": "acme"})
+    r = await client.put(f"/conversations/{cid}/design-system", json={"slug": None})
+    assert r.status_code == 200 and r.json() == {"design_system": ""}
+    assert all("Design system" not in m.content for m in await _task_calls(client, harness))
+
+
+async def test_design_system_pick_errors(client, harness: Harness):
+    _make_design_system(harness.config.vault_root, "big", "# Big\n\n" + "x" * 40_000)
+    cid = await _conversation(client, harness)
+    assert (await client.put(f"/conversations/{cid}/design-system", json={"slug": "nope"})).status_code == 404
+    assert (await client.put("/conversations/zzz/design-system", json={"slug": "nope"})).status_code == 404
+    r = await client.put(f"/conversations/{cid}/design-system", json={"slug": "big"})
+    assert r.status_code == 422 and "40,000" in r.json()["detail"]
+    assert (await client.get(f"/conversations/{cid}")).json()["design_system"] == ""
+
+
+async def test_a_design_system_deleted_after_picking_still_lets_a_task_run(client, harness: Harness):
+    import shutil
+
+    _make_design_system(harness.config.vault_root, "acme")
+    cid = await _conversation(client, harness)
+    await client.put(f"/conversations/{cid}/design-system", json={"slug": "acme"})
+    shutil.rmtree(harness.config.vault_root / "design-systems" / "acme")
+    calls = await _task_calls(client, harness)
+    assert all("Design system" not in m.content for m in calls) and calls[-1].content == "go"
