@@ -1,7 +1,8 @@
 """bot-prompts/: a bot's identity as one markdown file.
 
 Frontmatter carries `name`, `role`, an optional `skills` list of refs, and an
-optional `mcps` list of MCP servers the bot always gets (the rest are routed);
+optional `mcps` list of MCP servers the bot always gets (the rest are routed),
+and an optional `studio: true` that marks a design bot;
 the body is the instructions. The file stem is the bot id, so ids are
 stable across restarts and readable in room mentions (@research-partner).
 
@@ -31,6 +32,7 @@ class BotPrompt:
     instructions: str = ""
     skills: list[str] | None = None  # None: not listed, the harness attaches every catalog skill
     mcps: list[str] | None = None  # MCP servers loaded on every task, whatever routing scores; None: routing only
+    studio: bool = False  # a design bot: the GUI shows its design preview pane; set only in the file
 
 
 def slugify(name: str) -> str:
@@ -51,7 +53,10 @@ def parse(text: str, bot_id: str) -> BotPrompt:
     mcps = meta.get("mcps")
     if mcps is not None and (not isinstance(mcps, list) or not all(isinstance(s, str) for s in mcps)):
         raise ValueError("mcps must be a list of MCP server names")
-    return BotPrompt(id=bot_id, name=name.strip(), role=role.strip(), instructions=body.strip(), skills=skills, mcps=mcps)
+    studio = meta.get("studio", False)
+    if not isinstance(studio, bool):
+        raise ValueError("studio must be true or false")
+    return BotPrompt(id=bot_id, name=name.strip(), role=role.strip(), instructions=body.strip(), skills=skills, mcps=mcps, studio=studio)
 
 
 def render(p: BotPrompt) -> str:
@@ -60,6 +65,8 @@ def render(p: BotPrompt) -> str:
         meta["skills"] = list(p.skills)
     if p.mcps:
         meta["mcps"] = list(p.mcps)
+    if p.studio:
+        meta["studio"] = True
     head = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, default_flow_style=None).strip()
     return f"---\n{head}\n---\n{p.instructions.strip()}\n"
 

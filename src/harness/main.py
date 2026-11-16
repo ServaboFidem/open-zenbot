@@ -64,7 +64,7 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
     for err in errors:
         print(f"bot-prompts: skipped {err}", file=sys.stderr)
     for p in prompts:
-        bot = Bot(p.name, p.role, p.instructions, id=p.id, mcps=list(p.mcps or []))
+        bot = Bot(p.name, p.role, p.instructions, id=p.id, mcps=list(p.mcps or []), studio=p.studio)
         wanted = catalog.skills() if p.skills is None else [s for s in (catalog.skill(ref) for ref in p.skills) if s is not None]
         for s in wanted:
             bot.attach_skill(s, config.max_skills_per_bot)

@@ -75,6 +75,7 @@ class Session:
     room_id: str = ""  # the room this session is a turn of; empty outside rooms
     recall_query: str = ""  # what recall searches; empty means the task (a room turn's task is the whole thread)
     pinned_skills: list[str] = field(default_factory=list)  # skill slugs a routine forces; the selector is skipped
+    design: str = ""  # the conversation's design system block, appended to the context after the note
     note: str = ""  # the bot's turn note from its last turn in this conversation: read into the context and the route
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
@@ -200,6 +201,8 @@ class TaskLoop:
         context = bot.context_text(skills, facts)
         if session.note:  # in the context message, not the system prompt, and so kept out of compaction too
             context = "\n\n".join(p for p in (context, f"{NOTE_HEADING}\n{session.note}") if p)
+        if session.design:  # likewise in the context message: authoritative, and never compacted away
+            context = "\n\n".join(p for p in (context, session.design) if p)
         session.context = context
         session.messages = [
             Message("system", bot.base_prompt()),

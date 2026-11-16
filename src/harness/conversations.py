@@ -53,6 +53,8 @@ class Exchange:
     outcome: str = "pending"  # pending|done|failed|stopped|interrupted|routed
     at: str = field(default_factory=_now)
     attachments: list[dict[str, str]] = field(default_factory=list)  # {id, title, path}: files the bot attached; path never leaves the harness
+    comments: list[dict[str, str]] = field(default_factory=list)  # the user's design comments, as the chat shows them
+    addendum: str = ""  # the comment block the bot read after the user's text; the GUI never gets it
 
 
 def reply_text(ex: Exchange) -> str:
@@ -83,6 +85,8 @@ class Conversation:
     exchanges: list[Exchange] = field(default_factory=list)
     summary: str = ""
     folded: int = 0  # how many leading exchanges the summary already covers
+    design_system: str = ""  # slug of the design system the user picked for this conversation; empty for none
+    design_system_source: str = ""  # where the picked system came from ("shipped" or "yours"); empty on older records
     note: str = ""  # the owner bot's turn note: what its last task found, made and left (src/harness/turn_notes.py)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
@@ -112,7 +116,7 @@ class Conversation:
         for ex in self.exchanges[self.folded :]:
             if exclude and ex.session_id == exclude:
                 continue
-            msgs.append(Message("user", ex.user))
+            msgs.append(Message("user", f"{ex.user}\n\n{ex.addendum}" if ex.addendum else ex.user))
             msgs.append(Message("assistant", reply_text(ex)))
         return msgs
 
@@ -226,7 +230,8 @@ class Conversations:
         self.store.save(c)
 
     def begin(
-        self, owner: str, user_text: str, session_id: str = "", conv_id: str | None = None
+        self, owner: str, user_text: str, session_id: str = "", conv_id: str | None = None,
+        comments: list[dict[str, str]] | None = None, addendum: str = "",
     ) -> tuple[Conversation, Exchange]:
         c = self.get(conv_id) if conv_id else self.current(owner)
         if conv_id and (c is None or c.owner != owner):
@@ -235,7 +240,7 @@ class Conversations:
             c = self.start_new(owner)
         if not c.title:
             c.title = title_of(user_text)
-        ex = Exchange(user=user_text, session_id=session_id)
+        ex = Exchange(user=user_text, session_id=session_id, comments=list(comments or []), addendum=addendum)
         c.exchanges.append(ex)
         self._touch(c)
         return c, ex
@@ -258,6 +263,14 @@ class Conversations:
         c = self._by_id.get(conv_id)
         if c is not None:
             c.note = note
+            self.store.save(c)
+
+    def set_design_system(self, conv_id: str, slug: str, source: str = "") -> None:
+        """Keep the picked design system's slug and source (`shipped` or `yours`; both empty to clear). Saved
+        without touching `updated_at`: a pick is not a new message."""
+        c = self._by_id.get(conv_id)
+        if c is not None:
+            c.design_system, c.design_system_source = slug, source if slug else ""
             self.store.save(c)
 
     def attachment(self, conv_id: str, attachment_id: str) -> dict[str, str] | None:
