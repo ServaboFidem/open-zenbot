@@ -12,7 +12,7 @@ import pytest
 
 from src.harness.api import Harness, create_app
 from src.harness.bot import Bot
-from src.harness.bot_prompts import BotPrompt, load_dir, save
+from src.harness.bot_prompts import BotPrompt, load_dir, parse, render, save
 from src.harness.config import HarnessConfig
 from src.harness.main import build_harness
 from src.memory.ledger import Ledger
@@ -186,3 +186,15 @@ def test_darkroom_edits_with_magick_and_shows_the_result():
     [edits] = [line for line in p.instructions.splitlines() if line.startswith("Common edits:")]
     suggested = set(re.findall(r"[`\s][-+]([a-z][a-z-]+)\b", edits))
     assert suggested and not suggested - set(OPTIONS), suggested - set(OPTIONS)
+
+
+def test_studio_flag_round_trips():
+    p = parse("---\nname: D\nrole: r\nstudio: true\n---\nbody", "d")
+    assert p.studio is True
+    assert parse(render(p), "d").studio is True
+    assert "studio" not in render(parse("---\nname: D\nrole: r\n---\nbody", "d"))
+
+
+def test_studio_must_be_a_boolean():
+    with pytest.raises(ValueError, match="studio must be true or false"):
+        parse("---\nname: D\nrole: r\nstudio: yes please\n---\n", "d")

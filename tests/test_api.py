@@ -1377,3 +1377,20 @@ async def test_an_unreadable_routines_file_is_reported_and_left_alone(harness):
         assert (await c.post("/routines/import", json={"routines": []})).status_code == 409
     assert (d / "routines.json").read_text() == "{broken"
     assert any("could not be read" in (e.data.get("error") or "") for e in harness2.ledger.iter() if e.kind == "error")
+
+
+async def test_studio_flag_survives_a_bot_edit(monkeypatch, vault: Path, tmp_path: Path):
+    from src.harness.main import build_harness
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("ZEN_MEMORY_BACKEND", "local")
+    prompts = tmp_path / "bot-prompts"
+    prompts.mkdir()
+    (prompts / "designer.md").write_text("---\nname: Designer\nrole: Old role\nstudio: true\n---\nDesign.\n", encoding="utf-8")
+    h = build_harness(HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=prompts))
+    transport = httpx.ASGITransport(app=create_app(h))
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
+        assert (await c.patch("/bots/designer", json={"role": "New role"})).status_code == 200
+        bots = {b["id"]: b for b in (await c.get("/bots")).json()}
+    assert bots["designer"]["studio"] is True and bots["designer"]["role"] == "New role"
+    assert "studio: true" in (prompts / "designer.md").read_text(encoding="utf-8")
