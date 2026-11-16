@@ -19,6 +19,8 @@ import { CodingAgentsSection } from './AgentSettings';
 import { SettingsHome } from './SettingsHome';
 import { PANELS, anchorId, liveSections } from './settings-index';
 import { UpdateNotice, VersionSection } from './UpdateNotice';
+import { WelcomeKey } from './WelcomeKey';
+import { showWelcome } from './welcome';
 import McpKeys from './McpKeys';
 import McpDeps from './McpDeps';
 import MusicArea from './music/MusicArea';
@@ -176,6 +178,7 @@ function App() {
   const roomSpeakerId = room?.open_turn?.bot_id || room?.active_speaker || '';
   const pending = approvals.filter(a => a.state === 'pending');
   const online = harness.status === 'online';
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);  // "Not now" on the key screen, for this run only
   const bound = !!harness.settings?.key_set && harness.settings?.provider !== 'unbound';
   const assistant = bots.find(b => b.id === ASSISTANT_ID);
   const studioBot = bots.find(b => b.studio);  // the design bot the Design page starts a new design with
@@ -754,9 +757,11 @@ function App() {
   </div>;
 
   const booting = harness.status === 'connecting' || (harness.status === 'online' && warming(warm));
+  const welcome = !booting && showWelcome({ online, settings: harness.settings, dismissed: welcomeDismissed });
   return <FluentProvider theme={webLightTheme} className="provider">
     {booting && <BootOverlay connecting={harness.status === 'connecting'} warm={warm}/>}
-    <div className="workspace" aria-hidden={booting || undefined}>
+    {welcome && <WelcomeKey api={api} onSaved={refreshHealth} onSkip={() => setWelcomeDismissed(true)}/>}
+    <div className="workspace" aria-hidden={booting || welcome || undefined}>
       <aside className={`sidebar ${mobileNav ? 'mobile-open' : ''}`}>
         <a className="brand od-row" href="#" onClick={e => { e.preventDefault(); navigate('Overview'); }}><span className="brand-mark"><img src={logo} alt=""/></span><span>OpenZenBot</span></a>
         <div className="workspace-name od-row"><span className="workspace-initial">P</span><div className="od-field od-fill"><strong>Personal workspace</strong><span>Local · {api.baseUrl.replace('http://', '')}</span></div></div>
