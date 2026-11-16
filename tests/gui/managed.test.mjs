@@ -45,13 +45,14 @@ function fakeHarness(result) {
   return h;
 }
 
-function make({ checker = fakeChecker(), setupNeeded = false, setup = fakeSetup([{ ok: true }]), harnesses = [fakeHarness({ ok: true, adopted: false })] } = {}) {
-  const calls = { shown: [], sent: [], checkerStarts: 0, checkerStops: 0, made: [] };
+function make({ checker = fakeChecker(), setupNeeded = false, setup = fakeSetup([{ ok: true }]), harnesses = [fakeHarness({ ok: true, adopted: false })], needsSetup } = {}) {
+  const calls = { shown: [], sent: [], checkerStarts: 0, checkerStops: 0, made: [], errors: [] };
   const m = createManaged({
     checker,
-    needsSetup: async () => setupNeeded,
+    needsSetup: needsSetup || (async () => setupNeeded),
     makeSetup: emit => { setup.emit = emit; return setup; },
-    makeHarness: async () => { const h = harnesses.shift(); calls.made.push(h); return h; },
+    makeHarness: async () => { const h = harnesses.shift(); if (h instanceof Error) throw h; calls.made.push(h); return h; },
+    logError: e => calls.errors.push(e),
     show: page => calls.shown.push(page),
     send: s => calls.sent.push(s),
     startChecker: () => { calls.checkerStarts++; return () => { calls.checkerStops++; }; },
@@ -201,4 +202,71 @@ test('quitting while the update offer waits ends the launch', async () => {
   await m.shutdown();
   await done;
   assert.equal(calls.made.length, 0);
+});
+
+function assertCouldNotStart(m, calls, message) {
+  assert.equal(m.state().phase, 'failed');
+  assert.equal(m.state().harness.reason, 'error');
+  assert.equal(calls.sent.at(-1).phase, 'failed');
+  assert.equal(calls.shown.at(-1), 'setup');
+  assert.equal(calls.errors.length, 1);
+  assert.match(String(calls.errors[0] && calls.errors[0].message), message);
+}
+
+test('a step that throws lands on the failed phase, logs the error and leaves nothing running', async () => {
+  // the update check
+  const checker = fakeChecker();
+  checker.check = async () => { throw new Error('check blew up'); };
+  let t = make({ checker });
+  await t.m.run();
+  assertCouldNotStart(t.m, t.calls, /check blew up/);
+  assert.equal(t.calls.made.length, 0);
+  assert.equal(t.calls.checkerStarts, 0);
+
+  // deciding whether setup is needed
+  t = make({ needsSetup: async () => { throw new Error('stamp unreadable'); } });
+  await t.m.run();
+  assertCouldNotStart(t.m, t.calls, /stamp unreadable/);
+
+  // setup itself
+  const setup = fakeSetup([]);
+  setup.start = async () => { throw new Error('setup threw'); };
+  t = make({ setupNeeded: true, setup });
+  await t.m.run();
+  assertCouldNotStart(t.m, t.calls, /setup threw/);
+  assert.equal(setup.cancels, 1);  // nothing of setup keeps running
+
+  // log rotation, inside makeHarness
+  t = make({ harnesses: [new Error('EACCES harness.log')] });
+  await t.m.run();
+  assertCouldNotStart(t.m, t.calls, /EACCES/);
+  assert.equal(t.calls.made.length, 0);
+
+  // the harness start: the harness is stopped
+  const h = fakeHarness({ ok: true });
+  h.start = async () => { h.starts++; throw new Error('start threw'); };
+  t = make({ harnesses: [h] });
+  await t.m.run();
+  assertCouldNotStart(t.m, t.calls, /start threw/);
+  assert.equal(h.stops, 1);
+  h.exit();  // a late exit does not turn it into "the harness stopped"
+  assert.equal(t.m.state().harness.reason, 'error');
+});
+
+test('after an unexpected error only the log folder is offered: Restart and Retry do nothing', async () => {
+  const t = make({ needsSetup: async () => { throw new Error('boom'); } });
+  await t.m.run();
+  t.m.retry(); t.m.proceed();
+  await t.m.restartHarness();
+  assert.equal(t.calls.made.length, 0);
+  assert.equal(t.m.state().harness.reason, 'error');
+});
+
+test('a Restart whose new harness cannot be made lands on the same failed phase', async () => {
+  const first = fakeHarness({ ok: true });
+  const t = make({ harnesses: [first, new Error('no log folder')] });
+  await t.m.run();
+  first.exit();
+  await t.m.restartHarness();
+  assertCouldNotStart(t.m, t.calls, /no log folder/);
 });

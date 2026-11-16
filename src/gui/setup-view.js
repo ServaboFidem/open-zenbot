@@ -63,6 +63,15 @@ function startingView(harness) {
 }
 
 function failedView(harness) {
+  if (harness && harness.reason === 'error') {
+    return {
+      heading: 'OpenZenBot could not start.',
+      body: 'Something went wrong while it was starting. Open the log folder to see what happened, then open OpenZenBot again.',
+      steps: [],
+      actions: ['open-logs'],
+      detail: text(harness.detail),
+    };
+  }
   if (harness && harness.reason === 'port-in-use') {
     return {
       heading: 'Port 8765 is in use',

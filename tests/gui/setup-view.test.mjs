@@ -74,3 +74,10 @@ test('a state it does not know shows a plain waiting page, never throws', () => 
     assert.ok(Array.isArray(v.steps) && Array.isArray(v.actions));
   }
 });
+
+test('an unexpected error says OpenZenBot could not start, with the log folder only', () => {
+  const v = viewOf({ phase: 'failed', harness: { reason: 'error', detail: 'TypeError: x' } });
+  assert.equal(v.heading, 'OpenZenBot could not start.');
+  assert.deepEqual(v.actions, ['open-logs']);
+  assert.equal(v.detail, 'TypeError: x');
+});

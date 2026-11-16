@@ -94,6 +94,11 @@ function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, 
       if (w) w.webContents.send('setup:state', state);
     },
     startChecker: () => checker.start(),
+    logError: e => {
+      console.error(`managed launch: ${(e && e.stack) || e}`);
+      fs.mkdirSync(paths.logs, { recursive: true });
+      fs.appendFileSync(path.join(paths.logs, 'setup.log'), `OpenZenBot could not start: ${(e && e.stack) || e}\n`);
+    },
   });
 
   // the setup page's IPC, from setup.html only; none takes an argument
@@ -126,7 +131,7 @@ function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, 
     ctl.shutdown().catch(() => {}).finally(() => { quitReady = true; app.quit(); });
   });
 
-  ctl.run().catch(e => console.error(`managed launch: ${(e && e.stack) || e}`));
+  ctl.run();  // never rejects: an error lands on the failed phase
 }
 
 module.exports = { startManaged };
