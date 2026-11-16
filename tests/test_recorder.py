@@ -327,3 +327,67 @@ async def test_draft_never_overwrites_a_foreign_skill_and_reports_the_catalog_re
     assert first.state == SkillState.added
     second = draft_skill(recording, name="Export CSV", use="u2", skills_dir=skills_dir, catalog=catalog)
     assert second.state == SkillState.added and catalog.skill("export-csv").use == "u2"
+
+
+# -- user skills beside the vault (ZEN_USER_CONTENT) --------------------------------
+
+
+def _skill_file(folder: Path, slug: str, use: str) -> None:
+    (folder / slug).mkdir(parents=True, exist_ok=True)
+    (folder / slug / "SKILL.md").write_text(f"---\nname: {slug.upper()}\nuse: {use}\n---\n# {slug}\n", encoding="utf-8")
+
+
+def test_user_skills_win_over_shipped_on_the_same_slug(monkeypatch, vault: Path, tmp_path: Path):
+    from src.harness.main import build_harness
+    from src.vault_settings import user_skills_dir
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("ZEN_MEMORY_BACKEND", "local")
+    shipped = tmp_path / "shipped"
+    _skill_file(shipped, "x", "shipped")
+    _skill_file(user_skills_dir(vault), "x", "mine")
+    _skill_file(user_skills_dir(vault), "y", "also mine")
+    h = build_harness(HarnessConfig(vault_root=vault, skills_dir=shipped, bot_prompts_dir=tmp_path / "none", user_content=True))
+    assert h.catalog.skill("x").use == "mine"
+    assert h.catalog.skill("y") is not None
+
+
+async def _draft_via_api(cfg: HarnessConfig, tmp_path: Path, catalog: Catalog) -> dict:
+    driver = FakeDriver()
+    h = Harness(config=cfg, provider=ScriptedProvider(), ledger=Ledger(cfg.vault_root), catalog=catalog, recorder_driver=driver)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(h)), base_url="http://localhost") as c:
+        await c.post("/recorder/start", json={"name": "export invoices"})
+        await c.post("/recorder/actions", json={"kind": "navigate", "target": "https://app.example.com/invoices", "intent": "open the invoices page"})
+        await c.post("/recorder/stop")
+        r = await c.post("/recorder/draft", json={"name": "Export invoices", "use": "When asked to export invoices."})
+        assert r.status_code == 200
+        return r.json()
+
+
+async def test_a_recorded_skill_is_drafted_into_the_user_folder(vault: Path, tmp_path: Path):
+    from src.vault_settings import user_skills_dir
+
+    shipped = tmp_path / "shipped"
+    cfg = HarnessConfig(vault_root=vault, shell_cwd=tmp_path, skills_dir=shipped, user_content=True)
+    body = await _draft_via_api(cfg, tmp_path, Catalog())
+    assert body["state"] == "added"
+    assert (user_skills_dir(vault) / body["slug"] / "SKILL.md").is_file()
+    assert not (shipped / body["slug"]).exists()
+
+
+async def test_a_recorded_skill_never_replaces_a_shipped_skill_of_the_same_slug(vault: Path, tmp_path: Path):
+    from src.skills.loader import load_dir
+    from src.vault_settings import user_skills_dir
+
+    shipped = tmp_path / "shipped"
+    _skill_file(shipped, "export-invoices", "shipped")
+    (shipped / "export-invoices" / "SKILL.md").write_text("---\nname: Export invoices\nuse: shipped\n---\n# s\n", encoding="utf-8")
+    catalog = Catalog()
+    for r in load_dir(shipped):
+        catalog.add_skill(r.skill)
+    cfg = HarnessConfig(vault_root=vault, shell_cwd=tmp_path, skills_dir=shipped, user_content=True)
+    body = await _draft_via_api(cfg, tmp_path, catalog)
+    assert body["state"] == "added" and body["slug"] == "export-invoices-2"
+    assert catalog.skill("export-invoices").use == "shipped"
+    assert catalog.skill("export-invoices-2") is not None
+    assert not (user_skills_dir(vault) / "export-invoices").exists()

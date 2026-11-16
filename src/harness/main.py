@@ -57,9 +57,16 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
         provider, scorer = None, None
     ledger = Ledger(config.vault_root)
     catalog = Catalog()
-    for r in load_dir(config.skills_dir, skill_config(config)):
-        if r.ok:
-            catalog.add_skill(r.skill)
+    # the catalog keeps the first skill of a slug, so the user's folder goes first and wins
+    folders = [config.skills_dir]
+    if config.user_content:
+        from src.vault_settings import user_skills_dir
+
+        folders.insert(0, user_skills_dir(config.vault_root))
+    for folder in folders:
+        for r in load_dir(folder, skill_config(config)):
+            if r.ok:
+                catalog.add_skill(r.skill)
     h = Harness(config=config, provider=provider, ledger=ledger, catalog=catalog, scorer=scorer)
     saved = ModelRoles.load(config.vault_root)  # Settings > Harness settings, once saved, wins over the environment
     if saved is not None:

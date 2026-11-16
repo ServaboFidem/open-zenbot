@@ -64,6 +64,15 @@ class HarnessConfig:
             return user_bots_dir(self.vault_root)
         return self.bot_prompts_dir
 
+    @property
+    def skills_write_dir(self) -> Path:
+        """Where a skill recorded in the app is saved."""
+        if self.user_content:
+            from src.vault_settings import user_skills_dir
+
+            return user_skills_dir(self.vault_root)
+        return self.skills_dir
+
     def validate(self) -> None:
         if self.host not in LOOPBACK:
             raise ValueError(f"the harness binds to loopback only; got host {self.host!r}")
