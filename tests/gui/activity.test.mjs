@@ -92,3 +92,40 @@ test('tool labels: search, page, browser, shell, learn, other', () => {
   assert.equal(other.title, 'make_widget');
   assert.match(other.detail, /size: 3/);
 });
+
+test('a delegate call is labelled with the agent and its run adds rows under it', () => {
+  const rows = activityFeed([
+    ev('tool_start', { tool: 'delegate', arguments: { agent: 'claude-code', task: 'fix the bug' } }),
+    ev('delegate', { event: 'start', agent: 'claude-code', folder: 'C:\work\app' }),
+    ev('delegate', { event: 'file', tool: 'Write', path: 'src/a.py' }),
+    ev('delegate', { event: 'file', tool: 'Edit', path: 'C:\elsewhere\b.py', outside: true }),
+    ev('delegate', { event: 'end', ok: true, seconds: 42, changed: ['src/a.py'] }),
+    ev('tool_call', { tool: 'delegate', arguments: { agent: 'claude-code' }, ok: true, output: 'done' }),
+  ]);
+  assert.equal(rows.length, 5);
+  assert.equal(rows[0].title, 'Claude Code');
+  assert.equal(rows[0].detail, 'fix the bug');
+  assert.equal(rows[0].status, 'ok');
+  assert.match(rows[1].title, /Claude Code started/);
+  assert.equal(rows[1].detail, 'C:\work\app');
+  assert.equal(rows[2].title, 'Write');
+  assert.equal(rows[2].detail, 'src/a.py');
+  assert.equal(rows[2].status, 'info');
+  assert.equal(rows[3].status, 'waiting');
+  assert.match(rows[3].meta, /outside the job folder/);
+  assert.equal(rows[4].status, 'ok');
+  assert.match(rows[4].title, /finished/);
+  assert.match(rows[4].detail, /42 s/);
+  assert.match(rows[4].detail, /1 file changed/);
+});
+
+test('a failed delegate run closes as an error and codex is named', () => {
+  const rows = activityFeed([
+    ev('tool_start', { tool: 'delegate', arguments: { agent: 'codex', task: 't' } }),
+    ev('delegate', { event: 'start', agent: 'codex', folder: '/w' }),
+    ev('delegate', { event: 'end', ok: false, seconds: 3, changed: [] }),
+  ]);
+  assert.equal(rows[0].title, 'Codex');
+  assert.equal(rows[2].status, 'error');
+  assert.match(rows[2].title, /Codex stopped/);
+});

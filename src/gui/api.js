@@ -93,6 +93,8 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     programPath: key => get(`/settings/tools/programs/${enc(key)}`),
     setProgramPath: (key, path) => put(`/settings/tools/programs/${enc(key)}`, { path }),
     clearProgramPath: key => del(`/settings/tools/programs/${enc(key)}`),
+    agents: () => get('/agents'),
+    setAgent: (key, body) => put(`/settings/agents/${enc(key)}`, body),
     allowedFolders: () => get('/settings/folders'),
     addAllowedFolder: (path, access = 'full') => post('/settings/folders', { path, access }),
     setFolderAccess: (path, access) => patch('/settings/folders', { path, access }),

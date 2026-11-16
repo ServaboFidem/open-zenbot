@@ -121,12 +121,28 @@ const firstOf = (args, keys) => { for (const k of keys) { const v = args?.[k]; i
 const plain = v => String(v ?? '').replace(/[#*_`>]+/g, '');  // model markdown, read as a one-line preview
 const argSummary = args => Object.entries(args || {}).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join(' · ');
 
+const AGENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex' };
+const agentName = id => AGENT_NAMES[id] || 'The coding agent';
+
+// A delegated run's ledger entries (kind "delegate": start, file, end) as rows that follow the delegate tool's row.
+function delegateRow(base, d, run) {
+  if (d.event === 'start') { run.name = agentName(d.agent); return { ...base, icon: 'agent', status: 'info', title: `${run.name} started`, detail: clip(d.folder, 300), meta: '' }; }
+  if (d.event === 'file') return { ...base, icon: d.outside ? 'approval' : 'agent', status: d.outside ? 'waiting' : 'info', title: clip(d.tool, 40) || 'Touched a file', detail: clip(d.path, 300), meta: d.outside ? 'outside the job folder' : '' };
+  if (d.event === 'end') {
+    const name = run.name || 'The coding agent', n = Array.isArray(d.changed) ? d.changed.length : 0;
+    const detail = [d.seconds != null && `${Math.round(d.seconds)} s`, `${n} ${n === 1 ? 'file' : 'files'} changed`].filter(Boolean).join(' · ');
+    return { ...base, icon: d.ok ? 'done' : 'error', status: d.ok ? 'ok' : 'error', title: d.ok ? `${name} finished` : `${name} stopped`, detail, meta: '' };
+  }
+  return { ...base, icon: 'agent', status: 'info', title: 'Coding agent', detail: clip(d.event, 200), meta: '' };
+}
+
 // What a tool call reads as in the feed. MCP tools arrive as "server.tool"; the server becomes the meta line.
 export function toolLabel(name = '', args = {}) {
   const dot = name.indexOf('.');
   const meta = dot > 0 ? name.slice(0, dot) : '';
   const tool = dot > 0 ? name.slice(dot + 1) : name;
   if (tool === 'shell') return { icon: 'shell', title: 'Shell', detail: clip(args.command, 400), meta };
+  if (tool === 'delegate') return { icon: 'agent', title: AGENT_NAMES[args.agent] || 'Coding agent', detail: clip(args.task, 400), meta: args.folder ? clip(args.folder, 200) : meta };
   if (tool === 'learn_page') return { icon: 'learn', title: 'Learning a page', detail: clip(firstOf(args, ['url']), 400), meta };
   if (tool === 'browser') return { icon: 'web', title: 'Browser', detail: clip([args.action, firstOf(args, ['url', 'selector', 'text'])].filter(Boolean).join(' '), 400), meta };
   if (/search/i.test(tool)) return { icon: 'search', title: 'Web search', detail: clip(firstOf(args, ['query', 'q', 'search', 'keywords', 'term']) || argSummary(args), 400), meta };
@@ -141,6 +157,7 @@ const SESSION_END = { done: 'Finished', stopped: 'Stopped', failed: 'Failed', pa
 export function activityFeed(events = []) {
   const rows = [];
   const add = row => { rows.push(row); return row; };
+  const run = {};
   for (const e of events) {
     const d = e.data || {};
     const base = { id: e.id || `${e.kind}-${rows.length}`, time: (e.ts || '').slice(11, 19), kind: e.kind };
@@ -165,6 +182,7 @@ export function activityFeed(events = []) {
         Object.assign(row, { status: d.ok === false ? 'error' : 'ok', output: d.output || '', error: d.error || '', done: base.time });
         break;
       }
+      case 'delegate': add(delegateRow(base, d, run)); break;
       case 'approval_request':
         add({ ...base, icon: 'approval', status: 'waiting', title: 'Waiting for approval', detail: clip(d.title || d.tool, 300), meta: d.rule ? `rule: ${d.rule}` : '', approvalId: d.approval_id });
         break;
