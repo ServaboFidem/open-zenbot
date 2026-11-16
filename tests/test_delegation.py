@@ -375,3 +375,68 @@ async def test_a_missing_program_is_refused(rig):
     with pytest.raises(DelegationError):
         await runner.run("claude-code", folder, "task", "b1", "s1")
     assert runner.live == {}
+
+
+# -- review fixes: leftovers, cancellation, odd paths, a bad start, big folders --------------------------------
+
+async def test_a_child_left_behind_dies_and_the_run_ends_promptly(rig):
+    runner, folder = rig("cut_off_child", timeout=30)
+    t0 = time.monotonic()
+    r = await runner.run("claude-code", folder, "task", "b1", "s1")
+    assert time.monotonic() - t0 < 15, "the run waited on a pipe the leftover child holds"
+    assert not r.ok and "Something broke: connection reset" in r.error
+    rec = json.loads(rig.record.read_text(encoding="utf-8"))
+    assert await _all_dead([rec["pid"], rec["child"]])
+
+
+async def test_a_cancelled_run_still_logs_end_and_kills_the_tree(rig):
+    runner, folder = rig("hang")
+    task = asyncio.create_task(runner.run("claude-code", folder, "task", "b1", "s1"))
+    rec = await _child_recorded(rig.record)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    events = _delegate_entries(rig.ledger)
+    assert [e["event"] for e in events] == ["start", "end"] and events[-1]["ok"] is False
+    assert await _all_dead([rec["pid"], rec["child"]])
+    assert runner.live == {}
+
+
+async def test_a_reader_fault_fails_the_run_and_logs_end(rig, monkeypatch):
+    runner, folder = rig("ok")
+
+    def boom(*a, **k):
+        raise RuntimeError("bad event")
+
+    monkeypatch.setattr(runner, "_files", boom)
+    r = await runner.run("claude-code", folder, "task", "b1", "s1")
+    assert not r.ok and "bad event" in r.error
+    assert _delegate_entries(rig.ledger)[-1]["event"] == "end"
+
+
+async def test_a_write_outside_the_folder_is_logged_in_full(rig):
+    runner, folder = rig("odd_paths")
+    r = await runner.run("claude-code", folder, "task", "b1", "s1")
+    assert r.ok
+    files = [e for e in _delegate_entries(rig.ledger) if e["event"] == "file"]
+    assert files[0]["path"] == str((folder.parent / "elsewhere.txt").resolve()) and files[0]["outside"] is True
+    assert files[1]["outside"] is True and "bad" in files[1]["path"]  # a NUL in it: logged, not fatal
+
+
+async def test_a_first_event_that_is_not_the_start_says_what_the_cli_said(rig):
+    runner, folder = rig("error_first")
+    r = await runner.run("claude-code", folder, "task", "b1", "s1")
+    assert not r.ok and "start event" in r.error and r.error.endswith("It said: Not logged in. Please run /login")
+    runner, folder = rig("garbage_first")
+    r = await runner.run("claude-code", folder, "task", "b1", "s2")
+    assert not r.ok and "start event" in r.error and "Fatal: config file is broken" in r.error
+
+
+def test_snapshot_stops_at_the_limit(tmp_path):
+    for i in range(10):
+        (tmp_path / f"f{i}.txt").write_text("a")
+    assert snapshot(tmp_path).complete
+    part = snapshot(tmp_path, limit=5)
+    assert not part.complete and len(part) <= 5
+    assert "too large to compare in full" in changes_text(["f1.txt"], complete=False)
+    assert "too large" not in changes_text(["f1.txt"])

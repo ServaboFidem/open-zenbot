@@ -73,6 +73,31 @@ def main() -> int:
         sys.stderr.write("Something broke: connection reset\n")
         sys.stderr.flush()
         return 1
+    elif mode == "cut_off_child":
+        # a child left behind that holds this process's stdout and stderr open after it exits
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS if os.name == "nt" else 0
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"], stdin=subprocess.DEVNULL,
+                                 stdout=sys.stdout.fileno(), stderr=sys.stderr.fileno(), creationflags=flags)
+        record({**data, "child": child.pid})
+        emit(init())
+        sys.stderr.write("Something broke: connection reset\n")
+        sys.stderr.flush()
+        os._exit(1)  # without waiting for the child
+    elif mode == "error_first":
+        emit({"type": "result", "subtype": "error_during_execution", "is_error": True,
+              "result": "Not logged in. Please run /login"})
+        return 1
+    elif mode == "garbage_first":
+        sys.stdout.write("Fatal: config file is broken\n")
+        emit({"type": "system", "subtype": "status", "status": "starting"})
+        return 1
+    elif mode == "odd_paths":
+        emit(init())
+        outside = str(Path(os.getcwd()).parent / "elsewhere.txt")
+        emit({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Write", "input": {"file_path": outside, "content": "x"}},
+            {"type": "tool_use", "id": "t2", "name": "Edit", "input": {"file_path": "bad\u0000name.txt"}}]}})
+        success()
     elif mode == "hang":
         # the child first, so even a 1 s timeout finds a tree to kill
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"],
