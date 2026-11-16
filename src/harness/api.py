@@ -60,7 +60,8 @@ from . import allowed_folders, tracing_settings
 from .allowed_folders import AllowedFolders
 from .magick_guard import Folders as GuardFolders, MagickGuard, MagickRunner
 from .write_guard import ShellWriteCheck
-from . import tool_paths
+from . import agent_clis, tool_paths
+from .agent_clis import Agents
 from src.vault_settings import settings_dir
 from src.providers import tracing as llm_tracing
 from .onboarding import ASSISTANT_ID, NEW_TOPICS, TOPICS, Interviewer
@@ -145,6 +146,7 @@ class Harness:
     extract_queue: ExtractQueue | None = None
     learner: Learner | None = None  # the learn_page tool: a fetched page teaches memory what touches a known org, person, or product
     images: ImageGenerator | None = None  # the image.generate tool; the decider offers it like an MCP server
+    agents: Agents | None = None  # Claude Code and Codex: where they are, sign-in, switches (agent_clis.py)
     music: MusicService | None = None  # music discovery: settings, Discogs token, atlas, digests, the /music routes
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
     provider_store: ProviderStore | None = None  # vault-settings/providers.json: providers, their keys, their enabled models
@@ -240,6 +242,8 @@ class Harness:
         self.images.workspace = self.tools.cwd
         self.images.attach = self.tools.fn("attach_file")
         self.images.register(self.tools, self.catalog)  # idempotent, like the room tools
+        if self.agents is None:
+            self.agents = Agents(c.vault_root)
         if self.music is None:
             self.music = MusicService(c, self.ledger, self.memory, self.tools, self.catalog)
         self.music.register()  # the music tools appear only when music is on and the token is set
@@ -607,6 +611,12 @@ class ImageToolIn(BaseModel):
     model: str | None = None  # "" goes back to the default model
 
 
+class AgentIn(BaseModel):
+    enabled: bool | None = None
+    ask: bool | None = None
+    model: str | None = None
+
+
 class ProgramPathIn(BaseModel):
     path: str
 
@@ -917,6 +927,7 @@ def create_app(h: Harness) -> FastAPI:
             h.markdownify = lambda tool, filepath: reg.call("markdownify", tool, {"filepath": filepath})
             h.ingestor = None
             h.__post_init__()
+        await h.agents.refresh()
         h.bootstrap_owner()
         h.learner.restore()  # learn holds waiting in Approvals come back after a restart
         scheduling = asyncio.create_task(scheduler.run())
@@ -1045,6 +1056,31 @@ def create_app(h: Harness) -> FastAPI:
         tool_paths.save(h.config.vault_root, key, None)
         h.ledger.append(Kind.settings, "", "", event="tool", tool=key, path=None)
         return await program_changed(key)
+
+    # delegating to Claude Code and Codex (Settings > Agents): detection and switches; running is elsewhere
+    @app.get("/agents")
+    async def get_agents() -> dict[str, Any]:
+        return {"agents": await h.agents.refresh()}
+
+    @app.put("/settings/agents/{key}")
+    async def set_agent(key: str, body: AgentIn) -> dict[str, Any]:
+        if key not in agent_clis.AGENTS:
+            raise HTTPException(404, f"no agent named {key}")
+        cur = h.agents.settings(key)
+        new = agent_clis.AgentSettings(
+            enabled=cur.enabled if body.enabled is None else body.enabled,
+            ask=cur.ask if body.ask is None else body.ask,
+            model=cur.model if body.model is None else body.model.strip())
+        if new.model and not agent_clis.MODEL.fullmatch(new.model):
+            raise HTTPException(422, "A model name may hold only letters, digits, dots, dashes and underscores (64 at most).")
+        if body.enabled:  # a fresh look: it may have been signed out since the last one
+            now = await asyncio.to_thread(agent_clis.probe, h.config.vault_root, key)
+            if not now["usable"]:
+                raise HTTPException(422, now["reason"])
+        agent_clis.save_settings(h.config.vault_root, key, new)
+        h.ledger.append(Kind.settings, "", "", event="agent", agent=key, enabled=new.enabled, ask=new.ask, model=new.model)
+        await h.agents.refresh(key)
+        return h.agents.statuses[key]
 
     # tracing (Settings > Tracing): saved over .env, applied now; the desktop app reads the DSN at launch
 
