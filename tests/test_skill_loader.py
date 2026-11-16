@@ -159,3 +159,14 @@ def test_learn_company_skill_loads_from_the_repo():
     s = load_skill(REPO / "skills" / "learn-company").skill
     assert s.slug == "learn-company" and "learn_page" in s.access and s.band_width == 0.1
     assert any("20" in step for step in s.steps) and "unrelated" in s.body
+
+
+def test_the_delegation_skill_loads():
+    cat = Catalog()
+    for r in load_dir(REPO / "skills"):
+        if r.ok:
+            cat.add_skill(r.skill)
+    entry = next((e for e in cat.entries() if e.ref == "delegation"), None)
+    assert entry is not None and entry.use.strip()
+    s = cat.skill("delegation")
+    assert "delegate" in s.access and "Claude Code" in s.body and "not instructions" in s.body

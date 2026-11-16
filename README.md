@@ -195,6 +195,10 @@ instructions unchanged. Each folder keeps its upstream license and notices.
 | `skills/archify/` | [tt-a1i/archify](https://github.com/tt-a1i/archify) by tt-a1i and Cocoon AI | Apache-2.0 (`LICENSE.txt`, `NOTICE.txt`) |
 | `skills/prompt-master/` | [nidhinjs/prompt-master](https://github.com/nidhinjs/prompt-master) by Nidhin Joseph Nelson | MIT (`LICENSE`, `NOTICE.md`) |
 
+### Ideas
+
+Handing a job to Claude Code on the user's own subscription, in a folder it cannot leave, follows the idea in [OpenDesign](https://github.com/nexu-io/open-design). No code was copied.
+
 ### Data
 
 The music Taste map and genre lookups use the Soundlore genre atlas. Its files
