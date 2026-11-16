@@ -61,3 +61,19 @@ def revision_of(vault_root: Path, path: Path) -> tuple[str, int, str] | None:
         return None
     m = _COPY.match(parts[2])
     return (parts[0], int(m.group(1)), m.group(2)) if m else None
+
+
+# the studio page is framed with the preview policy; the app picks elements through this one script
+BRIDGE_MAX_BYTES = 5 * 1024 * 1024
+_BRIDGE = (b"<script data-zen-bridge>" + (Path(__file__).with_name("design_bridge.js")).read_bytes().strip()
+           + b"</script>")
+_BODY_CLOSE = re.compile(rb"</body\s*>", re.IGNORECASE)
+
+
+def with_bridge(html: bytes) -> bytes:
+    """Insert the bridge before the last `</body>` (appended when there is none), on the raw bytes."""
+    last = None
+    for last in _BODY_CLOSE.finditer(html):
+        pass
+    at = last.start() if last else len(html)
+    return html[:at] + _BRIDGE + html[at:]

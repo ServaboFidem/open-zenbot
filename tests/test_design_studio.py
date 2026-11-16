@@ -1,6 +1,6 @@
 import pytest
 
-from src.harness.design_studio import revision_of, snapshot
+from src.harness.design_studio import revision_of, snapshot, with_bridge
 
 
 def test_snapshot_numbers_copies_and_skips_an_unchanged_file(tmp_path):
@@ -44,3 +44,20 @@ def test_snapshot_refuses_a_symlinked_versions_folder(tmp_path):
         pytest.skip("symlinks cannot be created here")
     assert snapshot(tmp_path, f) is None
     assert list(elsewhere.iterdir()) == []
+
+
+MARK = b"<script data-zen-bridge>"
+
+
+@pytest.mark.parametrize("html, tail", [
+    (b"<html><body><p>x</p></body></html>", b"</body></html>"),
+    (b"<BODY><p>x</p></BODY>", b"</BODY>"),
+    (b"<body><script>var s='</body>';</script></body>", b"</body>"),
+])
+def test_bridge_goes_once_before_the_last_body_close(html, tail):
+    out = with_bridge(html)
+    assert out.count(MARK) == 1 and out.endswith(tail) and out.rindex(MARK) < out.rindex(tail)
+
+
+def test_bridge_is_appended_when_there_is_no_body_close():
+    assert with_bridge(b"<p>x</p>").startswith(b"<p>x</p>" + MARK)

@@ -860,7 +860,7 @@ def create_app(h: Harness) -> FastAPI:
             view["design"], view["version"] = rev[0], rev[1]
         return view
 
-    def serve_attachment(path: str, preview: bool = False) -> FileResponse:
+    def serve_attachment(path: str, preview: bool = False, studio: bool = False) -> FileResponse | Response:
         """A file a bot attached, in a room or a one-to-one task. `preview` is the thumbnail the chat
         frames on its own as a reply renders: that page may run its inline script and style but reach
         no network, so a bot-made page cannot send anything out before the user chooses to open it."""
@@ -871,6 +871,17 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(404, "the file is gone") from None
         if not isinstance(h.attachable(str(target)), Path):
             raise HTTPException(404, "the file is gone")
+        headers = {"Content-Security-Policy": PREVIEW_CSP, "X-Content-Type-Options": "nosniff"}
+        if studio:
+            # the design pane's frame: preview policy plus the pick bridge; an oversized or non-HTML file goes as is
+            try:
+                size = target.stat().st_size
+            except OSError:
+                raise HTTPException(404, "the file is gone") from None
+            if target.suffix.lower() in (".html", ".htm") and size <= design_studio.BRIDGE_MAX_BYTES:
+                return Response(design_studio.with_bridge(target.read_bytes()), media_type="text/html",
+                                headers={**headers, "Content-Disposition": "inline"})
+            preview = True
         # shown inline, not downloaded; the sandbox keeps a bot-made page off this origin
         return FileResponse(target, filename=target.name, content_disposition_type="inline",
                             headers={"Content-Security-Policy": PREVIEW_CSP if preview else "sandbox allow-scripts",
@@ -1899,11 +1910,12 @@ def create_app(h: Harness) -> FastAPI:
         return d
 
     @app.get("/conversations/{conv_id}/attachments/{attachment_id}")
-    async def conversation_attachment(conv_id: str, attachment_id: str, preview: str = "") -> FileResponse:
+    async def conversation_attachment(conv_id: str, attachment_id: str, preview: str = "",
+                                      studio: str = "") -> Response:
         att = h.conversations.attachment(conv_id, attachment_id)
         if att is None:
             raise HTTPException(404, "no such attachment")
-        return serve_attachment(att["path"], preview=preview == "1")
+        return serve_attachment(att["path"], preview=preview == "1", studio=studio == "1")
 
     @app.post("/bots/{bot_id}/conversations/{conv_id}/current")
     async def select_conversation(bot_id: str, conv_id: str) -> dict[str, Any]:

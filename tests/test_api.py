@@ -9,7 +9,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from src.harness.api import Harness, create_app
+from src.harness.api import PREVIEW_CSP, Harness, create_app
+from src.harness.design_studio import BRIDGE_MAX_BYTES
 from src.harness.bot import Bot
 from src.harness.config import HarnessConfig
 from src.memory.exclusion import exclusion
@@ -1280,6 +1281,26 @@ async def test_attachment_preview_is_served_network_closed(client, harness: Harn
     assert "http" not in csp  # no origin is named: nothing loads from anywhere
     full = await client.get(f"/conversations/{cid}/attachments/{att['id']}")
     assert full.headers["content-security-policy"] == "sandbox allow-scripts"  # View, on the user's click
+
+
+async def test_studio_attachment_gets_the_bridge_under_the_preview_policy(client, harness: Harness, tmp_path: Path):
+    _, cid = await _attach_task(client, harness, tmp_path)
+    att = (await client.get(f"/conversations/{cid}")).json()["exchanges"][-1]["attachments"][0]
+    f = await client.get(f"/conversations/{cid}/attachments/{att['id']}?studio=1")
+    assert f.status_code == 200 and f.headers["content-security-policy"] == PREVIEW_CSP
+    assert f.headers["x-content-type-options"] == "nosniff" and f.text.count("data-zen-bridge") == 1
+    plain = await client.get(f"/conversations/{cid}/attachments/{att['id']}")
+    assert "data-zen-bridge" not in plain.text and plain.text == "<svg>flow</svg>"
+    assert plain.headers["content-security-policy"] == "sandbox allow-scripts"
+
+
+async def test_studio_attachment_over_the_cap_is_served_unchanged(client, harness: Harness, tmp_path: Path):
+    _, cid = await _attach_task(client, harness, tmp_path)
+    att = (await client.get(f"/conversations/{cid}")).json()["exchanges"][-1]["attachments"][0]
+    big = b"<p>" + b"x" * BRIDGE_MAX_BYTES
+    Path(harness.conversations.attachment(cid, att["id"])["path"]).write_bytes(big)
+    f = await client.get(f"/conversations/{cid}/attachments/{att['id']}?studio=1")
+    assert f.content == big and f.headers["content-security-policy"] == PREVIEW_CSP
 
 
 ROUTINE = {"name": "Digest", "bot": "bot1", "skill": "research-brief",
