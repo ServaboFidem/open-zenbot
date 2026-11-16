@@ -125,6 +125,7 @@ class TaskLoop:
         supervisor: "LoopSupervisor | None" = None,
         model_for: "Callable[[Bot], tuple[Provider, str | None]] | None" = None,
         write_check: "ShellWriteCheck | None" = None,
+        delegate_check: "Callable[[dict], tuple[str, str] | None] | None" = None,
     ) -> None:
         self.provider = provider
         self.model_for = model_for  # a bot's own provider and model (Edit bot); None or (provider, None): the chat model
@@ -138,6 +139,7 @@ class TaskLoop:
         self.compactor = compactor
         self.supervisor = supervisor
         self.write_check = write_check  # a shell command that may write outside the allowed folders waits for the user
+        self.delegate_check = delegate_check  # (rule, detail) when a hand-off to Claude Code or Codex waits for the user
 
     async def run(
         self,
@@ -315,6 +317,12 @@ class TaskLoop:
                 rejected = verdict.rejected or REJECTED.format(cwd=self.write_check.cwd)
                 why = {"guard": self.write_check.kind, "verdict": verdict.choice, "p_inside": verdict.p_inside,
                        "reads": verdict.reads}
+        elif not rule and call.name == "delegate" and self.delegate_check is not None:
+            from .delegation import REJECTED as DELEGATE_REJECTED
+
+            if asked := self.delegate_check(call.arguments):
+                rule, detail = asked
+                rejected = DELEGATE_REJECTED
         if rule:
             req = self.approvals.create(
                 bot.id, session.id,

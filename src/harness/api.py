@@ -62,6 +62,7 @@ from .magick_guard import Folders as GuardFolders, MagickGuard, MagickRunner
 from .write_guard import ShellWriteCheck
 from . import agent_clis, tool_paths
 from .agent_clis import Agents
+from .delegation import Delegator, Runner as DelegateRunner
 from src.vault_settings import settings_dir
 from src.providers import tracing as llm_tracing
 from .onboarding import ASSISTANT_ID, NEW_TOPICS, TOPICS, Interviewer
@@ -147,6 +148,7 @@ class Harness:
     learner: Learner | None = None  # the learn_page tool: a fetched page teaches memory what touches a known org, person, or product
     images: ImageGenerator | None = None  # the image.generate tool; the decider offers it like an MCP server
     agents: Agents | None = None  # Claude Code and Codex: where they are, sign-in, switches (agent_clis.py)
+    delegator: Delegator | None = None  # the delegate tool: hands a job to an agent that is on; a rebind keeps it
     music: MusicService | None = None  # music discovery: settings, Discogs token, atlas, digests, the /music routes
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
     provider_store: ProviderStore | None = None  # vault-settings/providers.json: providers, their keys, their enabled models
@@ -210,10 +212,17 @@ class Harness:
                                 allowed=allowed, offload=True, extract_queue=shared.extract_queue)
 
             self.importer = DirImporter(make_ingestor, self.ledger)
+        if self.agents is None:
+            self.agents = Agents(c.vault_root)
+        if self.delegator is None:  # kept across a rebind, so a run in flight stays stoppable
+            self.delegator = Delegator(c.vault_root, self.agents, self.reach,
+                                       DelegateRunner(self.agents, self.ledger, timeout=c.delegate_timeout),
+                                       in_routine=self._in_routine)
         self.loop = self.loop or TaskLoop(
             self.provider, self.ledger, self.approvals, self.tools, self.pause, selector=selector, max_steps=c.max_steps,
             compactor=self.compactor, supervisor=self.supervisor, recall=self.recall, model_for=self._model_for,
             write_check=ShellWriteCheck(lambda: self.scorer, self.reach, self.tools.cwd, self.ledger, c.shell_write_pass),
+            delegate_check=self.delegator.needs_approval,
         )
         self.interviews = self.interviews or Interviewer(self.provider, self.memory, self.ledger, model=c.model,
                                                        profile=self.profile, extract_queue=self.extract_queue)
@@ -242,8 +251,7 @@ class Harness:
         self.images.workspace = self.tools.cwd
         self.images.attach = self.tools.fn("attach_file")
         self.images.register(self.tools, self.catalog)  # idempotent, like the room tools
-        if self.agents is None:
-            self.agents = Agents(c.vault_root)
+        self.delegator.register(self.tools)  # idempotent; offered only while an agent is on
         if self.music is None:
             self.music = MusicService(c, self.ledger, self.memory, self.tools, self.catalog)
         self.music.register()  # the music tools appear only when music is on and the token is set
@@ -491,6 +499,12 @@ class Harness:
         self.task_attachments.setdefault(session_id, []).append(att)
         return f"Attached {att.title!r}; it will show under your reply."
 
+    def _in_routine(self, session_id: str) -> bool:
+        """A session with no conversation and no room (a routine), or one the harness does not know: nobody is
+        there to approve or see a hand-off. The same sessions `attach` refuses, room turns aside."""
+        session = self.sessions.get(session_id)
+        return session is None or not (session.conversation_id or session.room_id)
+
     def reach(self) -> allowed_folders.Folders:
         """Where bots may reach now: the workspace (the shell's working folder) with Full Access, then the
         `files` server's folders. Read fresh, so a change on Settings > Allowed Folders applies at once."""
@@ -575,6 +589,7 @@ class Harness:
     def stop(self, session_id: str) -> Session:
         session = self.sessions[session_id]
         session.stop_requested = True
+        self.delegator.stop(session_id)  # a hand-off in flight is killed; the loop then sees stop_requested
         self.pause.release_for_stop(session_id)
         task = self.tasks.get(session_id)
         if task and not task.done() and session.state == SessionState.waiting_approval:
@@ -927,7 +942,11 @@ def create_app(h: Harness) -> FastAPI:
             h.markdownify = lambda tool, filepath: reg.call("markdownify", tool, {"filepath": filepath})
             h.ingestor = None
             h.__post_init__()
-        refreshing = asyncio.create_task(h.agents.refresh())  # a hung CLI must not hold startup; GET /agents waits for its own
+        async def refresh_agents() -> None:
+            await h.agents.refresh()
+            h.delegator.register(h.tools)  # the tool appears once an agent that is on is found
+
+        refreshing = asyncio.create_task(refresh_agents())  # a hung CLI must not hold startup; GET /agents waits for its own
         h.bootstrap_owner()
         h.learner.restore()  # learn holds waiting in Approvals come back after a restart
         scheduling = asyncio.create_task(scheduler.run())
@@ -1080,6 +1099,7 @@ def create_app(h: Harness) -> FastAPI:
         agent_clis.save_settings(h.config.vault_root, key, new)
         h.ledger.append(Kind.settings, "", "", event="agent", agent=key, enabled=new.enabled, ask=new.ask, model=new.model)
         h.agents.statuses[key] = {**now, "enabled": new.enabled, "ask": new.ask, "model": new.model}
+        h.delegator.register(h.tools)  # on, off, or another agent's name in the tool's list
         return h.agents.statuses[key]
 
     # tracing (Settings > Tracing): saved over .env, applied now; the desktop app reads the DSN at launch

@@ -3,6 +3,7 @@ Every probe runs a fake CLI; nothing here starts the real `claude` or `codex`.""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import sys
@@ -238,6 +239,53 @@ async def test_put_unknown_agent_404(app_h):
     app, _ = app_h
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as c:
         assert (await c.put("/settings/agents/nope", json={"ask": False})).status_code == 404
+
+
+async def test_put_enable_registers_the_tool_and_disable_removes_it(app_h, only):
+    only("claude-code", CLAUDE)
+    app, h = app_h
+    assert "delegate" not in h.tools.names()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as c:
+        assert (await c.put("/settings/agents/claude-code", json={"enabled": True})).status_code == 200
+        assert "delegate" in h.tools.names()
+        spec = next(s for s in h.tools.specs() if s.name == "delegate")
+        assert spec.parameters["properties"]["agent"]["enum"] == ["claude-code"]
+        assert (await c.put("/settings/agents/claude-code", json={"enabled": False})).status_code == 200
+    assert "delegate" not in h.tools.names()
+
+
+async def test_stop_ends_a_delegated_run(app_h, monkeypatch, tmp_path):
+    from src.harness import delegation
+    from src.harness.loop import Session
+    from src.harness.tools import current_call
+    from src.providers.interface import ToolCall
+
+    from .test_delegation import FAKE, FakeRunner, _all_dead, _child_recorded
+
+    _, h = app_h
+    record = tmp_path / "record.json"
+    real = delegation.run_env
+    monkeypatch.setattr(delegation, "run_env",
+                        lambda base=None: {**real(base), "FAKE_AGENT_RECORD": str(record), "FAKE_AGENT_MODE": "hang"})
+    h.agents.statuses["claude-code"] = {"path": str(FAKE), "auth": "subscription", "usable": True}
+    save_settings(h.config.vault_root, "claude-code", AgentSettings(enabled=True, ask=False))
+    h.delegator.runner = FakeRunner(h.agents, h.ledger, timeout=60)
+    h.delegator.register(h.tools)
+    session = Session(bot_id="b1", task="hand it off")
+    session.conversation_id = "conv-1"
+    h.sessions[session.id] = session
+    token = current_call.set(("b1", session.id))
+    try:  # the task copies the context as it is now
+        running = asyncio.create_task(h.tools.run(ToolCall("c1", "delegate", {"agent": "claude-code", "task": "Wait."})))
+    finally:
+        current_call.reset(token)
+    rec = await _child_recorded(record)
+    h.stop(session.id)
+    result = await asyncio.wait_for(running, 30)
+    assert not result.ok and "Stopped by the user." in result.error
+    assert session.stop_requested
+    assert await _all_dead([rec["pid"], rec["child"]])
+    assert h.delegator.runner.live == {}
 
 
 async def test_put_bad_model_422(app_h):

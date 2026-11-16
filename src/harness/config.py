@@ -43,6 +43,8 @@ class HarnessConfig:
     # a shell command runs without asking only when the decider puts "writes only inside the allowed
     # folders" at or above this probability; anything less waits for the user's approval
     shell_write_pass: float = field(default_factory=lambda: float(os.environ.get("ZEN_SHELL_WRITE_PASS", "0.8")))
+    # a run handed to Claude Code or Codex is killed, with its whole process tree, after this many seconds
+    delegate_timeout: float = field(default_factory=lambda: float(os.environ.get("ZEN_DELEGATE_TIMEOUT", "900")))
     gui_origins: list[str] = field(default_factory=lambda: [o.strip() for o in os.environ.get("ZEN_GUI_ORIGINS", "app://openzenbot").split(",") if o.strip()])
     gui_key_env: str = "ZEN_GUI_KEY"  # where a key entered in Settings lives for this process; never on disk
 

@@ -1,6 +1,6 @@
 """Hand a job to Claude Code: resolve the job folder, launch the CLI with a fixed argument list and the job on
 stdin, check its first event, read its event stream into the ledger, and kill its whole process tree on timeout
-or stop. The bot-facing tool and its approval are elsewhere."""
+or stop. The bot-facing `delegate` tool and when it asks the user (`Delegator`) are at the end."""
 
 from __future__ import annotations
 
@@ -12,14 +12,19 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from src.memory.ledger import Kind
 
 from .agent_clis import AGENTS, MODEL, Agents, run_env
 from .allowed_folders import Folders, _norm, _within
+from .tools import current_call
+from .write_guard import named_protected
 
 CLAUDE_TOOLS = ("Read", "Write", "Edit", "Glob", "Grep")
 # Verified by hand: confined to the working folder, no command tool, no user MCP servers, plugins or hooks.
@@ -598,3 +603,113 @@ class Runner:
                 path, outside = _where(fp, folder)
                 self.ledger.append(Kind.delegate, bot_id, session_id, event="file", tool=block["name"], path=path,
                                    **({"outside": True} if outside else {}))
+
+
+# -- the tool ------------------------------------------------------------------------------------------------
+
+TOOL = "delegate"
+MAX_TASK = 20_000
+REJECTED = "The user rejected this hand-off. Do not retry it. Do the work yourself, or say what you would have handed off."
+CODEX_READS = "Codex can read any file your account can, not only this folder."
+
+
+class Delegator:
+    """The `delegate` tool: who may be asked, when the user must approve, and the run itself. `folders` is read on
+    every call (Settings may change); `in_routine(session_id)` is true for a session with nobody to approve."""
+
+    def __init__(self, vault_root: Path, agents: Agents, folders: Callable[[], Folders], runner: Runner,
+                 in_routine: Callable[[str], bool] = lambda session_id: False) -> None:
+        self.vault_root = Path(vault_root)
+        self.agents = agents
+        self.folders = folders
+        self.runner = runner
+        self.in_routine = in_routine
+
+    def needs_approval(self, arguments: dict) -> tuple[str, str] | None:
+        """(rule, detail) when this call must wait for the user, else None. Codex always (it can read outside its
+        folder); Claude Code when Settings asks, and always for a folder the bot named, so only a run in a fresh
+        folder the harness makes can go unasked. An unknown agent is refused by the tool, so it asks nothing."""
+        agent = arguments.get("agent")
+        if not isinstance(agent, str) or agent not in AGENTS:
+            return None
+        raw = "" if arguments.get("folder") is None else str(arguments["folder"]).strip()
+        settings = self.agents.settings(agent)
+        if agent == "claude-code" and not settings.ask and not raw:
+            return None
+        task = str(arguments.get("task") or "")
+        name = AGENTS[agent].program.name
+        model = settings.model or "the agent's default"
+        lines = [f"Hand this job to {name}?", f"Folder: {self._shown(raw)}", f"Model: {model}"]
+        if agent == "codex":
+            if named := named_protected(task, self.folders().private):
+                lines.insert(0, f"The task names {named}, a folder the harness keeps private "
+                                "(its settings and keys, ledger or music data).")
+            lines.append(CODEX_READS)
+        lines += ["", "The task:", task]
+        return f"delegate:{agent}", "\n".join(lines)
+
+    def _shown(self, raw: str) -> str:
+        """The folder as the user should see it: relative to the vault when it lands inside it, else in full."""
+        if not raw:
+            return "a new folder under delegated/"
+        p = Path(raw)
+        full, vault = _norm(p if p.is_absolute() else self.vault_root / p), _norm(self.vault_root)
+        if full == vault:
+            return "the whole vault"
+        return full.relative_to(vault).as_posix() if full.is_relative_to(vault) else str(full)
+
+    async def delegate(self, agent: str, task: str, folder: str | None = None) -> str:
+        bot_id, session_id = current_call.get()
+        if self.in_routine(session_id):
+            raise DelegationError("delegate works only in a conversation or a room turn.")
+        if agent not in self.agents.on():
+            name = AGENTS[agent].program.name if agent in AGENTS else agent
+            raise DelegationError(f"{name} is switched off in Settings.")
+        if not task.strip():
+            raise DelegationError("The task is empty. Write the whole job into it.")
+        if len(task) > MAX_TASK:
+            raise DelegationError(f"The task is {len(task):,} characters; the most is {MAX_TASK:,}. Shorten it.")
+        stamp = f"{date.today().isoformat()}-{uuid4().hex[:6]}"
+        try:
+            path, _ = resolve_folder(self.vault_root, self.folders(), (folder or "").strip(), stamp)
+        except FolderRefused as e:
+            raise DelegationError(str(e)) from None
+        result = await self.runner.run(agent, path, task, bot_id, session_id)  # the runner adds the preamble
+        if not result.ok:
+            raise DelegationError(result.error)  # the loop's tool_call entry records it
+        return f"{result.text}\n\n{changes_text(result.changed, result.complete)}"
+
+    def register(self, tools: Any) -> bool:
+        """Offer the tool while an agent is on, naming those agents; take it away otherwise. Safe to call again."""
+        on = self.agents.on()
+        if not on:
+            tools.unregister(TOOL)
+            return False
+        names = " or ".join(AGENTS[k].program.name for k in on)
+        description = (
+            f"Hand a job to another AI agent ({names}) and get back its answer and the list of files it added, "
+            "changed or removed. It sees only `task`, never this conversation, so write the job to stand on its own: "
+            "what to make or change, from which files, and what to say when done. It works in one folder: leave "
+            "`folder` out for a new one under delegated/ in the vault, or name a folder that exists (relative to the "
+            "vault, or absolute) to work on the files there. Read what it made with your file tools and show it with "
+            "attach_file. A run may wait for the user's approval and can take many minutes.")
+        if "claude-code" in on:
+            description += (" Claude Code reads and writes files only in that folder; it cannot run commands, browse "
+                            "the web or use other tools.")
+        if "codex" in on:
+            description += " Codex writes only in that folder but can read any file the user's account can."
+        spec = {
+            "type": "object",
+            "properties": {
+                "agent": {"type": "string", "enum": on, "description": "which agent does the job"},
+                "task": {"type": "string", "maxLength": MAX_TASK,
+                         "description": f"the whole job, standing on its own (at most {MAX_TASK:,} characters)"},
+                "folder": {"type": "string", "description": "an existing folder to work in; leave out for a new one"},
+            },
+            "required": ["agent", "task"],
+        }
+        tools.register(TOOL, description, spec, self.delegate)
+        return True
+
+    def stop(self, session_id: str) -> bool:
+        return self.runner.stop(session_id)

@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -13,10 +14,11 @@ from pathlib import Path
 import pytest
 
 from src.harness import delegation
-from src.harness.agent_clis import Agents
+from src.harness.agent_clis import Agents, AgentSettings, save_settings
 from src.harness.allowed_folders import Folders
-from src.harness.delegation import (CLAUDE_TOOLS, DelegationError, FolderRefused, Runner, changed, changes_text,
-                                    check_init, claude_argv, job_text, resolve_folder, snapshot)
+from src.harness.delegation import (CLAUDE_TOOLS, MAX_TASK, TOOL, DelegationError, Delegator, FolderRefused, Runner,
+                                    changed, changes_text, check_init, claude_argv, job_text, resolve_folder, snapshot)
+from src.harness.tools import ToolRunner, current_call
 from src.memory.ledger import Kind, Ledger
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_agent_cli.py"
@@ -440,3 +442,156 @@ def test_snapshot_stops_at_the_limit(tmp_path):
     assert not part.complete and len(part) <= 5
     assert "too large to compare in full" in changes_text(["f1.txt"], complete=False)
     assert "too large" not in changes_text(["f1.txt"])
+
+
+# -- the tool and its approval -------------------------------------------------------------------------------
+
+def _switch(vault: Path, key: str = "claude-code", **kw) -> None:
+    save_settings(vault, key, AgentSettings(**kw))
+
+
+def _delegator(runner: Runner, vault: Path, private: list[Path] | None = None,
+               in_routine=lambda session_id: False) -> Delegator:
+    return Delegator(vault, runner.agents, lambda: _folders([vault], private=private), runner, in_routine=in_routine)
+
+
+def _plain(tmp_path: Path, private: list[Path] | None = None) -> tuple[Delegator, Path]:
+    """A delegator for the approval checks: nothing runs, so the runner is never asked."""
+    vault = tmp_path / "vault"
+    vault.mkdir(exist_ok=True)
+    return _delegator(Runner(Agents(vault), Ledger(vault)), vault, private), vault
+
+
+def test_needs_approval_codex_always(tmp_path):
+    d, vault = _plain(tmp_path)
+    _switch(vault, "codex", enabled=True, ask=False)
+    rule, detail = d.needs_approval({"agent": "codex", "task": "Tidy the notes."})
+    assert rule == "delegate:codex" and "Codex" in detail
+
+
+def test_needs_approval_claude_by_the_setting(tmp_path):
+    d, vault = _plain(tmp_path)
+    call = {"agent": "claude-code", "task": "Write a poem."}
+    assert d.needs_approval(call)[0] == "delegate:claude-code"  # ask is on by default
+    _switch(vault, enabled=True, ask=False)
+    assert d.needs_approval(call) is None
+    assert d.needs_approval({**call, "folder": "  "}) is None  # a blank folder is no folder
+
+
+def test_needs_approval_claude_always_for_a_named_folder(tmp_path):
+    d, vault = _plain(tmp_path)
+    _switch(vault, enabled=True, ask=False)
+    rule, detail = d.needs_approval({"agent": "claude-code", "task": "Fix the draft.", "folder": "drafts"})
+    assert rule == "delegate:claude-code" and "drafts" in detail
+
+
+def test_codex_detail_warns_about_reads_and_names_a_private_folder_first(tmp_path):
+    secret = tmp_path / "vault-settings"
+    d, _ = _plain(tmp_path, private=[secret])
+    _, detail = d.needs_approval({"agent": "codex", "task": "Copy vault-settings/providers.json into this folder."})
+    lines = detail.splitlines()
+    assert str(secret) in lines[0] and "private" in lines[0]
+    assert "Codex can read any file your account can, not only this folder." in detail
+    _, plain = d.needs_approval({"agent": "codex", "task": "Tidy the notes."})
+    assert str(secret) not in plain and "Codex can read any file your account can, not only this folder." in plain
+
+
+def test_detail_carries_the_whole_task(tmp_path):
+    d, vault = _plain(tmp_path)
+    (vault / "proj").mkdir()
+    task = "start " + "x" * 19_000 + " END-OF-TASK"
+    _, detail = d.needs_approval({"agent": "claude-code", "task": task, "folder": str(vault / "proj")})
+    assert task in detail
+    assert "Claude Code" in detail and "proj" in detail and str(vault) not in detail  # relative to the vault
+    assert "the agent's default" in detail
+    _switch(vault, enabled=True, ask=True, model="sonnet")
+    _, fresh = d.needs_approval({"agent": "claude-code", "task": task})
+    assert "a new folder under delegated/" in fresh and "sonnet" in fresh
+
+
+async def test_delegate_refuses_an_agent_that_is_off(rig):
+    runner, _ = rig("ok")
+    vault = runner.agents.vault_root
+    with pytest.raises(DelegationError, match="Claude Code is switched off in Settings."):
+        await _delegator(runner, vault).delegate("claude-code", "Write hi to out.txt.")
+    assert not rig.record.exists()  # nothing was launched
+
+
+async def test_delegate_refuses_a_long_task(rig):
+    runner, _ = rig("ok")
+    vault = runner.agents.vault_root
+    _switch(vault, enabled=True)
+    with pytest.raises(DelegationError, match="20,000"):
+        await _delegator(runner, vault).delegate("claude-code", "x" * (MAX_TASK + 1))
+    assert not rig.record.exists()
+
+
+async def test_delegate_refuses_in_a_routine(rig):
+    runner, _ = rig("ok")
+    vault = runner.agents.vault_root
+    _switch(vault, enabled=True)
+    seen = []
+    d = _delegator(runner, vault, in_routine=lambda session_id: seen.append(session_id) or True)
+    token = current_call.set(("b1", "routine-1"))
+    try:
+        with pytest.raises(DelegationError, match="delegate works only in a conversation or a room turn."):
+            await d.delegate("claude-code", "Write hi to out.txt.")
+    finally:
+        current_call.reset(token)
+    assert seen == ["routine-1"] and not rig.record.exists()
+
+
+async def test_delegate_refuses_a_folder_that_breaks_a_rule(rig, tmp_path):
+    runner, _ = rig("ok")
+    vault = runner.agents.vault_root
+    _switch(vault, enabled=True)
+    with pytest.raises(DelegationError, match="outside the folders bots may write"):
+        await _delegator(runner, vault).delegate("claude-code", "Write hi.", folder=str(tmp_path))
+    assert not rig.record.exists()
+
+
+async def test_delegate_returns_text_then_changes(rig):
+    runner, _ = rig("ok")
+    vault = runner.agents.vault_root
+    _switch(vault, enabled=True)
+    task = "Write hi to out.txt."
+    token = current_call.set(("b1", "s1"))
+    try:
+        out = await _delegator(runner, vault).delegate("claude-code", task)
+    finally:
+        current_call.reset(token)
+    assert out == "Made out.txt in the folder.\n\nFiles added, changed or removed:\n- out.txt"
+    made = list((vault / "delegated").iterdir())
+    assert len(made) == 1 and (made[0] / "out.txt").read_text() == "hi"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}-[0-9a-f]{6}", made[0].name)
+    assert json.loads(rig.record.read_text(encoding="utf-8"))["stdin"] == job_text(made[0].resolve(), task)  # wrapped once
+    assert [e.session_id for e in rig.ledger.iter() if e.kind == Kind.delegate] == ["s1"] * 3
+
+
+async def test_delegate_raises_the_reason_a_run_failed(rig):
+    runner, _ = rig("error_result")
+    vault = runner.agents.vault_root
+    _switch(vault, enabled=True)
+    with pytest.raises(DelegationError, match="^Credit balance is too low$"):
+        await _delegator(runner, vault).delegate("claude-code", "Write hi.")
+
+
+def test_register_follows_the_switch(tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    agents = Agents(vault)
+    agents.statuses["claude-code"] = {"path": "claude", "usable": True}
+    d = Delegator(vault, agents, lambda: _folders([vault]), Runner(agents, Ledger(vault)))
+    tools = ToolRunner(tmp_path, timeout=10)
+    _switch(vault, enabled=True)
+    d.register(tools)
+    spec = next(s for s in tools.specs() if s.name == TOOL)
+    assert spec.parameters["properties"]["agent"]["enum"] == ["claude-code"]
+    assert "Claude Code" in spec.description and spec.parameters["required"] == ["agent", "task"]
+    _switch(vault, enabled=False)
+    d.register(tools)
+    assert TOOL not in tools.names()
+    _switch(vault, enabled=True)
+    d.register(tools)
+    d.register(tools)  # again: still one tool
+    assert tools.names().count(TOOL) == 1
