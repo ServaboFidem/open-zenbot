@@ -10,13 +10,18 @@ const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
 const sameKeys = (o, keys) => { const k = Object.keys(o).sort(); return k.length === keys.length && k.every((x, i) => x === keys[i]); };
 const str = (v, min, max) => typeof v === 'string' && v.length >= min && v.length <= max;
 
-// Every design revision in the conversation, oldest first; a plain attachment has no version.
+// Every design revision in the conversation, oldest first; a plain attachment has no version. Attaching an
+// unchanged file again gives the same copy: one entry per (design, version), its latest attachment, in its place.
 export function designRevisions(exchanges) {
-  const out = [];
+  const byRev = new Map();
   for (const ex of exchanges || [])
     for (const a of ex.attachments || [])
-      if (typeof a.version === 'number') out.push({ attId: a.id, title: a.title, design: a.design, version: a.version });
-  return out;
+      if (typeof a.version === 'number') {
+        const key = JSON.stringify([a.design, a.version]);
+        byRev.delete(key);  // re-inserted, so the latest attachment takes the newest place
+        byRev.set(key, { attId: a.id, title: a.title, design: a.design, version: a.version });
+      }
+  return [...byRev.values()];
 }
 
 export const studioFrameUrl = src => `${src}${src.includes('?') ? '&' : '?'}studio=1`;
@@ -40,7 +45,11 @@ export const acceptReady = (event, frameWindow) =>
 export const MAX_PICKS = 20;
 export const addPick = (picks, pick) => picks.length >= MAX_PICKS ? picks : [...picks, { ...pick, note: '' }];
 
-// The picks the user wrote a note for, as the task's design_comments on that revision.
-export const commentsFor = (attId, picks) => (picks || [])
-  .map(p => ({ attachment_id: attId, element_id: p.elementId, selector: p.selector, tag: p.tag, text: p.text, note: String(p.note || '').trim() }))
-  .filter(c => c.note);
+// The picks as the task's design_comments on that revision. A pick with no note takes `fallback` (when the
+// user wrote a message, the note points at it) or, with no fallback, is left out.
+export function commentsFor(attId, picks, { fallback } = {}) {
+  const spare = typeof fallback === 'string' ? fallback.trim() : '';
+  return (picks || [])
+    .map(p => ({ attachment_id: attId, element_id: p.elementId, selector: p.selector, tag: p.tag, text: p.text, note: String(p.note || '').trim() || spare }))
+    .filter(c => c.note);
+}

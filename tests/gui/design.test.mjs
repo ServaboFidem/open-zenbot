@@ -37,6 +37,12 @@ test('revisions come oldest first and skip plain attachments', () => {
   assert.deepEqual(designRevisions(ex)[1], { attId: 'b', title: 'L', design: 'landing', version: 2 });
   assert.deepEqual(designRevisions([{ text: 'no attachments' }]), []);
 });
+test('an unchanged file attached again is one revision, under its latest attachment', () => {
+  const ex = [{ attachments: [{ id: 'a', title: 'L', design: 'landing', version: 1 }] },
+              { attachments: [{ id: 'b', title: 'L', design: 'landing', version: 2 }] },
+              { attachments: [{ id: 'c', title: 'L', design: 'landing', version: 2 }, { id: 'p', title: 'P', design: 'pricing', version: 2 }] }];
+  assert.deepEqual(designRevisions(ex).map(r => [r.design, r.version, r.attId]), [['landing', 1, 'a'], ['landing', 2, 'c'], ['pricing', 2, 'p']]);
+});
 test('the studio frame url adds studio=1', () => {
   assert.equal(studioFrameUrl('http://h/conversations/c/attachments/a'), 'http://h/conversations/c/attachments/a?studio=1');
   assert.equal(studioFrameUrl('http://h/x?k=1'), 'http://h/x?k=1&studio=1');
@@ -48,7 +54,16 @@ test('a pick joins with an empty note, and none past the twentieth', () => {
   assert.equal(MAX_PICKS, 20);
   assert.equal(addPick(full, p), full);
 });
-test('only picks with a note are sent', () => {
+test('without a fallback, only picks with a note are sent', () => {
   const picks = [{ elementId: 'hero', selector: 's', tag: 'h1', text: 'Hi', note: ' bigger ' }, { elementId: '', selector: 't', tag: 'p', text: '', note: ' ' }];
-  assert.deepEqual(commentsFor('b', picks), [{ attachment_id: 'b', element_id: 'hero', selector: 's', tag: 'h1', text: 'Hi', note: 'bigger' }]);
+  const want = [{ attachment_id: 'b', element_id: 'hero', selector: 's', tag: 'h1', text: 'Hi', note: 'bigger' }];
+  assert.deepEqual(commentsFor('b', picks), want);
+  assert.deepEqual(commentsFor('b', picks, {}), want);
+  assert.deepEqual(commentsFor('b', picks, { fallback: '  ' }), want);
+  assert.deepEqual(commentsFor('b', picks, { fallback: 3 }), want);
+});
+test('with a fallback, a pick without a note is sent with the fallback note', () => {
+  const picks = [{ elementId: 'hero', selector: 's', tag: 'h1', text: 'Hi', note: ' bigger ' }, { elementId: '', selector: 't', tag: 'p', text: '', note: ' ' }, { elementId: 'cta', selector: 'u', tag: 'a', text: 'Go' }];
+  assert.deepEqual(commentsFor('b', picks, { fallback: 'See my message.' }).map(c => c.note), ['bigger', 'See my message.', 'See my message.']);
+  assert.deepEqual(commentsFor('b', [], { fallback: 'See my message.' }), []);
 });
