@@ -254,3 +254,80 @@ async def test_a_failed_routed_record_still_returns_the_route(client, harness: H
     await harness.rooms.settle(r.json()["room_id"])
     errs = [e.data for e in harness.ledger.tail(kind="error") if e.data.get("where") == "orchestrate_record"]
     assert errs and errs[0]["error"] == "OSError: disk full"
+
+
+def studio_harness(vault: Path, tmp_path: Path) -> Harness:
+    h = build(vault, tmp_path, MockScorer(scores(**{"bot:designer": 0.9})))
+    h.add_bot(Bot(name="Designer", role="Design pages", id="designer", studio=True))
+    return h
+
+
+async def test_orchestrate_hands_a_design_to_the_studio_bots_own_conversation(vault: Path, tmp_path: Path):
+    h = studio_harness(vault, tmp_path)
+    old = h.conversations.start_new("designer")
+    h.conversations.record("designer", "an older design", "done", "made")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(h)), base_url="http://localhost") as c:
+        r = await c.post("/orchestrate", json={"text": "Design a page for my honey shop"})
+    out = r.json()
+    assert (out["outcome"], out["bot_id"], out["room_id"]) == ("studio", "designer", None)
+    assert h.rooms.list() == []
+    new = h.conversations.current("designer")
+    assert out["conversation_id"] == new.id != old.id and new.exchanges == []  # the GUI starts the task there
+    ex = h.conversations.current("personal-assistant").exchanges[-1]
+    assert (ex.user, ex.outcome, ex.reply) == ("Design a page for my honey shop", "routed", "(Sent to Designer.)")
+
+
+async def test_orchestrate_reuses_the_studio_bots_empty_conversation(vault: Path, tmp_path: Path):
+    h = studio_harness(vault, tmp_path)
+    empty = h.conversations.start_new("designer")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(h)), base_url="http://localhost") as c:
+        r = await c.post("/orchestrate", json={"text": "Design a page for my honey shop"})
+    assert r.json()["conversation_id"] == empty.id
+
+
+async def test_a_studio_bots_room_attachment_resolves_in_the_vault_and_is_a_numbered_copy(vault: Path, tmp_path: Path):
+    h = studio_harness(vault, tmp_path)
+    design = vault / "designs" / "honey" / "index.html"
+    design.parent.mkdir(parents=True)
+    design.write_text("<!doctype html><title>x</title>")
+    h.rooms.turn_of["s1"] = ("r1", "p1")
+    said = h.rooms._attach(tmp_path, "s1", "designs/honey/index.html", "", bot_id="designer")
+    assert said.startswith("Attached 'index.html'")
+    att = h.rooms._attachments["s1"][0]
+    assert Path(att.path) == vault / "designs" / "honey" / ".versions" / "1.index.html"
+    # another bot's relative path is still its working folder's
+    assert "no file" in h.rooms._attach(tmp_path, "s1", "designs/honey/index.html", "", bot_id="research-partner")
+
+
+async def test_designs_lists_each_studio_conversations_designs_newest_first(vault: Path, tmp_path: Path):
+    h = studio_harness(vault, tmp_path)
+
+    def attach(conv_id: str, slug: str, n: int, att_id: str, title: str) -> None:
+        copy = vault / "designs" / slug / ".versions" / f"{n}.index.html"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_text("<!doctype html>")
+        _, ex = h.conversations.begin("designer", f"design {slug}", conv_id=conv_id)
+        ex.attachments = [{"id": att_id, "title": title, "path": str(copy)}]
+        ex.outcome = "done"
+
+    first = h.conversations.start_new("designer")
+    attach(first.id, "honey", 1, "a1", "Honey shop")
+    attach(first.id, "honey", 2, "a2", "Honey shop")
+    first.updated_at = "2026-11-01T00:00:00+00:00"
+    second = h.conversations.start_new("designer")
+    attach(second.id, "tea", 1, "b1", "Tea room")
+    second.updated_at = "2026-11-02T00:00:00+00:00"
+    plain = tmp_path / "notes.txt"
+    plain.write_text("x")
+    h.conversations.record("research-partner", "notes", "done", "ok").attachments = [{"id": "c1", "title": "Notes", "path": str(plain)}]
+    h.conversations.start_new("designer")  # no design yet: not listed
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(h)), base_url="http://localhost") as c:
+        r = await c.get("/designs")
+    assert r.status_code == 200
+    assert r.json()["designs"] == [
+        {"conversation_id": second.id, "bot_id": "designer", "design": "tea", "title": "Tea room", "name": "index.html",
+         "version": 1, "versions": 1, "attachment_id": "b1", "updated_at": "2026-11-02T00:00:00+00:00"},
+        {"conversation_id": first.id, "bot_id": "designer", "design": "honey", "title": "Honey shop", "name": "index.html",
+         "version": 2, "versions": 2, "attachment_id": "a2", "updated_at": "2026-11-01T00:00:00+00:00"},
+    ]
+    assert str(vault) not in r.text

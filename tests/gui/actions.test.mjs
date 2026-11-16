@@ -123,3 +123,10 @@ test('emptyReplyNote explains a stopped or interrupted exchange with no reply', 
   assert.equal(emptyReplyNote({ outcome: 'done', reply: '' }), '');
   assert.equal(emptyReplyNote({ outcome: 'failed' }), '');
 });
+
+test('designMeta gives the newest version, the count when there are several, and when', () => {
+  const now = new Date('2026-11-16T12:00:00Z');
+  assert.equal(actions.designMeta({ version: 1, versions: 1, updated_at: '2026-11-07T11:40:00Z' }, now), 'Version 1 · Nov 7');
+  assert.match(actions.designMeta({ version: 3, versions: 3, updated_at: now.toISOString() }, now), /^Version 3 · 3 versions · today /);
+  assert.equal(actions.designMeta({}, now), 'Version 1');
+});

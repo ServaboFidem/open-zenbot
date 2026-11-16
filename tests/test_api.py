@@ -1881,3 +1881,29 @@ async def test_a_record_without_a_design_system_source_still_uses_it(client, har
     await client.put(f"/conversations/{cid}/design-system", json={"slug": "acme"})
     harness.conversations.get(cid).design_system_source = ""  # a record made before sources were kept
     assert any("Design system: Acme." in m.content for m in await _task_calls(client, harness))
+
+
+async def test_events_end_only_after_the_exchange_is_saved(client, harness: Harness):
+    """The GUI reloads the conversation on `end`: the reply and its attachments must be there by then, even
+    while the turn note (a model call after the run) is still being written."""
+    import asyncio
+    gate = asyncio.Event()
+
+    async def slow_write(bot, session, *, outcome, previous="", save):
+        await gate.wait()
+        return ""
+
+    harness.turn_notes.write = slow_write
+    harness.provider.script = [completion("Here it is.")]
+    sid = (await client.post("/bots/bot1/tasks", json={"task": "make it"})).json()["session_id"]
+    await wait_for(client, sid, {"done"})
+    conv = harness.conversations.current("bot1")
+    assert conv.exchanges[-1].outcome == "pending"  # the run is over, the exchange not yet saved
+    stream = asyncio.create_task(client.get(f"/sessions/{sid}/events"))
+    await asyncio.sleep(0.3)
+    assert not stream.done()
+    gate.set()
+    ev = await asyncio.wait_for(stream, 5)
+    frames = [json.loads(l[6:]) for l in ev.text.splitlines() if l.startswith("data: ")]
+    assert frames[-1] == {"kind": "end", "state": "done"}
+    assert conv.exchanges[-1].outcome == "done" and conv.exchanges[-1].reply == "Here it is."

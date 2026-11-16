@@ -15,7 +15,7 @@ name each top-level system and run the harness and the tests.
 | `src/music/` | Music discovery: Discogs scan, taste profile, the Soundlore atlas, MusicBrainz and YouTube Music lookups, candidates, the album gate, digests, `music_*` tools, `/music` routes |
 | `src/skills/` | `SKILL.md` loader and catalog; recorder |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, program paths `program-paths.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go) |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, program paths `program-paths.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go) |
 | `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`) |
 | `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, and `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+) |
@@ -35,7 +35,7 @@ for the GUI tests. See `README.md` for the full start sequence.
 
 MCP servers live in `mcp.json` at the repo root (Claude Desktop shape). The
 harness connects them at start (`src/harness/mcp_client.py`); the GUI's MCP
-servers page lists them and asks the user for any keys. **`mcp.json` is
+servers page (Settings > MCP servers) lists them and asks the user for any keys. **`mcp.json` is
 committed: never write a real key, token or password into it**, not even
 temporarily. A key that lands there is public in git history and must be
 rotated.
@@ -214,6 +214,17 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
   used until it is picked again. A picked system that stops loading or has changed source is recorded in the
   ledger (an `error` entry, `where: design_system`) while the task still runs without it. The context block
   says the system governs looks only and ends with `End of design system: <name>.`.
+- **From ZenBot.** When the orchestrator's best fit is a studio bot (`src/rooms/orchestrator.py`), no room opens:
+  `POST /orchestrate` answers `{"outcome": "studio", "bot_id", "conversation_id"}` (a new conversation, or the bot's
+  current one when it is empty) and the GUI opens that bot and starts the task there, where the pane, the forms and
+  the comments are. A room that already matches the message still takes it, and a studio bot that is not the top
+  fit joins a room as before. In a room a studio bot's `attach_file` follows the same rules as one to one
+  (`Harness.attach_target`: `designs/...` against the vault, attached as a numbered copy), but a room has no
+  pane, live forms or comments.
+- **The Design page.** `GET /designs` lists every design made in a studio bot's own conversation, one entry per
+  conversation and design with its newest numbered copy (names and ids, never a path), newest conversation first.
+  A card's thumbnail is the attachment served closed (`?preview=1`), like any other thumbnail. A file attached
+  in a room before designs there became numbered copies is not listed.
 - **Records.** The conversation routes return a record through `_conversation_view` (it carries
   `design_system`, a slug or empty, and `design_system_source`). Keep new conversation fields going through it.
 

@@ -333,6 +333,8 @@ class RoomService:
         self._attachments: dict[str, list[Attachment]] = {}  # session id -> files queued for the post the turn delivers
         # attach_file's path check; the harness sets its own (the workspace plus the allowed folders)
         self.attachable: Callable[[str], Path | str] | None = None
+        # the same check for a named bot, which may resolve the path its own way (a studio bot's designs)
+        self.attach_target: Callable[[str, str], Path | str] | None = None
         self._invites: dict[tuple[str, str], int] = {}  # (room id, root) -> invites so far; in memory only
         self.notes: TurnNotes | None = None  # each bot's turn notes; the harness sets it, None writes and reads none
         # (room id, trigger post id, failed bot) -> files a turn attached before it ended without a post; the lead's
@@ -443,10 +445,10 @@ class RoomService:
             return self._invite(caller, session_id, bot_id, job)
 
         def attach_file(path: str, title: str = "") -> str:
-            _, session_id = current_call.get()
+            caller, session_id = current_call.get()
             if session_id not in self.turn_of and elsewhere is not None:
                 return elsewhere(session_id, path, title)
-            return self._attach(tools.cwd, session_id, path, title)
+            return self._attach(tools.cwd, session_id, path, title, bot_id=caller)
 
         tools.register(
             "invite_to_room",
@@ -494,10 +496,14 @@ class RoomService:
         self.ledger.append("room", caller, room.id, event="invited", bot=bot_id, job=job, root=root)
         return f"Added @{bot_id}. Mention @{bot_id} with the job in your reply to start it."
 
-    def _attach(self, cwd: Path, session_id: str, path: str, title: str) -> str:
+    def _attach(self, cwd: Path, session_id: str, path: str, title: str, bot_id: str = "") -> str:
         if session_id not in self.turn_of:
             return "attach_file works only during a room turn."
-        target = self.attachable(path) if self.attachable else workspace_file(cwd, path)
+        title = title or Path(path).name  # the file's own name: a design is attached as its numbered copy
+        if self.attach_target is not None:
+            target = self.attach_target(bot_id, path)
+        else:
+            target = self.attachable(path) if self.attachable else workspace_file(cwd, path)
         if isinstance(target, str):
             return target
         att = Attachment(uuid4().hex[:10], title or target.name, str(target))

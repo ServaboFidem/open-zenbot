@@ -267,6 +267,7 @@ class Harness:
             self.conversations = Conversations(ConversationStore(ledger_path_for(c.vault_root) / "conversations"), self.ledger)
             self.conversations.load()
         self.rooms.attachable = self.attachable
+        self.rooms.attach_target = self.attach_target
         self.rooms.register_tools(self.tools, elsewhere=self.attach)  # idempotent: a rebind re-registers them on the new rooms
         if self.turn_notes is None:
             self.turn_notes = TurnNotes(self.compactor.generator, self.ledger)
@@ -522,25 +523,10 @@ class Harness:
         session = self.sessions.get(session_id)
         if session is None or not session.conversation_id or session.room_id:
             return "attach_file works only in a conversation or a room turn."
-        bot = self.bots.get(session.bot_id)
-        if bot is not None and bot.studio and not Path(path).is_absolute() and Path(path).parts[:1] == ("designs",):
-            path = str(self.config.vault_root / path)  # designs live in the vault, not the working folder
-        target = self.attachable(path)
+        target = self.attach_target(session.bot_id, path)
         if isinstance(target, str):
             return target
-        title = title or target.name  # the file's own name, before the swap to its numbered copy
-        if bot is not None and bot.studio:
-            # a design is attached as its fixed copy or not at all: the live file would change under the revision
-            try:
-                copy = design_studio.snapshot(self.config.vault_root, target)
-            except design_studio.SnapshotRefused as e:
-                return f"Not attached: {e}."
-            if copy is not None:
-                kept = self.attachable(str(copy))
-                if isinstance(kept, str):
-                    return kept
-                target = copy
-        att = Attachment(uuid4().hex[:10], title, str(target))
+        att = Attachment(uuid4().hex[:10], title or Path(path).name, str(target))  # the file's own name, not its numbered copy's
         self.task_attachments.setdefault(session_id, []).append(att)
         return f"Attached {att.title!r}; it will show under your reply."
 
@@ -565,6 +551,23 @@ class Harness:
         f = allowed_folders.reachable(self.config.vault_root)
         f.full.insert(0, self.tools.cwd)
         return f
+
+    def attach_target(self, bot_id: str, path: str) -> Path | str:
+        """The file `attach_file` attaches for this bot, in a one-to-one task or a room turn, or the refusal.
+        A studio bot's relative `designs/...` path is the vault's, and its design is attached as a numbered copy."""
+        bot = self.bots.get(bot_id)
+        studio = bot is not None and bot.studio
+        if studio and not Path(path).is_absolute() and Path(path).parts[:1] == ("designs",):
+            path = str(self.config.vault_root / path)  # designs live in the vault, not the working folder
+        target = self.attachable(path)
+        if isinstance(target, str) or not studio:
+            return target
+        # a design is attached as its fixed copy or not at all: the live file would change under the revision
+        try:
+            copy = design_studio.snapshot(self.config.vault_root, target)
+        except design_studio.SnapshotRefused as e:
+            return f"Not attached: {e}."
+        return target if copy is None else self.attachable(str(copy))
 
     def attachable(self, path: str) -> Path | str:
         """`attach_file`'s check, for one-to-one tasks and rooms alike, and again when the file is served."""
@@ -2105,6 +2108,29 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(404, "no such conversation")
         return _conversation_view(c)
 
+    @app.get("/designs")
+    async def list_designs() -> dict[str, Any]:
+        """Every design made in a studio bot's own conversation, newest conversation first, for the Design page:
+        one entry per conversation and design, with its newest numbered copy. Names only, never a path."""
+        found: list[dict[str, Any]] = []
+        studio = {bid for bid, b in h.bots.items() if b.studio}
+        for c in h.conversations.recent(studio, 10_000):
+            by_design: dict[str, dict[str, Any]] = {}
+            for ex in c.exchanges:
+                for a in ex.attachments:
+                    rev = design_studio.revision_of(h.config.vault_root, Path(a["path"]))
+                    if rev is None:
+                        continue
+                    slug, version, name = rev
+                    d = by_design.setdefault(slug, {"seen": set()})
+                    d["seen"].add((name, version))
+                    d.update(title=a["title"], name=name, version=version, attachment_id=a["id"])  # the latest attached
+            found += [{"conversation_id": c.id, "bot_id": c.owner, "design": slug, "title": d["title"], "name": d["name"],
+                       "version": d["version"], "versions": len(d["seen"]), "attachment_id": d["attachment_id"],
+                       "updated_at": c.updated_at} for slug, d in by_design.items()]
+        out, _ = exclusion.redact_obj({"designs": found})
+        return out
+
     @app.get("/design-systems")
     async def list_design_systems() -> dict[str, Any]:
         return {"design_systems": design_systems.available(h.config.design_systems_dir, h.config.vault_root)}
@@ -2344,7 +2370,11 @@ def create_app(h: Harness) -> FastAPI:
             try:
                 while True:
                     s = h.sessions[session_id]
-                    if s.state in (SessionState.done, SessionState.stopped, SessionState.failed) and q.empty():
+                    # `end` tells the GUI to reload the conversation, so it waits for the run's task to finish too:
+                    # the exchange (reply and attachments) is saved after the turn note, which is a model call
+                    task = h.tasks.get(session_id)
+                    over = task is None or task.done()
+                    if s.state in (SessionState.done, SessionState.stopped, SessionState.failed) and over and q.empty():
                         yield _sse({"kind": "end", "state": str(s.state)})
                         return
                     try:
@@ -2403,6 +2433,20 @@ def create_app(h: Harness) -> FastAPI:
                 h.conversations.record(ASSISTANT_ID, body.text, "routed", f"(Sent to the room {room.name if room else ''!r}.)")
             except Exception as e:  # noqa: BLE001 - the room is open; a failed record must not turn the route into a 500
                 h.ledger.append("error", ASSISTANT_ID, "", where="orchestrate_record", error=f"{type(e).__name__}: {e}")
+        if out.outcome == "studio" and out.bot_id:
+            h._last_routed_at = datetime.now(timezone.utc)
+            bot = h.bots[out.bot_id]
+            try:
+                # a design starts in a conversation of its own; the GUI opens it and starts the task there
+                conv = h.conversations.current(bot.id)
+                if conv is None or conv.exchanges:
+                    conv = h.conversations.start_new(bot.id)
+                h.conversations.record(ASSISTANT_ID, body.text, "routed", f"(Sent to {bot.name}.)")
+            except Exception as e:  # noqa: BLE001 - without a conversation to hand over to, ZenBot answers itself
+                err = f"{type(e).__name__}: {e}"
+                h.ledger.append("error", ASSISTANT_ID, "", where="orchestrate_record", error=err)
+                return {"outcome": "task", "fallback": err}
+            return {**out.to_dict(), "conversation_id": conv.id}
         return out.to_dict()
 
     @app.put("/rooms/{room_id}/archived")

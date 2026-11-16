@@ -30,6 +30,11 @@ export function recentConversationMeta(c, botName, now = new Date()) {
   const n = Number(c?.exchanges) || 0;
   return [botName || c?.owner || 'Unknown bot', `${n} ${n === 1 ? 'message' : 'messages'}`, conversationWhen(c, now)].filter(Boolean).join(' · ');
 }
+// One card of the Design page: which version is the newest, how many there are, when it was last worked on.
+export function designMeta(d, now = new Date()) {
+  const n = Number(d?.versions) || 0;
+  return [`Version ${Number(d?.version) || 1}`, n > 1 ? `${n} versions` : '', conversationWhen(d, now)].filter(Boolean).join(' · ');
+}
 
 // An exchange that ended without a reply still says why, instead of an empty bubble. Same words as the
 // harness's reply_text (conversations.py), without its parentheses.

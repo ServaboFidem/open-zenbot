@@ -250,3 +250,38 @@ async def test_a_routed_message_lands_in_the_rooms_current_conversation(ledger: 
     await svc.settle(room.id)
     assert [p.text for p in room.current_posts()][:1] == ["and the hive?"]
     assert all(p.conversation == conv.id for p in room.current_posts())
+
+
+def with_studio(svc: RoomService, bot_id: str = "writer") -> None:
+    svc.bots[bot_id].studio = True
+
+
+async def test_a_studio_bot_on_top_is_handed_the_message_without_a_room(ledger: Ledger, tmp_path: Path):
+    svc = make(provider(), ledger, tmp_path)
+    with_studio(svc)
+    o = orch(MockScorer(scores(**{"bot:writer": 0.9, "bot:critic": 0.85})), svc, ledger)
+    out = await o.route("Design a page for my honey shop")
+    assert (out.outcome, out.bot_id, out.room_id) == ("studio", "writer", None)
+    assert out.to_dict()["bot_id"] == "writer"
+    assert svc.list() == []
+    routed = [e.data for e in ledger.tail(kind="room") if e.data.get("event") == "routed"]
+    assert routed[-1]["outcome"] == "studio" and routed[-1]["bot"] == "writer"
+
+
+async def test_a_studio_bot_in_second_place_still_joins_a_room(ledger: Ledger, tmp_path: Path):
+    svc = make(provider(), ledger, tmp_path)
+    with_studio(svc)
+    o = orch(MockScorer(scores(**{"bot:writer": 0.85, "bot:critic": 0.9})), svc, ledger)
+    out = await o.route("Research honey shops, then design a page")
+    assert out.outcome == "room" and svc.get(out.room_id).members == ["lead", "critic", "writer"]
+    await svc.settle(out.room_id)
+
+
+async def test_a_matching_room_still_wins_over_a_studio_bot(ledger: Ledger, tmp_path: Path):
+    svc = make(provider(), ledger, tmp_path)
+    with_studio(svc)
+    room = svc.create("Honey shop", ["lead", "writer"], lead="lead", topic="A honey shop page")
+    o = orch(MockScorer(scores(**{f"room:{room.id}": 0.9, "bot:writer": 0.9})), svc, ledger)
+    out = await o.route("Make the hero bigger")
+    assert (out.outcome, out.room_id, out.created) == ("room", room.id, False)
+    await svc.settle(room.id)

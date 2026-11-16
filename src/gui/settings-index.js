@@ -7,6 +7,8 @@ export const PANELS = [
   { id: 'harness', name: 'Harness settings', description: 'The models your bots, summaries and the decider run on.' },
   { id: 'providers', name: 'Model providers', description: 'Where models come from: providers, their API keys and which models are enabled.' },
   { id: 'tools', name: 'Harness Tools', description: 'Toolkits built into the harness: image generation and ImageMagick.' },
+  { id: 'mcps', name: 'MCP servers', description: 'Tools your bots can reach: the servers in mcp.json, their API keys and what they need installed.' },
+  { id: 'skills', name: 'Skills', description: 'Good work, worth repeating: the skills in the catalog and which bots carry them.' },
   { id: 'agents', name: 'Coding agents', description: 'Claude Code and Codex on this computer: found, signed in, and whether bots may hand work to them.' },
   { id: 'folders', name: 'Allowed Folders', description: 'The folders outside the vault that bots may read or write.' },
   { id: 'tracing', name: 'Tracing', description: 'Where errors and traces go: Sentry, GlitchTip and Langfuse.' },
@@ -45,6 +47,15 @@ export const SECTIONS = [
     "Images are saved in the workspace's generated-images folder and attached to the bot's reply.",
     'ImageMagick: the full path of the magick program the harness runs.', 'Program path',
   ]),
+  whole('mcps', [
+    'MCP servers listed in mcp.json connect when the harness starts. Each line is what the decider reads when it chooses which servers a task gets.',
+    'A server that needs an API key asks for it on its card; a key saved there wins over .env and reconnects the server at once.',
+    'API key', 'Recheck', 'needs install', 'connected', 'failed', 'tools',
+  ]),
+  whole('skills', [
+    'Skills live in the harness catalog. Teach one by recording a task, then let the decider suggest which bot should carry it.',
+    'Fit suggestions', 'Suggest a fit', 'Bots with this skill', 'Frontmatter',
+  ]),
   section('agents', 'Coding agents', [
     'Let bots hand a coding job to a program on this computer. The program works in one folder you allow, and you see what it changed.',
     'Claude Code', 'Codex', 'Detected command-line programs (CLIs): where each is, its version and whether it is signed in.',
@@ -71,13 +82,18 @@ export const SECTIONS = [
   section('about', 'Open source', ['Authored source is MIT licensed. See README.md for setup, source locations, and dependency licenses.', 'License']),
 ];
 
-// The sections headed by data, for the search: each provider and each harness tool, with the id its card carries.
-export function liveSections(providers, tools) {
+// The sections headed by data, for the search: each provider, harness tool, MCP server and skill, with the id its
+// card carries. `mcps` is GET /mcps (an object by server name); `skills` is the catalog list (MCP entries left out).
+export function liveSections(providers, tools, mcps, skills) {
   const named = x => !!x && typeof x.name === 'string' && !!x.name && x.id != null;
   return [
     ...(providers || []).filter(named).map(p => ({ panel: 'providers', anchor: anchorId('providers', p.id), title: p.name,
       words: (p.models || []).flatMap(m => [m?.id, m?.name]).filter(w => typeof w === 'string') })),
     ...(tools || []).filter(named).map(t => ({ panel: 'tools', anchor: anchorId('tools', t.id), title: t.name, words: [t.summary].filter(w => typeof w === 'string') })),
+    ...Object.entries(mcps && typeof mcps === 'object' && !Array.isArray(mcps) ? mcps : {}).filter(([name, m]) => !!name && !!m && typeof m === 'object')
+      .map(([name, m]) => ({ panel: 'mcps', anchor: anchorId('mcps', name), title: name, words: [m.use, ...(Array.isArray(m.tools) ? m.tools : [])].filter(w => typeof w === 'string') })),
+    ...(Array.isArray(skills) ? skills : []).filter(s => !!s && s.kind !== 'mcp' && typeof s.name === 'string' && !!s.name && typeof s.ref === 'string' && !!s.ref)
+      .map(s => ({ panel: 'skills', anchor: anchorId('skills', s.ref), title: s.name, words: [s.use].filter(w => typeof w === 'string') })),
   ];
 }
 

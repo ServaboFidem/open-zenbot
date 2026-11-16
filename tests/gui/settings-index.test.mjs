@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PANELS, SECTIONS, anchorId, liveSections, searchSettings } from '../../src/gui/settings-index.js';
 
-test('panels are the nine, in order', () => {
-  assert.deepEqual(PANELS.map(p => p.id), ['harness', 'providers', 'tools', 'agents', 'folders', 'tracing', 'memory', 'apps', 'about']);
+test('panels are the eleven, in order', () => {
+  assert.deepEqual(PANELS.map(p => p.id), ['harness', 'providers', 'tools', 'mcps', 'skills', 'agents', 'folders', 'tracing', 'memory', 'apps', 'about']);
   for (const p of PANELS) assert.ok(p.name && p.description);
 });
 test('every section belongs to a panel and its anchor is anchorId', () => {
@@ -89,4 +89,17 @@ test('live sections carry the id of their card', () => {
 test('live sections survive nothing loaded and odd entries', () => {
   assert.deepEqual(liveSections(null, null), []);
   assert.deepEqual(liveSections([null, { id: 'x' }, { id: 'y', name: 'Y' }], undefined), [{ panel: 'providers', anchor: 'settings-providers-y', title: 'Y', words: [] }]);
+});
+
+test('MCP servers and skills are settings panels, found by name and by their cards', () => {
+  assert.equal(searchSettings('mcp servers')[0].panel, 'mcps');
+  assert.equal(searchSettings('skills')[0].panel, 'skills');
+  const live = liveSections(null, null, { pexels: { use: 'Free stock photos.', tools: ['photos_search'] }, odd: null }, [
+    { ref: 'research-brief', name: 'Research brief', kind: 'skill', use: 'Dig into a topic.' }, { ref: 'mcp:pexels', name: 'pexels', kind: 'mcp' }, null]);
+  assert.deepEqual(live, [
+    { panel: 'mcps', anchor: 'settings-mcps-pexels', title: 'pexels', words: ['Free stock photos.', 'photos_search'] },
+    { panel: 'skills', anchor: 'settings-skills-research-brief', title: 'Research brief', words: ['Dig into a topic.'] },
+  ]);
+  assert.equal(searchSettings('photos_search', live)[0].anchor, 'settings-mcps-pexels');
+  assert.equal(searchSettings('research brief', live)[0].anchor, 'settings-skills-research-brief');
 });

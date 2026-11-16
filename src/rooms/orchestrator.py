@@ -1,6 +1,8 @@
 """The orchestrator: when the user messages ZenBot, one scoring call decides
 whether the message continues an existing topic room, opens a new room with
-the best-fit specialists, or is answered by ZenBot directly.
+the best-fit specialists, goes to a studio bot's own conversation (a design
+bot works one to one: its preview pane, question forms and comments are not
+in a room), or is answered by ZenBot directly.
 
 It never imports the harness; the harness wires it in."""
 
@@ -37,15 +39,16 @@ class OrchestratorConfig:
 
 @dataclass
 class RouteOutcome:
-    outcome: str  # "room" | "task"
+    outcome: str  # "room" | "studio" | "task"
     room_id: str | None = None
     created: bool = False
     scores: dict[str, float] = field(default_factory=dict)
     fallback: str | None = None
+    bot_id: str | None = None  # "studio": the bot whose own conversation takes the message
 
     def to_dict(self) -> dict[str, Any]:
         return {"outcome": self.outcome, "room_id": self.room_id, "created": self.created,
-                "scores": self.scores, "fallback": self.fallback}
+                "scores": self.scores, "fallback": self.fallback, "bot_id": self.bot_id}
 
 
 class Orchestrator:
@@ -62,7 +65,7 @@ class Orchestrator:
 
     def _done(self, out: RouteOutcome) -> RouteOutcome:
         self.ledger.append("room", self.lead_id, out.room_id or "", event="routed", outcome=out.outcome,
-                           created=out.created, fallback=out.fallback)
+                           created=out.created, fallback=out.fallback, **({"bot": out.bot_id} if out.bot_id else {}))
         return out
 
     def _candidates(self, new_topic: bool) -> list[Room]:
@@ -113,6 +116,9 @@ class Orchestrator:
                            BandConfig(cfg.band_width, cfg.k, cfg.low_confidence))
         if band.outcome == Outcome.act and band.winners:
             winners = band.winners
+            if getattr(self.bots[winners[0]], "studio", False):
+                # the best fit designs in its studio, which a room does not have: no room, the caller hands over
+                return self._done(RouteOutcome("studio", scores=scores, bot_id=winners[0]))
             name, topic = await self.topic_writer(text)
             room = self.rooms.create(name, [self.lead_id, *winners], lead=self.lead_id, topic=topic)
             if context:
