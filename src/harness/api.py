@@ -48,7 +48,7 @@ import src.decider.adapters.decision_model  # noqa: F401 - registers the built-i
 import src.providers.openrouter  # noqa: F401 - registers the built-in provider kind
 from src.providers import registry as providers
 from src.decider import registry as scorers
-from src.providers.interface import Provider, ProviderError, UnboundProvider
+from src.providers.interface import Provider, ProviderAuthError, ProviderError, UnboundProvider
 from src.skills.catalog import Catalog
 from src.skills.loader import SkillConfig
 
@@ -85,7 +85,8 @@ from src.music.service import MANAGED_BY as MUSIC_MANAGED_BY, MusicService
 from src.generation.images import DEFAULT_MODEL as DEFAULT_IMAGE_MODEL, ImageConfig, ImageGenerator
 from src.providers.models import ModelInfo, ModelLister, guess_kinds
 from src.providers.probe import ProbeJobs
-from src.providers.store import KINDS as PROVIDER_KINDS, PRESETS as PROVIDER_PRESETS, ProviderStore, ProviderStoreError
+from src.providers.secrets import Secret
+from src.providers.store import KINDS as PROVIDER_KINDS, OPENROUTER_BASE, PRESETS as PROVIDER_PRESETS, ProviderStore, ProviderStoreError
 from .model_roles import ROLE_LABELS, ROLES, Choice, ModelRoles, load_bot_models, save_bot_models
 from .models_setup import build as build_models, check_choice, default_models, make_provider, roles_from_config
 from .stubs import InjectAllSelector
@@ -511,11 +512,21 @@ class Harness:
         c = self.config
         return {
             "provider": self.provider.kind, "model": c.model, "scorer": self.scorer.kind if self.scorer else None,
-            "decision_model": c.decision_model, "key_set": self.bound,
+            "decision_model": c.decision_model, "key_set": self.bound, "openrouter_key": self.has_openrouter_key(),
             "provider_kinds": providers.kinds(), "scorer_kinds": scorers.kinds(), "memory": self.memory.kind if self.memory else None,
             "owner": self.owner(),
             "media_trusted_hosts": list(self.media.hosts) if self.media else [],
         }
+
+    def has_openrouter_key(self) -> bool:
+        """Whether any OpenRouter provider in providers.json has a key that resolves (the first-start screen asks otherwise)."""
+        store = self.provider_store
+        if store is None:
+            return False
+        for e in store.entries.values():
+            if e.kind == "openrouter" and (secret := store.secret(e.id)) is not None and secret.reveal():
+                return True
+        return False
 
     def _design_folder(self, bot: Bot, conv: Any, brief: str, session_id: str) -> str:
         """The slug of this studio conversation's own design folder. The harness picks it, not the bot, so two
@@ -736,6 +747,10 @@ class SettingsIn(BaseModel):
     model: str | None = None
     scorer: str | None = None  # a scorer kind; omitted keeps the current one, "" clears it
     decision_model: str | None = None
+
+
+class OpenRouterKeyIn(BaseModel):
+    key: str
 
 
 class ImageToolIn(BaseModel):
@@ -1575,6 +1590,38 @@ def create_app(h: Harness) -> FastAPI:
         h.summary_provider, h.openrouter_ref = None, None
         h.rebind(provider, scorer)
         h.ledger.append(Kind.settings, "", "", event="provider", provider=body.kind, model=body.model, scorer=scorer_kind, key_ref=ref)
+        return h.settings()
+
+    @app.post("/settings/openrouter-key")
+    async def set_openrouter_key(body: OpenRouterKeyIn) -> dict[str, Any]:
+        """The first-start screen's one step: check the key with OpenRouter, keep it in providers.json (so it
+        survives a restart) and bind the models on it. A refused or unchecked key leaves the store untouched."""
+        key = body.key.strip()
+        if not key:
+            raise HTTPException(422, "key is empty")
+        exclusion.register_secret_value(key)  # before anything can log it
+        store = h.provider_store
+        entry = next((e for e in store.entries.values() if e.kind == "openrouter"), None)
+        pid = entry.id if entry else "openrouter"
+        try:
+            await h.model_lister.list(pid, "openrouter", OPENROUTER_BASE, Secret(key), refresh=True)
+        except ProviderAuthError:
+            raise HTTPException(422, "OpenRouter did not accept that key.") from None
+        except ProviderError:
+            raise HTTPException(503, "Could not reach OpenRouter. Check your connection and try again.") from None
+        if entry is None:  # removed since the first start: add it back as the seed made it
+            entry = store.add("OpenRouter", "openrouter", key=key)
+            store.set_models(entry.id, default_models(h.config))
+        else:
+            store.update(entry.id, key=key)
+        h.model_lister.forget(entry.id)
+        h.ledger.append(Kind.settings, "", "", event="provider_changed", provider=entry.id, key_changed=True)
+        roles = h.model_roles()
+        try:
+            h.apply_models(roles)
+        except ProviderStoreError as ex:
+            raise HTTPException(422, str(ex)) from None
+        roles.save(h.config.vault_root)
         return h.settings()
     app.state.harness = h
 

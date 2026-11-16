@@ -77,6 +77,7 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     warmup: () => get('/warmup'),
     settings: () => get('/settings'),
     setProvider: ({ kind, key, model = null, scorer = null, decision_model = null }) => post('/settings/provider', { kind, key, model, scorer, decision_model }),
+    saveOpenRouterKey: key => post('/settings/openrouter-key', { key }),
     toolSettings: () => get('/settings/tools'),
     providers: () => get('/settings/providers'),
     addProvider: ({ name, kind, base_url = null, key = null, key_ref = null, no_key = false }) => post('/settings/providers', { name, kind, base_url, key, key_ref, no_key: !!no_key }),
