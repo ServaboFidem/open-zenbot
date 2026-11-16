@@ -5,6 +5,7 @@ const { saveMedia } = require('./save-media.cjs');
 const { loadEnvFile } = require('./env-file.cjs');
 const { createArrival } = require('./arrival.cjs');
 const { applySavedDsn } = require('./tracing-settings.cjs');
+const { allowFrameNavigation } = require('./frame-nav.cjs');
 
 // first: every setting below reads the environment; the repo's .env fills what the shell left unset
 const envLoaded = loadEnvFile(path.join(__dirname, '..', '..', '.env'));
@@ -13,6 +14,9 @@ if (envLoaded.length) console.log(`.env: ${envLoaded.length} ${envLoaded.length 
 // Settings > Tracing's saved DSN wins over .env (and '' saved turns it off); the preload reads the same env
 const dsnSource = applySavedDsn();
 if (dsnSource === 'saved') console.log('sentry: DSN from vault-settings/tracing.json');
+
+// The harness this app talks to: frame navigation, arrival polling and Save… all name the same base.
+const harnessBase = () => (process.env.ZEN_HARNESS_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
 
 // ZEN_GLITCHTIP_DSN set: errors and crashes from the shell, errors and traces from the renderer, go to GlitchTip.
 // Started before the app is ready. The renderer reaches it over IPC only (the bundled preload), never the network.
@@ -51,11 +55,16 @@ function createWindow() {
   win.webContents.on('will-navigate', (event, url) => {
     if (url !== win.webContents.getURL()) event.preventDefault();
   });
+  // a framed page (a bot's design) can navigate its own frame, which will-navigate never sees: keep every
+  // subframe on the harness's own origin or this machine
+  win.webContents.on('will-frame-navigate', (event) => {
+    if (!event.isMainFrame && !allowFrameNavigation(event.url, harnessBase())) event.preventDefault();
+  });
   win.loadURL('app://openzenbot/index.html');
 }
 // A new weekly digest: poll the harness every 60 s; the notice's click brings the window forward and opens Music > This week.
 function startArrivalPolling() {
-  const base = (process.env.ZEN_HARNESS_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
+  const base = harnessBase();
   const store = path.join(app.getPath('userData'), 'arrival-notified.json');
   const fs = require('node:fs');
   const arrival = createArrival({
@@ -93,7 +102,7 @@ app.whenReady().then(() => {
   });
   // Save…: the page names a harness URL and a file name; the dialog names the path; nothing else is written
   ipcMain.handle('save-media', (event, args) => saveMedia(args, {
-    harnessBase: (process.env.ZEN_HARNESS_URL || 'http://127.0.0.1:8765').replace(/\/+$/, ''),
+    harnessBase: harnessBase(),
     dialog: { showSaveDialog: opts => dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), opts) },
     fetch: url => net.fetch(url),
     storePath: path.join(app.getPath('userData'), 'media-save.json'),

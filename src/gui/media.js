@@ -121,8 +121,12 @@ export function attachmentItem(att, url) {
 }
 
 /** Where a bot-made page's thumbnail frame loads from: the harness serves it network-closed, since it
- *  runs as the reply renders. View frames `src` itself, after the user's click. */
+ *  runs as the reply renders. */
 export const previewFrameUrl = src => `${src}${src.includes('?') ? '&' : '?'}preview=1`;
+
+/** Where the viewer frames a bot-made page: opened with the single-use token it asked for on the user's
+ *  click, or `src` itself (which the harness serves network-closed) while it waits or when none came. */
+export const viewerFrameUrl = (src, token) => (token ? `${src}${src.includes('?') ? '&' : '?'}open=${encodeURIComponent(token)}` : src);
 
 /** The URL's host is a trusted host or a subdomain of one. */
 export function isTrusted(url, hosts) {
@@ -133,11 +137,15 @@ export function isTrusted(url, hosts) {
 
 const viaHarness = (base, url) => `${base}/media?url=${encodeURIComponent(url)}`;
 
-/** Where a remote preview loads from, or null while it waits for the user's click. */
+const withConsent = (href, token) => (token ? `${href}&ok=${encodeURIComponent(token)}` : href);
+
+/** Where a remote preview loads from, or null while it waits for the user's click. `unlocked` maps each
+ *  URL the user clicked to the consent token the harness gave for it. */
 export function previewUrl(url, { base, trusted, unlocked }) {
   if (isTrusted(url, trusted)) return viaHarness(base, url);
-  return unlocked?.has(url) ? viaHarness(base, url) + '&ok=1' : null;
+  const token = unlocked?.get(url);
+  return token ? withConsent(viaHarness(base, url), token) : null;
 }
 
-/** What Save… fetches: an attachment as served, remote media with the click flag (Save… is a click). */
-export const saveUrl = (item, base) => (item.local ? item.src : viaHarness(base, item.src) + '&ok=1');
+/** What Save… fetches: an attachment as served, remote media with its consent token (Save… is a click). */
+export const saveUrl = (item, base, token) => (item.local ? item.src : withConsent(viaHarness(base, item.src), token));

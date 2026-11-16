@@ -52,8 +52,15 @@ def jpeg(request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, content=b"\xff\xd8jpegbytes", headers={"Content-Type": "image/jpeg"})
 
 
-def media(url: str, ok: bool = False) -> str:
-    return "/media?" + str(httpx.QueryParams({"url": url, **({"ok": "1"} if ok else {})}))
+def media(url: str, ok: str = "") -> str:
+    return "/media?" + str(httpx.QueryParams({"url": url, **({"ok": ok} if ok else {})}))
+
+
+async def consent(client, url: str) -> str:
+    """The token the GUI gets for `url` on the user's click."""
+    r = await client.post("/media/consent", json={"urls": [url]})
+    assert r.status_code == 200
+    return r.json()["tokens"][url]
 
 
 def test_trusted_hosts_default_and_env():
@@ -74,8 +81,28 @@ async def test_untrusted_needs_the_click(client, harness):
     harness.media = proxy(jpeg)
     r = await client.get(media("https://cdn.example.net/a.jpg"))
     assert r.status_code == 403
-    r = await client.get(media("https://cdn.example.net/a.jpg", ok=True))
+    r = await client.get(media("https://cdn.example.net/a.jpg", ok=await consent(client, "https://cdn.example.net/a.jpg")))
     assert r.status_code == 200 and r.content == b"\xff\xd8jpegbytes"
+
+
+async def test_the_click_cannot_be_claimed_with_a_flag_or_another_urls_token(client, harness):
+    """A bot-made page can navigate its own frame to /media with any query: only a token for this URL counts."""
+    harness.media = proxy(jpeg)
+    other = await consent(client, "https://cdn.example.net/a.jpg")
+    for ok in ("1", "true", other, "\u00e9"):
+        assert (await client.get(media("https://collector.example.net/?d=secret", ok=ok))).status_code == 403
+    token = await consent(client, "https://cdn.example.net/a.jpg")
+    for _ in range(2):  # a video's range requests reuse the token
+        assert (await client.get(media("https://cdn.example.net/a.jpg", ok=token))).status_code == 200
+
+
+async def test_consent_is_json_only_and_bounded(client):
+    body = '{"urls": ["https://cdn.example.net/a.jpg"]}'
+    for kind in ("text/plain", "application/x-www-form-urlencoded"):  # what a page elsewhere can send without a preflight
+        r = await client.post("/media/consent", content=body, headers={"Content-Type": kind})
+        assert r.status_code in (415, 422) and "tokens" not in r.text
+    assert (await client.post("/media/consent", json={"urls": ["https://a/x"] * 21})).status_code == 422
+    assert (await client.post("/media/consent", json={"urls": ["https://a/" + "x" * 4096]})).status_code == 422
 
 
 async def test_trusted_streams_with_headers(client, harness):
@@ -111,7 +138,7 @@ async def test_html_at_an_image_url_is_415(client, harness):
 
 async def test_private_address_refused_even_when_clicked(client, harness):
     harness.media = proxy(jpeg, addresses={"intranet.local": ["127.0.0.1"]})
-    assert (await client.get(media("http://intranet.local/a.png", ok=True))).status_code == 403
+    assert (await client.get(media("http://intranet.local/a.png", ok=await consent(client, "http://intranet.local/a.png")))).status_code == 403
 
 
 async def test_redirect_to_private_address_refused(client, harness):
@@ -133,7 +160,7 @@ async def test_redirect_to_an_untrusted_host_waits_for_the_click(client, harness
 
     harness.media = proxy(handler)
     assert (await client.get(media("https://images.pexels.com/p/1.jpeg"))).status_code == 403
-    r = await client.get(media("https://images.pexels.com/p/1.jpeg", ok=True))
+    r = await client.get(media("https://images.pexels.com/p/1.jpeg", ok=await consent(client, "https://images.pexels.com/p/1.jpeg")))
     assert r.status_code == 200 and r.content == b"\xff\xd8jpegbytes"
 
 
@@ -201,7 +228,7 @@ async def test_upstream_404_is_404(client, harness):
 
 async def test_non_http_scheme_is_400(client, harness):
     harness.media = proxy(jpeg)
-    assert (await client.get(media("file:///C:/x.png", ok=True))).status_code == 400
+    assert (await client.get(media("file:///C:/x.png", ok=await consent(client, "file:///C:/x.png")))).status_code == 400
 
 
 async def test_settings_lists_trusted_hosts(client):

@@ -112,6 +112,27 @@ test('startTask sends the conversation fields', async () => {
   assert.ok(calls.every(c => new URL(c.url).pathname === '/bots/b/tasks' && c.method === 'POST'));
 });
 
+test('startTask sends design comments only when there are some', async () => {
+  const { fetch, calls } = fakeFetch();
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  const comments = [{ attachment_id: 'a2', element_id: 'hero', selector: 'body > h1', tag: 'h1', text: 'Hi', note: 'bigger' }];
+  await api.startTask('b', 'See my comments on the design.', { conversationId: 'c1', designComments: comments });
+  await api.startTask('b', 'go on', { conversationId: 'c1', designComments: [] });
+  await api.startTask('b', 'go on', { conversationId: 'c1' });
+  assert.deepEqual(calls[0].body, { task: 'See my comments on the design.', conversation_id: 'c1', conversation: true, design_comments: comments });
+  assert.equal('design_comments' in calls[1].body, false);
+  assert.equal('design_comments' in calls[2].body, false);
+});
+
+test('design system routes list the systems and put the pick on the conversation', async () => {
+  const { fetch, calls } = fakeFetch();
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  await api.designSystems(); await api.setDesignSystem('c1', 'default'); await api.setDesignSystem('c1', null);
+  assert.deepEqual(calls.map(c => `${c.method} ${new URL(c.url).pathname}`), ['GET /design-systems', 'PUT /conversations/c1/design-system', 'PUT /conversations/c1/design-system']);
+  assert.deepEqual(calls[1].body, { slug: 'default' });
+  assert.deepEqual(calls[2].body, { slug: null });
+});
+
 test('conversation endpoints hit the right paths', async () => {
   const { fetch, calls } = fakeFetch();
   const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
@@ -182,6 +203,23 @@ test('importEvents opens the import stream and closes it on end', () => {
 test('conversation attachment urls are built like room ones', () => {
   const api = createApi({ baseUrl: 'http://127.0.0.1:8765/', fetch: async () => {} });
   assert.equal(api.conversationAttachmentUrl('c 1', 'a/1'), 'http://127.0.0.1:8765/conversations/c%201/attachments/a%2F1');
+});
+
+test('an open token is asked for by POST to the attachment url itself, and only on the harness', async () => {
+  const { fetch, calls } = fakeFetch({ 'POST /conversations/c1/attachments/a1/open': { status: 200, body: { token: 't0k' } } });
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  assert.equal(await api.openToken(api.conversationAttachmentUrl('c1', 'a1')), 't0k');
+  assert.deepEqual(calls.map(c => `${c.method} ${c.url}`), ['POST http://127.0.0.1:8765/conversations/c1/attachments/a1/open']);
+  await assert.rejects(api.openToken('https://evil.test/conversations/c1/attachments/a1'));
+  await assert.rejects(api.openToken('http://127.0.0.1:8765.evil.test/x'));
+  assert.equal(calls.length, 1);
+});
+
+test('media consent asks for a token per url', async () => {
+  const { fetch, calls } = fakeFetch({ 'POST /media/consent': { status: 200, body: { tokens: { 'https://a/b.png': 'sig' } } } });
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  assert.deepEqual(await api.mediaConsent(['https://a/b.png']), { 'https://a/b.png': 'sig' });
+  assert.deepEqual(calls[0].body, { urls: ['https://a/b.png'] });
 });
 
 test('tool settings read and change one harness tool', async () => {

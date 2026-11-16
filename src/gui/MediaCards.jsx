@@ -1,14 +1,15 @@
 // Preview cards for the media in a bot's reply: images and video in a grid with Save…, Open and Copy
 // link under each; PDFs, diagrams and other files as compact cards with Save… and View; a viewer that
 // shows an item large inside the app. Remote media loads through the harness (media.js previewUrl);
-// a host off the trusted list waits for the user's click, and that click unlocks only that URL, for
-// as long as the conversation is open. Bot-made pages are framed sandboxed, never same-origin.
+// a host off the trusted list waits for the user's click, and that click unlocks only that URL (the
+// harness gives a consent token for it), for as long as the conversation is open. Bot-made pages are framed sandboxed, never same-origin, and
+// network-closed; only the viewer, once the user opens one, asks the harness for a single-use open token.
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Spinner } from '@fluentui/react-components';
 import { ArrowDownload20Regular, Copy20Regular, Dismiss24Regular, DocumentPdf24Regular, DocumentText24Regular, Eye20Regular, Flowchart24Regular, Image24Regular, Open20Regular, Video24Regular } from '@fluentui/react-icons';
-import { previewFrameUrl, previewUrl, saveUrl } from './media.js';
+import { previewFrameUrl, previewUrl, saveUrl, viewerFrameUrl } from './media.js';
 import { loadPdf, renderPage, usingPdf } from './pdf.js';
-import { harnessUrl } from './api';
+import { createApi, harnessUrl } from './api';
 
 const DEFAULT_TRUSTED = ['images.pexels.com', 'videos.pexels.com'];
 const MAX_VIEWER_PAGES = 50;
@@ -17,18 +18,25 @@ export const MediaContext = createContext(null);
 
 /** Where previews load from, which hosts load at once, and which URLs the user has unlocked in this conversation. */
 export function MediaProvider({ base, trusted, notify, scope, children }) {
-  const [unlocked, setUnlocked] = useState(() => new Set());
-  useEffect(() => { setUnlocked(new Set()); }, [scope]);  // a click unlocks a URL only while its conversation is open
-  const unlock = useCallback(urls => setUnlocked(prev => {
-    const next = new Set(prev);
-    urls.filter(Boolean).forEach(u => next.add(u));
-    return next;
-  }), []);
+  const [unlocked, setUnlocked] = useState(() => new Map());  // URL -> its consent token
+  useEffect(() => { setUnlocked(new Map()); }, [scope]);  // a click unlocks a URL only while its conversation is open
+  const unlock = useCallback(async urls => {
+    const wanted = urls.filter(Boolean);
+    if (!wanted.length) return;
+    try {
+      const tokens = await createApi({ baseUrl: base }).mediaConsent(wanted);
+      setUnlocked(prev => {
+        const next = new Map(prev);
+        wanted.forEach(u => { if (tokens[u]) next.set(u, tokens[u]); });
+        return next;
+      });
+    } catch { (notify || (() => {}))('Could not load that. Is the harness running?'); }
+  }, [base, notify]);
   const value = useMemo(() => ({ base, trusted: trusted || DEFAULT_TRUSTED, unlocked, unlock, notify: notify || (() => {}) }), [base, trusted, unlocked, unlock, notify]);
   return <MediaContext.Provider value={value}>{children}</MediaContext.Provider>;
 }
 
-const FALLBACK = { base: harnessUrl(), trusted: DEFAULT_TRUSTED, unlocked: new Set(), unlock: () => {}, notify: () => {} };
+const FALLBACK = { base: harnessUrl(), trusted: DEFAULT_TRUSTED, unlocked: new Map(), unlock: () => {}, notify: () => {} };
 const useMedia = () => useContext(MediaContext) || FALLBACK;
 
 const srcOf = (url, item, ctx) => (!url ? null : item.local ? url : previewUrl(url, ctx));
@@ -37,7 +45,12 @@ const captionText = item => item.caption.map(s => s.text).join(' ');
 const KIND_ICON = { image: Image24Regular, video: Video24Regular, pdf: DocumentPdf24Regular, diagram: Flowchart24Regular, file: DocumentText24Regular };
 
 async function saveItem(item, ctx) {
-  const url = saveUrl(item, ctx.base);
+  let token = '';
+  if (!item.local) {  // Save… is the user's click: ask for this URL's consent token unless a click already got it
+    token = ctx.unlocked.get(item.src) || '';
+    if (!token) try { token = (await createApi({ baseUrl: ctx.base }).mediaConsent([item.src]))[item.src] || ''; } catch { /* a trusted host still saves without one */ }
+  }
+  const url = saveUrl(item, ctx.base, token);
   const bridge = typeof window !== 'undefined' ? window.openzenbot?.saveMedia : null;
   if (bridge) {
     const r = await bridge(url, item.name);
@@ -154,16 +167,30 @@ function PdfPages({ url }) {
   return <div className="media-viewer-pages" ref={box}>{!state.pages && <Spinner/>}{Array.from({ length: state.pages }, (_, i) => <canvas key={i} data-page={i + 1} aria-label={`Page ${i + 1}`}/>)}</div>;
 }
 
+// The user opened this page: ask for its single-use token. Until it comes, or if the ask fails, the page stays closed.
+function useOpenToken(src, wanted, base) {
+  const [token, setToken] = useState({ src: null, value: '' });
+  useEffect(() => {
+    setToken({ src: null, value: '' });  // a token is spent once used: each opening asks afresh
+    if (!wanted || !src) return undefined;
+    let alive = true;
+    createApi({ baseUrl: base }).openToken(src).then(value => { if (alive) setToken({ src, value }); }, () => {});
+    return () => { alive = false; };
+  }, [src, wanted, base]);
+  return token.src === src ? token.value : '';
+}
+
 function MediaViewer({ item, onClose }) {
   const ctx = useMedia();
   const src = item ? srcOf(item.src, item, ctx) : null;
   const poster = item ? srcOf(item.poster, item, ctx) : null;
+  const token = useOpenToken(src, item?.kind === 'diagram' && item.local, ctx.base);
   let body = null;
   if (item && !src) body = <p className="media-viewer-note">Loading…</p>;
   else if (item?.kind === 'image') body = <img className="media-viewer-image" src={src} alt={captionText(item)}/>;
   else if (item?.kind === 'video') body = <video className="media-viewer-image" src={src} poster={poster || undefined} controls autoPlay/>;
   else if (item?.kind === 'pdf') body = <PdfPages url={src}/>;
-  else if (item?.kind === 'diagram') body = <iframe className="media-viewer-frame" sandbox="allow-scripts" src={src} title={item.name}/>;
+  else if (item?.kind === 'diagram') body = <iframe className="media-viewer-frame" sandbox="allow-scripts" src={item.local ? viewerFrameUrl(src, token) : src} title={item.name}/>;
   return <Dialog open={!!item} onOpenChange={(e, d) => { if (!d.open) onClose(); }}>
     <DialogSurface className="media-viewer">
       {item && <DialogBody>

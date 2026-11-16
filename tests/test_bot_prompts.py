@@ -12,7 +12,7 @@ import pytest
 
 from src.harness.api import Harness, create_app
 from src.harness.bot import Bot
-from src.harness.bot_prompts import BotPrompt, load_dir, save
+from src.harness.bot_prompts import BotPrompt, load_dir, parse, render, save
 from src.harness.config import HarnessConfig
 from src.harness.main import build_harness
 from src.memory.ledger import Ledger
@@ -81,7 +81,7 @@ def test_build_harness_makes_bots_from_the_directory(monkeypatch, vault: Path, t
     h = build_harness(HarnessConfig(vault_root=vault, skills_dir=Path("skills"), bot_prompts_dir=prompts))
     assert set(h.bots) == {"research-partner", "generalist"}
     assert [s.slug for s in h.bots["research-partner"].skills] == ["research-brief"]
-    assert sorted(s.slug for s in h.bots["generalist"].skills) == ["discernment-nudge", "doc-coauthoring", "docx", "learn-company", "pdf", "pptx", "research-brief", "skill-creator", "xlsx"]  # no skills key: every catalog skill
+    assert sorted(s.slug for s in h.bots["generalist"].skills) == ["archify", "design-studio", "discernment-nudge", "doc-coauthoring", "docx", "learn-company", "pdf", "pptx", "prompt-master", "research-brief", "skill-creator", "weekly-digest", "xlsx"]  # no skills key: every catalog skill
 
 
 def test_build_harness_with_an_empty_directory_has_no_bots(monkeypatch, vault: Path, tmp_path: Path):
@@ -186,3 +186,22 @@ def test_darkroom_edits_with_magick_and_shows_the_result():
     [edits] = [line for line in p.instructions.splitlines() if line.startswith("Common edits:")]
     suggested = set(re.findall(r"[`\s][-+]([a-z][a-z-]+)\b", edits))
     assert suggested and not suggested - set(OPTIONS), suggested - set(OPTIONS)
+
+
+def test_studio_flag_round_trips():
+    p = parse("---\nname: D\nrole: r\nstudio: true\n---\nbody", "d")
+    assert p.studio is True
+    assert parse(render(p), "d").studio is True
+    assert "studio" not in render(parse("---\nname: D\nrole: r\n---\nbody", "d"))
+
+
+def test_studio_must_be_a_boolean():
+    with pytest.raises(ValueError, match="studio must be true or false"):
+        parse("---\nname: D\nrole: r\nstudio: yes please\n---\n", "d")
+
+
+def test_the_designer_bot_file_is_a_studio_bot():
+    p = parse(Path("bot-prompts/designer.md").read_text(encoding="utf-8"), "designer")
+    assert p.studio is True and p.skills == ["design-studio"] and p.mcps == ["files"]
+    for must in ("designs/", "data-zen-id", "attach_file", "question-form", "create_directory", "edit_file"):
+        assert must in p.instructions

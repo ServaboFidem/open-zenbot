@@ -1,13 +1,16 @@
 """Remote media for the chat: the GUI shows a bot's images, video and PDFs through this proxy, so the
 page's CSP names only the harness origin. A trusted host is fetched at once; any other host only when
-the request says the user clicked (`ok=1`). A bot that read a hostile page could be steered into putting
+the request carries the consent token the GUI got for that URL on the user's click (`MediaConsent`). A bot that read a hostile page could be steered into putting
 the user's data in an image URL, and loading it would send that data out, so nothing untrusted loads on
 its own. No hop of a fetch may reach a private address: the proxy is not a way into the local network."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import ipaddress
 import os
+import secrets
 import socket
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -33,6 +36,23 @@ def host_trusted(url: str, hosts: Iterable[str]) -> bool:
     """The URL's host is a trusted host or a subdomain of one."""
     host = (urlsplit(url).hostname or "").lower()
     return bool(host) and any(host == h or host.endswith("." + h) for h in hosts)
+
+
+class MediaConsent:
+    """The user's click, as a token for one URL: `/media` fetches a host off the trusted list only with it.
+    The GUI asks for one with a JSON POST, which a bot-made page cannot send: served closed it has no
+    network and no forms, and all it can do is navigate its own frame, a GET with a query it chose. So
+    the click can no longer be claimed with a query flag. Signed, not stored: a video's range requests
+    reuse it, and a restart (a new key) ends every token."""
+
+    def __init__(self) -> None:
+        self._key = secrets.token_bytes(32)
+
+    def issue(self, url: str) -> str:
+        return hmac.new(self._key, url.encode("utf-8", "surrogatepass"), hashlib.sha256).hexdigest()
+
+    def valid(self, url: str, token: str) -> bool:
+        return bool(token) and hmac.compare_digest(self.issue(url).encode(), token.encode("utf-8", "surrogatepass"))
 
 
 class MediaRefused(Exception):

@@ -42,6 +42,7 @@ class Bot:
     skills: list[Skill] = field(default_factory=list)
     model: dict[str, str] | None = None  # {provider, model} from Settings' enabled text models; None: the harness's chat model
     mcps: list[str] = field(default_factory=list)  # MCP servers on every task, not left to routing (the bot file's `mcps`)
+    studio: bool = False  # the bot file's `studio`: a design bot, shown with a preview pane
 
     def attach_skill(self, skill: Skill, max_per_bot: int = 250) -> tuple[SkillState, Reason | None]:
         if any(s.slug == skill.slug for s in self.skills):
@@ -97,4 +98,5 @@ class Bot:
             "skills": [s.slug for s in self.skills],
             "model": self.model,
             "mcps": list(self.mcps),
+            "studio": self.studio,
         }

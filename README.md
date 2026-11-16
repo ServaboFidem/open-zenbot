@@ -194,6 +194,7 @@ instructions unchanged. Each folder keeps its upstream license and notices.
 | `skills/anthropic/` (docx, pptx, xlsx, pdf, discernment-nudge, doc-coauthoring, skill-creator) | [anthropics/skills](https://github.com/anthropics/skills) by Anthropic | Apache-2.0 (`skills/anthropic/LICENSE.txt`) |
 | `skills/archify/` | [tt-a1i/archify](https://github.com/tt-a1i/archify) by tt-a1i and Cocoon AI | Apache-2.0 (`LICENSE.txt`, `NOTICE.txt`) |
 | `skills/prompt-master/` | [nidhinjs/prompt-master](https://github.com/nidhinjs/prompt-master) by Nidhin Joseph Nelson | MIT (`LICENSE`, `NOTICE.md`) |
+| `skills/design-studio/references/` | Adapted from the `craft/` guides of [nexu-io/open-design](https://github.com/nexu-io/open-design) (commit `59e4f2a`) | Apache-2.0 (`NOTICE.txt`) |
 
 ### Data
 

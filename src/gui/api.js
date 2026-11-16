@@ -110,15 +110,24 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     createBot: body => post('/bots', body),
     patchBot: (id, body) => call('PATCH', `/bots/${enc(id)}`, body),
     // A task joins the bot's current conversation (or the one named); a routine passes conversation: false.
-    startTask: (botId, task, { conversationId, conversation = true, protected: block } = {}) =>
-      post(`/bots/${enc(botId)}/tasks`, { task, ...(conversationId ? { conversation_id: conversationId } : {}), conversation, ...(block ? { protected: block } : {}) }),
+    // designComments: notes on elements of the newest design revision, sent only when there are some.
+    startTask: (botId, task, { conversationId, conversation = true, protected: block, designComments } = {}) =>
+      post(`/bots/${enc(botId)}/tasks`, { task, ...(conversationId ? { conversation_id: conversationId } : {}), conversation, ...(block ? { protected: block } : {}), ...(designComments?.length ? { design_comments: designComments } : {}) }),
     // conversations
     conversations: botId => get(`/bots/${enc(botId)}/conversations`),
     recentConversations: (limit = 5) => get(`/conversations?limit=${enc(limit)}`),  // newest one-to-one, across bots
     conversation: id => get(`/conversations/${enc(id)}`),
     newConversation: botId => post(`/bots/${enc(botId)}/conversations`),
+    designSystems: async () => (await get('/design-systems'))?.design_systems ?? [],  // [{slug, name, source: 'shipped' | 'yours', summary}]
+    setDesignSystem: (convId, slug) => put(`/conversations/${enc(convId)}/design-system`, { slug: slug ?? null }),
     selectConversation: (botId, id) => post(`/bots/${enc(botId)}/conversations/${enc(id)}/current`),
     conversationAttachmentUrl: (convId, attId) => `${base}/conversations/${enc(convId)}/attachments/${enc(attId)}`,
+    // a single-use token that opens one attachment (conversation or room) with its scripts' network reach; the viewer asks on the user's click
+    openToken: async attUrl => {
+      if (typeof attUrl !== 'string' || !attUrl.startsWith(base + '/')) throw new HarnessError(0, 'That file is not served by the harness.');
+      return (await post(`${attUrl.slice(base.length)}/open`))?.token || '';
+    },
+    mediaConsent: async urls => (await post('/media/consent', { urls }))?.tokens || {},
     sessions: () => get('/sessions'),
     session: id => get(`/sessions/${enc(id)}`),
     stopSession: id => post(`/sessions/${enc(id)}/stop`),

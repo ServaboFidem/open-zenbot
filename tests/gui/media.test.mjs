@@ -5,7 +5,7 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import { toString } from 'mdast-util-to-string';
-import { attachmentItem, fileName, isTrusted, mediaItems, mediaKind, previewFrameUrl, previewUrl, saveUrl, splitMedia } from '../../src/gui/media.js';
+import { attachmentItem, fileName, isTrusted, mediaItems, mediaKind, previewFrameUrl, previewUrl, saveUrl, splitMedia, viewerFrameUrl } from '../../src/gui/media.js';
 
 const parse = md => unified().use(remarkParse).use(remarkGfm).parse(md);
 const split = md => { const tree = parse(md); const items = splitMedia(tree); return { items, tree, text: toString(tree) }; };
@@ -94,15 +94,16 @@ test('trust matches a host exactly or as a subdomain', () => {
 });
 
 test('preview urls go through the harness and only trusted or unlocked hosts load', () => {
-  const ctx = { base: 'http://127.0.0.1:8765', trusted: ['images.pexels.com'], unlocked: new Set(['https://cdn.x.net/a.png']) };
+  const ctx = { base: 'http://127.0.0.1:8765', trusted: ['images.pexels.com'], unlocked: new Map([['https://cdn.x.net/a.png', 't0k/n']]) };
   assert.equal(previewUrl('https://images.pexels.com/p/1.jpeg', ctx), 'http://127.0.0.1:8765/media?url=https%3A%2F%2Fimages.pexels.com%2Fp%2F1.jpeg');
-  assert.equal(previewUrl('https://cdn.x.net/a.png', ctx), 'http://127.0.0.1:8765/media?url=https%3A%2F%2Fcdn.x.net%2Fa.png&ok=1');
+  assert.equal(previewUrl('https://cdn.x.net/a.png', ctx), 'http://127.0.0.1:8765/media?url=https%3A%2F%2Fcdn.x.net%2Fa.png&ok=t0k%2Fn');
   assert.equal(previewUrl('https://cdn.x.net/b.png', ctx), null);
 });
 
-test('save urls always carry the click', () => {
+test('save urls carry the consent token for remote media', () => {
   const remote = { src: 'https://images.pexels.com/p/1.jpeg', local: false };
-  assert.equal(saveUrl(remote, 'http://h'), 'http://h/media?url=https%3A%2F%2Fimages.pexels.com%2Fp%2F1.jpeg&ok=1');
+  assert.equal(saveUrl(remote, 'http://h', 'abc'), 'http://h/media?url=https%3A%2F%2Fimages.pexels.com%2Fp%2F1.jpeg&ok=abc');
+  assert.equal(saveUrl(remote, 'http://h', ''), 'http://h/media?url=https%3A%2F%2Fimages.pexels.com%2Fp%2F1.jpeg');
   assert.equal(saveUrl({ src: 'http://h/rooms/r/attachments/a', local: true }, 'http://h'), 'http://h/rooms/r/attachments/a');
 });
 
@@ -113,9 +114,17 @@ test('only http(s) urls become cards or caption links', () => {
   assert.deepEqual(items[0].caption, [{ text: 'Photo by' }, { text: 'Z' }, { text: 'on Pexels' }]);
 });
 
-test('a diagram thumbnail asks the harness for the network-closed preview; View and Save… do not', () => {
+test('a diagram thumbnail asks the harness for the network-closed preview; Save… fetches the file as served', () => {
   const item = attachmentItem({ id: 'a1', title: 'Flow', name: 'flow.html' }, 'http://127.0.0.1:8765/rooms/r1/attachments/a1');
   assert.equal(previewFrameUrl(item.src), 'http://127.0.0.1:8765/rooms/r1/attachments/a1?preview=1');
   assert.equal(previewFrameUrl('http://127.0.0.1:8765/x?y=1'), 'http://127.0.0.1:8765/x?y=1&preview=1');
   assert.equal(saveUrl(item, 'http://127.0.0.1:8765'), item.src);
+});
+
+test('the viewer frames a page opened with its token, and the closed page until it has one', () => {
+  const src = 'http://127.0.0.1:8765/conversations/c1/attachments/a1';
+  assert.equal(viewerFrameUrl(src, 'tok-_9'), `${src}?open=tok-_9`);
+  assert.equal(viewerFrameUrl(src, 'a b&c'), `${src}?open=a%20b%26c`);
+  assert.equal(viewerFrameUrl('http://h/x?y=1', 't'), 'http://h/x?y=1&open=t');
+  for (const none of ['', null, undefined]) assert.equal(viewerFrameUrl(src, none), src);
 });

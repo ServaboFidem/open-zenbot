@@ -12,20 +12,24 @@ import base64
 import binascii
 import json
 import re
+import secrets
 import shutil
+import time
+from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi import Request
 from starlette.background import BackgroundTask
 from uuid import uuid4
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.decider.fit import FitConfig, FitEngine
 from src.decider.interface import BandConfig, ConfirmState, Scorer
@@ -60,7 +64,7 @@ from . import allowed_folders, tracing_settings
 from .allowed_folders import AllowedFolders
 from .magick_guard import Folders as GuardFolders, MagickGuard, MagickRunner
 from .write_guard import ShellWriteCheck
-from . import tool_paths
+from . import design_studio, design_systems, tool_paths
 from src.vault_settings import settings_dir
 from src.providers import tracing as llm_tracing
 from .onboarding import ASSISTANT_ID, NEW_TOPICS, TOPICS, Interviewer
@@ -68,7 +72,7 @@ from .config import HarnessConfig
 from .conversations import ConversationStore, Conversations
 from .loop import Session, SessionState, TaskLoop
 from .scheduler import Routine, RoutineError, RoutineStore, Schedule, Scheduler, next_run, parse_schedule
-from .media import MediaProxy, MediaRefused, trusted_hosts
+from .media import MediaConsent, MediaProxy, MediaRefused, trusted_hosts
 from .pause import PauseController
 from src.context.compaction import Compactor
 from src.context.protected import ProtectedBlock, ScopeGuard
@@ -93,6 +97,32 @@ from .turn_notes import TurnNotes, outcome_of
 # A bot-made page shown as a thumbnail: its own inline script, style and images run; nothing loads from anywhere.
 PREVIEW_CSP = ("sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
                "img-src data: blob:; font-src data:")
+OPEN_POLICY = "sandbox allow-scripts"  # an opened page: off this origin, but its scripts may reach the network
+# every type a browser will run as a page (script, or markup that can carry it): served under PREVIEW_CSP unless opened
+CLOSED_SUFFIXES = (".html", ".htm", ".xhtml", ".xht", ".shtml", ".xml", ".svg", ".svgz", ".mht", ".mhtml")
+
+
+class OpenTokens:
+    """Single-use tokens that open one bot-made page under OPEN_POLICY. Only the viewer asks for one, on the
+    user's click; a page served closed cannot reach the harness to ask. In memory: a restart drops them all."""
+
+    def __init__(self, ttl: float = 60.0, cap: int = 256) -> None:
+        self.ttl, self.cap = ttl, cap
+        self.clock: Callable[[], float] = time.monotonic
+        self._tokens: OrderedDict[str, tuple[tuple[str, str, str], float]] = OrderedDict()
+
+    def issue(self, key: tuple[str, str, str]) -> str:
+        """A token for one attachment: `key` is (route kind, owner id, attachment id)."""
+        token = secrets.token_urlsafe(24)
+        self._tokens[token] = (key, self.clock())
+        while len(self._tokens) > self.cap:
+            self._tokens.popitem(last=False)  # the oldest goes first
+        return token
+
+    def redeem(self, token: str, key: tuple[str, str, str]) -> bool:
+        """Consumes `token` whatever it names: a page that reloads with a spent token is served closed."""
+        found = self._tokens.pop(token, None)
+        return found is not None and found[0] == key and self.clock() - found[1] <= self.ttl
 
 if TYPE_CHECKING:  # built only on a store that can attach
     from src.memory.extract_queue import ExtractQueue
@@ -480,10 +510,25 @@ class Harness:
         session = self.sessions.get(session_id)
         if session is None or not session.conversation_id or session.room_id:
             return "attach_file works only in a conversation or a room turn."
+        bot = self.bots.get(session.bot_id)
+        if bot is not None and bot.studio and not Path(path).is_absolute() and Path(path).parts[:1] == ("designs",):
+            path = str(self.config.vault_root / path)  # designs live in the vault, not the working folder
         target = self.attachable(path)
         if isinstance(target, str):
             return target
-        att = Attachment(uuid4().hex[:10], title or target.name, str(target))
+        title = title or target.name  # the file's own name, before the swap to its numbered copy
+        if bot is not None and bot.studio:
+            # a design is attached as its fixed copy or not at all: the live file would change under the revision
+            try:
+                copy = design_studio.snapshot(self.config.vault_root, target)
+            except design_studio.SnapshotRefused as e:
+                return f"Not attached: {e}."
+            if copy is not None:
+                kept = self.attachable(str(copy))
+                if isinstance(kept, str):
+                    return kept
+                target = copy
+        att = Attachment(uuid4().hex[:10], title, str(target))
         self.task_attachments.setdefault(session_id, []).append(att)
         return f"Attached {att.title!r}; it will show under your reply."
 
@@ -501,6 +546,7 @@ class Harness:
     def start_task(
         self, bot: Bot, task: str, *, conversation_id: str | None = None, in_conversation: bool = True,
         protected: dict[str, Any] | None = None, pinned_skills: list[str] | None = None,
+        comments: list[dict[str, str]] | None = None, addendum: str = "",
     ) -> Session:
         """Run a task for a bot. It joins the bot's current conversation (or
         the one named) unless `in_conversation` is False (routines): its
@@ -510,10 +556,29 @@ class Harness:
         session = Session(bot_id=bot.id, task=task, pinned_skills=list(pinned_skills or []))
         conv = None
         if in_conversation:
-            conv, _ = self.conversations.begin(bot.id, task, session_id=session.id, conv_id=conversation_id)
+            conv, _ = self.conversations.begin(bot.id, task, session_id=session.id, conv_id=conversation_id,
+                                               comments=comments, addendum=addendum)
             session.conversation_id = conv.id
             if self.turn_notes is not None and self.turn_notes.config.enabled:
                 session.note = conv.note  # what this bot's last task here found, made and left
+        if conv is not None and conv.design_system:
+            why = ""
+            try:
+                ds = design_systems.load(self.config.design_systems_dir, self.config.vault_root, conv.design_system)
+                if conv.design_system_source and ds.source != conv.design_system_source:
+                    # a bot can write <vault>/design-systems/<slug>/, replacing the shipped one the user picked
+                    why = (f"changed from {conv.design_system_source} to {ds.source} since it was picked; "
+                           "pick it again to use it")
+                else:
+                    session.design = design_systems.block(ds)
+            except (KeyError, OSError, design_systems.DesignSystemError) as e:
+                why = "no longer exists" if isinstance(e, KeyError) else str(e) if isinstance(e, design_systems.DesignSystemError) else "cannot be read"
+            if why:
+                # gone, no longer safe or replaced: the task runs without it, and the ledger says why (never a disk path)
+                self.ledger.append(Kind.error, bot.id, session.id, where="design_system",
+                                   error=f"design system {conv.design_system}: {why}", action="running without the design system")
+        if addendum:
+            session.recall_query = task  # recall searches the user's words, not the comment block
         self.sessions[session.id] = session
 
         async def _run() -> Session:
@@ -527,7 +592,11 @@ class Harness:
                                 conv, self.compactor.generator, budget_chars=cfg.conversation_budget_chars, keep=cfg.conversation_keep)
                     history = conv.history(exclude=session.id)
                 try:
-                    await self.loop.run(bot, task, session, history=history, protected=protected)
+                    # the bot reads the comments after the task; the pinned task stays the user's words alone, and
+                    # the comment block's lines are pinned as constraints so a mid-task compaction cannot fold them away
+                    pinned = protected or ({"task": task, "constraints": addendum.splitlines()} if addendum else None)
+                    await self.loop.run(bot, f"{task}\n\n{addendum}" if addendum else task, session, history=history,
+                                        protected=pinned)
                 except asyncio.CancelledError:
                     if session.state not in _ENDED:  # cancelled before the loop could mark it
                         session.state = SessionState.stopped
@@ -591,6 +660,10 @@ def _outcome(session: Session) -> tuple[str, str]:
 
 
 # -- request models -------------------------------------------------------
+
+
+class MediaConsentIn(BaseModel):
+    urls: list[Annotated[str, Field(max_length=4096)]] = Field(max_length=20)
 
 
 class SettingsIn(BaseModel):
@@ -710,11 +783,25 @@ class ProtectedIn(BaseModel):
     constraints: list[str] = []
 
 
+class DesignCommentIn(BaseModel):
+    attachment_id: str
+    element_id: str = Field("", max_length=120)
+    selector: str = Field(min_length=1, max_length=300)
+    tag: str = Field(min_length=1, max_length=40)
+    text: str = Field("", max_length=160)
+    note: str = Field(min_length=1, max_length=1000)
+
+
+class DesignSystemIn(BaseModel):
+    slug: str | None
+
+
 class TaskIn(BaseModel):
     task: str
     conversation_id: str | None = None  # omitted: the bot's current conversation
     conversation: bool = True  # False: the task joins no conversation (routines)
     protected: ProtectedIn | None = None  # a scope check's carried block; omitted: the task itself
+    design_comments: list[DesignCommentIn] = Field(default_factory=list, max_length=20)  # on the conversation's newest design revision
 
 
 class ScheduleIn(BaseModel):
@@ -845,10 +932,47 @@ def _looks_like_text(raw: bytes) -> bool:
 
 
 def create_app(h: Harness) -> FastAPI:
-    def serve_attachment(path: str, preview: bool = False) -> FileResponse:
-        """A file a bot attached, in a room or a one-to-one task. `preview` is the thumbnail the chat
-        frames on its own as a reply renders: that page may run its inline script and style but reach
-        no network, so a bot-made page cannot send anything out before the user chooses to open it."""
+    def _attachment_view(a: dict[str, Any]) -> dict[str, Any]:
+        """What the GUI sees of an attachment: a name, never the path; a design copy gives its original name."""
+        rev = design_studio.revision_of(h.config.vault_root, Path(a["path"]))
+        view: dict[str, Any] = {"id": a["id"], "title": a["title"], "name": rev[2] if rev else Path(a["path"]).name}
+        if rev:
+            view["design"], view["version"] = rev[0], rev[1]
+        return view
+
+    def _conversation_view(c: Any) -> dict[str, Any]:
+        """A conversation as any route returns it: attachments by name (never the path on disk), and
+        no addendum (what the bot read after the user's text)."""
+        record = c.to_record()
+        for ex in record["exchanges"]:
+            ex["attachments"] = [_attachment_view(a) for a in ex.get("attachments", [])]
+            ex.pop("addendum", None)
+        d, _ = exclusion.redact_obj(record)
+        return d
+
+    def _comment_addendum(bot: Bot, body: TaskIn, comments: list[dict[str, str]]) -> str:
+        """The block for a task's design comments, or a 422: they must name the newest design revision
+        of the conversation the task joins. Checked before anything is created."""
+        if not body.conversation:
+            raise HTTPException(422, "design comments need a conversation")
+        conv = h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
+        if conv is not None and conv.owner != bot.id:
+            conv = None
+        newest = next(((a, rev) for ex in reversed(conv.exchanges if conv else []) for a in reversed(ex.attachments)
+                       if (rev := design_studio.revision_of(h.config.vault_root, Path(a["path"])))), None)
+        if newest is None:
+            raise HTTPException(422, "this conversation has no design to comment on")
+        att, (slug, version, name) = newest
+        if any(c["attachment_id"] != att["id"] for c in comments):
+            raise HTTPException(422, "comments belong on the newest version of the design")
+        return design_studio.comment_block(f"designs/{slug}/{name}", version, comments)
+
+    def serve_attachment(path: str, *, opened: bool = False, preview: bool = False, studio: bool = False) -> FileResponse | Response:
+        """A file a bot attached, in a room or a one-to-one task. A page that runs script (HTML, SVG) may run
+        its inline script and style but reach no network, so it cannot send anything out: not as a thumbnail,
+        not in the design pane, and not by navigating its own frame to the bare URL. Only `opened` (a valid
+        open token, which the viewer asks for on the user's click) serves it under OPEN_POLICY. `preview`
+        closes any other file type too; `studio` adds the pick bridge and is always closed."""
         # re-check at serve time: attach_file vetted the path, but it may have become a symlink or moved since
         try:
             target = Path(path).resolve(strict=True)
@@ -856,9 +980,22 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(404, "the file is gone") from None
         if not isinstance(h.attachable(str(target)), Path):
             raise HTTPException(404, "the file is gone")
+        headers = {"Content-Security-Policy": PREVIEW_CSP, "X-Content-Type-Options": "nosniff"}
+        if studio:
+            # the design pane's frame: preview policy plus the pick bridge; an oversized or non-HTML file goes as is
+            try:
+                size = target.stat().st_size
+            except OSError:
+                raise HTTPException(404, "the file is gone") from None
+            if target.suffix.lower() in (".html", ".htm") and size <= design_studio.BRIDGE_MAX_BYTES:
+                return Response(design_studio.with_bridge(target.read_bytes()), media_type="text/html",
+                                headers={**headers, "Content-Disposition": "inline"})
+            preview = True
+        page = Path(path).suffix.lower() in CLOSED_SUFFIXES or target.suffix.lower() in CLOSED_SUFFIXES
+        closed = preview or (page and not opened)
         # shown inline, not downloaded; the sandbox keeps a bot-made page off this origin
         return FileResponse(target, filename=target.name, content_disposition_type="inline",
-                            headers={"Content-Security-Policy": PREVIEW_CSP if preview else "sandbox allow-scripts",
+                            headers={"Content-Security-Policy": PREVIEW_CSP if closed else OPEN_POLICY,
                                      "X-Content-Type-Options": "nosniff"})
 
     def mcp_vars() -> dict[str, str | list[str]]:
@@ -939,6 +1076,8 @@ def create_app(h: Harness) -> FastAPI:
             await asyncio.to_thread(h.memory.close)
 
     app = FastAPI(title="zen-agents harness", version="0.0.1", lifespan=lifespan)
+    app.state.open_tokens = open_tokens = OpenTokens()
+    media_consent = MediaConsent()
     for router in app_routers:
         app.include_router(router)
     app.add_middleware(CORSMiddleware, allow_origins=list(h.config.gui_origins), allow_methods=["*"], allow_headers=["*"])
@@ -953,13 +1092,22 @@ def create_app(h: Harness) -> FastAPI:
 
     @app.get("/media")
     async def get_media(url: str, request: Request, ok: str = "") -> StreamingResponse:
-        """A remote image, video or PDF for the chat. A host off the trusted list needs `ok=1`: the user clicked."""
+        """A remote image, video or PDF for the chat. A host off the trusted list needs `ok`, the consent
+        token for this URL from `POST /media/consent`: the user clicked."""
         try:
-            stream = await h.media.open(url, clicked=ok == "1", range_header=request.headers.get("range"))
+            stream = await h.media.open(url, clicked=media_consent.valid(url, ok), range_header=request.headers.get("range"))
         except MediaRefused as e:
             raise HTTPException(e.status, str(e)) from None
         return StreamingResponse(stream.body, status_code=stream.status, headers=stream.headers,
                                  background=BackgroundTask(stream.close))
+
+    @app.post("/media/consent")
+    async def post_media_consent(body: MediaConsentIn, request: Request) -> dict[str, Any]:
+        """The GUI, on the user's click: a consent token for each URL. JSON only: a page elsewhere can send
+        a form or plain text across origins without a preflight, never `application/json`."""
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            raise HTTPException(415, "send JSON")
+        return {"tokens": {u: media_consent.issue(u) for u in body.urls}}
 
     def image_providers() -> list[str]:
         return [e.id for e in h.provider_store.entries.values() if e.kind == "openrouter"]
@@ -1877,18 +2025,46 @@ def create_app(h: Harness) -> FastAPI:
         c = h.conversations.get(conv_id)
         if c is None:
             raise HTTPException(404, "no such conversation")
-        record = c.to_record()
-        for ex in record["exchanges"]:  # the GUI gets a name to show, never the path on disk
-            ex["attachments"] = [{"id": a["id"], "title": a["title"], "name": Path(a["path"]).name} for a in ex.get("attachments", [])]
-        d, _ = exclusion.redact_obj(record)
-        return d
+        return _conversation_view(c)
+
+    @app.get("/design-systems")
+    async def list_design_systems() -> dict[str, Any]:
+        return {"design_systems": design_systems.available(h.config.design_systems_dir, h.config.vault_root)}
+
+    @app.put("/conversations/{conv_id}/design-system")
+    async def set_design_system(conv_id: str, body: DesignSystemIn) -> dict[str, str]:
+        if h.conversations.get(conv_id) is None:
+            raise HTTPException(404, "no such conversation")
+        source = ""
+        if body.slug is not None:  # picking loads it, so a too-large or unsafe one is refused now with its reason
+            try:
+                source = design_systems.load(h.config.design_systems_dir, h.config.vault_root, body.slug).source
+            except KeyError:
+                raise HTTPException(404, "no such design system") from None
+            except design_systems.DesignSystemError as e:
+                raise HTTPException(422, str(e)) from None
+        h.conversations.set_design_system(conv_id, body.slug or "", source)
+        return {"design_system": body.slug or ""}
+
+    # Open tokens. A page served closed (PREVIEW_CSP) cannot obtain one: its fetch and XHR are blocked by
+    # `default-src 'none'`, and the sandbox (no allow-forms) refuses its form posts. So a closed page cannot
+    # open itself; only the GUI's viewer asks, when the user opens an attachment.
+    @app.post("/conversations/{conv_id}/attachments/{attachment_id}/open")
+    async def open_conversation_attachment(conv_id: str, attachment_id: str) -> dict[str, str]:
+        if h.conversations.attachment(conv_id, attachment_id) is None:
+            raise HTTPException(404, "no such attachment")
+        return {"token": open_tokens.issue(("conversation", conv_id, attachment_id))}
 
     @app.get("/conversations/{conv_id}/attachments/{attachment_id}")
-    async def conversation_attachment(conv_id: str, attachment_id: str, preview: str = "") -> FileResponse:
+    async def conversation_attachment(conv_id: str, attachment_id: str, preview: str = "",
+                                      studio: str = "", open_: str = Query("", alias="open")) -> Response:
         att = h.conversations.attachment(conv_id, attachment_id)
         if att is None:
             raise HTTPException(404, "no such attachment")
-        return serve_attachment(att["path"], preview=preview == "1")
+        # a token is spent by the first GET that shows it, even one it does not open (wrong file, studio)
+        opened = bool(open_) and open_tokens.redeem(open_, ("conversation", conv_id, attachment_id))
+        return serve_attachment(att["path"], opened=opened and studio != "1", preview=preview == "1",
+                                studio=studio == "1")
 
     @app.post("/bots/{bot_id}/conversations/{conv_id}/current")
     async def select_conversation(bot_id: str, conv_id: str) -> dict[str, Any]:
@@ -1897,8 +2073,7 @@ def create_app(h: Harness) -> FastAPI:
             c = h.conversations.select(bot_id, conv_id)
         except KeyError:
             raise HTTPException(404, "no such conversation") from None
-        d, _ = exclusion.redact_obj(c.to_record())
-        return d
+        return _conversation_view(c)
 
     @app.post("/bots", status_code=201)
     async def create_bot(body: BotIn) -> dict[str, Any]:
@@ -1993,10 +2168,14 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(422, "task is empty")
         if not h.bound:
             raise HTTPException(503, UnboundProvider.MESSAGE)
+        comments = [c.model_dump() for c in body.design_comments]
+        addendum = _comment_addendum(bot, body, comments) if comments else ""
         try:
             session = h.start_task(bot, body.task.strip(), conversation_id=body.conversation_id or None,
                                    in_conversation=body.conversation,
-                                   protected=body.protected.model_dump() if body.protected else None)
+                                   protected=body.protected.model_dump() if body.protected else None,
+                                   comments=comments,
+                                   addendum=addendum)
         except KeyError:
             raise HTTPException(404, "no such conversation") from None
         return {"session_id": session.id, "state": str(session.state)}
@@ -2160,13 +2339,24 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(404 if str(e).startswith("no room") else 409, str(e)) from None
         return Response(status_code=204)
 
-    @app.get("/rooms/{room_id}/attachments/{attachment_id}")
-    async def room_attachment(room_id: str, attachment_id: str, preview: str = "") -> FileResponse:
+    def _room_attachment(room_id: str, attachment_id: str) -> Attachment:
         room = _room_call(h.rooms.get, room_id)
         att = next((a for p in room.posts for a in p.attachments if a.id == attachment_id), None)
         if att is None:
             raise HTTPException(404, "no such attachment")
-        return serve_attachment(att.path, preview=preview == "1")
+        return att
+
+    @app.post("/rooms/{room_id}/attachments/{attachment_id}/open")
+    async def open_room_attachment(room_id: str, attachment_id: str) -> dict[str, str]:
+        _room_attachment(room_id, attachment_id)  # see open_conversation_attachment: a closed page cannot ask
+        return {"token": open_tokens.issue(("room", room_id, attachment_id))}
+
+    @app.get("/rooms/{room_id}/attachments/{attachment_id}")
+    async def room_attachment(room_id: str, attachment_id: str, preview: str = "",
+                              open_: str = Query("", alias="open")) -> FileResponse:
+        att = _room_attachment(room_id, attachment_id)
+        opened = bool(open_) and open_tokens.redeem(open_, ("room", room_id, attachment_id))
+        return serve_attachment(att.path, opened=opened, preview=preview == "1")
 
     @app.post("/rooms")
     async def create_room(body: RoomIn) -> dict[str, Any]:
@@ -2262,7 +2452,7 @@ def create_app(h: Harness) -> FastAPI:
 
 def _persist(h: Harness, bot: Bot) -> None:
     """The bot's identity lives in bot-prompts/<id>.md; a new bot gets its id from the file name."""
-    p = save_bot_prompt(h.config.bot_prompts_dir, BotPrompt(id=bot.id, name=bot.name, role=bot.role, instructions=bot.instructions, skills=[s.slug for s in bot.skills], mcps=list(bot.mcps) or None))
+    p = save_bot_prompt(h.config.bot_prompts_dir, BotPrompt(id=bot.id, name=bot.name, role=bot.role, instructions=bot.instructions, skills=[s.slug for s in bot.skills], mcps=list(bot.mcps) or None, studio=bot.studio))
     bot.id = p.id
 
 

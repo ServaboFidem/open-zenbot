@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from src.decider.interface import NoulAnswer
-from src.harness.api import Harness, create_app
+from src.harness.api import PREVIEW_CSP, Harness, create_app
 from src.harness.bot import Bot
 from src.harness.config import HarnessConfig
 from src.memory.ledger import Ledger
@@ -239,7 +239,7 @@ async def test_attachment_is_served_inline_in_a_sandbox(client, harness: Harness
     r = await client.get(f"/rooms/{room.id}/attachments/a1")
     assert r.status_code == 200
     assert r.headers["content-disposition"].startswith("inline")
-    assert r.headers["content-security-policy"] == "sandbox allow-scripts"
+    assert r.headers["content-security-policy"] == PREVIEW_CSP  # a bot-made page is network-closed until opened
     assert r.headers["x-content-type-options"] == "nosniff"
 
 
