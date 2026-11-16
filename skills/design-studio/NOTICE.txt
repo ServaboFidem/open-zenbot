@@ -1,0 +1,10 @@
+The reference files in references/ are adapted from the craft/ folder of
+OpenDesign (https://github.com/nexu-io/open-design), commit 59e4f2a:
+anti-ai-slop.md, typography.md, color.md, accessibility-baseline.md and
+state-coverage.md. They are condensed and edited for single-file HTML designs
+shown in the OpenZenBot studio preview.
+
+OpenDesign is licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0). Some of its craft files are in
+turn adapted from refero_skill (https://github.com/referodesign/refero_skill),
+MIT licence.
