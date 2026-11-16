@@ -117,3 +117,73 @@ def test_bad_slugs_are_unknown(tmp_path, slug):
 def test_unknown_slug_is_a_key_error(tmp_path):
     with pytest.raises(KeyError):
         load(tmp_path / "s", tmp_path / "v", "nope")
+
+
+def test_a_case_variant_folder_is_not_the_slug(tmp_path):
+    make(tmp_path / "s", "default")
+    make(tmp_path / "v" / "design-systems", "Default", "# Bot's\n\nSneaky.\n")
+    got = available(tmp_path / "s", tmp_path / "v")
+    assert [(d["slug"], d["source"]) for d in got] == [("default", "shipped")]
+    assert load(tmp_path / "s", tmp_path / "v", "default").source == "shipped"
+
+
+def test_a_hard_linked_file_is_refused(tmp_path):
+    import os
+
+    other = tmp_path / "other.md"; other.write_text("# Other\n\nPrivate.\n", encoding="utf-8")
+    d = tmp_path / "v" / "design-systems" / "hl"; d.mkdir(parents=True)
+    try:
+        os.link(other, d / "DESIGN.md")
+    except OSError:
+        pytest.skip("hard links are not available here")
+    assert available(tmp_path / "s", tmp_path / "v") == []
+    with pytest.raises(DesignSystemError, match="linked from elsewhere"):
+        load(tmp_path / "s", tmp_path / "v", "hl")
+
+
+def _link_dir(link, target):
+    """A directory link without privilege: a junction on Windows, a symlink elsewhere; skips when neither works."""
+    import sys
+
+    try:
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            link.symlink_to(target, target_is_directory=True)
+    except (OSError, ImportError, AttributeError):
+        pytest.skip("directory links are not available here")
+
+
+def test_a_linked_design_systems_root_counts_as_empty(tmp_path):
+    make(tmp_path / "elsewhere", "evil")
+    make(tmp_path / "s", "default")
+    (tmp_path / "v").mkdir()
+    _link_dir(tmp_path / "v" / "design-systems", tmp_path / "elsewhere")
+    assert [d["slug"] for d in available(tmp_path / "s", tmp_path / "v")] == ["default"]
+    with pytest.raises(KeyError):
+        load(tmp_path / "s", tmp_path / "v", "evil")
+    assert load(tmp_path / "s", tmp_path / "v", "default").source == "shipped"
+
+
+def test_a_symlinked_design_systems_root_counts_as_empty(tmp_path):
+    make(tmp_path / "elsewhere", "evil")
+    (tmp_path / "v").mkdir()
+    try:
+        (tmp_path / "v" / "design-systems").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks need privilege on this machine")
+    assert available(tmp_path / "s", tmp_path / "v") == []
+    with pytest.raises(KeyError):
+        load(tmp_path / "s", tmp_path / "v", "evil")
+
+
+def test_a_huge_file_is_refused_unread(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    d = make(tmp_path / "s", "huge", tokens=None)
+    (d / "DESIGN.md").write_bytes(b"x" * (4 * 40_000 + 1))
+    monkeypatch.setattr(Path, "read_text", lambda *a, **k: pytest.fail("read a file over the byte bound"))
+    with pytest.raises(DesignSystemError, match="40,000"):
+        load(tmp_path / "s", tmp_path / "v", "huge")
+    assert available(tmp_path / "s", tmp_path / "v") == [{"slug": "huge", "name": "huge", "source": "shipped", "summary": ""}]

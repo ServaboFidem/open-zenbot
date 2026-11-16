@@ -527,8 +527,11 @@ class Harness:
             try:
                 session.design = design_systems.block(
                     design_systems.load(self.config.design_systems_dir, self.config.vault_root, conv.design_system))
-            except (KeyError, design_systems.DesignSystemError):
-                pass  # gone or no longer safe: the task runs without it
+            except (KeyError, OSError, design_systems.DesignSystemError) as e:
+                # gone or no longer safe: the task runs without it, and the ledger says why (never a disk path)
+                why = "no longer exists" if isinstance(e, KeyError) else str(e) if isinstance(e, design_systems.DesignSystemError) else "cannot be read"
+                self.ledger.append(Kind.error, bot.id, session.id, where="design_system",
+                                   error=f"design system {conv.design_system}: {why}", action="running without the design system")
         if addendum:
             session.recall_query = task  # recall searches the user's words, not the comment block
         self.sessions[session.id] = session

@@ -18,6 +18,14 @@ class DesignSystemError(ValueError):
     pass
 
 
+class TooLarge(DesignSystemError):
+    pass
+
+
+def _too_large_message(name: str) -> str:
+    return f"{name} is over {MAX_CHARS:,} characters; the limit is {MAX_CHARS:,}"
+
+
 @dataclass
 class DesignSystem:
     slug: str
@@ -29,7 +37,14 @@ class DesignSystem:
 
 
 def _roots(shipped_dir: Path, vault_root: Path) -> list[tuple[str, Path]]:
-    return [("shipped", Path(shipped_dir)), ("yours", Path(vault_root) / "design-systems")]
+    roots = [("shipped", Path(shipped_dir))]
+    mine = Path(vault_root) / "design-systems"
+    try:
+        # a bot could swap the folder for a link to somewhere else: then nothing of "yours" counts
+        safe = mine.resolve() == Path(vault_root).resolve() / "design-systems"
+    except (OSError, RuntimeError):
+        safe = False
+    return roots + [("yours", mine)] if safe else roots
 
 
 def _inside(child: Path, parent: Path) -> bool:
@@ -48,8 +63,17 @@ def _read(folder: Path, name: str, *, required: bool) -> str:
         return ""
     if not _inside(path, folder) or not path.resolve().is_file():
         raise DesignSystemError(f"{name} of {folder.name} resolves outside its own folder or is not a file")
+    real = path.resolve()
     try:
-        return path.resolve().read_text(encoding="utf-8")
+        st = real.stat()
+    except OSError as e:
+        raise DesignSystemError(f"{name} of {folder.name} cannot be read: {e.strerror or e}") from None
+    if st.st_nlink > 1:  # a hard link looks like a plain file but may be another file entirely
+        raise DesignSystemError(f"{name} of {folder.name} is linked from elsewhere")
+    if st.st_size > 4 * MAX_CHARS:  # a character is at most 4 bytes: over this it is over the cap, unread
+        raise TooLarge(_too_large_message(folder.name))
+    try:
+        return real.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         raise DesignSystemError(f"{name} of {folder.name} is not valid UTF-8") from None
     except OSError as e:
@@ -58,8 +82,11 @@ def _read(folder: Path, name: str, *, required: bool) -> str:
 
 def _find(root: Path, slug: str) -> Path | None:
     """The folder for `slug` inside `root`, or None when there is no folder there."""
-    folder = root / slug
-    return folder if folder.is_dir() else None
+    # exact on-disk name: a case-insensitive filesystem would match "Default" for "default"
+    for entry in root.iterdir():
+        if entry.name == slug and entry.is_dir():
+            return entry
+    return None
 
 
 def _name_of(slug: str, design: str) -> str:
@@ -101,6 +128,8 @@ def available(shipped_dir: Path, vault_root: Path) -> list[dict[str, str]]:
                 continue
             try:
                 found[entry.name] = _open(root, source, entry.name)
+            except TooLarge:
+                found[entry.name] = DesignSystem(entry.name, entry.name, source, "", "", "")  # listed: picking says why
             except (DesignSystemError, KeyError, OSError):
                 found.pop(entry.name, None)  # a broken folder of yours still replaces the shipped one, as `load` does
     rows = [{"slug": d.slug, "name": d.name, "source": d.source, "summary": d.summary} for d in found.values()]

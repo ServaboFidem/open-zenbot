@@ -1627,3 +1627,16 @@ async def test_a_design_system_deleted_after_picking_still_lets_a_task_run(clien
     shutil.rmtree(harness.config.vault_root / "design-systems" / "acme")
     calls = await _task_calls(client, harness)
     assert all("Design system" not in m.content for m in calls) and calls[-1].content == "go"
+
+
+async def test_a_dropped_design_system_is_recorded_in_the_ledger(client, harness: Harness):
+    import shutil
+
+    _make_design_system(harness.config.vault_root, "acme")
+    cid = await _conversation(client, harness)
+    await client.put(f"/conversations/{cid}/design-system", json={"slug": "acme"})
+    shutil.rmtree(harness.config.vault_root / "design-systems" / "acme")
+    await _task_calls(client, harness)
+    errs = [e for e in harness.ledger.iter() if e.data.get("where") == "design_system"]
+    assert len(errs) == 1 and errs[0].data["action"] == "running without the design system"
+    assert "acme" in errs[0].data["error"] and str(harness.config.vault_root) not in json.dumps(errs[0].data)
