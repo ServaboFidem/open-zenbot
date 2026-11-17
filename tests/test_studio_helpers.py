@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -586,3 +587,27 @@ async def test_answers_to_a_session_outside_the_conversation_is_refused(harness:
     conv, _ = _studio(harness)
     r = await _post(harness, "designer", conversation_id=conv.id, answers_to="nope")
     assert r.status_code == 422 and r.json()["detail"] == "answers_to is not a reply in this conversation"
+
+
+async def test_a_second_task_started_while_the_scorer_is_thinking_makes_the_first_answer_409(harness: Harness):
+    conv, _ = _studio(harness)
+    gate, parked = asyncio.Event(), asyncio.Event()
+
+    class Slow(MockScorer):
+        async def decide(self, request):
+            if request.purpose == "studio_help":
+                parked.set()
+                await gate.wait()
+            return await super().decide(request)
+
+    s = Slow(lambda req: {k: NoulAnswer(0.9 if req.purpose == "studio_help" else 0.0) for k in req.questions})
+    _script(harness, s, [completion("ok") for _ in range(4)])
+    transport = httpx.ASGITransport(app=create_app(harness))
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
+        first = asyncio.create_task(c.post("/bots/designer/tasks", json={"task": "a", "conversation_id": conv.id}))
+        await asyncio.wait_for(parked.wait(), 5)
+        second = await c.post("/bots/designer/tasks", json={"task": "b", "conversation_id": conv.id, "route": "owner"})
+        gate.set()
+        r1 = await first
+    assert second.status_code == 202 and r1.status_code == 409
+    assert sum(ex.outcome == "pending" for ex in conv.exchanges) <= 1

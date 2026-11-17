@@ -16,6 +16,10 @@ if TYPE_CHECKING:
     from .bot import Bot
 
 
+def _flat(s: str) -> str:
+    return " ".join(s.split())
+
+
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.environ[name])
@@ -42,12 +46,12 @@ async def pick(scorer: Any, ledger: Any, owner: Bot, helpers: list[Bot], text: s
             f"{b.name} can only change the {' and '.join(b.places)} inside elements that already exist and cannot add, "
             f"remove, move or restyle anything?")
         for b in helpers}
-    request = DecisionRequest(state={"message": text, "comments": [f"<{c['tag']}> {c['note']}" for c in comments]},
+    request = DecisionRequest(state={"message": text, "comments": [f"<{_flat(c['tag'])}> {_flat(c['note'])}" for c in comments]},
                               questions=questions, purpose="studio_help")
     try:
         decision = await decide_and_log(scorer, request, ledger, owner.id, "")
         scores = {b.id: decision.noul(f"bot:{b.id}").noul for b in helpers}
-    except (ProviderError, DecisionRefused) as e:
+    except (ProviderError, DecisionRefused, KeyError, TypeError) as e:
         ledger.append(Kind.error, owner.id, "", where="studio_help", error=f"{type(e).__name__}: {e}", action="designer takes it")
         return None
     band = select_band(scores, BandConfig(cfg.band_width, cfg.k, cfg.low_confidence))

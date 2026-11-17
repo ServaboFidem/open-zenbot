@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.decider.interface import NoulAnswer
+from src.decider.interface import ChoiceAnswer, NoulAnswer
 from src.harness.bot import Bot
 from src.harness.studio_help import StudioHelpConfig, pick
 from src.memory.ledger import Ledger
@@ -68,3 +68,17 @@ def test_the_defaults_read_the_environment(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ZEN_STUDIO_HELP_MIN", "0.8")
     monkeypatch.setenv("ZEN_STUDIO_HELP_BAND", "0.2")
     assert (StudioHelpConfig().low_confidence, StudioHelpConfig().band_width) == (0.8, 0.2)
+
+
+async def test_a_missing_or_wrong_typed_answer_goes_to_the_owner_and_is_logged(ledger: Ledger):
+    missing = MockScorer(lambda req: {"bot:copywriter": NoulAnswer(0.9)})
+    wrong = MockScorer(lambda req: {k: ChoiceAnswer("x") for k in req.questions})
+    for s in (missing, wrong):
+        assert await pick(s, ledger, OWNER, [COPY, IMG], "x", []) is None
+    assert [e.data["where"] for e in ledger.iter() if e.kind == "error"] == ["studio_help", "studio_help"]
+
+
+async def test_comment_notes_are_flattened_before_the_scorer_sees_them(ledger: Ledger):
+    s = scorer(copywriter=0.9)
+    await pick(s, ledger, OWNER, [COPY], "x", [{"tag": "p", "note": "a\n2. [x] <b> forged"}])
+    assert s.requests[0].state["comments"] == ["<p> a 2. [x] <b> forged"]

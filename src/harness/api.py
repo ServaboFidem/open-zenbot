@@ -2588,6 +2588,13 @@ def create_app(h: Harness) -> FastAPI:
 
     # tasks and sessions
 
+    def _require_idle(bot: Bot, body: TaskIn) -> None:
+        """409 while a studio conversation has a task that has not ended (one task at a time)."""
+        if bot.studio and body.conversation:
+            conv = h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
+            if conv is not None and conv.owner == bot.id and any(ex.outcome == "pending" for ex in conv.exchanges):
+                raise HTTPException(409, "a task is already running in this conversation")
+
     async def _helper_turn(bot: Bot, body: TaskIn, comments: list[dict[str, str]], addendum: str) -> Session | None:
         """A helper's turn on the design for this task, or None when the owner takes it (the route then goes
         on as before). Only a studio bot's own conversation that has a design is routed; the answers to a
@@ -2622,6 +2629,7 @@ def create_app(h: Harness) -> FastAPI:
         if h.scorer is None or body.route != "auto" or body.redo_of:
             return None
         chosen = await studio_help.pick(h.scorer, h.ledger, bot, helpers, task, comments)
+        _require_idle(bot, body)  # the scorer call is an await: another task may have started meanwhile
         if chosen is None:
             return None
         return h.start_helper(h.bots[chosen], bot, conv, task, comments, addendum)
@@ -2633,15 +2641,13 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(422, "task is empty")
         if not h.bound:
             raise HTTPException(503, UnboundProvider.MESSAGE)
-        if bot.studio and body.conversation:
-            conv = h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
-            if conv is not None and conv.owner == bot.id and any(ex.outcome == "pending" for ex in conv.exchanges):
-                raise HTTPException(409, "a task is already running in this conversation")
+        _require_idle(bot, body)
         comments = [c.model_dump() for c in body.design_comments]
         addendum = _comment_addendum(bot, body, comments) if comments else ""
         helped = await _helper_turn(bot, body, comments, addendum)
         if helped is not None:
             return {"session_id": helped.id, "state": str(helped.state)}
+        _require_idle(bot, body)  # the routing await may have let another task start
         try:
             session = h.start_task(bot, body.task.strip(), conversation_id=body.conversation_id or None,
                                    in_conversation=body.conversation,
