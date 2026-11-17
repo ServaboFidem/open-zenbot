@@ -97,7 +97,7 @@ class Connection:
         if attempt is None or self._clock() >= attempt[2]:
             self._log("connect_refused", reason="invalid_state")
             return False, INVALID
-        verifier, scopes, _ = attempt
+        verifier, _, _ = attempt
         if error:
             self._log("connect_refused", reason="cancelled")
             return False, CANCELLED
@@ -106,15 +106,28 @@ class Connection:
             return False, FAILED
         try:
             tokens = await self.google.exchange(code, verifier, self.redirect_uri)
-            new_refresh = str(tokens.get("refresh_token") or "")
+        except GoogleError as e:
+            self.google.forget()
+            self._log("connect_refused", reason="google_error", error_kind=e.kind)
+            return False, FAILED
+        new_refresh = str(tokens.get("refresh_token") or "")
+        try:
             if not new_refresh and not self.keys.refresh_token:
                 raise GoogleError("provider", "Google sent no refresh token")
-            rows = [calendar_row(item) for item in await self.google.calendar_list()]
+            granted = str(tokens.get("scope") or "").split()
+            if not granted:
+                raise GoogleError("provider", "Google sent no scope")
+            # the account check uses the token just issued, never a cached or refreshed one (which could be
+            # the already connected account's)
+            listed = await self.google.calendar_list(access=str(tokens["access_token"]))
+            rows = [calendar_row(item) for item in listed]
             account = next((r["id"] for r in rows if r["primary"]), "")
             if not account:
                 raise GoogleError("provider", "Google listed no primary calendar")
         except GoogleError as e:
             self.google.forget()
+            if new_refresh:
+                await self.google.revoke(new_refresh)
             self._log("connect_refused", reason="google_error", error_kind=e.kind)
             return False, FAILED
         was_linked = self._linked()
@@ -130,9 +143,8 @@ class Connection:
             exclusion.register_secret_value(new_refresh)
             self.keys.refresh_token = new_refresh
             self.keys.save(self.vault_root)
-        granted = str(tokens.get("scope") or "").split()
         self.settings.account = account
-        self.settings.scopes = granted or scopes
+        self.settings.scopes = granted
         self.settings.save(self.vault_root)
         self.store.set_meta(NEEDS_RECONNECT, "")
         self.store.upsert_google(rows)

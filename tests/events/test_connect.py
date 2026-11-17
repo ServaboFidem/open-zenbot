@@ -228,3 +228,32 @@ def test_credentials_are_stripped_required_and_saved(conn_factory):
 def test_begin_url_uses_the_loopback_callback(conn):
     assert "redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Fcalendar%2Fgoogle%2Fcallback" in conn.begin(write=False)
     assert conn.redirect_uri == "http://127.0.0.1:8765/calendar/google/callback"
+
+
+async def test_the_account_is_read_with_the_new_token_not_the_saved_one(conn, fake):
+    await connect(conn, fake, "a@x.org")
+    a_list = list(fake.calendars)
+    url = conn.begin(write=True)
+    fake.omit_expiry = True  # without expires_in a cached token would count as expired
+    fake.calendars_by_token = {f"access-{fake.access_tokens + 1}": [cal("b@x.org")]}
+    fake.calendars = a_list  # every other token (a refresh) sees the connected account
+    assert await conn.finish(state_of(url), "code", None) == (False, DIFFERENT)
+    assert conn.settings.account == "a@x.org" and conn.keys.refresh_token == "refresh-1"
+    assert not any(r.url.path.endswith("/calendarList") and r.headers["authorization"] != f"Bearer access-2"
+                   for r in fake.requests[-3:])
+
+
+async def test_a_response_without_scope_is_a_failed_sign_in_and_revokes_the_new_token(conn, fake):
+    sign_in_as(fake, "a@x.org", scope="")
+    s = state_of(conn.begin(write=False))
+    assert await conn.finish(s, "code", None) == (False, "Google could not complete the sign-in. Try again.")
+    assert conn.state() == "ready" and conn.settings.account == "" and conn.settings.scopes == []
+    assert any("/revoke" in str(r.url) for r in fake.requests)
+
+
+async def test_a_failed_calendar_list_revokes_the_new_token(conn, fake):
+    sign_in_as(fake, "a@x.org")
+    fake.fail["calendarList"] = 500
+    assert (await conn.finish(state_of(conn.begin(write=False)), "code", None))[0] is False
+    assert conn.state() == "ready"
+    assert any("/revoke" in str(r.url) for r in fake.requests)

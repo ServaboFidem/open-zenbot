@@ -140,8 +140,8 @@ class Google:
             pass
 
     async def _call(self, method: str, path: str, *, params: dict[str, str] | None = None,
-                    body: dict | None = None, ok_gone: bool = False) -> dict[str, Any]:
-        access = await self.token()
+                    body: dict | None = None, ok_gone: bool = False, access: str | None = None) -> dict[str, Any]:
+        access = access or await self.token()
         resp = await self._send(method, f"{API}{path}", params=params, json=body,
                                 headers={"Authorization": f"Bearer {access}"})
         if resp.status_code == 401:
@@ -152,12 +152,13 @@ class Google:
             raise _failure(resp)
         return _json(resp)
 
-    async def calendar_list(self) -> list[dict]:
+    async def calendar_list(self, access: str | None = None) -> list[dict]:
+        """``access``: list with exactly this access token (never a cached or refreshed one)."""
         items: list[dict] = []
         page = ""
         while True:
             params = {"maxResults": str(PAGE), **({"pageToken": page} if page else {})}
-            body = await self._call("GET", "/users/me/calendarList", params=params)
+            body = await self._call("GET", "/users/me/calendarList", params=params, access=access)
             items += body.get("items") or []
             page = body.get("nextPageToken") or ""
             if not page:

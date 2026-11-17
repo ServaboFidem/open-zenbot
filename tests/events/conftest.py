@@ -46,6 +46,8 @@ class FakeGoogle:
         self.scope = ""
         self.page_size = 250
         self.access_tokens = 0
+        self.calendars_by_token: dict[str, list[dict]] = {}  # bearer token -> the list that token sees
+        self.omit_expiry = False  # a code-exchange answer without expires_in
         self._clock = 0
         self._changed: dict[tuple[str, str], int] = {}
         self._issued: set[str] = set()
@@ -73,7 +75,8 @@ class FakeGoogle:
             return httpx.Response(200, json={})
         path = urllib.parse.unquote(request.url.path.removeprefix(urllib.parse.urlsplit(API).path))
         if path == "/users/me/calendarList":
-            return httpx.Response(200, json={"items": self.calendars})
+            bearer = request.headers.get("authorization", "").removeprefix("Bearer ")
+            return httpx.Response(200, json={"items": self.calendars_by_token.get(bearer, self.calendars)})
         parts = path.split("/")
         if len(parts) >= 4 and parts[1] == "calendars" and parts[3] == "events":
             return self._events(request, parts[2], parts[4] if len(parts) > 4 else None)
@@ -92,6 +95,8 @@ class FakeGoogle:
                 "token_type": "Bearer"}
         if form.get("grant_type") == "authorization_code":
             body["refresh_token"] = "refresh-1"
+            if self.omit_expiry:
+                del body["expires_in"]
         return httpx.Response(200, json=body)
 
     def _events(self, request: httpx.Request, cal: str, event_id: str | None) -> httpx.Response:
