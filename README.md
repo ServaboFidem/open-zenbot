@@ -8,7 +8,7 @@ An open-source AI harness that runs on your desktop, remembers what it learns, a
 
 > **Just want to use it? [Download the installer (0.1.0 beta)](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.1.0)** for Windows or Ubuntu/Debian, then follow [Install](#install). No Python, Node.js or developer tools needed. To run it from the source code, see [Run from source](#run-from-source-development-builds).
 
-> **Status: experimental.** open-zenbot is a passion project, not a product. Expect rough edges, breaking changes and features that are half-built. Full documentation is on the way. Until then, this README, `AGENTS.md` and `.env.example` are the best guides.
+> **Status: experimental.** open-zenbot is a passion project, not a product. Expect rough edges, breaking changes and features that are half-built. For more information, see the [wiki](https://github.com/ServaboFidem/open-zenbot/wiki). It is a work in progress: a few pages so far, with more on the way. Where it has no answer yet, this README, `AGENTS.md` and `.env.example` are the best guides.
 
 Inspired by grokbot, open-zenbot is a team of bots that live on your machine. They work in a folder you can see, with tools you choose, and they know a little more each time you use them. It isn't a chat window over a model. Bots run commands, read and write documents, call MCP servers, hand work to each other in rooms, and run routines on a schedule, and every step lands in a ledger you can read.
 
