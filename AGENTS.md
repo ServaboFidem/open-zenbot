@@ -23,7 +23,7 @@ name each top-level system and run the harness and the tests.
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
 | `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
-| `.github/` | Workflows: `changelog.yml` appends every push to `main` to `CHANGELOG.md` (don't edit it by hand; `[skip changelog]` in a commit subject leaves it out), `stale.yml`, and `release.yml` (a `v*` tag builds the .deb and the Windows installer and opens a draft release; see `## Installed app`) |
+| `.github/` | Workflows: `changelog.yml` appends every push to `main` to `CHANGELOG.md` (don't edit it by hand; `[skip changelog]` in a commit subject leaves it out), `stale.yml`, and `release.yml` (a `v*` tag builds the .deb and the Windows installer and opens a draft release; a manual run only builds them; see `## Installed app`) |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
 
 Run the harness with `uv sync --group dev`, then `uv run python -m src.harness.main`
@@ -455,8 +455,10 @@ was written: its first build is the release workflow's first run.
   this repo's release pages; the notes are shown as plain text, cut to 2,000 characters.
 - **Releasing.** Set the same new `version` in `package.json`, `pyproject.toml` and `packaging/harness/pyproject.toml`,
   run `uv lock --project packaging/harness` (and keep its `dependencies` equal to the root's: `tests/test_packaged_deps.py`),
-  commit, tag `v<version>` and push the tag. `.github/workflows/release.yml` runs only on `v*` tags: job `check` fails
-  unless the tag equals the three versions, the packaged lock is current (`uv lock --check`) and both test suites pass;
+  commit, tag `v<version>` and push the tag. `.github/workflows/release.yml` runs on `v*` tags and by hand
+  (`workflow_dispatch`): a manual run tests and builds the installers as artifacts of the run without making a release
+  (the `release` job and the tag check are gated on a `refs/tags/v` ref). Job `check` fails
+  unless the tag (on a tag run) equals the three versions, the packaged lock is current (`uv lock --check`) and both test suites pass;
   `build` makes the .deb on `ubuntu-22.04` and the installer on `windows-latest` from a clean checkout (the package
   copies harness files from the working tree); `release` creates a **draft** with both attached. Publishing it is a
   maintainer's manual step. Actions are pinned by 40-character commit SHA with the version in a comment: look the SHA

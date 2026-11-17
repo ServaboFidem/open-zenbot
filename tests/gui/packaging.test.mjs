@@ -117,7 +117,8 @@ test('a user sees OpenZenBot, never the npm name', () => {
   assert.doesNotMatch(read('electron-builder.yml') + read('build/apparmor-profile'), /zen-agents/);
 });
 
-// The release workflow: a draft release from a v* tag, built only after both test suites pass.
+// The release workflow: a draft release from a v* tag (a manual run builds without one), built only after both
+// test suites pass.
 const workflow = () => read('.github/workflows/release.yml');
 const jobBlock = name => {
   const m = new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  [a-z-]+:\\n|(?![\\s\\S]))`, 'm').exec(workflow());
@@ -125,10 +126,14 @@ const jobBlock = name => {
   return m[1];
 };
 
-test('the release workflow runs only on v* tags', () => {
+test('the release workflow runs on v* tags and by hand, and only a tag makes a release', () => {
   const on = /^on:\n([\s\S]*?)^\S/m.exec(workflow() + '\nx')[1];
-  assert.match(on, /^  push:\n    tags: \['v\*'\]\s*$/m);
-  assert.doesNotMatch(on, /branches|pull_request|workflow_dispatch|schedule/);
+  assert.equal(on.trimEnd(), "  push:\n    tags: ['v*']\n  workflow_dispatch:");
+  assert.doesNotMatch(on, /branches|pull_request|schedule|inputs/);
+  assert.match(jobBlock('release'), /^    if: startsWith\(github\.ref, 'refs\/tags\/v'\)$/m);
+  // the tag-equals-version step runs only for a tag; a manual run still tests and builds
+  assert.match(jobBlock('check'), /- name: The tag matches the version[^\n]*\n        if: startsWith\(github\.ref, 'refs\/tags\/v'\)\n/);
+  assert.doesNotMatch(jobBlock('check') + jobBlock('build'), /^    if:/m);
 });
 
 test('the release workflow tests before it builds, and creates only a draft release', () => {
