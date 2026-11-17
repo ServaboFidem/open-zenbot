@@ -531,7 +531,7 @@ async def test_the_designer_takes_it_when_the_helper_has_no_worksheet(harness: H
     assert len(_routed(s)) == 1 and harness.sessions[r.json()["session_id"]].bot_id == "designer"
 
 
-@pytest.mark.parametrize("case", ["no design", "owner", "not studio", "no conversation", "no helpers", "redo"])
+@pytest.mark.parametrize("case", ["no design", "owner", "not studio", "no conversation", "no helpers"])
 async def test_the_scorer_is_not_asked_when_routing_does_not_apply(harness: Harness, case: str):
     conv, _ = _studio(harness)
     body: dict = {"conversation_id": conv.id}
@@ -548,8 +548,6 @@ async def test_the_scorer_is_not_asked_when_routing_does_not_apply(harness: Harn
     elif case == "no helpers":
         for b in ("copywriter", "darkroom"):
             harness.bots[b].places = []
-    elif case == "redo":
-        body["redo_of"] = "abc"
     s = _favour(copywriter=0.9)
     _script(harness, s, [completion("ok")])
     r = await _post(harness, bot, **body)
@@ -611,3 +609,109 @@ async def test_a_second_task_started_while_the_scorer_is_thinking_makes_the_firs
         r1 = await first
     assert second.status_code == 202 and r1.status_code == 409
     assert sum(ex.outcome == "pending" for ex in conv.exchanges) <= 1
+
+
+# -- redo with the Designer ----------------------------------------------------
+
+
+async def _helped(h: Harness):
+    """A Designer conversation whose version 1 the Copywriter changed into version 2."""
+    conv, att = _studio(h)
+    s = await _help(h, conv, [completion(calls=[_set_text("c1", "lede", "New lede")]), completion("Rewrote.")],
+                    comments=[_comment(att)])
+    return conv, att, s
+
+
+async def _redo(h: Harness, conv, sid: str, **body):
+    return await _post(h, "designer", conversation_id=conv.id, redo_of=sid, **body)
+
+
+async def test_a_redo_puts_the_earlier_source_back_and_starts_the_designer_on_version_one(harness: Harness):
+    conv, att, helped = await _helped(harness)
+    scorer = _favour(copywriter=0.99)
+    _script(harness, scorer, [completion("Redone.")])
+    r = await _redo(harness, conv, helped.id, design_comments=[_comment(att)])
+    assert r.status_code == 202
+    sid = r.json()["session_id"]
+    assert harness.sessions[sid].bot_id == "designer" and _routed(scorer) == []
+    assert (_folder(harness) / "index.html").read_bytes() == PAGE.encode()
+    assert conv.exchanges[-2].session_id == helped.id and conv.exchanges[-2].set_aside is True
+    await harness.tasks[sid]
+    prompt = "\n".join(m.content for m in harness.provider.calls[0] if isinstance(m.content, str))
+    assert "version 1" in prompt and "Comments on the design" in prompt
+    atts = [Path(a["path"]).name for ex in conv.exchanges for a in ex.attachments]
+    assert atts == ["1.index.html", "2.index.html"]
+    ev = [e.data for e in harness.ledger.iter() if e.kind == "design_part" and e.data.get("event") == "redo"]
+    assert ev == [{"event": "redo", "set_aside": 2, "restored": 1}]
+
+
+async def test_a_redo_without_comments_works(harness: Harness):
+    conv, _, helped = await _helped(harness)
+    _script(harness, _favour(), [completion("Redone.")])
+    r = await _redo(harness, conv, helped.id)
+    assert r.status_code == 202
+    assert (_folder(harness) / "index.html").read_bytes() == PAGE.encode()
+
+
+def _unchanged(h: Harness, conv) -> None:
+    assert (_folder(h) / "index.html").read_bytes() == PAGE.replace("Old lede", "New lede").encode()
+    assert not any(ex.set_aside for ex in conv.exchanges)
+
+
+async def test_only_the_newest_exchange_can_be_redone(harness: Harness):
+    conv, _, helped = await _helped(harness)
+    for sid in ("nope", conv.exchanges[0].session_id):
+        r = await _redo(harness, conv, sid)
+        assert r.status_code == 422 and r.json()["detail"] == "only the newest change can be redone"
+    _unchanged(harness, conv)
+
+
+async def test_a_redo_of_the_owners_exchange_is_refused(harness: Harness):
+    conv, _ = _studio(harness)
+    r = await _redo(harness, conv, conv.exchanges[-1].session_id)
+    assert r.status_code == 422 and r.json()["detail"] == "only a helper's change can be redone"
+
+
+async def test_a_redo_whose_kept_source_is_gone_is_refused_and_changes_nothing(harness: Harness):
+    conv, _, helped = await _helped(harness)
+    (_folder(harness) / ".versions" / "before-2.index.html").unlink()
+    r = await _redo(harness, conv, helped.id)
+    assert r.status_code == 422 and r.json()["detail"] == "the earlier version of the design is no longer there"
+    _unchanged(harness, conv)
+
+
+async def test_a_redo_whose_restore_fails_is_refused_and_changes_nothing(harness: Harness, monkeypatch):
+    conv, _, helped = await _helped(harness)
+
+    def boom(live, data):
+        raise OSError("disk")
+
+    monkeypatch.setattr(studio_helpers, "_replace", boom)
+    r = await _redo(harness, conv, helped.id)
+    assert r.status_code == 422 and r.json()["detail"] == "the earlier version of the design is no longer there"
+    _unchanged(harness, conv)
+
+
+async def test_redo_comments_must_name_the_version_the_helper_started_from(harness: Harness):
+    conv, att, helped = await _helped(harness)
+    newest = conv.exchanges[-1].attachments[0]
+    r = await _redo(harness, conv, helped.id, design_comments=[_comment(newest)])
+    assert r.status_code == 422
+    _unchanged(harness, conv)
+
+
+async def test_a_second_redo_of_the_same_exchange_is_refused(harness: Harness):
+    conv, _, helped = await _helped(harness)
+    _script(harness, _favour(), [completion("Redone."), completion("again")])
+    r = await _redo(harness, conv, helped.id)
+    await harness.tasks[r.json()["session_id"]]
+    r2 = await _redo(harness, conv, helped.id)
+    assert r2.status_code == 422 and r2.json()["detail"] == "only the newest change can be redone"
+
+
+async def test_a_redo_while_a_task_runs_is_409_and_changes_nothing(harness: Harness):
+    conv, _, helped = await _helped(harness)
+    harness.conversations.begin("designer", "busy", session_id="busy1", conv_id=conv.id)
+    r = await _redo(harness, conv, helped.id)
+    assert r.status_code == 409
+    _unchanged(harness, conv)

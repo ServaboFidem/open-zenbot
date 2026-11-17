@@ -1274,9 +1274,41 @@ def create_app(h: Harness) -> FastAPI:
         d, _ = exclusion.redact_obj(record)
         return d
 
-    def _comment_addendum(bot: Bot, body: TaskIn, comments: list[dict[str, str]]) -> str:
+    def _redo_target(bot: Bot, body: TaskIn) -> tuple[Any, dict[str, str], tuple[str, int, str], Path, int]:
+        """What a redo sends back, or a 422: (the conversation, the version the helper started from as an
+        attachment and its (slug, number, name), the helper's numbered copy, its number). Only the newest
+        exchange, a helper's, that made a revision whose kept source is still there."""
+        conv = h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
+        if not body.conversation or conv is None or conv.owner != bot.id or not conv.exchanges \
+                or conv.exchanges[-1].session_id != body.redo_of:
+            raise HTTPException(422, "only the newest change can be redone")
+        ex = conv.exchanges[-1]
+        helper = h.bots.get(ex.bot) if ex.bot else None
+        if helper is None or not helper.places or ex.set_aside:
+            raise HTTPException(422, "only a helper's change can be redone")
+        root = h.config.vault_root
+        mine = next(((a, rev) for a in ex.attachments if (rev := design_studio.revision_of(root, Path(a["path"])))), None)
+        if mine is None:
+            raise HTTPException(422, "that change made no new version of the design")
+        att, (slug, number, name) = mine
+        earlier = [(a, rev) for e in conv.exchanges for a in e.attachments
+                   if (rev := design_studio.revision_of(root, Path(a["path"]))) and rev[0] == slug and rev[2] == name
+                   and rev[1] < number]
+        if not earlier or design_studio.before_of(root, Path(att["path"])) is None:
+            raise HTTPException(422, studio_helpers.NO_EARLIER)
+        prev, prev_rev = max(earlier, key=lambda t: t[1][1])
+        return conv, prev, prev_rev, Path(att["path"]), number
+
+    def _comment_addendum(bot: Bot, body: TaskIn, comments: list[dict[str, str]],
+                          redo: tuple[Any, dict[str, str], tuple[str, int, str], Path, int] | None = None) -> str:
         """The block for a task's design comments, or a 422: they must name the newest design revision
-        of the conversation the task joins. Checked before anything is created."""
+        of the conversation the task joins (a redo: the version the helper started from). Checked before
+        anything is created."""
+        if redo is not None:
+            _, att, (slug, version, name), _, _ = redo
+            if any(c["attachment_id"] != att["id"] for c in comments):
+                raise HTTPException(422, "comments belong on the version the helper started from")
+            return design_studio.comment_block(f"designs/{slug}/{name}", version, comments)
         if not body.conversation:
             raise HTTPException(422, "design comments need a conversation")
         conv = h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
@@ -2643,11 +2675,21 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(503, UnboundProvider.MESSAGE)
         _require_idle(bot, body)
         comments = [c.model_dump() for c in body.design_comments]
-        addendum = _comment_addendum(bot, body, comments) if comments else ""
-        helped = await _helper_turn(bot, body, comments, addendum)
-        if helped is not None:
-            return {"session_id": helped.id, "state": str(helped.state)}
-        _require_idle(bot, body)  # the routing await may have let another task start
+        redo = _redo_target(bot, body) if body.redo_of else None
+        addendum = _comment_addendum(bot, body, comments, redo) if comments else ""
+        if redo is None:
+            helped = await _helper_turn(bot, body, comments, addendum)
+            if helped is not None:
+                return {"session_id": helped.id, "state": str(helped.state)}
+            _require_idle(bot, body)  # the routing await may have let another task start
+        else:
+            # everything is checked; from here no await until the task starts, so nothing else can start
+            conv, _, (_, back, _), copy, number = redo
+            if why := studio_helpers.restore(h.config.vault_root, copy):
+                raise HTTPException(422, why)
+            h.conversations.set_aside(conv.id, body.redo_of)
+            h.ledger.append(Kind.design_part, conv.exchanges[-1].bot, body.redo_of, event="redo",
+                            set_aside=number, restored=back)
         try:
             session = h.start_task(bot, body.task.strip(), conversation_id=body.conversation_id or None,
                                    in_conversation=body.conversation,

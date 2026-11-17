@@ -155,6 +155,28 @@ def _replace(live: Path, data: bytes) -> None:
         raise
 
 
+NO_EARLIER = "the earlier version of the design is no longer there"
+
+
+def restore(vault_root: Path, copy: Path) -> str | None:
+    """Put the working file back to the source kept before the helper's change that made the numbered
+    `copy`. Writes whole or not at all; returns the reason when it cannot (and then changes nothing)."""
+    rev = design_studio.revision_of(vault_root, copy)
+    before = design_studio.before_of(vault_root, copy)
+    folder = design_dir(vault_root, rev[0]) if rev else None
+    if rev is None or before is None or folder is None:
+        return NO_EARLIER
+    live = folder / rev[2]
+    try:
+        if live.is_symlink() or not live.is_file():
+            return NO_EARLIER
+        data = before.read_bytes()
+        _replace(live, data)
+    except OSError:
+        return NO_EARLIER
+    return None
+
+
 def apply(vault_root: Path, turn: PartTurn) -> Applied:
     """Splice the turn's changes into the working file, keep the source it replaced, and take a numbered
     copy. Writes nothing unless the working file is still the one the worksheet was read from and the copy
