@@ -209,3 +209,48 @@ def test_a_design_folder_that_links_out_is_not_followed(tmp_path):
     (tmp_path / "designs" / "site").symlink_to(out, target_is_directory=True)
     live = tmp_path / "designs" / "site" / "index.html"
     assert embed_notes(tmp_path, live) == [] and not is_current(tmp_path, live, live)
+
+
+def test_keep_before_keeps_the_source_for_the_copy_about_to_be_made(tmp_path):
+    from src.harness.design_studio import before_of, keep_before, next_number
+
+    d, live = _site(tmp_path)
+    assert next_number(tmp_path, live) == 1
+    one = snapshot(tmp_path, live)
+    assert next_number(tmp_path, live) == 2
+    kept = keep_before(tmp_path, live, 2, b"<p>old</p>")
+    assert kept == d / ".versions" / "before-2.index.html" and kept.read_bytes() == b"<p>old</p>"
+    assert revision_of(tmp_path, kept) is None and next_number(tmp_path, live) == 2  # never counted as a copy
+    with pytest.raises(SnapshotRefused, match="already there"):
+        keep_before(tmp_path, live, 2, b"<p>other</p>")
+    assert kept.read_bytes() == b"<p>old</p>"
+    live.write_text("<p>new</p>")
+    two = snapshot(tmp_path, live)
+    assert before_of(tmp_path, two) == kept and before_of(tmp_path, one) is None
+    assert before_of(tmp_path, kept) is None
+
+
+def test_keep_before_refuses_a_linked_versions_folder_and_a_non_design(tmp_path):
+    from src.harness.design_studio import keep_before, next_number
+
+    d, live = _site(tmp_path)
+    elsewhere = tmp_path / "elsewhere"; elsewhere.mkdir()
+    (d / ".versions").symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(SnapshotRefused, match="link"):
+        keep_before(tmp_path, live, 1, b"x")
+    with pytest.raises(SnapshotRefused, match="link"):
+        next_number(tmp_path, live)
+    assert list(elsewhere.iterdir()) == []
+    with pytest.raises(SnapshotRefused):
+        keep_before(tmp_path, d / "images" / "hero.png", 1, b"x")
+
+
+def test_before_of_ignores_a_kept_source_that_is_a_link(tmp_path):
+    from src.harness.design_studio import before_of
+
+    d, live = _site(tmp_path)
+    snapshot(tmp_path, live)
+    live.write_text("<p>two</p>")
+    two = snapshot(tmp_path, live)
+    (d / ".versions" / "before-2.index.html").symlink_to(live)
+    assert before_of(tmp_path, two) is None

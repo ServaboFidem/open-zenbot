@@ -129,6 +129,18 @@ def add(folder: Path, source: Path, name: str = "") -> str:
         raise ImageRefused("not readable") from None
     if len(data) > PICTURE_MAX_BYTES:
         raise ImageRefused("too large")
+    return _put(folder, data, name or source.name)
+
+
+def write_out(folder: Path, data: bytes, name: str) -> str:
+    """Write picture bytes (from a `data:` URI in an older design) into `folder/images/` and return
+    `images/<name>`. A file there with the same bytes is reused; other bytes are never overwritten."""
+    if len(data) > PICTURE_MAX_BYTES:
+        raise ImageRefused("too large")
+    return _put(folder, data, name, reuse=True)
+
+
+def _put(folder: Path, data: bytes, name: str, reuse: bool = False) -> str:
     kind = sniff(data)
     if kind is None:
         raise ImageRefused("not a picture")
@@ -138,7 +150,7 @@ def add(folder: Path, source: Path, name: str = "") -> str:
     if not d.exists():
         d.mkdir()
     d = _images_dir(folder)
-    stem, ext = _stem(name or source.name), _EXT[kind]
+    stem, ext = _stem(name), _EXT[kind]
     n = 1
     while True:
         leaf = f"{stem}.{ext}" if n == 1 else f"{stem}-{n}.{ext}"
@@ -146,6 +158,47 @@ def add(folder: Path, source: Path, name: str = "") -> str:
             with open(d / leaf, "xb") as out:  # exclusive: never follows or truncates what is there
                 out.write(data)
         except FileExistsError:
+            if reuse:
+                try:
+                    if load(folder, leaf)[1] == data:
+                        return f"{IMAGES}/{leaf}"
+                except ImageRefused:
+                    pass
             n += 1
             continue
         return f"{IMAGES}/{leaf}"
+
+
+def dimensions(data: bytes) -> tuple[int, int] | None:
+    """(width, height) in pixels from a PNG, GIF, WebP or JPEG header, or None when it cannot be read."""
+    kind = sniff(data)
+    if kind == "png" and data[12:16] == b"IHDR":
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if kind == "gif" and len(data) >= 10:
+        return int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little")
+    if kind == "webp":
+        chunk = data[12:16]
+        if chunk == b"VP8 " and data[23:26] == b"\x9d\x01\x2a":
+            return int.from_bytes(data[26:28], "little") & 0x3FFF, int.from_bytes(data[28:30], "little") & 0x3FFF
+        if chunk == b"VP8L" and len(data) >= 25 and data[20] == 0x2F:
+            bits = int.from_bytes(data[21:25], "little")
+            return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+        if chunk == b"VP8X" and len(data) >= 30:
+            return int.from_bytes(data[24:27], "little") + 1, int.from_bytes(data[27:30], "little") + 1
+        return None
+    if kind == "jpeg":
+        i = 2
+        while i + 9 <= len(data):
+            if data[i] != 0xFF:
+                return None
+            marker = data[i + 1]
+            if marker == 0xFF:  # fill byte
+                i += 1
+                continue
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):  # a start-of-frame
+                return int.from_bytes(data[i + 7:i + 9], "big"), int.from_bytes(data[i + 5:i + 7], "big")
+            if marker == 0x01 or 0xD0 <= marker <= 0xD9:  # no length
+                i += 2
+                continue
+            i += 2 + int.from_bytes(data[i + 2:i + 4], "big")
+    return None

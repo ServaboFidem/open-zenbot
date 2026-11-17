@@ -87,17 +87,10 @@ def snapshot(vault_root: Path, target: Path) -> Path | None:
         return None
     if len(parts) != 2 or parts[0].startswith(".") or real.suffix.lower() not in _SUFFIXES or not real.is_file():
         return None
-    vdir = real.parent / ".versions"
     # a symlinked .versions would send the copy elsewhere; refuse before any read, mkdir or write
-    if vdir.is_symlink() or (vdir.exists() and vdir.resolve() != vdir):
-        raise SnapshotRefused(f"designs/{parts[0]}/.versions is a link or not a folder; remove it and attach again")
+    vdir = _versions(real, parts[0])
     name = real.name
-    have: list[tuple[int, Path]] = []
-    if vdir.is_dir():
-        for p in vdir.iterdir():
-            m = _COPY.match(p.name)
-            if m and m.group(2) == name:
-                have.append((int(m.group(1)), p))
+    have = _copies(vdir, name)
     data = design_images.embed(real.read_bytes(), real.parent)[0]  # the copy is fixed: its pictures go inside it
     n = 0
     if have:
@@ -112,6 +105,64 @@ def snapshot(vault_root: Path, target: Path) -> Path | None:
     except FileExistsError:
         raise SnapshotRefused(f"designs/{parts[0]}/.versions/{copy.name} is already there; attach again") from None
     return copy
+
+
+def _copies(vdir: Path, name: str) -> list[tuple[int, Path]]:
+    have: list[tuple[int, Path]] = []
+    if vdir.is_dir():
+        for p in vdir.iterdir():
+            m = _COPY.match(p.name)
+            if m and m.group(2) == name:
+                have.append((int(m.group(1)), p))
+    return have
+
+
+def _versions(real: Path, slug: str) -> Path:
+    """The design's `.versions` folder, refused when it is a link or not a folder (as `snapshot` refuses it)."""
+    vdir = real.parent / ".versions"
+    if vdir.is_symlink() or (vdir.exists() and vdir.resolve() != vdir):
+        raise SnapshotRefused(f"designs/{slug}/.versions is a link or not a folder; remove it and attach again")
+    return vdir
+
+
+def next_number(vault_root: Path, live: Path) -> int:
+    """The number the next new numbered copy of this design file takes. Raises SnapshotRefused for a path
+    that is not a design or a linked `.versions`."""
+    real = _live(vault_root, live)
+    if real is None:
+        raise SnapshotRefused("not a design file")
+    have = _copies(_versions(real, real.parent.name), real.name)
+    return max(have)[0] + 1 if have else 1
+
+
+def keep_before(vault_root: Path, live: Path, n: int, source: bytes) -> Path:
+    """Keep the design file's source as it was before a helper's change: `.versions/before-<n>.<name>`,
+    where `<n>` is the number of the copy the change is about to make. Never overwrites or follows what is
+    at the name. Raises SnapshotRefused (the message names no disk path) or OSError."""
+    real = _live(vault_root, live)
+    if real is None:
+        raise SnapshotRefused("not a design file")
+    vdir = _versions(real, real.parent.name)
+    vdir.mkdir(exist_ok=True)
+    kept = vdir / f"before-{n}.{real.name}"
+    try:
+        with open(kept, "xb") as out:  # exclusive, as the numbered copies are
+            out.write(source)
+    except FileExistsError:
+        raise SnapshotRefused(f"designs/{real.parent.name}/.versions/{kept.name} is already there") from None
+    return kept
+
+
+def before_of(vault_root: Path, copy: Path) -> Path | None:
+    """The source kept before the helper's change that made this numbered copy, when there is one."""
+    rev = revision_of(vault_root, copy)
+    if rev is None:
+        return None
+    vdir = _designs(vault_root) / rev[0] / ".versions"
+    if vdir.is_symlink() or not vdir.is_dir():
+        return None
+    kept = vdir / f"before-{rev[1]}.{rev[2]}"
+    return kept if _fixed(kept) else None
 
 
 def _live(vault_root: Path, live: Path) -> Path | None:

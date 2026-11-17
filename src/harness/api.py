@@ -64,7 +64,8 @@ from . import allowed_folders, tracing_settings
 from .allowed_folders import AllowedFolders
 from .magick_guard import Folders as GuardFolders, MagickGuard, MagickRunner
 from .write_guard import ShellWriteCheck
-from . import agent_clis, design_images, design_studio, design_systems, tool_paths
+from . import agent_clis, design_images, design_parts, design_studio, design_systems, studio_helpers, tool_paths
+from .studio_helpers import PartTurn
 from .agent_clis import Agents
 from .delegation import Delegator, Runner as DelegateRunner
 from src.vault_settings import settings_dir
@@ -191,6 +192,7 @@ class Harness:
     _bot_providers: dict[str, tuple[tuple, Provider]] = field(default_factory=dict, init=False, repr=False)  # provider id -> (its settings, a client)
     media: MediaProxy | None = None  # remote images, video and PDFs for the chat; trusted hosts at once, others on a click
     task_attachments: dict[str, list[Attachment]] = field(default_factory=dict)  # session id -> files attached in a one-to-one task
+    part_turns: dict[str, PartTurn] = field(default_factory=dict)  # session id -> a helper's turn on a design: its worksheet and changes
     _warm_tasks: set = field(default_factory=set, init=False, repr=False)
     _last_routed_at: datetime | None = field(default=None, init=False)  # last /orchestrate that put a message in a room
 
@@ -296,7 +298,35 @@ class Harness:
                 "name": {"type": "string", "description": "optional name for the picture; it is made lower case and kept safe"},
             }, "required": ["path"]},
             self._design_add_image_tool,
-            offered=lambda _bot, session_id: self._studio_session(session_id) is not None,
+            offered=lambda _bot, session_id: (self._studio_session(session_id) is not None
+                                              or self._part_turn(session_id, "images") is not None),
+        )
+        self.tools.register(  # idempotent; offered only to a helper's turn on a design's text
+            "design_set_text",
+            "Set the text of one element on your list in the design. Give its id (the word in brackets) and the new "
+            "text, as plain text: no HTML. A later call for the same id replaces the earlier one. The design is "
+            "changed when you finish.",
+            {"type": "object", "properties": {
+                "id": {"type": "string", "description": "the element's id from your list, without the brackets"},
+                "text": {"type": "string", "description": "the new text, plain"},
+            }, "required": ["id", "text"]},
+            self._design_set_text_tool,
+            offered=lambda _bot, session_id: self._part_turn(session_id, "text") is not None,
+        )
+        self.tools.register(  # idempotent; offered only to a helper's turn on a design's pictures
+            "design_set_image",
+            "Set the picture of one element on your list in the design. Give its id (the word in brackets) and the "
+            "path of a PNG, JPEG, WebP or GIF: one already in the design's images folder, or one you may read, which "
+            "is copied in. Optionally give new alt text, plain. A later call for the same id replaces the earlier "
+            "one. The design is changed when you finish.",
+            {"type": "object", "properties": {
+                "id": {"type": "string", "description": "the element's id from your list, without the brackets"},
+                "path": {"type": "string", "description": "the picture: a full path, designs/<folder>/images/<name>, "
+                                                          "or relative to your working folder"},
+                "alt": {"type": "string", "description": "optional new alt text, plain"},
+            }, "required": ["id", "path"]},
+            self._design_set_image_tool,
+            offered=lambda _bot, session_id: self._part_turn(session_id, "images") is not None,
         )
         if self.music is None:
             self.music = MusicService(c, self.ledger, self.memory, self.tools, self.catalog)
@@ -568,6 +598,8 @@ class Harness:
         session = self.sessions.get(session_id)
         if session is None or not session.conversation_id or session.room_id:
             return "attach_file works only in a conversation or a room turn."
+        if session_id in self.part_turns and self._in_designs(path):
+            return studio_helpers.ATTACH_REFUSED  # the live file would be attached; the apply attaches the copy
         conv = self.conversations.get(session.conversation_id)
         target = self.attach_target(session.bot_id, path, folder=conv.design_folder if conv else "")
         if isinstance(target, str):
@@ -599,26 +631,155 @@ class Harness:
         return self.design_add_image(current_call.get()[1], path, name)
 
     def design_add_image(self, session_id: str, path: str, name: str = "") -> str:
-        """`design_add_image`: copy a picture the studio bot may read into its design's `images/` folder."""
+        """`design_add_image`: copy a picture the studio bot (or an image helper) may read into the design's
+        `images/` folder."""
         found = self._studio_session(session_id)
-        if found is None:
+        turn = self._part_turn(session_id, "images")
+        if found is None and turn is None:
             return "design_add_image works only in a design conversation."
-        slug = found[1]
+        slug = found[1] if found is not None else turn.slug
         source = self.attachable(path)
         if isinstance(source, str):
             return source
-        designs = self.config.vault_root.resolve() / "designs"
-        folder = designs / slug
-        try:
-            if folder.is_symlink() or not folder.is_dir() or folder.resolve() != folder:
-                return "Not added: the design folder is not a plain folder."
-        except OSError:
-            return "Not added: the design folder cannot be read."
+        folder = studio_helpers.design_dir(self.config.vault_root, slug)
+        if folder is None:
+            return "Not added: the design folder is not a plain folder."
         try:
             ref = design_images.add(folder, source, name)
         except design_images.ImageRefused as e:
             return f"Not added: {e}."
         return f"Added as {ref}. Reference it as <img src=\"{ref}\"> (keep the quotes); do not write it as data: text."
+
+    def _part_turn(self, session_id: str, kind: str) -> PartTurn | None:
+        """The helper's turn this session is, when it places `kind` ("text" or "images")."""
+        turn = self.part_turns.get(session_id)
+        return turn if turn is not None and turn.kind == kind else None
+
+    def _in_designs(self, path: str) -> bool:
+        """True when `path`, read as any tool might (the vault's `designs/...`, the working folder, absolute),
+        resolves inside `<vault>/designs/`."""
+        designs = self.config.vault_root.resolve() / "designs"
+        p = Path(path).expanduser()
+        for c in ([p] if p.is_absolute() else [self.config.vault_root / p, self.tools.cwd / p]):
+            try:
+                if c.resolve().is_relative_to(designs):
+                    return True
+            except (OSError, RuntimeError):
+                return True  # cannot tell: treat it as the design
+        return False
+
+    def _design_set_text_tool(self, id: str, text: str) -> str:  # noqa: A002 - the name the model sees
+        from .tools import current_call
+        return self.design_set_text(current_call.get()[1], id, text)
+
+    def _design_set_image_tool(self, id: str, path: str, alt: str = "") -> str:  # noqa: A002
+        from .tools import current_call
+        return self.design_set_image(current_call.get()[1], id, path, alt)
+
+    def _on_sheet(self, turn: PartTurn, slot_id: str) -> str:
+        """The refusal for an id that is not on the turn's worksheet; empty when it is."""
+        if slot_id in turn.sheet:
+            return ""
+        shown = " ".join(str(slot_id).split())[:64]
+        return f"Not set: [{shown}] is not on your list."
+
+    def design_set_text(self, session_id: str, slot_id: str, text: str) -> str:
+        """`design_set_text`: hold a new text for one text slot on this helper turn's worksheet."""
+        turn = self._part_turn(session_id, "text")
+        if turn is None:
+            return "design_set_text works only when you are helping with a design's text."
+        if refused := self._on_sheet(turn, slot_id):
+            return refused
+        try:
+            clean = design_parts.check_text(text)
+        except design_parts.PartRefused as e:
+            return f"Not set: {e}."
+        turn.changes[slot_id] = design_parts.Change(text=clean)
+        session = self.sessions.get(session_id)
+        self.ledger.append(Kind.design_part, session.bot_id if session else "", session_id, event="set_text",
+                           id=slot_id, chars=len(clean), version=turn.version)
+        return f"Set [{slot_id}]."
+
+    def design_set_image(self, session_id: str, slot_id: str, path: str, alt: str = "") -> str:
+        """`design_set_image`: hold a new picture (and alt) for one picture slot on this helper turn's worksheet.
+        A picture outside the design's `images/` folder is copied in, as `design_add_image` does."""
+        turn = self._part_turn(session_id, "images")
+        if turn is None:
+            return "design_set_image works only when you are helping with a design's pictures."
+        if refused := self._on_sheet(turn, slot_id):
+            return refused
+        new_alt = None
+        if alt.strip():
+            try:
+                new_alt = design_parts.check_text(alt)
+            except design_parts.PartRefused as e:
+                return f"Not set: the alt text: {e}."
+        if not Path(path).is_absolute() and Path(path).parts[:1] == ("designs",):
+            path = str(self.config.vault_root / path)  # designs live in the vault, not the working folder
+        source = self.attachable(path)
+        if isinstance(source, str):
+            if "outside the folders" in source:
+                return "Not set: that picture is outside the folders you may read."
+            return f"Not set: {source.removeprefix('Refused: ').rstrip('.')}."
+        folder = studio_helpers.design_dir(self.config.vault_root, turn.slug)
+        if folder is None:
+            return "Not set: the design folder is not a plain folder."
+        try:
+            if source.parent == folder / design_images.IMAGES and design_images.NAME.fullmatch(source.name):
+                ref = f"{design_images.IMAGES}/{source.name}"  # already the design's: used as it is
+            else:
+                ref = design_images.add(folder, source)
+            size = len(design_images.load(folder, ref[len(design_images.IMAGES) + 1:])[1])
+        except design_images.ImageRefused as e:
+            return f"Not set: {e}."
+        turn.changes[slot_id] = design_parts.Change(src=ref, alt=new_alt)
+        session = self.sessions.get(session_id)
+        self.ledger.append(Kind.design_part, session.bot_id if session else "", session_id, event="set_image",
+                           id=slot_id, bytes=size, name=ref, version=turn.version)
+        return f"Set [{slot_id}]."
+
+    def start_helper(self, helper: Bot, owner: Bot, conv: Any, task: str, comments: list[dict[str, str]],
+                     addendum: str) -> Session | None:
+        """Run `helper` on the newest design of the owner's conversation `conv`: it reads a worksheet of the
+        slots it may change (the commented ones, or all of its kind) and places changes with the design tools;
+        the harness applies them when the task ends well. None when there is no worksheet for this helper
+        (the caller then gives the task to the owner). `addendum` is the comment block, or empty."""
+        found = studio_helpers.prepare(self.config.vault_root, conv, helper.places, comments)
+        if found is None:
+            return None
+        turn, sheet = found
+        extra = "\n\n".join(p for p in (addendum, sheet, studio_helpers.RULES) if p)
+        return self.start_task(helper, task, conversation_id=conv.id, owner=owner, comments=comments,
+                               addendum=extra, part=turn)
+
+    def _apply_part(self, bot: Bot, session: Session, turn: PartTurn | None) -> str:
+        """At a helper turn's end: apply what it placed when the task ended well. Returns the sentence the
+        reply gets when the changes were not applied; never raises, so the exchange is always finished."""
+        if turn is None:
+            self.ledger.append(Kind.design_part, bot.id, session.id, event="apply", refused="no turn state")
+            return ""
+        if session.state != SessionState.done or not turn.changes:
+            return ""  # a task that failed, was stopped or placed nothing writes nothing
+        ids = sorted(turn.changes)
+        try:
+            done = studio_helpers.apply(self.config.vault_root, turn)
+        except Exception as e:  # noqa: BLE001 - the exchange must still be finished
+            self.ledger.append(Kind.error, bot.id, session.id, where="design_part", error=type(e).__name__)
+            done = studio_helpers.Applied(None, "error", "My changes were not applied: something went wrong.")
+        if done.copy is None:
+            self.ledger.append(Kind.design_part, bot.id, session.id, event="apply", ids=ids, version=turn.version,
+                               refused=done.refused)
+            return done.sentence
+        rev = design_studio.revision_of(self.config.vault_root, done.copy)
+        try:
+            size = done.copy.stat().st_size
+        except OSError:
+            size = 0
+        self.task_attachments.setdefault(session.id, []).append(
+            Attachment(uuid4().hex[:10], turn.name, str(done.copy)))
+        self.ledger.append(Kind.design_part, bot.id, session.id, event="apply", ids=ids, bytes=size,
+                           version=rev[1] if rev else 0, name=turn.name)
+        return ""
 
     def _in_routine(self, session_id: str) -> bool:
         """A session with no conversation and no room (a routine), or one the harness does not know: nobody is
@@ -676,14 +837,14 @@ class Harness:
         self, bot: Bot, task: str, *, conversation_id: str | None = None, in_conversation: bool = True,
         protected: dict[str, Any] | None = None, pinned_skills: list[str] | None = None,
         comments: list[dict[str, str]] | None = None, addendum: str = "",
-        owner: Bot | None = None,
+        owner: Bot | None = None, part: PartTurn | None = None,
     ) -> Session:
         """Run a task for a bot. `owner` is the conversation's owner when it is another bot: `bot` then acts
         in that conversation as a helper (no design folder or design system block, no turn note). It joins the bot's current conversation (or
         the one named) unless `in_conversation` is False (routines): its
         exchange is written now, pending, and completed with the outcome
         when the task ends. Raises KeyError for a named conversation that is
-        not this bot's."""
+        not this bot's. `part` makes the task a helper's turn on the conversation's design (`start_helper`)."""
         session = Session(bot_id=bot.id, task=task, pinned_skills=list(pinned_skills or []))
         conv = None
         helper = owner is not None and owner.id != bot.id
@@ -717,6 +878,8 @@ class Harness:
         if addendum:
             session.recall_query = task  # recall searches the user's words, not the comment block
         self.sessions[session.id] = session
+        if part is not None:
+            self.part_turns[session.id] = part  # before the task runs: the design tools are offered by it
 
         async def _run() -> Session:
             try:
@@ -731,7 +894,8 @@ class Harness:
                 try:
                     # the bot reads the comments after the task; the pinned task stays the user's words alone, and
                     # the comment block's lines are pinned as constraints so a mid-task compaction cannot fold them away
-                    pinned = protected or ({"task": task, "constraints": addendum.splitlines()} if addendum else None)
+                    pinned = protected or ({"task": task, "constraints": [ln for ln in addendum.splitlines() if ln.strip()]}
+                                           if addendum else None)
                     await self.loop.run(bot, f"{task}\n\n{addendum}" if addendum else task, session, history=history,
                                         protected=pinned)
                 except asyncio.CancelledError:
@@ -750,10 +914,17 @@ class Harness:
                     cid = conv.id
                     await self.turn_notes.write(bot, session, outcome=outcome_of(session), previous=session.note,
                                                 save=lambda n: self.conversations.set_note(cid, n))
+                turn = self.part_turns.pop(session.id, None)
+                note = self._apply_part(bot, session, turn) if part is not None else ""
                 if conv is not None:
                     # attached files stay with the exchange whatever the outcome: the files exist either way
                     attached = [{"id": a.id, "title": a.title, "path": a.path} for a in self.task_attachments.pop(session.id, [])]
-                    self.conversations.finish(conv.id, session.id, *_outcome(session), attachments=attached)
+                    outcome, reply = _outcome(session)
+                    if note:  # the helper's changes were refused: the user reads why under its reply
+                        reply = f"{reply}\n\n{note}" if reply else note
+                        if session.state == SessionState.done:
+                            session.result = reply
+                    self.conversations.finish(conv.id, session.id, outcome, reply, attachments=attached)
 
         link = telemetry.trace_link()  # now, while the starting request's span is still open
 

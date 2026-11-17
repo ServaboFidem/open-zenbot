@@ -63,7 +63,8 @@ def reply_text(ex: Exchange) -> str:
     text = _reply_text(ex)
     if ex.attachments:  # the bot knows, next turn, which files the user already has
         text += "\n(Attached: " + "; ".join(f"{a['title']} ({Path(a['path']).name})" for a in ex.attachments) + ")"
-    if ex.bot:  # a helper answered: the owner reads which bot changed the design, and whether the user sent it back
+    if ex.bot and ex.outcome == "done" and ex.attachments:
+        # a helper changed the design: the owner reads which bot did, and whether the user sent it back
         text = f"({ex.bot} changed the design) {text}"
         if ex.set_aside:
             text += " (These changes were set aside.)"

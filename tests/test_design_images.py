@@ -135,3 +135,35 @@ def test_a_tool_with_offered_is_listed_only_for_its_callers():
     t.register("x", "d", {"type": "object", "properties": {}}, lambda: "ok", offered=lambda b, s: b == "designer")
     names = lambda **k: [s.name for s in t.specs(**k)]  # noqa: E731
     assert "x" not in names() and "x" not in names(caller=("other", "s1")) and "x" in names(caller=("designer", "s1"))
+
+
+def test_dimensions_read_from_the_header():
+    from src.harness.design_images import dimensions
+
+    png = bytes.fromhex("89504e470d0a1a0a") + b"\0\0\0\rIHDR" + (801).to_bytes(4, "big") + (603).to_bytes(4, "big")
+    gif = b"GIF89a" + (801).to_bytes(2, "little") + (603).to_bytes(2, "little") + b"\0" * 6
+    jpeg = (b"\xff\xd8" + b"\xff\xe0\x00\x04ab" + b"\xff\xc2\x00\x11\x08" + (603).to_bytes(2, "big")
+            + (801).to_bytes(2, "big") + b"\0" * 12)
+    vp8 = (b"RIFF\0\0\0\0WEBPVP8 \0\0\0\0" + b"\0\0\0\x9d\x01\x2a" + (801).to_bytes(2, "little")
+           + (603).to_bytes(2, "little"))
+    vp8l_bits = (801 - 1) | ((603 - 1) << 14)
+    vp8l = b"RIFF\0\0\0\0WEBPVP8L\0\0\0\0\x2f" + vp8l_bits.to_bytes(4, "little")
+    vp8x = b"RIFF\0\0\0\0WEBPVP8X\0\0\0\0\0\0\0\0" + (800).to_bytes(3, "little") + (602).to_bytes(3, "little")
+    for data in (png, gif, jpeg, vp8, vp8l, vp8x):
+        assert dimensions(data) == (801, 603), data[:16]
+    assert [dimensions(b) for b in (PNG, JPEG, WEBP, b"<svg/>")] == [None, None, None, None]
+
+
+def test_write_out_reuses_the_same_bytes_and_never_overwrites_others(tmp_path):
+    from src.harness.design_images import write_out
+
+    d = design(tmp_path)
+    assert write_out(d, PNG, "old") == "images/old.png"
+    assert write_out(d, PNG, "old") == "images/old.png"
+    other = PNG + b"x"
+    assert write_out(d, other, "old") == "images/old-2.png"
+    assert (d / "images" / "old.png").read_bytes() == PNG and (d / "images" / "old-2.png").read_bytes() == other
+    with pytest.raises(ImageRefused):
+        write_out(d, b"<svg/>", "logo")
+    with pytest.raises(ImageRefused, match="too large"):
+        write_out(d, PNG + b"\0" * PICTURE_MAX_BYTES, "big")

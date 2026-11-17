@@ -298,12 +298,21 @@ def test_a_helper_exchange_records_its_bot_and_reads_back_with_a_prefix_and_a_su
     convs = make(tmp_path, ledger)
     conv, ex = convs.begin("designer", "hi", session_id="s1", bot="copywriter")
     assert ex.bot == "copywriter" and not ex.set_aside
-    convs.finish(conv.id, "s1", "done", "Rewrote it.")
-    assert convs.get(conv.id).history()[-1].content == "(copywriter changed the design) Rewrote it."
+    convs.finish(conv.id, "s1", "done", "Rewrote it.", attachments=[{"id": "a1", "title": "Site", "path": "/v/2.index.html"}])
+    assert convs.get(conv.id).history()[-1].content == "(copywriter changed the design) Rewrote it.\n(Attached: Site (2.index.html))"
     convs.set_aside(conv.id, "s1")
-    assert convs.get(conv.id).history()[-1].content.endswith("Rewrote it. (These changes were set aside.)")
+    assert convs.get(conv.id).history()[-1].content.endswith("(Attached: Site (2.index.html)) (These changes were set aside.)")
     again = make(tmp_path, ledger)
     assert again.get(conv.id).exchanges[0].set_aside is True
+
+
+@pytest.mark.parametrize("outcome, attachments", [("done", []), ("failed", [{"id": "a1", "title": "Site", "path": "/v/2.index.html"}]),
+                                                   ("stopped", [])])
+def test_a_helper_exchange_that_changed_nothing_reads_back_without_the_prefix(tmp_path, ledger, outcome, attachments):
+    convs = make(tmp_path, ledger)
+    conv, _ = convs.begin("designer", "hi", session_id="s1", bot="copywriter")
+    convs.finish(conv.id, "s1", outcome, "No luck.", attachments=attachments)
+    assert "changed the design" not in convs.get(conv.id).history()[-1].content
 
 
 def test_an_old_record_without_bot_or_set_aside_loads_and_the_owners_reply_is_plain(tmp_path, ledger):
