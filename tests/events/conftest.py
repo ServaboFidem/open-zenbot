@@ -194,5 +194,26 @@ def conn(conn_factory):
     return c
 
 
+SYNC_NOW = "2026-11-17T12:00:00Z"
+
+
+@pytest.fixture
+def sync(store, fake, conn, conn_factory):
+    """A connected Sync with ``now`` fixed at SYNC_NOW. Google has calendars ``work`` (owner, primary) and
+    ``home`` (reader); both are in the store and only ``work`` is selected."""
+    from datetime import datetime, timezone
+
+    from src.events.convert import calendar_row
+    from src.events.sync import Sync
+
+    conn.keys.refresh_token = "refresh"
+    fake.calendars = [{"id": "work", "summary": "Work", "accessRole": "owner", "primary": True},
+                      {"id": "home", "summary": "Home", "accessRole": "reader"}]
+    store.upsert_google([calendar_row(c) for c in fake.calendars])
+    store.set_calendar("work", selected=True)
+    now = datetime.strptime(SYNC_NOW, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return Sync(store, conn.google, conn, conn_factory.ledger, now=lambda: now)
+
+
 def state_of(url: str) -> str:
     return urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["state"][0]
