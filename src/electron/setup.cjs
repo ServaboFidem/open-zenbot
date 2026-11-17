@@ -6,9 +6,11 @@
 // Everything with a side effect is passed in, so this file needs no Electron:
 //   run(cmd, args, { env, cwd, onLine, signal }) -> Promise<{ code }>   start a child from an argument array, no
 //       shell; call onLine for each output line; on signal's 'abort' stop the child (its whole tree) and resolve.
-//   download({ url, dest, sha256, onProgress }) -> Promise<dest>        downloadVerified with fetch and fs bound.
+//   download({ url, dest, sha256, signal, onProgress }) -> Promise<dest>  downloadVerified with fetch and fs
+//       bound; on signal's 'abort' it rejects.
 //   extract(archive, destDir) -> Promise<void>                          unpack as it is, top folder included.
-//   freeBytes(dir) -> Promise<number>; findNode() -> Promise<string|null> (a node >= 24 on PATH, else null).
+//   freeBytes(dir) -> Promise<number>; findNode() -> Promise<string|null> (a node >= 24 from an
+//       earlier setup or on PATH, else null).
 //   runtimeExists() -> Promise<boolean>: an earlier setup left a runtime (a stamp, or the venv's Python), so this
 //       run is an update whose re-sync is incremental and the smaller free-space floor applies.
 //   fs: the node:fs API (only fs.promises mkdir, writeFile, rm, rename are used); emit(state) on every change.
@@ -100,16 +102,19 @@ function createSetup({ paths, platform, arch, appVersion, lockHash, pins, run, d
       const staging = paths.node + '.part';
       await fs.promises.mkdir(paths.downloads, { recursive: true });
       let shown = -1;
-      await download({
-        url: pin.url, dest: archive, sha256: pin.sha256,
-        onProgress: ({ received, total }) => {
-          const mb = Math.floor(received / 1024 ** 2);
-          if (mb === shown) return;
-          shown = mb;
-          state.line = total ? `Downloading Node.js: ${mb} of ${Math.ceil(total / 1024 ** 2)} MB` : `Downloading Node.js: ${mb} MB`;
-          changed();
-        },
-      });
+      controller = new AbortController();  // cancel() aborts the download, even one that has stopped sending
+      try {
+        await download({
+          url: pin.url, dest: archive, sha256: pin.sha256, signal: controller.signal,
+          onProgress: ({ received, total }) => {
+            const mb = Math.floor(received / 1024 ** 2);
+            if (mb === shown) return;
+            shown = mb;
+            state.line = total ? `Downloading Node.js: ${mb} of ${Math.ceil(total / 1024 ** 2)} MB` : `Downloading Node.js: ${mb} MB`;
+            changed();
+          },
+        });
+      } finally { controller = null; }
       if (cancelled) return;
       await fs.promises.rm(staging, { recursive: true, force: true });
       await fs.promises.mkdir(staging, { recursive: true });

@@ -22,7 +22,7 @@ const TARGETS = {
   'win32-x64': { folder: 'win-x64', bins: ['uv.exe', 'uvx.exe'] },
 };
 
-const target = process.argv[2];
+const target = process.argv[2] || `${process.platform}-${process.arch}`;  // no argument: this machine (npm run pack)
 if (!TARGETS[target]) {
   console.error(`usage: node scripts/fetch-uv.mjs <${Object.keys(TARGETS).join('|')}>`);
   process.exit(2);

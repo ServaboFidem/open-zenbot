@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button, Input, Field } from '@fluentui/react-components';
 import { saveError } from './welcome';
 
@@ -8,6 +8,14 @@ export function WelcomeKey({ api, onSaved, onSkip }) {
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // The workspace behind is inert while this is open (app.jsx). Focus starts in the key field, and goes back to
+  // where it was when the screen closes.
+  const field = useRef(null);
+  useEffect(() => {
+    const before = document.activeElement;
+    field.current?.focus();
+    return () => { if (before && before !== document.body && before.isConnected) before.focus(); };
+  }, []);
   async function save(e) {
     e.preventDefault();
     if (busy) return;
@@ -26,7 +34,7 @@ export function WelcomeKey({ api, onSaved, onSkip }) {
       <p>Everything else can run on this computer or through NVIDIA NIM: the models your bots talk with are your choice, in Settings.</p>
       <div><Button as="a" appearance="outline" href="https://openrouter.ai" target="_blank" rel="noreferrer">Create an OpenRouter account</Button></div>
       <Field label="OpenRouter API key" validationState={error ? 'error' : undefined} validationMessage={error || undefined}>
-        <Input type="password" autoComplete="off" value={key} onChange={(_, d) => setKey(d.value)}/>
+        <Input ref={field} type="password" autoComplete="off" value={key} onChange={(_, d) => setKey(d.value)}/>
       </Field>
       <div className="welcome-actions">
         <Button appearance="primary" type="submit" disabled={busy || !key.trim()}>Save and continue</Button>

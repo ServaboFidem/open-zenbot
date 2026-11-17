@@ -237,7 +237,10 @@ def draft_skill(
     config = config or SkillConfig()
     slug = _slugify(name)
     base, n = name, 1
-    while slug in taken:  # a slug in `taken` (a shipped skill's) is never reused: "Name 2", "Name 3"...
+    # a slug in `taken` (a shipped skill's) is never reused: "Name 2", "Name 3"... A numbered name was not the
+    # user's choice, so it never lands on a skill already saved either (a name the user gave still replaces
+    # their own earlier recording of it)
+    while slug in taken or (n > 1 and (Path(skills_dir) / slug / SKILL_FILENAME).exists()):
         n += 1
         name = f"{base} {n}"
         slug = _slugify(name)

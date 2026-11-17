@@ -259,6 +259,29 @@ test('cancel stops the running child', async () => {
   assert.ok(written[paths.stamp]);
 });
 
+test('cancel aborts a Node.js download under way, and retry downloads again', async () => {
+  let seenSignal = null;
+  let n = 0;
+  const { setup, written, paths } = harness({
+    download: a => {
+      n += 1;
+      if (n > 1) return Promise.resolve(a.dest);
+      seenSignal = a.signal;
+      return new Promise((_, reject) => a.signal.addEventListener('abort', () => reject(new Error('aborted'))));  // a stalled download
+    },
+  });
+  const done = setup.start();
+  while (!seenSignal) await new Promise(r => setImmediate(r));
+  setup.cancel();
+  assert.equal(seenSignal.aborted, true);
+  assert.deepEqual(await done, { ok: false, cancelled: true });
+  assert.deepEqual(setup.state().steps.map(s => s.status), ['done', 'done', 'done', 'pending', 'pending']);
+  assert.equal(setup.state().error, null);
+  assert.deepEqual(await setup.retry(), { ok: true });
+  assert.equal(n, 2);
+  assert.ok(written[paths.stamp]);
+});
+
 test('every command is an argument array whose paths survive spaces and non-ASCII', async () => {
   const { setup, calls, paths, downloads, extracts, written } = harness({
     platform: 'win32', userData: 'C:\\Users\\Zoë Ünal\\App Data', resources: 'C:\\Program Files\\Open ZenBot\\resources',

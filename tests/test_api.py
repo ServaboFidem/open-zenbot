@@ -993,8 +993,11 @@ async def test_pending_learn_holds_survive_a_restart(vault: Path, harness: Harne
 
 async def test_rebind_keeps_learn_page_and_follows_the_provider(harness: Harness):
     fresh = ScriptedProvider()
+    harness._bot_providers["other"] = (("openrouter", "", "ref", False), ScriptedProvider())
     harness.rebind(fresh, None)
     assert "learn_page" in harness.tools.names() and harness.learner.generator.provider is fresh
+    # a bot's own provider client holds the key it was built with: a rebind (a key change) drops it
+    assert harness._bot_providers == {}
 
 
 async def test_rebind_keeps_the_tools_the_mcp_servers_and_music_registered(harness: Harness):

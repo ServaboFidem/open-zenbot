@@ -202,3 +202,23 @@ def test_the_users_bots_and_skills_folders_are_private(tmp_path: Path):
     vault = tmp_path / "vault"
     private = af.private_folders(vault)
     assert user_bots_dir(vault) in private and user_skills_dir(vault) in private
+
+
+def test_a_saved_folder_that_is_private_now_is_not_loaded(tmp_path: Path, capsys):
+    """A folder saved before the harness made it private (or written into the file by hand) never reaches the
+    files server: the private folder itself, one inside it, and one holding it."""
+    vault = tmp_path / "zen" / "vault"
+    work = tmp_path / "work"
+    skills = user_skills_dir(vault)
+    for d in (vault, work, skills / "mine"):
+        d.mkdir(parents=True)
+    saved = [str(work), str(skills), str(skills / "mine"), {"path": str(tmp_path / "zen"), "access": "read_only"}]
+    (settings_dir(vault) / FILE).parent.mkdir(parents=True, exist_ok=True)
+    (settings_dir(vault) / FILE).write_text(json.dumps({"folders": saved}), encoding="utf-8")
+    loaded = AllowedFolders.load(vault)
+    assert loaded.folders == [Folder(str(work), FULL)]
+    assert loaded.server_args() == {"ZEN_ALLOWED_FOLDERS": [str(work)], "ZEN_READ_ONLY_FOLDER_ARGS": []}
+    said = capsys.readouterr().err
+    assert said.count("allowed folder not used") == 3 and str(skills) in said
+    AllowedFolders.load(vault)
+    assert capsys.readouterr().err == ""  # each one is reported once a run

@@ -27,6 +27,11 @@ if (envLoaded.length) console.log(`.env: ${envLoaded.length} ${envLoaded.length 
 const dsnSource = applySavedDsn();
 if (dsnSource === 'saved') console.log('sentry: DSN from vault-settings/tracing.json');
 
+// The installed app runs its own harness, always on 127.0.0.1: ZEN_HARNESS_URL can only move its port. The URL is
+// written back, so the page (the preload reads the same env), the harness it starts and everything below name one.
+const managedPort = managed ? (require('./harness-process.cjs').ownPort(process.env.ZEN_HARNESS_URL) || 8765) : null;
+if (managed) process.env.ZEN_HARNESS_URL = `http://127.0.0.1:${managedPort}`;
+
 // The harness this app talks to: frame navigation, arrival polling and Save… all name the same base.
 const harnessBase = () => (process.env.ZEN_HARNESS_URL || 'http://127.0.0.1:8765').replace(/\/+$/, '');
 
@@ -162,7 +167,7 @@ app.whenReady().then(() => {
   }));
   handleUpdates();
   if (managed) {
-    require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, fromApp, startArrivalPolling });
+    require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling });
     return;
   }
   createWindow();

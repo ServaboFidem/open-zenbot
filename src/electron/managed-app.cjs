@@ -41,7 +41,8 @@ function trace(paths, winOf) {
   };
 }
 
-function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, fromApp, startArrivalPolling }) {
+// port: the harness's port, the one in ZEN_HARNESS_URL (main.cjs), so the page and the harness it starts agree.
+function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port = 8765, fromApp, startArrivalPolling }) {
   const platform = process.platform;
   const appVersion = app.getVersion();
   const lockHash = host.fileSha256(fs, path.join(paths.harness, 'uv.lock'));
@@ -67,10 +68,10 @@ function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, 
     const run = host.createRun({ spawn, platform, killTree, log: l => setupLog.write(`${l}\n`) });
     return createSetup({
       paths, platform, arch: process.arch, appVersion, lockHash, pins, run, fs, emit,
-      download: opts => downloadVerified({ ...opts, fetch: url => net.fetch(url), fs }),
+      download: opts => downloadVerified({ ...opts, fetch: (url, init) => net.fetch(url, init), fs }),
       extract: host.createExtract({ run, platform }),
       freeBytes: host.freeBytesWith(fs),
-      findNode: host.findNodeWith({ platform, fs, execFile }),
+      findNode: host.findNodeWith({ platform, fs, execFile, managedDir: paths.nodeBin }),
       runtimeExists: async () => host.readStamp(fs, paths.stamp) !== null || host.isFile(fs, paths.python),
     });
   }
@@ -80,7 +81,7 @@ function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, 
     rotateLog({ dir: paths.logs, fs, platform });
     harnessLog = fs.createWriteStream(path.join(paths.logs, 'harness.log'), { flags: 'a' }).on('error', () => {});
     return createHarness({
-      paths, platform, spawn, killTree, logStream: harnessLog, sleep,
+      paths, platform, port, spawn, killTree, logStream: harnessLog, sleep,
       fetch: url => fetch(url, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) }),
       portInUse: host.portInUseWith(nodeNet),
     });

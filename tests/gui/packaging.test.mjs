@@ -4,9 +4,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('../../', import.meta.url).pathname;
-const read = rel => readFileSync(join(root, rel), 'utf8');
+const root = fileURLToPath(new URL('../../', import.meta.url));
+const read = rel => readFileSync(join(root, rel), 'utf8').replace(/\r\n/g, '\n');  // a Windows checkout may have CRLF
 // a tiny line-based read: "key: value" pairs, comments and quotes dropped (no YAML dependency)
 const lines = () => read('electron-builder.yml').split('\n').map(l => l.replace(/\s+#.*$/, '').trim()).filter(Boolean);
 const value = key => {
@@ -46,6 +47,9 @@ test('package.json has the packaging scripts and pins electron-builder exactly',
   for (const s of ['fetch-uv', 'pack', 'dist:linux', 'dist:win']) assert.ok(pkg.scripts[s], s);
   assert.match(pkg.scripts['dist:linux'], /fetch-uv(\.mjs)?( --)? linux-x64/);
   assert.match(pkg.scripts['dist:win'], /fetch-uv(\.mjs)?( --)? win32-x64/);
+  // pack bundles uv too (for this machine: fetch-uv with no target), before electron-builder takes build/bin
+  assert.match(pkg.scripts.pack, /fetch-uv(\.mjs)? && electron-builder --dir$/);
+  assert.match(read('scripts/fetch-uv.mjs'), /process\.argv\[2\] \|\| `\$\{process\.platform\}-\$\{process\.arch\}`/);
   assert.match(pkg.devDependencies['electron-builder'] || '', /^\d+\.\d+\.\d+$/);
 });
 
@@ -130,9 +134,10 @@ test('the release workflow runs on v* tags and by hand, and only a tag makes a r
   const on = /^on:\n([\s\S]*?)^\S/m.exec(workflow() + '\nx')[1];
   assert.equal(on.trimEnd(), "  push:\n    tags: ['v*']\n  workflow_dispatch:");
   assert.doesNotMatch(on, /branches|pull_request|schedule|inputs/);
-  assert.match(jobBlock('release'), /^    if: startsWith\(github\.ref, 'refs\/tags\/v'\)$/m);
+  // a manual run can be started on a tag, so the ref alone is not enough: the event must be the push
+  assert.match(jobBlock('release'), /^    if: github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/v'\)$/m);
   // the tag-equals-version step runs only for a tag; a manual run still tests and builds
-  assert.match(jobBlock('check'), /- name: The tag matches the version[^\n]*\n        if: startsWith\(github\.ref, 'refs\/tags\/v'\)\n/);
+  assert.match(jobBlock('check'), /- name: The tag matches the version[^\n]*\n        if: github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/v'\)\n/);
   assert.doesNotMatch(jobBlock('check') + jobBlock('build'), /^    if:/m);
 });
 

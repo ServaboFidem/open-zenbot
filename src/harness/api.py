@@ -454,6 +454,7 @@ class Harness:
         and register into it, so a new one would silently drop their tools;
         the tools built here re-register onto it against the rebuilt services."""
         self.provider, self.scorer = provider, scorer
+        self._bot_providers.clear()  # a cached bot provider holds the key it was built with
         rooms, fits, pending = self.rooms.rooms, (self.fit._suggestions if self.fit else {}), self.recall.pending
         interviews, interview_bots = self.interviews.interviews, self.interviews._bots
         if self.importer is not None:
@@ -1603,7 +1604,6 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(422, "key is empty")
         exclusion.register_secret_value(key)  # before anything can log it
         store = h.provider_store
-        entry = next((e for e in store.entries.values() if e.kind == "openrouter"), None)
         http = OpenRouterHttp(Secret(key), base_url=OPENROUTER_BASE, timeout=30.0, transport=h.model_lister.transport)
         try:  # the authenticated key endpoint: the model list is public and would take any key
             await http.check_key()
@@ -1613,6 +1613,8 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(503, "Could not reach OpenRouter. Check your connection and try again.") from None
         finally:
             await http.aclose()
+        # looked up after the check, with no await before the save: another request cannot remove it in between
+        entry = next((e for e in store.entries.values() if e.kind == "openrouter"), None)
         if entry is None:  # removed since the first start: add it back as the seed made it
             entry = store.add("OpenRouter", "openrouter", key=key)
             store.set_models(entry.id, default_models(h.config))

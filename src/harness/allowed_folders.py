@@ -111,6 +111,8 @@ class FolderConflict(FolderRefused):
     """The folder is fine on its own but clashes with one already allowed (HTTP 409)."""
 
 
+_reported: set[str] = set()  # saved folders already reported as private, so each is printed once a run
+
 FULL, READ_ONLY = "full", "read_only"
 ACCESS = (FULL, READ_ONLY)
 LABEL = {FULL: "Full Access", READ_ONLY: "Read-Only"}
@@ -141,14 +143,25 @@ class AllowedFolders:
         if not isinstance(items, list):
             return cls()
         out: list[Folder] = []
+        private = [_norm(x) for x in private_folders(vault_root)]
         for f in items:
             if isinstance(f, str):  # before access modes: a bare path, which was read-write
                 f = {"path": f, "access": FULL}
             if not isinstance(f, dict) or not isinstance(f.get("path"), str):
                 continue
             path, access = f["path"].strip(), f.get("access", FULL)
-            if path and Path(path).is_absolute() and access in ACCESS and all(Path(x.path) != Path(path) for x in out):
-                out.append(Folder(path, access))
+            if not (path and Path(path).is_absolute() and access in ACCESS and all(Path(x.path) != Path(path) for x in out)):
+                continue
+            # a folder saved before one of the harness's own folders became private (or written into the file by
+            # hand) is checked again here, as `refusal` checks a new one: never handed to the files server
+            p = _norm(Path(path))
+            if any(p == x or p.is_relative_to(x) or x.is_relative_to(p) for x in private):
+                if path not in _reported:
+                    _reported.add(path)
+                    print(f"allowed folder not used: {path} is, holds or is inside a folder the harness keeps "
+                          "from bots; remove it on Settings > Allowed Folders", file=sys.stderr)
+                continue
+            out.append(Folder(path, access))
         return cls(folders=out)
 
     def save(self, vault_root: Path) -> None:

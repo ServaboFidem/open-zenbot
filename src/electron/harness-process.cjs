@@ -117,6 +117,9 @@ function createHarness({ paths, platform, port = 8765, baseEnv = process.env, sp
     const gone = () => {
       if (child !== c || exited) return;
       exited = true;
+      // It died on its own: what it started (a bot's shell command) is still in its group, and a restart would
+      // know nothing of it. Asked to end now, while the group id is certainly still ours; stop() does its own.
+      if (platform !== 'win32' && !stopping) { try { kill(-c.pid, 'SIGTERM'); } catch { /* nothing left */ } }
       if (started && !stopping) for (const cb of exitCallbacks) cb();
     };
     c.on('exit', gone);
@@ -164,12 +167,17 @@ function createHarness({ paths, platform, port = 8765, baseEnv = process.env, sp
       return;
     }
     const signal = sig => { try { kill(-c.pid, sig); } catch { /* already gone */ } };
+    // The group can outlive its leader (a shell command that ignores TERM), so the wait and the KILL are on the
+    // group, not on the Python process.
+    const groupGone = () => {
+      try { kill(-c.pid, 0); return false; } catch (err) { return !(err && err.code === 'EPERM'); }
+    };
     signal('SIGTERM');
     for (let i = 0; i < STOP_STEPS; i++) {
-      if (exited) return;
+      if (groupGone()) return;
       await sleep(STOP_STEP_MS);
     }
-    if (!exited) signal('SIGKILL');
+    if (!groupGone()) signal('SIGKILL');
   }
 
   return {
@@ -180,4 +188,12 @@ function createHarness({ paths, platform, port = 8765, baseEnv = process.env, sp
   };
 }
 
-module.exports = { createHarness, rotateLog };
+// The port of a harness URL this app can serve itself: plain http on 127.0.0.1 with a port. Anything else is null.
+function ownPort(url) {
+  let u;
+  try { u = new URL(String(url || '')); } catch { return null; }
+  const port = Number(u.port);
+  return u.protocol === 'http:' && u.hostname === '127.0.0.1' && Number.isInteger(port) && port > 0 ? port : null;
+}
+
+module.exports = { createHarness, rotateLog, ownPort };

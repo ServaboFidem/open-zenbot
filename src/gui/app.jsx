@@ -761,7 +761,7 @@ function App() {
   return <FluentProvider theme={webLightTheme} className="provider">
     {booting && <BootOverlay connecting={harness.status === 'connecting'} warm={warm}/>}
     {welcome && <WelcomeKey api={api} onSaved={refreshHealth} onSkip={() => setWelcomeDismissed(true)}/>}
-    <div className="workspace" aria-hidden={booting || welcome || undefined}>
+    <div className="workspace" aria-hidden={booting || welcome || undefined} inert={welcome ? '' : undefined}>
       <aside className={`sidebar ${mobileNav ? 'mobile-open' : ''}`}>
         <a className="brand od-row" href="#" onClick={e => { e.preventDefault(); navigate('Overview'); }}><span className="brand-mark"><img src={logo} alt=""/></span><span>OpenZenBot</span></a>
         <div className="workspace-name od-row"><span className="workspace-initial">P</span><div className="od-field od-fill"><strong>Personal workspace</strong><span>Local · {api.baseUrl.replace('http://', '')}</span></div></div>

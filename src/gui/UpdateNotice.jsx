@@ -20,7 +20,7 @@ export function UpdateNotice() {
   if (!api || !n || dismissed) return null;
   return <div className="storage-warning update-notice" role="status">
     <div className="od-row"><span className="od-fill">OpenZenBot {n.version} is available.</span>
-      <Button appearance="primary" onClick={() => apply(api.open())}>Update</Button>
+      <Button appearance="primary" onClick={() => { api.open(); }}>Update</Button>
       <Button appearance="outline" onClick={() => { setDismissed(true); apply(api.skip(n.version)); }}>Skip this version</Button>
       <Button appearance="subtle" aria-label="Dismiss" onClick={() => setDismissed(true)}>Dismiss</Button></div>
     {n.notes && <details><summary>What's new</summary><pre className="update-notes">{n.notes}</pre></details>}
@@ -38,7 +38,7 @@ export function VersionSection() {
     {api && <>
       <p>{statusLine(state)}</p>
       <div className="od-row"><Button appearance="outline" disabled={busy} onClick={() => { setBusy(true); apply(api.check()).finally(() => setBusy(false)); }}>Check for updates</Button>
-        {state?.newer && <Button appearance="primary" onClick={() => apply(api.open())}>Update</Button>}</div>
+        {state?.newer && <Button appearance="primary" onClick={() => { api.open(); }}>Update</Button>}</div>
       <Switch checked={!!state?.auto} label="Check for updates automatically" onChange={(e, d) => apply(api.setAuto(d.checked))}/>
     </>}
   </div>;

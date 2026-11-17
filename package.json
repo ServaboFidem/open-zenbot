@@ -11,7 +11,7 @@
     "test": "node --test tests/gui/*.test.mjs",
     "serve": "python -m http.server 8080 --bind 127.0.0.1 --directory dist",
     "fetch-uv": "node scripts/fetch-uv.mjs",
-    "pack": "npm run build && electron-builder --dir",
+    "pack": "npm run build && npm run fetch-uv && electron-builder --dir",
     "dist:linux": "npm run build && npm run fetch-uv -- linux-x64 && electron-builder --linux deb",
     "dist:win": "npm run build && npm run fetch-uv -- win32-x64 && electron-builder --win nsis"
   },

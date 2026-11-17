@@ -8,7 +8,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { createHarness, rotateLog } = require('../../src/electron/harness-process.cjs');
+const { createHarness, rotateLog, ownPort } = require('../../src/electron/harness-process.cjs');
 const { runtimePaths } = require('../../src/electron/runtime-paths.cjs');
 
 function fakeChild(pid = 4242) {
@@ -23,14 +23,18 @@ function rig({ platform = 'linux', healthy = () => false, portBusy = false, base
   const resources = platform === 'win32' ? 'C:\\App\\resources' : '/opt/OpenZenBot/resources';
   const userData = platform === 'win32' ? 'C:\\Users\\a\\AppData\\Roaming\\OpenZenBot' : '/home/a/.config/OpenZenBot';
   const paths = runtimePaths({ userData, resources, platform });
-  const t = { spawned: [], kills: [], tree: [], log: [], sleeps: 0, polls: 0, child: null, onSleep: () => {} };
+  const t = { spawned: [], kills: [], tree: [], log: [], sleeps: 0, polls: 0, child: null, onSleep: () => {}, groupAlive: true };
   const h = createHarness({
     paths, platform, baseEnv,
     spawn: (cmd, args, opts) => { t.spawned.push([cmd, args, opts]); t.child = fakeChild(); return t.child; },
     fetch: async () => { t.polls++; return { ok: true, json: async () => ({ ok: healthy(t) }) }; },
     portInUse: async () => portBusy,
     killTree: async pid => { t.tree.push(pid); },
-    kill: (pid, sig) => { t.kills.push([pid, sig]); },
+    // signal 0 only asks whether the group is there (t.groupAlive); it is not recorded as a kill
+    kill: (pid, sig) => {
+      if (sig === 0) { if (!t.groupAlive) throw Object.assign(new Error('no such process'), { code: 'ESRCH' }); return; }
+      t.kills.push([pid, sig]);
+    },
     logStream: { write: c => t.log.push(String(c)) },
     sleep: async () => { t.sleeps++; await t.onSleep(t); },
   });
@@ -160,12 +164,44 @@ test('stop on linux sends TERM to the group, then KILL after 45 s', async () => 
   assert.equal((t.sleeps - sleepsBefore) * 250, 45000);
 });
 
-test('stop on linux ends early when the child exits after TERM', async () => {
+test('stop on linux ends early when the whole group is gone after TERM', async () => {
   const { t, h } = rig({ healthy: t2 => t2.child !== null });
   await h.start();
-  t.onSleep = () => t.child.emit('exit', 0, 'SIGTERM');
+  t.onSleep = () => { t.groupAlive = false; t.child.emit('exit', 0, 'SIGTERM'); };
   await h.stop();
   assert.deepEqual(t.kills, [[-4242, 'SIGTERM']]);
+});
+
+test('stop on linux still kills the group when the harness exits but something it started stays', async () => {
+  const { t, h } = rig({ healthy: t2 => t2.child !== null });
+  await h.start();
+  t.onSleep = () => t.child.emit('exit', 0, 'SIGTERM');  // the leader goes; a shell command ignores TERM
+  const sleepsBefore = t.sleeps;
+  await h.stop();
+  assert.deepEqual(t.kills, [[-4242, 'SIGTERM'], [-4242, 'SIGKILL']]);
+  assert.equal((t.sleeps - sleepsBefore) * 250, 45000);
+});
+
+test('a harness that dies on its own has its group asked to end; on windows nothing is signalled', async () => {
+  const a = rig({ healthy: t2 => t2.child !== null });
+  await a.h.start();
+  a.t.child.emit('exit', 1, null);
+  assert.deepEqual(a.t.kills, [[-4242, 'SIGTERM']]);
+  await a.h.stop();  // already gone: nothing more
+  assert.deepEqual(a.t.kills, [[-4242, 'SIGTERM']]);
+
+  const b = rig({ platform: 'win32', healthy: t2 => t2.child !== null });
+  await b.h.start();
+  b.t.child.emit('exit', 1, null);
+  assert.deepEqual([b.t.kills, b.t.tree], [[], []]);
+});
+
+test('ownPort takes only a plain http 127.0.0.1 url with a port', () => {
+  assert.equal(ownPort('http://127.0.0.1:9876'), 9876);
+  assert.equal(ownPort('http://127.0.0.1:9876/'), 9876);
+  for (const url of [undefined, '', 'nonsense', 'http://127.0.0.1', 'https://127.0.0.1:9876', 'http://localhost:9876', 'http://example.com:9876']) {
+    assert.equal(ownPort(url), null, String(url));
+  }
 });
 
 test('stop on windows runs the tree kill', async () => {
@@ -187,7 +223,7 @@ test('onExit fires when the harness dies after start, not after stop()', async (
   const b = rig({ healthy: t2 => t2.child !== null });
   b.h.onExit(() => fired++);
   await b.h.start();
-  b.t.onSleep = () => b.t.child.emit('exit', 0, 'SIGTERM');
+  b.t.onSleep = () => { b.t.groupAlive = false; b.t.child.emit('exit', 0, 'SIGTERM'); };
   await b.h.stop();
   assert.equal(fired, 1);
 });
@@ -237,7 +273,7 @@ test('a child whose streams never close does not hang start() or stop()', async 
 
   const b = rig({ healthy: t2 => t2.child !== null });
   await b.h.start();
-  b.t.onSleep = () => b.t.child.emit('exit', 0, 'SIGTERM');
+  b.t.onSleep = () => { b.t.groupAlive = false; b.t.child.emit('exit', 0, 'SIGTERM'); };
   await b.h.stop();
   assert.deepEqual(b.t.kills, [[-4242, 'SIGTERM']]);
 });

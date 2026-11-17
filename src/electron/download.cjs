@@ -27,7 +27,8 @@ function hashFile(fs, file) {
   });
 }
 
-async function downloadVerified({ url, dest, sha256, fetch, fs, onProgress = () => {} }) {
+// signal: an AbortSignal; aborting it ends the request or the body read, which is reported as OfflineError.
+async function downloadVerified({ url, dest, sha256, fetch, fs, signal, onProgress = () => {} }) {
   const want = String(sha256).toLowerCase();
   if (fs.existsSync(dest)) {
     let have = null;
@@ -39,7 +40,7 @@ async function downloadVerified({ url, dest, sha256, fetch, fs, onProgress = () 
   await drop();
 
   let res;
-  try { res = await fetch(url); } catch { throw new OfflineError(); }
+  try { res = await fetch(url, { signal }); } catch { throw new OfflineError(); }
   if (!res || !res.ok || !res.body) throw new OfflineError();
   const length = Number(res.headers && res.headers.get && res.headers.get('content-length'));
   const total = Number.isFinite(length) && length > 0 ? length : null;

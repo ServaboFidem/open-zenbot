@@ -94,6 +94,12 @@ test('findNode takes the first node on PATH, and only Node 24 or newer', async (
   assert.equal(await findNodeWith({ platform: 'linux', fs, execFile, env: { PATH: '.:node' } })(), null);
   const winFs = { statSync: f => { if (f === 'C:\\Node\\node.exe') return { isFile: () => true }; throw new Error('ENOENT'); } };
   assert.equal(await findNodeWith({ platform: 'win32', fs: winFs, execFile: (f, a, o, cb) => cb(null, 'v24.0.0'), env: { Path: 'C:\\Node' } })(), 'C:\\Node\\node.exe');
+  // the node an earlier setup installed comes first; one that is missing or too old falls back to PATH
+  const mine = { statSync: f => { if (['/rt/node/bin/node', '/b/node'].includes(f)) return { isFile: () => true }; throw new Error('ENOENT'); } };
+  const find = v => findNodeWith({ platform: 'linux', fs: mine, execFile: (f, a, o, cb) => cb(null, { '/rt/node/bin/node': v, '/b/node': 'v24.1.0' }[f]), env: { PATH: '/b' }, managedDir: '/rt/node/bin' })();
+  assert.equal(await find('v24.4.0'), '/rt/node/bin/node');
+  assert.equal(await find('v20.0.0'), '/b/node');
+  assert.equal(await findNodeWith({ platform: 'linux', fs, execFile, env: { PATH: '/b' }, managedDir: '/rt/node/bin' })(), '/b/node');
   assert.equal(nodeMajor('v24.22.3'), 24);
   assert.equal(nodeMajor('nonsense'), null);
 });

@@ -433,7 +433,7 @@ was written: its first build is the release workflow's first run.
   `ZEN_USER_CONTENT=1`, and a harness already answering `/health` there is adopted, never stopped.
 - **Setup** (`setup.cjs`): checks free space, `uv python install --no-bin --no-registry` 3.12 (nothing in
   `~/.local/bin` or the Windows registry), `uv sync --frozen --no-dev` against the packaged
-  lock, then Node.js only when no node 24 or newer is on PATH, then writes the stamp. It refuses to start with less than about 5 GB free
+  lock, then Node.js only when no node 24 or newer is there (the one an earlier setup installed, else one on PATH), then writes the stamp. It refuses to start with less than about 5 GB free
   (`NEEDED_BYTES`), or 1 GB (`UPDATE_NEEDED_BYTES`) when a runtime is already there (a stamp or the venv's Python),
   since that re-sync is incremental; the install itself was measured at about 2 GB on disk
   for the Python environment on Linux (CPU-only PyTorch); Windows was not measured. A change of app version or of the

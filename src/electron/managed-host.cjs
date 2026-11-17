@@ -94,23 +94,34 @@ const nodeMajor = text => {
   return m ? Number(m[1]) : null;
 };
 
-// The node a child would get from PATH: the first one found, and only when it is Node 24 or newer. Only
-// absolute PATH folders are looked in, so the current folder never counts.
-function findNodeWith({ env = process.env, platform, fs, execFile }) {
+// The node the harness's children would get. First the one an earlier setup put in `managedDir` (the harness puts
+// that folder on its own PATH, so it is not on ours), when it is Node 24 or newer: an update then downloads nothing.
+// Else the one on PATH: the first one found, and only when it is Node 24 or newer. Only absolute PATH folders are
+// looked in, so the current folder never counts.
+function findNodeWith({ env = process.env, platform, fs, execFile, managedDir = null }) {
   const p = platform === 'win32' ? path.win32 : path.posix;
   const key = Object.keys(env).find(k => (platform === 'win32' ? k.toUpperCase() === 'PATH' : k === 'PATH'));
   const dirs = String((key && env[key]) || '').split(platform === 'win32' ? ';' : ':').filter(d => d && p.isAbsolute(d));
+  // the file in `dir` when it is a node new enough; null when it is too old or does not run; undefined when absent
+  const probe = async dir => {
+    const file = p.join(dir, platform === 'win32' ? 'node.exe' : 'node');
+    let isFile = false;
+    try { isFile = fs.statSync(file).isFile(); } catch { /* not here */ }
+    if (!isFile) return undefined;
+    const version = await new Promise(resolve => {
+      execFile(file, ['--version'], { timeout: 10_000, windowsHide: true }, (err, stdout) => resolve(err ? null : stdout));
+    });
+    const major = version === null ? null : nodeMajor(version);
+    return major !== null && major >= NODE_MIN_MAJOR ? file : null;
+  };
   return async () => {
+    if (managedDir) {
+      const mine = await probe(managedDir);
+      if (mine) return mine;
+    }
     for (const dir of dirs) {
-      const file = p.join(dir, platform === 'win32' ? 'node.exe' : 'node');
-      let isFile = false;
-      try { isFile = fs.statSync(file).isFile(); } catch { /* not here */ }
-      if (!isFile) continue;
-      const version = await new Promise(resolve => {
-        execFile(file, ['--version'], { timeout: 10_000, windowsHide: true }, (err, stdout) => resolve(err ? null : stdout));
-      });
-      const major = version === null ? null : nodeMajor(version);
-      return major !== null && major >= NODE_MIN_MAJOR ? file : null;
+      const found = await probe(dir);
+      if (found !== undefined) return found;
     }
     return null;
   };

@@ -391,3 +391,9 @@ async def test_a_recorded_skill_never_replaces_a_shipped_skill_of_the_same_slug(
     assert catalog.skill("export-invoices").use == "shipped"
     assert catalog.skill("export-invoices-2") is not None
     assert not (user_skills_dir(vault) / "export-invoices").exists()
+    # a numbered name never lands on a recording already saved: the next one is -3, and -2 is as it was
+    second = user_skills_dir(vault) / "export-invoices-2" / "SKILL.md"
+    before = second.read_text(encoding="utf-8")
+    body = await _draft_via_api(cfg, tmp_path, catalog)
+    assert body["state"] == "added" and body["slug"] == "export-invoices-3"
+    assert second.read_text(encoding="utf-8") == before

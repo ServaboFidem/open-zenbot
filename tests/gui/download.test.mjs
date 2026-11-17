@@ -56,6 +56,25 @@ test('a stream cut off midway leaves no dest, and the next call starts clean', a
   assert.deepEqual(readdirSync(dir), ['archive.tar.gz']);
 });
 
+test('the abort signal reaches fetch, and an abort midway is an OfflineError that leaves nothing behind', async t => {
+  const { dir, args } = setup(t);
+  const ctl = new AbortController();
+  let seen;
+  const fetch = async (url, init) => {
+    seen = init.signal;
+    return answer((async function* () {
+      yield BYTES.subarray(0, 150);
+      // as a real body does: the read fails once the signal is aborted, and would otherwise wait for ever
+      if (init.signal.aborted) throw new Error('aborted');
+      await new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(new Error('aborted'))));
+    })());
+  };
+  const p = downloadVerified({ ...args, fetch, signal: ctl.signal, onProgress: () => ctl.abort() });
+  await assert.rejects(p, OfflineError);
+  assert.equal(seen, ctl.signal);
+  assert.deepEqual(readdirSync(dir), []);
+});
+
 test('a stale .part from an earlier run is not mixed into the new download', async t => {
   const { dir, args } = setup(t);
   writeFileSync(args.dest + '.part', 'junk from a crash');
