@@ -767,8 +767,9 @@ class Harness:
             self.ledger.append(Kind.error, bot.id, session.id, where="design_part", error=type(e).__name__)
             done = studio_helpers.Applied(None, "error", "My changes were not applied: something went wrong.")
         if done.copy is None:
+            extra = {"kept_before": True} if done.kept_before else {}
             self.ledger.append(Kind.design_part, bot.id, session.id, event="apply", ids=ids, version=turn.version,
-                               refused=done.refused)
+                               refused=done.refused, **extra)
             return done.sentence
         rev = design_studio.revision_of(self.config.vault_root, done.copy)
         try:

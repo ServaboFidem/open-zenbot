@@ -37,9 +37,10 @@ class PartTurn:
 
 @dataclass
 class Applied:
-    copy: Path | None  # the new numbered copy, or None when nothing was written
+    copy: Path | None  # the new numbered copy, or None when no new copy was made
     refused: str = ""  # for the ledger: why nothing was written
     sentence: str = ""  # for the reply: what the user is told when nothing was written
+    kept_before: bool = False  # a refused copy whose working file could not be put back: the kept source stays
 
 
 def design_dir(vault_root: Path, slug: str) -> Path | None:
@@ -188,13 +189,17 @@ def apply(vault_root: Path, turn: PartTurn) -> Applied:
         if copy is None:
             raise design_studio.SnapshotRefused("not a design file")
     except (design_studio.SnapshotRefused, OSError) as e:
+        why = str(e) if isinstance(e, design_studio.SnapshotRefused) else "the copy could not be written"
         try:
             _replace(live, raw)
-        finally:
-            before.unlink(missing_ok=True)
-        why = str(e) if isinstance(e, design_studio.SnapshotRefused) else "the copy could not be written"
+        except OSError:  # the working file holds the changes: keep the source it replaced
+            return Applied(None, "no copy", f"My changes were not applied: {why}.", kept_before=True)
+        before.unlink(missing_ok=True)
         return Applied(None, "no copy", f"My changes were not applied: {why}.")
     rev = design_studio.revision_of(vault_root, copy)
-    if rev is None or rev[1] != n:  # an unchanged copy was reused: the kept source belongs to no new copy
+    if rev is None or rev[1] != n:
+        # the page renders as the newest copy already does (a `data:` picture written out with the same bytes):
+        # no new revision, so the kept source belongs to none and nothing is attached
         before.unlink(missing_ok=True)
+        return Applied(None, "no change")
     return Applied(copy)

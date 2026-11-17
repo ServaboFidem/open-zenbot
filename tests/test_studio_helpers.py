@@ -267,8 +267,23 @@ async def test_an_older_embedded_picture_is_written_out_and_the_change_points_at
     assert '- [old] designs/site/images/old.png (800x600 pixels) alt "Then"' in harness.provider.calls[0][-1].content
     live = (_folder(harness) / "index.html").read_text()
     assert live == page.replace(old_uri, "images/old.png")
-    # the page looks the same, so the newest copy is reused and no kept source is left without a copy
+    # the page renders as version 1 does: no new copy, nothing attached, no kept source left behind
     assert sorted(p.name for p in (_folder(harness) / ".versions").iterdir()) == ["1.index.html"]
+    ex = conv.exchanges[-1]
+    assert ex.session_id == s.id and ex.attachments == [] and ex.reply == "Kept it as a file."
+    assert "changed the design" not in conv.history()[-1].content
+    assert {"event": "apply", "refused": "no change", "version": 1}.items() <= _parts(harness, s.id)[-1].items()
+
+
+async def test_setting_a_text_to_what_it_already_says_makes_no_copy_and_attaches_nothing(harness: Harness):
+    conv, att = _studio(harness)
+    s = await _help(harness, conv, [completion(calls=[_set_text("c1", "lede", "Old lede")]), completion("Kept it.")],
+                    comments=[_comment(att)])
+    _nothing_written(harness)
+    ex = conv.exchanges[-1]
+    assert ex.attachments == [] and ex.reply == "Kept it."
+    assert "changed the design" not in conv.history()[-1].content
+    assert {"event": "apply", "refused": "no change", "version": 1}.items() <= _parts(harness, s.id)[-1].items()
 
 
 # -- nothing to do ----------------------------------------------------------
@@ -437,3 +452,26 @@ async def test_a_copy_that_cannot_be_made_puts_the_working_file_back_and_keeps_n
     assert conv.exchanges[-1].reply == ("Done.\n\nMy changes were not applied: designs/site/.versions/2.index.html "
                                         "is already there; attach again.")
     assert _parts(harness, s.id)[-1]["refused"] == "no copy"
+
+
+async def test_a_working_file_that_cannot_be_put_back_keeps_the_source_it_replaced(harness: Harness, monkeypatch):
+    conv, att = _studio(harness)
+    real_replace, calls = studio_helpers._replace, []
+
+    def replace_once(live, data):
+        calls.append(data)
+        if len(calls) > 1:
+            raise OSError("disk full")
+        real_replace(live, data)
+
+    def refuse(*_a, **_k):
+        raise design_studio.SnapshotRefused("designs/site/.versions/2.index.html is already there; attach again")
+
+    monkeypatch.setattr(studio_helpers, "_replace", replace_once)
+    monkeypatch.setattr(design_studio, "snapshot", refuse)
+    s = await _help(harness, conv, [completion(calls=[_set_text("c1", "lede", "New lede")]), completion("Done.")],
+                    comments=[_comment(att)])
+    assert (_folder(harness) / ".versions" / "before-2.index.html").read_bytes() == PAGE.encode()
+    assert conv.exchanges[-1].attachments == []
+    entry = _parts(harness, s.id)[-1]
+    assert entry["refused"] == "no copy" and entry["kept_before"] is True
