@@ -63,9 +63,14 @@ test('start spawns the venv python in the harness folder with the managed enviro
   assert.equal(opts.env.ZEN_HARNESS_URL, 'http://127.0.0.1:8765');
   assert.equal(opts.env.ZEN_ENV_FILE, paths.envFile);
   assert.equal(opts.env.PYTHONUNBUFFERED, '1');
-  assert.equal(opts.env.UV_PROJECT_ENVIRONMENT, paths.venv);
-  assert.ok(opts.env.PATH.startsWith(path.join(resources, 'bin')));
-  assert.equal(opts.env.PATH, `${path.join(resources, 'bin')}:${paths.nodeBin}:/usr/bin`);
+  // the harness's own venv is never a uv project target for a bot's shell or a stdio server (I1)
+  assert.equal('UV_PROJECT_ENVIRONMENT' in opts.env, false);
+  assert.equal(opts.env.UV_PYTHON_INSTALL_DIR, paths.pythonInstalls);
+  assert.equal(opts.env.UV_CACHE_DIR, paths.uvCache);
+  assert.equal(opts.env.UV_TOOL_DIR, paths.uvTools);
+  // the venv's python leads PATH as under `uv run`, but VIRTUAL_ENV stays unset so `--active` cannot reach it
+  assert.equal('VIRTUAL_ENV' in opts.env, false);
+  assert.equal(opts.env.PATH, `${path.dirname(paths.python)}:${path.join(resources, 'bin')}:${paths.nodeBin}:/usr/bin`);
   assert.equal(h.url, 'http://127.0.0.1:8765');
 });
 
@@ -74,7 +79,10 @@ test('on windows the existing Path spelling leads with ; and no second PATH appe
   await h.start();
   const { env, detached } = t.spawned[0][2];
   assert.equal(detached, false);
-  assert.equal(env.Path, `C:\\App\\resources\\bin;${paths.nodeBin};C:\\Windows`);
+  assert.equal(env.Path, `${path.win32.dirname(paths.python)};C:\\App\\resources\\bin;${paths.nodeBin};C:\\Windows`);
+  assert.equal(path.win32.dirname(paths.python), path.win32.join(paths.venv, 'Scripts'));
+  assert.equal('UV_PROJECT_ENVIRONMENT' in env, false);
+  assert.equal('VIRTUAL_ENV' in env, false);
   assert.deepEqual(Object.keys(env).filter(k => k.toUpperCase() === 'PATH'), ['Path']);
 });
 
@@ -83,6 +91,38 @@ test('start waits as long as the child lives, and resolves when /health answers'
   const r = await h.start();
   assert.deepEqual(r, { ok: true, adopted: false });
   assert.ok(t.sleeps >= 100);
+});
+
+test('a VIRTUAL_ENV or UV_PROJECT_ENVIRONMENT from the launching environment does not reach the harness', async () => {
+  const { t, h } = rig({ baseEnv: { PATH: '/usr/bin', VIRTUAL_ENV: '/elsewhere/.venv', UV_PROJECT_ENVIRONMENT: '/elsewhere/env' }, healthy: t2 => t2.child !== null });
+  await h.start();
+  const { env } = t.spawned[0][2];
+  assert.equal('VIRTUAL_ENV' in env, false);
+  assert.equal('UV_PROJECT_ENVIRONMENT' in env, false);
+});
+
+test('stop() during the first moments of start() means nothing is launched', async () => {
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const t = { spawned: [], kills: [] };
+  const h = createHarness({
+    paths: runtimePaths({ userData: '/home/a/.config/OpenZenBot', resources: '/opt/OpenZenBot/resources', platform: 'linux' }),
+    platform: 'linux', baseEnv: { PATH: '/usr/bin' },
+    // a child that dies at once, so a wrong launch ends the start instead of polling for ever
+    spawn: (...a) => { t.spawned.push(a); const c = fakeChild(); setImmediate(() => c.emit('close', 1, null)); return c; },
+    fetch: async () => ({ ok: false }),
+    portInUse: async () => { await gate; return false; },  // start() is held here, just before it would launch
+    killTree: async () => {}, kill: (pid, sig) => { t.kills.push([pid, sig]); },
+    logStream: { write: () => {} }, sleep: () => new Promise(r => setImmediate(r)),
+  });
+  const started = h.start();
+  await h.stop();
+  release();
+  const r = await started;
+  assert.deepEqual([r.ok, r.reason, t.spawned.length, t.kills], [false, 'stopped', 0, []]);
+  // and a later start() does not launch either
+  assert.equal((await h.start()).reason, 'stopped');
+  assert.equal(t.spawned.length, 0);
 });
 
 test('start called while a start is in flight returns the same promise', async () => {

@@ -42,13 +42,23 @@ function createHarness({ paths, platform, port = 8765, baseEnv = process.env, sp
   let stopping = false;
   let starting = null;
   let started = false;
+  let stopped = false;  // stop() was called: no launch from then on, even by a start() already under way
   const exitCallbacks = [];
   let tail = [];
 
+  // The harness and everything it starts (a bot's shell commands, stdio MCP servers) share the managed Python,
+  // cache and tool folders, but never get UV_PROJECT_ENVIRONMENT: the harness's Python is started by full path, and
+  // with that variable a bot's own `uv sync` or `uv run` in its workspace would sync its project into the
+  // harness's venv. As under `uv run` in developer mode, the venv's bin folder leads PATH, so a bot's `python` (the
+  // shipped pdf, docx and pptx skills call it) has the harness's packages. VIRTUAL_ENV, which `uv run` also sets,
+  // is left unset on purpose: with it, a bot's `uv sync --active` or `uv run --active` would write into the harness's
+  // venv. One from the launching environment is dropped too, so no other venv stands in.
   function childEnv() {
     const env = uvEnv(paths, baseEnv);
+    delete env.UV_PROJECT_ENVIRONMENT;
+    for (const k of Object.keys(env)) if ((platform === 'win32' ? k.toUpperCase() : k) === 'VIRTUAL_ENV') delete env[k];
     const key = platform === 'win32' ? (Object.keys(env).find(k => k.toUpperCase() === 'PATH') || 'PATH') : 'PATH';
-    const lead = [p.dirname(paths.uv), paths.nodeBin].join(sep);
+    const lead = [p.dirname(paths.python), p.dirname(paths.uv), paths.nodeBin].join(sep);
     env[key] = env[key] ? lead + sep + env[key] : lead;
     Object.assign(env, {
       ZEN_PORT: String(port),
@@ -115,8 +125,10 @@ function createHarness({ paths, platform, port = 8765, baseEnv = process.env, sp
   }
 
   async function doStart() {
+    if (stopped) return { ok: false, reason: 'stopped', detail: '' };
     if (await healthy()) return { ok: true, adopted: true };
     if (await portInUse(port)) return { ok: false, reason: 'port-in-use', detail: `Port ${port} is in use by another program.` };
+    if (stopped) return { ok: false, reason: 'stopped', detail: '' };
     launch();
     let grace = GRACE_STEPS;
     while (!closed) {
@@ -143,6 +155,7 @@ function createHarness({ paths, platform, port = 8765, baseEnv = process.env, sp
   }
 
   async function stop() {
+    stopped = true;
     const c = child;
     if (!c || exited) return;
     stopping = true;
