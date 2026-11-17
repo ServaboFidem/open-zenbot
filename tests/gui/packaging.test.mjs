@@ -162,3 +162,11 @@ test('every action is pinned to a 40-character commit SHA and no script interpol
   for (const l of workflow().split('\n').filter(l => !/^\s*(TAG|REF_NAME):/.test(l)))
     assert.doesNotMatch(l, /\$\{\{\s*github\.(ref_name|ref)\s*\}\}/, l);
 });
+
+test('the README and AGENTS.md state the free space setup needs, as setup.cjs has it', async () => {
+  const { createRequire } = await import('node:module');
+  const { NEEDED_BYTES } = createRequire(import.meta.url)('../../src/electron/setup.cjs');
+  const gb = String(Number((NEEDED_BYTES / 1024 ** 3).toFixed(1)));
+  assert.match(read('README.md'), new RegExp(`about ${gb} GB (of )?free`));
+  assert.match(read('AGENTS.md'), new RegExp(`less than about ${gb} GB free`));
+});
