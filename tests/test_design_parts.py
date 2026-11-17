@@ -158,3 +158,21 @@ def test_one_apply_carries_a_text_change_and_a_picture_change(tmp_path):
     s = slots(PAGE, tmp_path)
     out = apply(PAGE, s, {"lede": Change(text="Three"), "hero": Change(src="images/new.png")})
     assert out == PAGE.replace("One<br>two", "Three").replace("images/hero.png", "images/new.png")
+
+
+def test_a_textarea_keeps_its_text_as_written_and_round_trips(tmp_path):
+    page = '<textarea data-zen-id="m">Use <br> here &amp; <!-- not a comment -->\nline two</textarea>'
+    s = slots(page, tmp_path)
+    assert s["m"].text == "Use <br> here & <!-- not a comment -->\nline two"
+    b = block("designs/site/index.html", 1, worksheet(s, "text", None), "text")
+    assert '- [m] "Use <br> here & <!-- not a comment -->\\nline two"' in b.split("\n")
+    # the helper places the worksheet text back, its \n written as a real newline
+    out = apply(page, s, {"m": Change(text=check_text("Use <br> here & <!-- not a comment -->\nline two"))})
+    assert out == page and slots(out, tmp_path)["m"].text == s["m"].text
+
+
+def test_a_textarea_cannot_be_closed_by_the_text_placed_in_it(tmp_path):
+    page = '<textarea data-zen-id="m">x</textarea><p data-zen-id="p">y</p>'
+    out = apply(page, slots(page, tmp_path), {"m": Change(text="a</textarea><b>&lt;")})
+    assert out == '<textarea data-zen-id="m">a&lt;/textarea><b>&amp;lt;</textarea><p data-zen-id="p">y</p>'
+    assert slots(out, tmp_path)["m"].text == "a</textarea><b>&lt;"

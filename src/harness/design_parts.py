@@ -29,7 +29,8 @@ class PartRefused(Exception):
 class Slot:
     id: str
     kind: str  # "text" | "images"
-    text: str  # text slot: the content as one line, each <br> as a newline; image slot: the alt
+    text: str  # text slot: the content as one line, each <br> as a newline (a textarea: as written, its
+    # newlines kept); image slot: the alt
     src: str  # image slot: "images/<name>", or "data:" for a picture still embedded; "" for text
     element: Element
 
@@ -90,10 +91,14 @@ def slots(html: str, folder: Path) -> dict[str, Slot]:
                 continue
             found[sid] = Slot(sid, "images", _flat(el.attrs.get("alt", "")), shown, el)
         elif el.inner is not None and el.children == 0 and el.tag not in _NOT_SLOT_INSIDE:
-            lines = [_flat(_html.unescape(part)) for part in _BR.split(_COMMENT.sub("", html[el.inner[0]:el.inner[1]]))]
-            if not any(lines):
+            inner = html[el.inner[0]:el.inner[1]]
+            if el.tag == "textarea":  # shown as written: a <br> or a comment there is text, its newlines are real
+                text = _html.unescape(inner).replace("\r\n", "\n").replace("\r", "\n")
+            else:
+                text = "\n".join(_flat(_html.unescape(part)) for part in _BR.split(_COMMENT.sub("", inner)))
+            if not text.strip():
                 continue  # an empty element (a spacer, an icon) is decoration, not text to write
-            found[sid] = Slot(sid, "text", "\n".join(lines), "", el)
+            found[sid] = Slot(sid, "text", text, "", el)
     return found
 
 
@@ -182,9 +187,11 @@ def apply(html: str, all_slots: dict[str, Slot], changes: dict[str, Change]) -> 
             if ch.src is not None or ch.alt is not None:
                 raise PartRefused(f"[{sid}] is a text slot")
             if ch.text is not None:
-                new = _html.escape(check_text(ch.text), quote=False)
-                if el.tag != "textarea":  # a textarea shows its text as written: a <br> there would be text
-                    new = new.replace("\n", "<br>")
+                text = check_text(ch.text)
+                if el.tag == "textarea":  # shown as written, newlines included: only `&` and an end tag need escaping
+                    new = text.replace("&", "&amp;").replace("</", "&lt;/")
+                else:
+                    new = _html.escape(text, quote=False).replace("\n", "<br>")
                 edits.append((el.inner[0], el.inner[1], new))
             continue
         if ch.text is not None:

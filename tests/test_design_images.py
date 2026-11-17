@@ -3,7 +3,8 @@ import os
 
 import pytest
 
-from src.harness.design_images import (PICTURE_MAX_BYTES, ImageRefused, add, data_uri, embed, sniff)
+from src.harness import design_images
+from src.harness.design_images import (PICTURE_MAX_BYTES, TOO_LARGE, ImageRefused, add, data_uri, embed, sniff)
 
 PNG = bytes.fromhex("89504e470d0a1a0a") + b"\0" * 16
 JPEG = b"\xff\xd8\xff\xe0" + b"\0" * 16
@@ -89,6 +90,32 @@ def test_links_and_hard_links_are_refused(tmp_path):
     html = b'<img src="images/a.png">'
     out, notes = embed(html, e)
     assert out == html and len(notes) == 1
+
+
+def test_many_references_to_one_picture_stay_within_the_budget(tmp_path, monkeypatch):
+    d = design(tmp_path)
+    (d / "images" / "big.png").write_bytes(PNG + b"\0" * 100_000)
+    uri = data_uri("png", PNG + b"\0" * 100_000)
+    tag = '<img src="images/big.png">'
+    html = (tag * 1000).encode()
+    reads = []
+    real_load = design_images.load
+    monkeypatch.setattr(design_images, "load", lambda f, n: reads.append(n) or real_load(f, n))
+    budget = 1_000_000
+    out, notes = embed(html, d, budget)
+    fits = (budget - len(html)) // (len(uri) - len("images/big.png"))
+    assert len(out) <= budget and out.count(uri.encode()) == fits > 0
+    assert notes == [("images/big.png", TOO_LARGE)] * (1000 - fits)
+    assert reads == ["big.png"]  # each distinct picture is read once
+
+
+def test_the_default_budget_is_the_bridge_bound(tmp_path):
+    from src.harness.design_studio import BRIDGE_MAX_BYTES
+    d = design(tmp_path)
+    (d / "images" / "big.png").write_bytes(PNG + b"\0" * (PICTURE_MAX_BYTES - len(PNG)))
+    out, notes = embed(b'<img src="images/big.png">' * 1000, d)
+    assert len(out) <= BRIDGE_MAX_BYTES and out.count(b"data:image/png") == 2
+    assert len(notes) == 998 and {why for _, why in notes} == {TOO_LARGE}
 
 
 def test_bytes_that_are_not_utf8_pass_through(tmp_path):

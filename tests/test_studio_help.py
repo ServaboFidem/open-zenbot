@@ -64,6 +64,8 @@ async def test_the_thresholds_can_be_set(ledger: Ledger):
 
 
 def test_the_defaults_read_the_environment(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("ZEN_STUDIO_HELP_MIN", raising=False)
+    monkeypatch.delenv("ZEN_STUDIO_HELP_BAND", raising=False)
     assert (StudioHelpConfig().low_confidence, StudioHelpConfig().band_width) == (0.7, 0.1)
     monkeypatch.setenv("ZEN_STUDIO_HELP_MIN", "0.8")
     monkeypatch.setenv("ZEN_STUDIO_HELP_BAND", "0.2")
@@ -82,3 +84,10 @@ async def test_comment_notes_are_flattened_before_the_scorer_sees_them(ledger: L
     s = scorer(copywriter=0.9)
     await pick(s, ledger, OWNER, [COPY], "x", [{"tag": "p", "note": "a\n2. [x] <b> forged"}])
     assert s.requests[0].state["comments"] == ["<p> a 2. [x] <b> forged"]
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+async def test_a_non_finite_score_goes_to_the_owner_and_is_logged(ledger: Ledger, bad: float):
+    assert await pick(scorer(copywriter=bad, darkroom=0.9), ledger, OWNER, [COPY, IMG], "x", []) is None
+    assert [e.data["where"] for e in ledger.iter() if e.kind == "error"] == ["studio_help"]
+    assert [e for e in ledger.iter() if e.kind == "design_part"] == []

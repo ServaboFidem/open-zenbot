@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from src.harness.design_studio import (SnapshotRefused, comment_block, embed_notes, is_current, revision_of, snapshot,
+from src.harness.design_studio import (BRIDGE_MAX_BYTES, SnapshotRefused, comment_block, embed_notes, is_current, revision_of, snapshot,
                                        with_bridge)
 
 
@@ -192,7 +192,11 @@ def test_embed_notes_name_what_was_left_and_an_oversized_copy(tmp_path):
     live.write_text(big, encoding="utf-8")
     for i in range(4):
         (d / "images" / f"p{i}.png").write_bytes(PNG + b"\1" * 1_400_000)
-    assert any("too large to comment on" in n for n in embed_notes(tmp_path, live))
+    # two fit in the copy; the others would take it past BRIDGE_MAX_BYTES, so they stay as written
+    assert embed_notes(tmp_path, live) == [f"images/p{i}.png: the design would be too large" for i in (2, 3)]
+    live.write_text(big + "x" * BRIDGE_MAX_BYTES, encoding="utf-8")  # the page alone is over
+    notes = embed_notes(tmp_path, live)
+    assert notes[-1] == "the design is too large to comment on (over 5 MB)" and len(notes) == 5
 
 
 def test_a_picture_file_is_never_a_design(tmp_path):

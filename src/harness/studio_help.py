@@ -4,6 +4,7 @@ leaves it with the Designer (the owner)."""
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -51,7 +52,9 @@ async def pick(scorer: Any, ledger: Any, owner: Bot, helpers: list[Bot], text: s
     try:
         decision = await decide_and_log(scorer, request, ledger, owner.id, "")
         scores = {b.id: decision.noul(f"bot:{b.id}").noul for b in helpers}
-    except (ProviderError, DecisionRefused, KeyError, TypeError) as e:
+        if not all(math.isfinite(v) for v in scores.values()):
+            raise ValueError("a score is not a finite number")
+    except (ProviderError, DecisionRefused, KeyError, TypeError, ValueError) as e:
         ledger.append(Kind.error, owner.id, "", where="studio_help", error=f"{type(e).__name__}: {e}", action="designer takes it")
         return None
     band = select_band(scores, BandConfig(cfg.band_width, cfg.k, cfg.low_confidence))

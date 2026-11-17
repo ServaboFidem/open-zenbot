@@ -247,6 +247,17 @@ async def test_refused_pictures_answer_with_the_reason(harness: Harness, tmp_pat
     assert len(list((_folder(harness) / ".versions").iterdir())) == 1
 
 
+@pytest.mark.parametrize("path", ["images/hero.png", "designs/site/images/hero.png"])
+async def test_the_picture_a_slot_already_shows_is_refused(harness: Harness, path: str):
+    conv, _ = _studio(harness)
+    script = [completion(calls=[("c1", "design_set_image", {"id": "hero", "path": path})]), completion("Edited it.")]
+    s = await _help(harness, conv, script, bot="darkroom")
+    assert _tool_results(harness) == ["Not set: that is the picture already there. Save your edit under a new name "
+                                      "in images/ and set that."]
+    _nothing_written(harness)
+    assert [e["event"] for e in _parts(harness, s.id)] == []
+
+
 async def test_an_image_helper_can_add_a_picture_to_the_owners_design_folder(harness: Harness, tmp_path: Path):
     conv, _ = _studio(harness)
     (tmp_path / "sky.png").write_bytes(PNG)
@@ -476,6 +487,8 @@ async def test_a_working_file_that_cannot_be_put_back_keeps_the_source_it_replac
                     comments=[_comment(att)])
     assert (_folder(harness) / ".versions" / "before-2.index.html").read_bytes() == PAGE.encode()
     assert conv.exchanges[-1].attachments == []
+    assert conv.exchanges[-1].reply == ("Done.\n\nMy changes are in the design file, but no numbered copy could be made, "
+                                        "so they do not show as a new version. The earlier source was kept.")
     entry = _parts(harness, s.id)[-1]
     assert entry["refused"] == "no copy" and entry["kept_before"] is True
 
@@ -611,6 +624,55 @@ async def test_a_second_task_started_while_the_scorer_is_thinking_makes_the_firs
     assert sum(ex.outcome == "pending" for ex in conv.exchanges) <= 1
 
 
+def _parked_scorer(by_id: dict[str, float]):
+    """A scorer that parks on the studio_help request until `gate` is set; `parked` is set when it is there."""
+    gate, parked = asyncio.Event(), asyncio.Event()
+
+    class Slow(MockScorer):
+        async def decide(self, request):
+            if request.purpose == "studio_help":
+                parked.set()
+                await gate.wait()
+            return await super().decide(request)
+
+    s = Slow(lambda req: {k: NoulAnswer(by_id.get(k.removeprefix("bot:"), 0.0) if req.purpose == "studio_help" else 0.0)
+                          for k in req.questions})
+    return s, gate, parked
+
+
+@pytest.mark.parametrize("winner", ["copywriter", ""])
+async def test_a_change_of_current_conversation_while_the_scorer_thinks_still_checks_the_first_one(harness: Harness, winner: str):
+    conv, _ = _studio(harness)
+    s, gate, parked = _parked_scorer({winner: 0.9} if winner else {})
+    _script(harness, s, [completion("ok") for _ in range(4)])
+    transport = httpx.ASGITransport(app=create_app(harness))
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
+        first = asyncio.create_task(c.post("/bots/designer/tasks", json={"task": "a"}))  # the current conversation
+        await asyncio.wait_for(parked.wait(), 5)
+        other = harness.conversations.start_new("designer")  # now the current one
+        second = await c.post("/bots/designer/tasks", json={"task": "b", "conversation_id": conv.id, "route": "owner"})
+        gate.set()
+        r1 = await first
+    assert second.status_code == 202 and r1.status_code == 409
+    assert sum(ex.outcome == "pending" for ex in conv.exchanges) <= 1 and other.exchanges == []
+
+
+async def test_comments_on_a_version_that_stopped_being_the_newest_while_the_scorer_thinks_are_refused(harness: Harness):
+    conv, att = _studio(harness)
+    s, gate, parked = _parked_scorer({"copywriter": 0.9})
+    _script(harness, s)
+    transport = httpx.ASGITransport(app=create_app(harness))
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
+        first = asyncio.create_task(c.post("/bots/designer/tasks", json={
+            "task": "a", "conversation_id": conv.id, "design_comments": [_comment(att)]}))
+        await asyncio.wait_for(parked.wait(), 5)
+        _attach(harness, conv, "index.html", PAGE.replace("Hello", "Hi"))  # a task ended with version 2 meanwhile
+        gate.set()
+        r1 = await first
+    assert r1.status_code == 422 and r1.json()["detail"] == "comments belong on the newest version of the design"
+    assert all(ex.outcome != "pending" for ex in conv.exchanges)
+
+
 # -- redo with the Designer ----------------------------------------------------
 
 
@@ -643,6 +705,43 @@ async def test_a_redo_puts_the_earlier_source_back_and_starts_the_designer_on_ve
     assert atts == ["1.index.html", "2.index.html"]
     ev = [e.data for e in harness.ledger.iter() if e.kind == "design_part" and e.data.get("event") == "redo"]
     assert ev == [{"event": "redo", "set_aside": 2, "restored": 1}]
+
+
+async def test_a_picture_changed_in_place_during_an_unchanged_turn_makes_a_version_that_cannot_be_redone(harness: Harness):
+    conv, att = _studio(harness)
+    hero = _folder(harness) / "images" / "hero.png"
+    harness.provider = harness.loop.provider = _OnSecondCall(
+        [completion(calls=[_set_text("c1", "lede", "Old lede")]), completion("Kept the lede.")],
+        lambda: hero.write_bytes(PNG + b"edited"))
+    s = _start(harness, conv, comments=[_comment(att)])
+    await harness.tasks[s.id]
+    folder = _folder(harness)
+    assert (folder / "index.html").read_bytes() == PAGE.encode()
+    assert sorted(p.name for p in (folder / ".versions").iterdir()) == ["1.index.html", "2.index.html"]
+    assert data_uri("png", PNG + b"edited") in (folder / ".versions" / "2.index.html").read_text()
+    ex = conv.exchanges[-1]
+    assert [Path(a["path"]).name for a in ex.attachments] == ["2.index.html"] and ex.reply == "Kept the lede."
+    _script(harness, _favour(), [completion("Redone.")])
+    r = await _redo(harness, conv, s.id)
+    assert r.status_code == 422 and r.json()["detail"] == studio_helpers.NO_EARLIER
+    assert hero.read_bytes() == PNG + b"edited" and not ex.set_aside
+
+
+async def test_a_redo_is_refused_when_a_picture_was_changed_in_place_beside_the_change(harness: Harness):
+    conv, att = _studio(harness)
+    hero = _folder(harness) / "images" / "hero.png"
+    harness.provider = harness.loop.provider = _OnSecondCall(
+        [completion(calls=[_set_text("c1", "lede", "New lede")]), completion("Rewrote.")],
+        lambda: hero.write_bytes(PNG + b"edited"))
+    s = _start(harness, conv, comments=[_comment(att)])
+    await harness.tasks[s.id]
+    live = _folder(harness) / "index.html"
+    assert live.read_bytes() == PAGE.replace("Old lede", "New lede").encode()
+    _script(harness, _favour(), [completion("Redone.")])
+    r = await _redo(harness, conv, s.id)
+    assert r.status_code == 422 and r.json()["detail"] == studio_helpers.NO_EARLIER
+    assert live.read_bytes() == PAGE.replace("Old lede", "New lede").encode()  # nothing put back halfway
+    assert not conv.exchanges[-1].set_aside
 
 
 async def test_a_redo_without_comments_works(harness: Harness):

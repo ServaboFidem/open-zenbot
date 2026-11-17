@@ -19,6 +19,8 @@ RULES = ("You are helping on a design another bot owns. Change only what the lis
          "Say in your reply what you changed.")
 CHANGED = "The design changed while I was working, so my changes were not applied."
 TOO_LARGE = "The design would be too large to comment on, so my changes were not applied."
+NO_COPY_KEPT = ("My changes are in the design file, but no numbered copy could be made, so they do not show as "
+                "a new version. The earlier source was kept.")
 ATTACH_REFUSED = ("Not attached: the design is attached for you when you finish. "
                   "Place your changes with the design tools.")
 
@@ -108,11 +110,17 @@ def _pictures(folder: Path, sheet: list[Slot], all_slots: dict[str, Slot]) -> tu
     return kept, sizes
 
 
+def _too_large(html: bytes, folder: Path) -> bool:
+    """Whether the copy of this page would be over BRIDGE_MAX_BYTES or leave a picture out for its size."""
+    data, notes = design_images.embed(html, folder, design_studio.BRIDGE_MAX_BYTES)
+    return len(data) > design_studio.BRIDGE_MAX_BYTES or any(why == design_images.TOO_LARGE for _, why in notes)
+
+
 def prepare(vault_root: Path, conv: Any, places: list[str],
             comments: list[dict[str, str]]) -> tuple[PartTurn, str] | None:
     """The turn and its worksheet block for a helper that places `places` in this conversation's newest
-    design, or None: no design, a working file that is not the newest copy, a copy already over
-    BRIDGE_MAX_BYTES, or nothing on the worksheet.
+    design, or None: no design, a working file that is not the newest copy, a copy already too
+    large (`_too_large`), or nothing on the worksheet.
     With comments, the worksheet holds the picked elements that are slots; without, every slot of the kind."""
     found = newest_revision(vault_root, conv)
     if found is None:
@@ -125,10 +133,7 @@ def prepare(vault_root: Path, conv: Any, places: list[str],
     raw = _read_source(live)
     if raw is None or not design_studio.is_current(vault_root, live, Path(att["path"])) or _read_source(live) != raw:
         return None
-    try:  # a design already too large to comment on: the helper's copy would be refused, so the Designer takes it
-        if Path(att["path"]).stat().st_size > design_studio.BRIDGE_MAX_BYTES:
-            return None
-    except OSError:
+    if _too_large(raw, folder):  # the helper's copy would be refused, so the Designer takes it
         return None
     try:
         source = raw.decode("utf-8")
@@ -165,10 +170,12 @@ NO_EARLIER = "the earlier version of the design is no longer there"
 CHANGED_SINCE = "the design has changed since this version; ask the Designer for the change instead"
 
 
-def restore(vault_root: Path, copy: Path) -> str | None:
+def restore(vault_root: Path, copy: Path, earlier: Path | None = None) -> str | None:
     """Put the working file back to the source kept before the helper's change that made the numbered
-    `copy`. Only while the working file is still the helper's result, so no later edit is lost. Writes whole
-    or not at all; returns the reason when it cannot (and then changes nothing)."""
+    `copy`. Only while the working file is still the helper's result, so no later edit is lost, and (with
+    `earlier`, the numbered copy the helper started from) only when the kept source with today's pictures
+    still renders as that copy: a picture changed in place since cannot be put back. Writes whole or not at
+    all; returns the reason when it cannot (and then changes nothing)."""
     rev = design_studio.revision_of(vault_root, copy)
     before = design_studio.before_of(vault_root, copy)
     folder = design_dir(vault_root, rev[0]) if rev else None
@@ -181,6 +188,9 @@ def restore(vault_root: Path, copy: Path) -> str | None:
         if not design_studio.is_current(vault_root, live, copy):
             return CHANGED_SINCE
         data = before.read_bytes()
+        if earlier is not None and design_images.embed(
+                data, folder, design_studio.BRIDGE_MAX_BYTES)[0] != earlier.read_bytes():
+            return NO_EARLIER
         _replace(live, data)
     except OSError:
         return NO_EARLIER
@@ -203,8 +213,11 @@ def apply(vault_root: Path, turn: PartTurn) -> Applied:
     except PartRefused as e:
         return Applied(None, "refused", f"My changes were not applied: {e}.")
     if new == raw:
-        return Applied(None, "no change")
-    if len(design_images.embed(new, folder)[0]) > design_studio.BRIDGE_MAX_BYTES:
+        start = folder / ".versions" / f"{turn.version}.{turn.name}"  # the copy the worksheet was read from
+        if design_studio.is_current(vault_root, live, start):
+            return Applied(None, "no change")
+        return _pictures_changed(vault_root, live, folder, raw)
+    if _too_large(new, folder):
         return Applied(None, "too large", TOO_LARGE)
     try:
         n = design_studio.next_number(vault_root, live)
@@ -225,7 +238,7 @@ def apply(vault_root: Path, turn: PartTurn) -> Applied:
         try:
             _replace(live, raw)
         except OSError:  # the working file holds the changes: keep the source it replaced
-            return Applied(None, "no copy", f"My changes were not applied: {why}.", kept_before=True)
+            return Applied(None, "no copy", NO_COPY_KEPT, kept_before=True)
         before.unlink(missing_ok=True)
         return Applied(None, "no copy", f"My changes were not applied: {why}.")
     rev = design_studio.revision_of(vault_root, copy)
@@ -234,4 +247,29 @@ def apply(vault_root: Path, turn: PartTurn) -> Applied:
         # no new revision, so the kept source belongs to none and nothing is attached
         before.unlink(missing_ok=True)
         return Applied(None, "no change")
+    return Applied(copy)
+
+
+def _pictures_changed(vault_root: Path, live: Path, folder: Path, raw: bytes) -> Applied:
+    """The source is unchanged but the page is not (a picture file was changed in place during the turn): a
+    numbered copy of the page as it now is, with no kept source, so a Redo of it is refused rather than
+    pretending to put the earlier pictures back."""
+    if _too_large(raw, folder):
+        return Applied(None, "too large", TOO_LARGE)
+    try:
+        n = design_studio.next_number(vault_root, live)
+        copy = design_studio.snapshot(vault_root, live)
+        if copy is None:
+            raise design_studio.SnapshotRefused("not a design file")
+    except (design_studio.SnapshotRefused, OSError) as e:
+        why = str(e) if isinstance(e, design_studio.SnapshotRefused) else "the copy could not be written"
+        return Applied(None, "no copy", f"A picture on the page changed, but no numbered copy could be made: {why}.")
+    rev = design_studio.revision_of(vault_root, copy)
+    if rev is None or rev[1] != n:
+        return Applied(None, "no change")  # the page renders as an existing copy already does
+    try:
+        if (stale := design_studio.before_of(vault_root, copy)) is not None:
+            stale.unlink(missing_ok=True)  # left from a crash; it belongs to no change of this copy
+    except OSError:
+        pass  # a Redo still checks the kept source against the version the helper started from
     return Applied(copy)

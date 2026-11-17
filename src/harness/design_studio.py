@@ -93,7 +93,7 @@ def snapshot(vault_root: Path, target: Path) -> Path | None:
     vdir = _versions(real, parts[0])
     name = real.name
     have = _copies(vdir, name)
-    data = design_images.embed(real.read_bytes(), real.parent)[0]  # the copy is fixed: its pictures go inside it
+    data = design_images.embed(real.read_bytes(), real.parent, BRIDGE_MAX_BYTES)[0]  # the copy is fixed: its pictures go inside it
     n = 0
     if have:
         n, newest = max(have)  # a number in use stays reserved, whatever sits there
@@ -198,24 +198,25 @@ def is_current(vault_root: Path, live: Path, copy: Path) -> bool:
     if real is None:
         return False
     try:
-        return design_images.embed(real.read_bytes(), real.parent)[0] == copy.read_bytes()
+        return design_images.embed(real.read_bytes(), real.parent, BRIDGE_MAX_BYTES)[0] == copy.read_bytes()
     except OSError:
         return False
 
 
 def embed_notes(vault_root: Path, live: Path) -> list[str]:
     """What a bot should fix before the next attach: `images/x.png: <reason>` for each picture left as
-    written, and one line when the copy with its pictures is over BRIDGE_MAX_BYTES (it could not be commented on)."""
+    written (one that would take the copy past BRIDGE_MAX_BYTES among them), and one line when the copy is
+    over BRIDGE_MAX_BYTES even so (it could not be commented on)."""
     real = _live(vault_root, live)
     if real is None:
         return []
     try:
-        data, left = design_images.embed(real.read_bytes(), real.parent)
+        data, left = design_images.embed(real.read_bytes(), real.parent, BRIDGE_MAX_BYTES)
     except OSError:
         return []
     notes = [f"{src}: {why}" for src, why in left]
     if len(data) > BRIDGE_MAX_BYTES:
-        notes.append("the design is too large to comment on (over 5 MB with its pictures)")
+        notes.append("the design is too large to comment on (over 5 MB)")
     return notes
 
 
@@ -250,7 +251,7 @@ def comment_block(file: str, version: int, comments: list[dict[str, str]]) -> st
 
 
 # the studio page is framed with the preview policy; the app picks elements through this one script
-BRIDGE_MAX_BYTES = 5 * 1024 * 1024
+BRIDGE_MAX_BYTES = design_images.PAGE_MAX_BYTES
 _BRIDGE = (b"<script data-zen-bridge>" + (Path(__file__).with_name("design_bridge.js")).read_bytes().strip()
            + b"</script>")
 _BODY_CLOSE = re.compile(rb"</body\s*>", re.IGNORECASE)

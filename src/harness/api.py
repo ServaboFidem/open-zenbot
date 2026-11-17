@@ -728,6 +728,16 @@ class Harness:
             if "outside the folders" in source:
                 return "Not set: that picture is outside the folders you may read."
             return f"Not set: {source.removeprefix('Refused: ').rstrip('.')}."
+        # the file the page's source already names for this slot (an older `data:` picture names none: setting
+        # the file `prepare` wrote it out to is a real change, and the kept source still holds the picture)
+        shown = turn.slots[slot_id].element.attrs.get("src", "")
+        try:
+            same = shown.startswith(design_images.IMAGES + "/") and os.path.samefile(source, folder / shown)
+        except (OSError, ValueError):
+            same = False
+        if same:
+            return ("Not set: that is the picture already there. Save your edit under a new name in images/ "
+                    "and set that.")
         try:
             if source.parent == folder / design_images.IMAGES and design_images.NAME.fullmatch(source.name):
                 ref = f"{design_images.IMAGES}/{source.name}"  # already the design's: used as it is
@@ -1313,10 +1323,11 @@ def create_app(h: Harness) -> FastAPI:
         return conv, prev, prev_rev, Path(att["path"]), number
 
     def _comment_addendum(bot: Bot, body: TaskIn, comments: list[dict[str, str]],
-                          redo: tuple[Any, dict[str, str], tuple[str, int, str], Path, int] | None = None) -> str:
+                          redo: tuple[Any, dict[str, str], tuple[str, int, str], Path, int] | None = None,
+                          conv: Any = None) -> str:
         """The block for a task's design comments, or a 422: they must name the newest design revision
-        of the conversation the task joins (a redo: the version the helper started from). Checked before
-        anything is created."""
+        of the conversation the task joins (`conv` when the route resolved it; a redo: the version the helper
+        started from). Checked before anything is created, and again after the routing await."""
         if redo is not None:
             _, att, (slug, version, name), _, _ = redo
             if any(c["attachment_id"] != att["id"] for c in comments):
@@ -1324,7 +1335,7 @@ def create_app(h: Harness) -> FastAPI:
             return design_studio.comment_block(f"designs/{slug}/{name}", version, comments)
         if not body.conversation:
             raise HTTPException(422, "design comments need a conversation")
-        conv = h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
+        conv = conv if conv is not None else _task_conv(bot, body)
         if conv is not None and conv.owner != bot.id:
             conv = None
         newest = next(((a, rev) for ex in reversed(conv.exchanges if conv else []) for a in reversed(ex.attachments)
@@ -2633,20 +2644,25 @@ def create_app(h: Harness) -> FastAPI:
 
     # tasks and sessions
 
-    def _require_idle(bot: Bot, body: TaskIn) -> None:
-        """409 while a studio conversation has a task that has not ended (one task at a time)."""
+    def _task_conv(bot: Bot, body: TaskIn) -> Any:
+        """The conversation a task joins (the one named, else the bot's current one), or None."""
+        return h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
+
+    def _require_idle(bot: Bot, body: TaskIn, conv: Any = None) -> None:
+        """409 while a studio conversation has a task that has not ended (one task at a time). `conv` is the
+        conversation the route already resolved; without it the task's conversation is looked up now."""
         if bot.studio and body.conversation:
-            conv = h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
+            conv = conv if conv is not None else _task_conv(bot, body)
             if conv is not None and conv.owner == bot.id and any(ex.outcome == "pending" for ex in conv.exchanges):
                 raise HTTPException(409, "a task is already running in this conversation")
 
-    async def _helper_turn(bot: Bot, body: TaskIn, comments: list[dict[str, str]], addendum: str) -> Session | None:
-        """A helper's turn on the design for this task, or None when the owner takes it (the route then goes
-        on as before). Only a studio bot's own conversation that has a design is routed; the answers to a
-        question form go to the bot that asked."""
+    async def _helper_turn(bot: Bot, body: TaskIn, conv: Any, comments: list[dict[str, str]],
+                           addendum: str) -> Session | None:
+        """A helper's turn on the design for this task in `conv` (resolved by the route before any await), or
+        None when the owner takes it (the route then goes on as before). Only a studio bot's own conversation
+        that has a design is routed; the answers to a question form go to the bot that asked."""
         if not (bot.studio and body.conversation):
             return None
-        conv = h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
         if conv is None or conv.owner != bot.id:
             if body.answers_to:
                 raise HTTPException(422, "answers_to is not a reply in this conversation")
@@ -2675,7 +2691,10 @@ def create_app(h: Harness) -> FastAPI:
         if h.scorer is None or body.route != "auto" or body.redo_of:
             return None
         chosen = await studio_help.pick(h.scorer, h.ledger, bot, helpers, task, comments)
-        _require_idle(bot, body)  # the scorer call is an await: another task may have started meanwhile
+        # the scorer call is an await: another task may have started (or ended, adding a revision) meanwhile
+        _require_idle(bot, body, conv)
+        if comments:
+            _comment_addendum(bot, body, comments, conv=conv)  # still the newest revision, or the same 422
         if chosen is None:
             return None
         return h.start_helper(h.bots[chosen], bot, conv, task, comments, addendum, protected=protected)
@@ -2691,21 +2710,26 @@ def create_app(h: Harness) -> FastAPI:
         comments = [c.model_dump() for c in body.design_comments]
         redo = _redo_target(bot, body) if body.redo_of else None
         addendum = _comment_addendum(bot, body, comments, redo) if comments else ""
+        conversation_id = body.conversation_id or None
         if redo is None:
-            helped = await _helper_turn(bot, body, comments, addendum)
+            # resolved once: a change of the bot's current conversation during the await cannot move the task
+            conv = _task_conv(bot, body) if bot.studio and body.conversation else None
+            if conv is not None and conv.owner == bot.id:
+                conversation_id = conv.id
+            helped = await _helper_turn(bot, body, conv, comments, addendum)
             if helped is not None:
                 return {"session_id": helped.id, "state": str(helped.state)}
-            _require_idle(bot, body)  # the routing await may have let another task start
+            _require_idle(bot, body, conv)  # the routing await may have let another task start
         else:
             # everything is checked; from here no await until the task starts, so nothing else can start
-            conv, _, (_, back, _), copy, number = redo
-            if why := studio_helpers.restore(h.config.vault_root, copy):
+            conv, prev, (_, back, _), copy, number = redo
+            if why := studio_helpers.restore(h.config.vault_root, copy, Path(prev["path"])):
                 raise HTTPException(422, why)
             h.conversations.set_aside(conv.id, body.redo_of)
             h.ledger.append(Kind.design_part, conv.exchanges[-1].bot, body.redo_of, event="redo",
                             set_aside=number, restored=back)
         try:
-            session = h.start_task(bot, body.task.strip(), conversation_id=body.conversation_id or None,
+            session = h.start_task(bot, body.task.strip(), conversation_id=conversation_id,
                                    in_conversation=body.conversation,
                                    protected=body.protected.model_dump() if body.protected else None,
                                    comments=comments,

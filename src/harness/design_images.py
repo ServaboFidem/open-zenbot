@@ -15,6 +15,9 @@ IMAGES = "images"
 PICTURE_MAX_BYTES = 1_500_000
 NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _EXT = {"png": "png", "jpeg": "jpg", "webp": "webp", "gif": "gif"}
+# a page bigger than this cannot be commented on (`design_studio.BRIDGE_MAX_BYTES` is this value)
+PAGE_MAX_BYTES = 5 * 1024 * 1024
+TOO_LARGE = "the design would be too large"
 _STEM_MAX = 48  # leaves room for "-NN" and the extension inside NAME's 64 characters
 
 
@@ -85,15 +88,19 @@ def load(folder: Path, name: str) -> tuple[str, bytes]:
     return kind, data
 
 
-def embed(html: bytes, folder: Path) -> tuple[bytes, list[tuple[str, str]]]:
+def embed(html: bytes, folder: Path, budget: int = PAGE_MAX_BYTES) -> tuple[bytes, list[tuple[str, str]]]:
     """Put each `images/<name>` picture into its `<img src>` as a data URI. Returns the new bytes and
-    `(src, reason)` for each picture left as written. Bytes that are not UTF-8 come back unchanged."""
+    `(src, reason)` for each picture left as written. A picture whose data URI would take the output past
+    `budget` bytes is left as written (TOO_LARGE). Bytes that are not UTF-8 come back unchanged."""
     try:
         text = html.decode("utf-8")  # strict; a BOM stays as the first character
     except UnicodeDecodeError:
         return html, []
     notes: list[tuple[str, str]] = []
     edits: list[tuple[int, int, str]] = []
+    loaded: dict[str, tuple[str, bytes] | ImageRefused] = {}  # each distinct file read once
+    uris: dict[str, str] = {}
+    size = len(html)
     for el in design_html.scan(text):
         if el.tag != "img":
             continue
@@ -104,15 +111,32 @@ def embed(html: bytes, folder: Path) -> tuple[bytes, list[tuple[str, str]]]:
         if span is None:
             notes.append((src, "write the src in quotes"))
             continue
-        try:
-            kind, data = load(folder, src[len(IMAGES) + 1:])
-        except ImageRefused as e:
-            notes.append((src, str(e)))
+        name = src[len(IMAGES) + 1:]
+        if name not in loaded:
+            try:
+                loaded[name] = load(folder, name)
+            except ImageRefused as e:
+                loaded[name] = e
+        got = loaded[name]
+        if isinstance(got, ImageRefused):
+            notes.append((src, str(got)))
             continue
-        edits.append((span[0], span[1], data_uri(kind, data)))
-    for a, b, uri in sorted(edits, reverse=True):
-        text = text[:a] + uri + text[b:]
-    return text.encode("utf-8"), notes
+        if name not in uris:
+            uris[name] = data_uri(*got)
+        uri = uris[name]
+        grown = size + len(uri) - len(text[span[0]:span[1]].encode("utf-8"))
+        if grown > budget:
+            notes.append((src, TOO_LARGE))
+            continue
+        size = grown
+        edits.append((span[0], span[1], uri))
+    pieces: list[str] = []
+    at = 0
+    for a, b, uri in sorted(edits):
+        pieces += (text[at:a], uri)
+        at = b
+    pieces.append(text[at:])
+    return "".join(pieces).encode("utf-8"), notes
 
 
 def _stem(raw: str) -> str:
