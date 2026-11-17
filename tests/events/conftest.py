@@ -149,3 +149,50 @@ async def google(fake):
     keys = CalendarKeys(client_id="cid", client_secret="secret", refresh_token="refresh")
     async with httpx.AsyncClient(transport=httpx.MockTransport(fake.handler)) as http:
         yield Google(http, lambda: keys)
+
+
+@pytest.fixture
+def clock():
+    class Clock:
+        now = 1000.0
+
+        def __call__(self):
+            return self.now
+
+    return Clock()
+
+
+@pytest.fixture
+async def conn_factory(tmp_path, store, fake, clock):
+    """Builds Connections over one vault: a second call is a restart (new object, same files)."""
+    from src.events.connect import Connection
+    from src.memory.ledger import Ledger
+
+    vault = tmp_path / "vault"
+    vault.mkdir(exist_ok=True)
+    ledger = Ledger(vault)
+    http = httpx.AsyncClient(transport=httpx.MockTransport(fake.handler))
+    made = []
+
+    def build():
+        holder = []
+        google = Google(http, lambda: holder[0].keys, clock)
+        c = Connection(vault, store, google, ledger, port=8765, clock=clock)
+        holder.append(c)
+        made.append(c)
+        return c
+
+    build.ledger = ledger
+    yield build
+    await http.aclose()
+
+
+@pytest.fixture
+def conn(conn_factory):
+    c = conn_factory()
+    c.set_credentials("cid", "secret")
+    return c
+
+
+def state_of(url: str) -> str:
+    return urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["state"][0]
