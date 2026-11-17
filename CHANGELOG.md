@@ -2,6 +2,10 @@
 
 What changed on `main`, newest first. Updated automatically on every push to `main`.
 
+## 2026-11-17
+
+- Installers for Debian and Windows, first-launch setup, and an update check ([#4](https://github.com/ServaboFidem/open-zenbot/pull/4), [`6fdac21`](https://github.com/ServaboFidem/open-zenbot/commit/6fdac2176d61e2136d54bcf225efe1fb677a18bd))
+
 ## 2026-11-16
 
 - Rename DarkroomBot to ImageEditor (the id stays darkroom-bot) ([`dec8786`](https://github.com/ServaboFidem/open-zenbot/commit/dec87861f748aae90ee6a7dd0d731f154765a30d))
