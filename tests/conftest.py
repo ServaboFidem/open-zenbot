@@ -18,6 +18,13 @@ def _bot_prompts_dir(monkeypatch, tmp_path_factory):
     """Bots created in tests persist under a scratch bot-prompts/, never the repo's."""
     monkeypatch.setenv("ZEN_BOT_PROMPTS", str(tmp_path_factory.mktemp("bot-prompts")))
 
+@pytest.fixture(autouse=True)
+def _vault_is_scratch(monkeypatch, tmp_path_factory):
+    """A bare HarnessConfig() reads ZEN_VAULT: without this it is the user's own ~/.zen-agents/vault, with the
+    saved keys and tracing settings beside it. A test that wants another vault sets ZEN_VAULT or passes one."""
+    monkeypatch.setenv("ZEN_VAULT", str(tmp_path_factory.mktemp("scratch") / "vault"))
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_agent_probe: run agent_clis.probe for real (against fake CLIs)")
 

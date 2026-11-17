@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from src.harness import main as harness_main
+from src.harness import telemetry
+from src.providers import tracing
 
 NAMES = ("ZEN_TEST_FROM_FILE", "ZEN_TEST_ALREADY_SET", "ZEN_TEST_QUOTED")
 
@@ -46,6 +48,8 @@ def test_main_loads_the_env_file_before_it_builds_the_harness(tmp_path: Path, mo
     env = tmp_path / ".env"
     env.write_text("ZEN_TEST_FROM_FILE=seen\n", encoding="utf-8")
     monkeypatch.setattr(harness_main, "ENV_FILE", env)
+    # main() starts tracing from the vault's saved settings (a scratch vault: conftest) and from the environment
+    monkeypatch.delenv(telemetry.DSN_ENV, raising=False)
     seen = {}
 
     class Stop(Exception):
@@ -59,6 +63,7 @@ def test_main_loads_the_env_file_before_it_builds_the_harness(tmp_path: Path, mo
     with pytest.raises(Stop):
         harness_main.main()
     assert seen["value"] == "seen"
+    assert not tracing.enabled() and not telemetry._active  # nothing left on for the tests that follow
 
 
 def test_env_file_is_the_repo_root_one():
