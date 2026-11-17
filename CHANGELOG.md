@@ -4,6 +4,7 @@ What changed on `main`, newest first. Updated automatically on every push to `ma
 
 ## 2026-11-17
 
+- README: point to the wiki for more information, and say it is a work in progress ([`080351b`](https://github.com/ServaboFidem/open-zenbot/commit/080351bc4bd4001c5b6b07ca51464a5d168b0044))
 - Wiki: point at the Capabilities page with the design studio ([`47d63e5`](https://github.com/ServaboFidem/open-zenbot/commit/47d63e5dd3b58232d058a7fbc02311731522813d))
 - README: a Design studio section, and the Windows installer has now been run on Windows ([`aec58c9`](https://github.com/ServaboFidem/open-zenbot/commit/aec58c9946d4aad6e9d242a87bf13b68b696ec06))
 - README: link the 0.1.0 beta installer at the top, and mark running from source as for development builds ([`565e819`](https://github.com/ServaboFidem/open-zenbot/commit/565e819ba4040559dea899820aa16a7185d73ae2))
