@@ -315,8 +315,10 @@ class SlowProvider(ScriptedProvider):
 
 
 async def test_every_mentioned_bot_answers_in_mention_order(ledger: Ledger, tmp_path: Path):
-    provider = SlowProvider([completion("Lead: here."), completion("Writer: here."), completion("Critic: here.")], delay=0.15)
-    svc, _ = make(provider, ledger, tmp_path, turn_deadline_s=0.2)
+    provider = SlowProvider([completion("Lead: here."), completion("Writer: here."), completion("Critic: here.")], delay=0.3)
+    # Three turns (0.9 s) outlast one deadline, so a shared deadline would skip a bot; each turn alone has 0.5 s to
+    # spare, which a slow CI runner needs.
+    svc, _ = make(provider, ledger, tmp_path, turn_deadline_s=0.8)
     room = svc.create("r", ["lead", "writer", "critic"])
     await svc.post(room.id, "user", "@lead @writer @critic sound off")
     await svc.settle(room.id)
