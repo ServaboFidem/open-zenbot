@@ -116,3 +116,49 @@ test('a user sees OpenZenBot, never the npm name', () => {
   assert.match(value('description') || '', /^OpenZenBot/);
   assert.doesNotMatch(read('electron-builder.yml') + read('build/apparmor-profile'), /zen-agents/);
 });
+
+// The release workflow: a draft release from a v* tag, built only after both test suites pass.
+const workflow = () => read('.github/workflows/release.yml');
+const jobBlock = name => {
+  const m = new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  [a-z-]+:\\n|(?![\\s\\S]))`, 'm').exec(workflow());
+  assert.ok(m, `job ${name}`);
+  return m[1];
+};
+
+test('the release workflow runs only on v* tags', () => {
+  const on = /^on:\n([\s\S]*?)^\S/m.exec(workflow() + '\nx')[1];
+  assert.match(on, /^  push:\n    tags: \['v\*'\]\s*$/m);
+  assert.doesNotMatch(on, /branches|pull_request|workflow_dispatch|schedule/);
+});
+
+test('the release workflow tests before it builds, and creates only a draft release', () => {
+  const check = jobBlock('check');
+  assert.match(check, /uv run pytest/);
+  assert.match(check, /npm test/);
+  assert.match(check, /uv lock --check --project packaging\/harness/);
+  assert.match(check, /package\.json/);  // the tag must equal v + the package version
+  assert.match(jobBlock('build'), /^    needs: check$/m);
+  assert.match(jobBlock('build'), /os: ubuntu-22\.04\n\s+script: dist:linux/);
+  assert.match(jobBlock('build'), /os: windows-latest\n\s+script: dist:win/);
+  assert.match(jobBlock('build'), /run: npm run \$\{\{ matrix\.script \}\}/);
+  assert.match(jobBlock('release'), /^    needs: build$/m);
+  assert.match(jobBlock('release'), /gh release create .*--draft/);
+  assert.doesNotMatch(workflow(), /--latest|gh release edit|--draft=false/);
+});
+
+test('the release workflow uploads the files electron-builder names, with least privilege', () => {
+  const text = workflow();
+  assert.match(text, /release\/OpenZenBot_\*_amd64\.deb/);
+  assert.match(text, /release\/OpenZenBot-Setup-\*\.exe/);
+  assert.match(text, /^permissions:\n  contents: read$/m);
+  assert.match(jobBlock('release'), /^    permissions:\n      contents: write$/m);
+  assert.doesNotMatch(jobBlock('check') + jobBlock('build'), /contents: write/);
+});
+
+test('every action is pinned to a 40-character commit SHA and no script interpolates the tag name', () => {
+  const uses = workflow().split('\n').filter(l => /\buses:/.test(l));
+  assert.ok(uses.length >= 5);
+  for (const l of uses) assert.match(l, /uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/, l);
+  for (const l of workflow().split('\n').filter(l => !/^\s*(TAG|REF_NAME):/.test(l)))
+    assert.doesNotMatch(l, /\$\{\{\s*github\.(ref_name|ref)\s*\}\}/, l);
+});

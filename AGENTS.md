@@ -15,15 +15,15 @@ name each top-level system and run the harness and the tests.
 | `src/music/` | Music discovery: Discogs scan, taste profile, the Soundlore atlas, MusicBrainz and YouTube Music lookups, candidates, the album gate, digests, `music_*` tools, `/music` routes |
 | `src/skills/` | `SKILL.md` loader and catalog; recorder |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, program paths `program-paths.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go) |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, program paths `program-paths.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) |
 | `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`) |
 | `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
-| `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, and `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+) |
+| `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+), and `fetch-uv.mjs` (downloads the pinned uv into `build/bin/` for the installers). Packaging itself is `electron-builder.yml`, `build/` (icon, the .deb's AppArmor profile `apparmor-profile`, the NSIS include `installer.nsh`) and `packaging/harness/` (the CPU-only `pyproject.toml` and `uv.lock` the installed app uses) |
 | `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`) |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
 | `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
-| `.github/` | Workflows: `changelog.yml` appends every push to `main` to `CHANGELOG.md` (don't edit it by hand; `[skip changelog]` in a commit subject leaves it out), and `stale.yml` |
+| `.github/` | Workflows: `changelog.yml` appends every push to `main` to `CHANGELOG.md` (don't edit it by hand; `[skip changelog]` in a commit subject leaves it out), `stale.yml`, and `release.yml` (a `v*` tag builds the .deb and the Windows installer and opens a draft release; see `## Installed app`) |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
 
 Run the harness with `uv sync --group dev`, then `uv run python -m src.harness.main`
@@ -407,6 +407,73 @@ never run the real programs: they use `tests/fixtures/fake_agent_cli.py`, and `t
 unless a module sets `pytestmark = pytest.mark.real_agent_probe`. Tests: `tests/test_agent_clis.py`,
 `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, additions in `tests/test_tool_paths.py` and
 `tests/test_task_loop.py`; GUI `tests/gui/agents.test.mjs` and `program-paths.test.mjs`.
+
+## Installed app
+
+OpenZenBot also ships as a `.deb` (`OpenZenBot_<version>_amd64.deb`, package and command `openzenbot`, installed under
+`/opt/OpenZenBot/`) and a per-user Windows installer (`OpenZenBot-Setup-<version>.exe`), both from electron-builder
+(`electron-builder.yml`; `npm run dist:linux`, `npm run dist:win`). The installer is small (about 124 MB for the .deb).
+Python, the harness's packages and Node.js are downloaded on the first launch. Not done: the installers are unsigned
+(SmartScreen warns on Windows), macOS is not packaged, ImageMagick is not installed by the app, and an update is a
+download of the new installer, not an install in place. The Windows installer was never built or installed when this
+was written: its first build is the release workflow's first run.
+
+- **Managed mode.** `src/electron/main.cjs` is managed when `app.isPackaged` or `ZEN_MANAGED=1` (from the repo, with
+  `ZEN_RESOURCES` naming a folder with `bin/` and `harness/`). Managed runs a single window, the setup page
+  (`setup.html`, state read by `src/gui/setup-view.js`), first-launch setup, its own harness and the update check, in
+  the order of `managed.cjs` (wired in `managed-app.cjs`; real side effects in `managed-host.cjs`). Developer mode
+  (`app.isPackaged` false and `ZEN_MANAGED` unset) is unchanged: no setup screen, no harness spawn, no update check;
+  `scripts/dev.sh`, `npm start`, `uv run pytest` and `npm test` work as before.
+- **Where things are.** `<resources>` holds `bin/` (uv, uvx from `scripts/fetch-uv.mjs`) and `harness/` (the Python
+  packages from `src/`, `bot-prompts/`, `skills/`, `design-systems/`, `mcp.json`, and `packaging/harness/`'s
+  `pyproject.toml` and `uv.lock`). `<userData>/runtime` (`runtime-paths.cjs`; `~/.config/OpenZenBot` on Linux,
+  `%APPDATA%\OpenZenBot` on Windows) holds Python, the venv, uv's cache and tools, Node.js, `downloads/` and the stamp
+  `setup.json`; `<userData>/.env` is the installed app's `.env` (`ZEN_ENV_FILE`, read by `src/harness/main.py`
+  `env_file` and by `env-file.cjs`); `<userData>/logs` has the logs. The harness runs on port 8765 with
+  `ZEN_USER_CONTENT=1`, and a harness already answering `/health` there is adopted, never stopped.
+- **Setup** (`setup.cjs`): checks free space, `uv python install` 3.12, `uv sync --frozen --no-dev` against the packaged
+  lock, then Node.js only when no node 24 or newer is on PATH, then writes the stamp. About 2 GB of disk was measured
+  for the Python environment on Linux (CPU-only PyTorch); Windows was not measured. A change of app version or of the
+  lock file sets it up again.
+- **`pins.json`** holds the uv and Node.js downloads (URL and SHA-256 per platform). Setup and `fetch-uv.mjs` download
+  only through `download.cjs`, which renames a file into place after its whole content matched the pinned SHA-256. To
+  bump a pin: take the new version's URL and checksum from the official release (uv's GitHub release, Node's
+  `SHASUMS256.txt`), never from memory, edit `pins.json` for both platforms, and run `npm test`.
+- **User content.** With `ZEN_USER_CONTENT` on, bots and skills made in the app are saved in `<vault>-bots/` and
+  `<vault>-skills/` (`vault_settings.user_bots_dir`, `user_skills_dir`), which load alongside the shipped ones so
+  the user's wins on the same id. Both are private folders (`allowed_folders.private_folders`): bots cannot reach them,
+  with this switch on or off. The first start asks for an OpenRouter key (`POST /settings/openrouter-key`): the
+  harness checks it, saves it in `providers.json` and registers it with the exclusion filter.
+- **Updates** (`update-check.cjs`): reads GitHub's latest release of this repo about once a day (and when asked),
+  sends only a User-Agent with the app version, and installs nothing. "Get the new version" opens only a link under
+  this repo's release pages; the notes are shown as plain text, cut to 2,000 characters.
+- **Releasing.** Set the same new `version` in `package.json`, `pyproject.toml` and `packaging/harness/pyproject.toml`,
+  run `uv lock --project packaging/harness` (and keep its `dependencies` equal to the root's: `tests/test_packaged_deps.py`),
+  commit, tag `v<version>` and push the tag. `.github/workflows/release.yml` runs only on `v*` tags: job `check` fails
+  unless the tag equals the three versions, the packaged lock is current (`uv lock --check`) and both test suites pass;
+  `build` makes the .deb on `ubuntu-22.04` and the installer on `windows-latest` from a clean checkout (the package
+  copies harness files from the working tree); `release` creates a **draft** with both attached. Publishing it is a
+  maintainer's manual step. Actions are pinned by 40-character commit SHA with the version in a comment: look the SHA
+  up (`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`, dereferencing an annotated tag), never guess one. Never put
+  `${{ github.ref_name }}` in a `run:` script; pass it through `env:`. Only the `release` job has `contents: write`.
+
+Rules for contributors:
+
+- Never `sudo`, never an admin prompt, never `--no-sandbox` or `executableArgs` in the packaging
+  (`tests/gui/packaging.test.mjs` checks the last). The installers are per-user; the .deb's AppArmor profile only
+  allows user namespaces for the installed binary.
+- Every child process starts from an argument array with no shell; paths may hold spaces and non-ASCII characters.
+- Setup never runs a download whose SHA-256 was not checked against `pins.json`.
+- The update notice opens only this repo's release pages and shows notes as plain text.
+- Installer scripts (`build/installer.nsh`) make no network calls. The Windows uninstaller removes only
+  `%APPDATA%\OpenZenBot\runtime`, never the vault or settings, and keeps it on an update.
+- A key never reaches a log, local storage or the Electron main process: the setup page sends it to the harness
+  (`POST /settings/openrouter-key`) and nothing else.
+- Keep `vault-bots/` and `vault-skills/` out of anything a bot can read or write.
+- Tests never run a real download, `uv`, harness or installer; the Electron modules take their side effects as
+  arguments. Tests: `tests/gui/` `download`, `setup`, `managed`, `managed-host`, `harness-process`, `update-check`,
+  `updates`, `setup-view`, `env-file` and `packaging` (`.test.mjs`); `tests/test_packaged_deps.py`,
+  `tests/test_env_file.py` and `tests/test_main_env.py`.
 
 ## Adding an MCP server that needs a host binary
 
