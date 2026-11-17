@@ -22,3 +22,6 @@ generated-images/
 research/artifacts/
 /research
 /docs/superpowers
+# electron-builder: downloaded uv (scripts/fetch-uv.mjs) and the built installers
+/build/bin/
+/release/

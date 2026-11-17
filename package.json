@@ -9,7 +9,11 @@
     "build": "node scripts/build-gui.mjs",
     "start": "electron .",
     "test": "node --test tests/gui/*.test.mjs",
-    "serve": "python -m http.server 8080 --bind 127.0.0.1 --directory dist"
+    "serve": "python -m http.server 8080 --bind 127.0.0.1 --directory dist",
+    "fetch-uv": "node scripts/fetch-uv.mjs",
+    "pack": "npm run build && electron-builder --dir",
+    "dist:linux": "npm run build && npm run fetch-uv -- linux-x64 && electron-builder --linux deb",
+    "dist:win": "npm run build && npm run fetch-uv -- win32-x64 && electron-builder --win nsis"
   },
   "dependencies": {
     "@fluentui/react-components": "9.75.1",
@@ -27,6 +31,7 @@
   },
   "devDependencies": {
     "electron": "45.2.3",
+    "electron-builder": "26.18.0",
     "esbuild": "0.28.2"
   },
   "type": "module",

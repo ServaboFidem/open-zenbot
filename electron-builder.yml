@@ -1,0 +1,86 @@
+# electron-builder: a .deb for Debian/Ubuntu x64 (npm run dist:linux) and a per-user NSIS installer for Windows x64
+# (npm run dist:win). The app finds the bundled uv in <resources>/bin and the harness in <resources>/harness
+# (src/electron/runtime-paths.cjs); the harness ships with the CPU-only pyproject.toml and uv.lock from
+# packaging/harness/, not the repo root's. Build resources (icon, AppArmor profile, NSIS include) are in build/.
+appId: com.zenandtheartofcode.openzenbot
+productName: OpenZenBot
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - src/electron/**
+  - src/assets/zenbot-enso-icon.png
+  - package.json
+extraResources:
+  # The harness's Python packages, one entry each, with the data files they read (src/harness/design_bridge.js,
+  # src/music/data/...). Not `from: src` as a whole: electron-builder leaves every extraResources source out of
+  # the app's own files, which would drop src/electron. A new package under src/ goes here too
+  # (tests/gui/packaging.test.mjs checks that every one is listed).
+  - from: src/__init__.py
+    to: harness/src/__init__.py
+  - from: src/vault_settings.py
+    to: harness/src/vault_settings.py
+  - from: src/context
+    to: harness/src/context
+    filter: &python
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+  - from: src/decider
+    to: harness/src/decider
+    filter: *python
+  - from: src/generation
+    to: harness/src/generation
+    filter: *python
+  - from: src/harness
+    to: harness/src/harness
+    filter: *python
+  - from: src/memory
+    to: harness/src/memory
+    filter: *python
+  - from: src/music
+    to: harness/src/music
+    filter: *python
+  - from: src/providers
+    to: harness/src/providers
+    filter: *python
+  - from: src/rooms
+    to: harness/src/rooms
+    filter: *python
+  - from: src/skills
+    to: harness/src/skills
+    filter: *python
+  - from: bot-prompts
+    to: harness/bot-prompts
+  - from: skills
+    to: harness/skills
+    filter: *python
+  - from: design-systems
+    to: harness/design-systems
+  - from: mcp.json
+    to: harness/mcp.json
+  - from: packaging/harness/pyproject.toml
+    to: harness/pyproject.toml
+  - from: packaging/harness/uv.lock
+    to: harness/uv.lock
+  # uv and uvx from scripts/fetch-uv.mjs: build/bin/linux-x64 or build/bin/win-x64
+  - from: build/bin/${os}-${arch}
+    to: bin
+linux:
+  target: deb
+  category: Utility
+  icon: build/icon.png
+  maintainer: Zen and the Art of Code
+deb:
+  appArmorProfile: build/apparmor-profile
+win:
+  target: nsis
+  icon: build/icon.png
+nsis:
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  include: build/installer.nsh
+publish: null
