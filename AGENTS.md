@@ -475,8 +475,8 @@ Rules for contributors:
 - The update notice opens only this repo's release pages and shows notes as plain text.
 - Installer scripts (`build/installer.nsh`) make no network calls. The Windows uninstaller removes only
   `%APPDATA%\OpenZenBot\runtime`, never the vault or settings, and keeps it on an update.
-- A key never reaches a log, local storage or the Electron main process: the setup page sends it to the harness
-  (`POST /settings/openrouter-key`) and nothing else.
+- A key never reaches a log, local storage or the Electron main process: the workspace's welcome screen
+  (`src/gui/WelcomeKey.jsx`) sends it to the harness (`POST /settings/openrouter-key`) and nothing else.
 - Keep `vault-bots/` and `vault-skills/` out of anything a bot can read or write.
 - Tests never run a real download, `uv`, harness or installer; the Electron modules take their side effects as
   arguments. Tests: `tests/gui/` `download`, `setup`, `managed`, `managed-host`, `harness-process`, `update-check`,
