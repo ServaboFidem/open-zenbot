@@ -130,3 +130,13 @@ test('designMeta gives the newest version, the count when there are several, and
   assert.match(actions.designMeta({ version: 3, versions: 3, updated_at: now.toISOString() }, now), /^Version 3 · 3 versions · today /);
   assert.equal(actions.designMeta({}, now), 'Version 1');
 });
+
+test('directSessions includes a helper turn in the bot\'s own conversation', () => {
+  const sessions = [
+    { id: 'own', bot_id: 'designer', conversation_owner: 'designer' },
+    { id: 'helper', bot_id: 'copywriter', conversation_owner: 'designer' },
+    { id: 'helper-room', bot_id: 'copywriter', conversation_owner: 'designer', room_id: 'r' },
+    { id: 'theirs', bot_id: 'copywriter', conversation_owner: 'copywriter' },
+  ];
+  assert.deepEqual(actions.directSessions(sessions, 'designer').map(s => s.id), ['own', 'helper']);
+});

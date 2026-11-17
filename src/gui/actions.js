@@ -218,8 +218,9 @@ export function activityFeed(events = []) {
   return rows;
 }
 
-// One bot's direct-chat sessions: room turns run under the same bot but belong to the room.
-export const directSessions = (sessions, botId) => (sessions || []).filter(s => s.bot_id === botId && !s.room_id);
+// One bot's direct-chat sessions: room turns run under the same bot but belong to the room. A helper's turn in the
+// bot's own conversation counts too (its session names the owner).
+export const directSessions = (sessions, botId) => (sessions || []).filter(s => (s.bot_id === botId || s.conversation_owner === botId) && !s.room_id);
 
 // Rooms newest-activity first, archived ones split off.
 export function sortRooms(rooms) {

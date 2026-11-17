@@ -54,3 +54,24 @@ export function commentsFor(attId, picks, { fallback } = {}) {
     .map(p => ({ attachment_id: attId, element_id: p.elementId, selector: p.selector, tag: p.tag, text: p.text, note: String(p.note || '').trim() || spare }))
     .filter(c => c.note);
 }
+
+// The exchange a helper answered that the user may send back to the owner: the newest one, a helper's, ended, not
+// set aside, and it attached a design revision. Else null.
+export function redoTarget(exchanges) {
+  const ex = (exchanges || []).at(-1);
+  if (!ex || !ex.bot || !ex.outcome || ex.outcome === 'pending' || ex.set_aside) return null;
+  return designRevisions([ex]).length ? ex : null;
+}
+
+// The attachment id of the revision before the one `exchange` attached, in the same design and file; else null.
+export function startedFrom(exchanges, exchange) {
+  const mine = designRevisions([exchange]).at(-1);
+  if (!mine) return null;
+  const before = [];
+  for (const ex of exchanges || []) {
+    if (ex === exchange) break;
+    before.push(ex);
+  }
+  const prior = designRevisions(before).filter(r => r.design === mine.design && r.version < mine.version);
+  return prior.at(-1)?.attId ?? null;
+}

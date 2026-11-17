@@ -2,7 +2,7 @@
 // which picks become comments on the task.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptPick, acceptReady, addPick, commentsFor, designRevisions, MAX_PICKS, studioFrameUrl } from '../../src/gui/design.js';
+import { acceptPick, acceptReady, addPick, commentsFor, designRevisions, MAX_PICKS, redoTarget, startedFrom, studioFrameUrl } from '../../src/gui/design.js';
 
 const win = {};
 const ok = { zen: 'pick', elementId: 'hero', selector: 'body > h1', tag: 'h1', text: 'Hi', rect: { x: 1, y: 2, w: 3, h: 4 } };
@@ -71,4 +71,30 @@ test('with a fallback, a pick without a note is sent with the fallback note', ()
   const picks = [{ elementId: 'hero', selector: 's', tag: 'h1', text: 'Hi', note: ' bigger ' }, { elementId: '', selector: 't', tag: 'p', text: '', note: ' ' }, { elementId: 'cta', selector: 'u', tag: 'a', text: 'Go' }];
   assert.deepEqual(commentsFor('b', picks, { fallback: 'See my message.' }).map(c => c.note), ['bigger', 'See my message.', 'See my message.']);
   assert.deepEqual(commentsFor('b', [], { fallback: 'See my message.' }), []);
+});
+
+const att = (id, version) => ({ id, name: 'a.html', title: 'A', design: 'd', version });
+const helperEx = (over = {}) => ({ session_id: 's2', bot: 'copywriter', outcome: 'done', set_aside: false, attachments: [att('a2', 2)], ...over });
+
+test('redoTarget is the newest exchange when a helper ended it with a revision', () => {
+  const first = { session_id: 's1', bot: '', outcome: 'done', attachments: [att('a1', 1)] };
+  const ex = helperEx();
+  assert.equal(redoTarget([first, ex]), ex);
+  assert.equal(redoTarget([]), null);
+  assert.equal(redoTarget(undefined), null);
+  assert.equal(redoTarget([ex, first]), null);
+  assert.equal(redoTarget([first, helperEx({ bot: '' })]), null);
+  assert.equal(redoTarget([first, helperEx({ outcome: 'pending' })]), null);
+  assert.equal(redoTarget([first, helperEx({ set_aside: true })]), null);
+  assert.equal(redoTarget([first, helperEx({ attachments: [] })]), null);
+});
+
+test('startedFrom is the revision before the one the exchange attached', () => {
+  const first = { session_id: 's1', attachments: [att('a1', 1)] };
+  const ex = helperEx();
+  assert.equal(startedFrom([first, ex], ex), 'a1');
+  assert.equal(startedFrom([ex], ex), null);
+  assert.equal(startedFrom([first, helperEx({ attachments: [] })], { attachments: [] }), null);
+  const other = { session_id: 's0', attachments: [{ ...att('z1', 1), design: 'other' }] };
+  assert.equal(startedFrom([other, ex], ex), null);
 });

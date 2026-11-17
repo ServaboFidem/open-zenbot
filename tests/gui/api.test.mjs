@@ -278,3 +278,14 @@ test('model provider routes map to the harness paths', async () => {
   await api.addProvider({ name: 'LM Studio', kind: 'openai-compatible', base_url: 'http://localhost:1234/v1', no_key: true });
   assert.equal(calls[0].body.no_key, true);
 });
+
+test('startTask sends route, answers_to and redo_of only when given', async () => {
+  const { fetch, calls } = fakeFetch();
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  await api.startTask('b', 'go on', { conversationId: 'c1' });
+  await api.startTask('b', 'yes', { conversationId: 'c1', route: 'owner', answersTo: 's9', redoOf: 's8' });
+  for (const k of ['route', 'answers_to', 'redo_of']) assert.equal(k in calls[0].body, false);
+  assert.equal(calls[1].body.route, 'owner');
+  assert.equal(calls[1].body.answers_to, 's9');
+  assert.equal(calls[1].body.redo_of, 's8');
+});
