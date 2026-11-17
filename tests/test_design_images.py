@@ -1,3 +1,4 @@
+import errno
 import os
 
 import pytest
@@ -199,20 +200,68 @@ def test_a_write_that_fails_part_way_leaves_no_file_and_is_refused(tmp_path, mon
     assert list((d / "images").iterdir()) == []
 
 
-def test_a_rename_that_fails_leaves_no_file_and_is_refused(tmp_path, monkeypatch):
+def _no_hard_links(monkeypatch):
+    from src.harness import design_images
+
+    def refuse(*_a, **_k):
+        raise OSError(errno.EPERM, "no hard links here")
+
+    monkeypatch.setattr(design_images.os, "link", refuse)
+
+
+def test_without_hard_links_the_picture_is_written_to_its_name_directly(tmp_path, monkeypatch):
+    d = design(tmp_path)
+    src = tmp_path / "a.png"
+    src.write_bytes(PNG)
+    (d / "images" / "a.png").write_bytes(JPEG)  # taken: never overwritten
+    _no_hard_links(monkeypatch)
+    assert add(d, src) == "images/a-2.png"
+    assert (d / "images" / "a-2.png").read_bytes() == PNG and (d / "images" / "a.png").read_bytes() == JPEG
+    assert sorted(p.name for p in (d / "images").iterdir()) == ["a-2.png", "a.png"]
+
+
+def test_without_hard_links_a_write_that_fails_leaves_no_file(tmp_path, monkeypatch):
     from src.harness import design_images
 
     d = design(tmp_path)
     src = tmp_path / "a.png"
     src.write_bytes(PNG)
+    _no_hard_links(monkeypatch)
+    real, calls = design_images._write_all, []
 
-    def refuse(*_a, **_k):
-        raise OSError("no links here")
+    def second_fails(fd, data):
+        calls.append(1)
+        if len(calls) == 2:  # the temporary file is written; the picture's own name is not
+            os.write(fd, data[:5])
+            raise OSError(errno.ENOSPC, "disk full")
+        real(fd, data)
 
-    monkeypatch.setattr(design_images.os, "link", refuse)
+    monkeypatch.setattr(design_images, "_write_all", second_fails)
     with pytest.raises(ImageRefused, match="could not be written"):
         add(d, src)
     assert list((d / "images").iterdir()) == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="no execute bit on Windows")
+def test_a_new_picture_is_not_executable(tmp_path):
+    d = design(tmp_path)
+    src = tmp_path / "a.png"
+    src.write_bytes(PNG)
+    add(d, src)
+    assert os.stat(d / "images" / "a.png").st_mode & 0o111 == 0
+
+
+def test_a_temporary_file_that_cannot_be_removed_takes_the_picture_back_out(tmp_path, monkeypatch):
+    from src.harness import design_images
+
+    d = design(tmp_path)
+    src = tmp_path / "a.png"
+    src.write_bytes(PNG)
+    real = design_images._remove
+    monkeypatch.setattr(design_images, "_remove", lambda p: False if p.name.endswith(".tmp") else real(p))
+    with pytest.raises(ImageRefused, match="could not be written"):
+        add(d, src)
+    assert [p.name for p in (d / "images").iterdir() if not p.name.endswith(".tmp")] == []
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFOs here")

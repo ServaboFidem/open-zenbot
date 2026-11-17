@@ -161,17 +161,31 @@ def _put(folder: Path, data: bytes, name: str, reuse: bool = False) -> str:
     stem, ext = _stem(name), _EXT[kind]
     tmp = d / f".{uuid4().hex[:12]}.tmp"
     try:
-        # written whole under a temporary name first, so a failed write never leaves part of a picture
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
-        try:
-            _write_all(fd, data)
-        finally:
-            os.close(fd)
-        return _place(folder, d, tmp, stem, ext, data, reuse)
+        _write_new(tmp, data)  # written whole under a temporary name first, so a failed write never leaves part of a picture
+        ref, linked = _place(folder, d, tmp, stem, ext, data, reuse)
+    except ImageRefused:
+        _remove(tmp)
+        raise
     except OSError:
+        _remove(tmp)
         raise ImageRefused("the picture could not be written") from None
-    finally:
-        tmp.unlink(missing_ok=True)
+    if not _remove(tmp) and linked:
+        # the picture would keep two links, which `load` refuses for good: take it back out
+        _remove(d / ref[len(IMAGES) + 1:])
+        raise ImageRefused("the picture could not be written")
+    return ref
+
+
+_NEW = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+
+
+def _remove(path: Path) -> bool:
+    """Remove `path` if it is there; False when it could not be removed."""
+    try:
+        path.unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False
 
 
 def _write_all(fd: int, data: bytes) -> None:
@@ -180,23 +194,47 @@ def _write_all(fd: int, data: bytes) -> None:
         view = view[os.write(fd, view):]
 
 
-def _place(folder: Path, d: Path, tmp: Path, stem: str, ext: str, data: bytes, reuse: bool) -> str:
-    """Give the written temporary file the first free name; a taken name is never overwritten."""
+def _write_new(path: Path, data: bytes) -> None:
+    """Create `path` (exclusive, never through a link, not executable) holding `data`. FileExistsError when the
+    name is taken; ImageRefused, with nothing left at the name, when the write fails."""
+    fd = os.open(path, _NEW, 0o666)
+    try:
+        try:
+            _write_all(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        _remove(path)
+        raise ImageRefused("the picture could not be written") from None
+
+
+def _place(folder: Path, d: Path, tmp: Path, stem: str, ext: str, data: bytes, reuse: bool) -> tuple[str, bool]:
+    """Give the written temporary file the first free name; a taken name is never overwritten. Returns
+    `(images/<name>, True when it was linked from the temporary file)`. Where the filesystem has no hard links
+    (exFAT, FAT32, some network shares), the bytes are written to the name directly, as exclusively."""
     n = 1
     while True:
         leaf = f"{stem}.{ext}" if n == 1 else f"{stem}-{n}.{ext}"
         try:
-            os.link(tmp, d / leaf)  # exclusive: fails on anything already at the name, a link included
+            try:
+                os.link(tmp, d / leaf)  # exclusive: fails on anything already at the name, a link included
+                linked = True
+            except FileExistsError:
+                raise
+            except OSError:  # no hard links here (EPERM, ENOTSUP, ENOSYS, EXDEV...)
+                _write_new(d / leaf, data)
+                linked = False
         except FileExistsError:
             if reuse:
                 try:
                     if load(folder, leaf)[1] == data:
-                        return f"{IMAGES}/{leaf}"
+                        return f"{IMAGES}/{leaf}", False
                 except ImageRefused:
                     pass
             n += 1
             continue
-        return f"{IMAGES}/{leaf}"
+        return f"{IMAGES}/{leaf}", linked
 
 
 def dimensions(data: bytes) -> tuple[int, int] | None:
