@@ -206,7 +206,7 @@ def test_the_designer_bot_file_is_a_studio_bot():
     assert p.studio is True and p.skills[0] == "design-studio" and p.mcps == ["files"]
     assert {"frontend-design", "high-end-visual-design", "design-everyday-things", "hooked-ux", "improve-retention", "drive-motivation"} <= set(p.skills)
     assert "Never use `shell`" not in p.instructions  # its skills' reference files are read with the shell
-    for must in ("designs/", "data-zen-id", "attach_file", "question-form", "create_directory", "edit_file"):
+    for must in ("designs/", "data-zen-id", "attach_file", "question-form", "create_directory", "edit_file", "every element that holds text"):
         assert must in p.instructions
 
 
@@ -215,6 +215,12 @@ def test_the_copywriter_bot_file_works_from_the_conversation_alone():
     assert p.name == "Copywriter" and p.studio is False and p.mcps is None
     assert p.skills == ["humanizer", "clarify-crit"]
     assert "ghostwriter" in p.instructions and "ask the user" in p.instructions
+    assert "design_set_text" in p.instructions and "never open" in p.instructions.lower()
+
+
+def test_imageeditor_places_pictures_through_the_tool():
+    p = parse(Path("bot-prompts/darkroom-bot.md").read_text(encoding="utf-8"), "darkroom-bot")
+    assert "design_set_image" in p.instructions and "design_add_image" in p.instructions
 
 
 def _bot_file(folder: Path, stem: str, name: str) -> None:
