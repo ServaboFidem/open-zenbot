@@ -4,6 +4,7 @@ What changed on `main`, newest first. Updated automatically on every push to `ma
 
 ## 2026-11-17
 
+- README: a Design studio section, and the Windows installer has now been run on Windows ([`aec58c9`](https://github.com/ServaboFidem/open-zenbot/commit/aec58c9946d4aad6e9d242a87bf13b68b696ec06))
 - README: link the 0.1.0 beta installer at the top, and mark running from source as for development builds ([`565e819`](https://github.com/ServaboFidem/open-zenbot/commit/565e819ba4040559dea899820aa16a7185d73ae2))
 - Rooms test: give each turn 0.5 s of slack so a slow CI runner does not skip a bot ([`3a8c248`](https://github.com/ServaboFidem/open-zenbot/commit/3a8c24832480439b3b2016ba001836202e86329b))
 - Installers for Debian and Windows, first-launch setup, and an update check ([#4](https://github.com/ServaboFidem/open-zenbot/pull/4), [`6fdac21`](https://github.com/ServaboFidem/open-zenbot/commit/6fdac2176d61e2136d54bcf225efe1fb677a18bd))
