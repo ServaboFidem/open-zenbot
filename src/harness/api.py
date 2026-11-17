@@ -676,21 +676,25 @@ class Harness:
         self, bot: Bot, task: str, *, conversation_id: str | None = None, in_conversation: bool = True,
         protected: dict[str, Any] | None = None, pinned_skills: list[str] | None = None,
         comments: list[dict[str, str]] | None = None, addendum: str = "",
+        owner: Bot | None = None,
     ) -> Session:
-        """Run a task for a bot. It joins the bot's current conversation (or
+        """Run a task for a bot. `owner` is the conversation's owner when it is another bot: `bot` then acts
+        in that conversation as a helper (no design folder or design system block, no turn note). It joins the bot's current conversation (or
         the one named) unless `in_conversation` is False (routines): its
         exchange is written now, pending, and completed with the outcome
         when the task ends. Raises KeyError for a named conversation that is
         not this bot's."""
         session = Session(bot_id=bot.id, task=task, pinned_skills=list(pinned_skills or []))
         conv = None
+        helper = owner is not None and owner.id != bot.id
         if in_conversation:
-            conv, _ = self.conversations.begin(bot.id, task, session_id=session.id, conv_id=conversation_id,
-                                               comments=comments, addendum=addendum)
+            conv, _ = self.conversations.begin((owner or bot).id, task, session_id=session.id, conv_id=conversation_id,
+                                               comments=comments, addendum=addendum, bot=bot.id if helper else "")
             session.conversation_id = conv.id
-            if self.turn_notes is not None and self.turn_notes.config.enabled:
+            session.conversation_owner = conv.owner
+            if not helper and self.turn_notes is not None and self.turn_notes.config.enabled:
                 session.note = conv.note  # what this bot's last task here found, made and left
-        if conv is not None and conv.design_system:
+        if conv is not None and not helper and conv.design_system:
             why = ""
             try:
                 ds = design_systems.load(self.config.design_systems_dir, self.config.vault_root, conv.design_system)
@@ -706,7 +710,7 @@ class Harness:
                 # gone, no longer safe or replaced: the task runs without it, and the ledger says why (never a disk path)
                 self.ledger.append(Kind.error, bot.id, session.id, where="design_system",
                                    error=f"design system {conv.design_system}: {why}", action="running without the design system")
-        if conv is not None and bot.studio:
+        if conv is not None and not helper and bot.studio:
             folder = self._design_folder(bot, conv, task, session.id)
             if folder:  # first in the context, before any design system
                 session.design = "\n\n".join(p for p in (design_studio.folder_block(folder), session.design) if p)
@@ -742,7 +746,7 @@ class Harness:
                     self.cache.add(session.id, bot.id, session.result)
                 return session
             finally:  # also on a stop that cancels the task, so the next message knows how this one ended
-                if conv is not None and self.turn_notes is not None:
+                if conv is not None and not helper and self.turn_notes is not None:
                     cid = conv.id
                     await self.turn_notes.write(bot, session, outcome=outcome_of(session), previous=session.note,
                                                 save=lambda n: self.conversations.set_note(cid, n))
@@ -1091,6 +1095,7 @@ def create_app(h: Harness) -> FastAPI:
         for ex in record["exchanges"]:
             ex["attachments"] = [_attachment_view(a) for a in ex.get("attachments", [])]
             ex.pop("addendum", None)
+            ex["bot_name"] = h.bots[ex["bot"]].name if ex.get("bot") in h.bots else ex.get("bot", "")
         d, _ = exclusion.redact_obj(record)
         return d
 
@@ -2415,6 +2420,10 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(422, "task is empty")
         if not h.bound:
             raise HTTPException(503, UnboundProvider.MESSAGE)
+        if bot.studio and body.conversation:
+            conv = h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
+            if conv is not None and conv.owner == bot.id and any(ex.outcome == "pending" for ex in conv.exchanges):
+                raise HTTPException(409, "a task is already running in this conversation")
         comments = [c.model_dump() for c in body.design_comments]
         addendum = _comment_addendum(bot, body, comments) if comments else ""
         try:

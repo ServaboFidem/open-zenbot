@@ -1982,3 +1982,66 @@ async def test_design_add_image_refuses_a_design_folder_that_is_a_link(harness: 
     pic.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 20)
     assert harness.design_add_image(chat.id, str(pic)).startswith("Not added")
     assert list(elsewhere.iterdir()) == []
+
+
+async def test_a_helper_bot_answers_in_the_owners_conversation(client, harness: Harness):
+    designer = Bot(name="Designer", role="Designs", id="designer", studio=True)
+    helper = Bot(name="Copywriter", role="Writes", id="copywriter")
+    harness.add_bot(designer)
+    harness.add_bot(helper)
+    conv = harness.conversations.start_new("designer")
+    harness.provider.script = [completion("Designed.")]
+    own = harness.start_task(designer, "make it", conversation_id=conv.id)
+    await harness.tasks[own.id]
+    harness.provider.script = [completion("Reworded.")]
+    session = harness.start_task(helper, "reword", conversation_id=conv.id, owner=designer)
+    await harness.tasks[session.id]
+    assert session.bot_id == "copywriter" and session.conversation_owner == "designer"
+    assert session.design == "" and session.note == ""
+    assert [ex.bot for ex in harness.conversations.get(conv.id).exchanges] == ["", "copywriter"]
+    view = (await client.get(f"/conversations/{conv.id}")).json()["exchanges"]
+    assert [(e["bot"], e["bot_name"]) for e in view] == [("", ""), ("copywriter", "Copywriter")]
+    assert (await client.get(f"/sessions/{session.id}")).json()["conversation_owner"] == "designer"
+    assert (await client.get(f"/sessions/{own.id}")).json()["conversation_owner"] == "designer"
+    with pytest.raises(KeyError):
+        harness.start_task(helper, "again", conversation_id=conv.id)
+
+
+async def test_a_helper_task_leaves_the_owners_turn_note_alone(harness: Harness):
+    designer = Bot(name="Designer", role="Designs", id="designer", studio=True)
+    helper = Bot(name="Copywriter", role="Writes", id="copywriter")
+    harness.add_bot(designer)
+    harness.add_bot(helper)
+    conv = harness.conversations.start_new("designer")
+    harness.conversations.set_note(conv.id, "the owner's note")
+    harness.provider.script = [completion("Reworded.")]
+    session = harness.start_task(helper, "reword", conversation_id=conv.id, owner=designer)
+    await harness.tasks[session.id]
+    assert session.note == "" and harness.conversations.get(conv.id).note == "the owner's note"
+    same = harness.start_task(designer, "x", conversation_id=conv.id, owner=designer)
+    await harness.tasks[same.id]
+    assert harness.conversations.get(conv.id).exchanges[-1].bot == ""
+
+
+async def test_a_studio_conversation_runs_one_task_at_a_time(client, harness: Harness):
+    harness.add_bot(Bot(name="Designer", role="Designs", id="des", studio=True))
+    conv = harness.conversations.start_new("des")
+    harness.conversations.begin("des", "running", session_id="s-pending", conv_id=conv.id)
+    r = await client.post("/bots/des/tasks", json={"task": "more", "conversation_id": conv.id})
+    assert r.status_code == 409 and r.json() == {"detail": "a task is already running in this conversation"}
+    r = await client.post("/bots/des/tasks", json={"task": "more"})
+    assert r.status_code == 409
+    harness.conversations.finish(conv.id, "s-pending", "done", "ok")
+    harness.provider.script = [completion("Fine.")]
+    r = await client.post("/bots/des/tasks", json={"task": "more", "conversation_id": conv.id})
+    assert r.status_code == 202
+    await harness.tasks[r.json()["session_id"]]
+
+
+async def test_a_bot_that_is_not_a_studio_bot_may_start_a_second_task(client, harness: Harness):
+    conv = harness.conversations.start_new("bot1")
+    harness.conversations.begin("bot1", "running", session_id="s-pending", conv_id=conv.id)
+    harness.provider.script = [completion("Fine.")]
+    r = await client.post("/bots/bot1/tasks", json={"task": "more", "conversation_id": conv.id})
+    assert r.status_code == 202
+    await harness.tasks[r.json()["session_id"]]

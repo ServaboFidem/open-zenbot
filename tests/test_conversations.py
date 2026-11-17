@@ -292,3 +292,29 @@ def test_history_names_attached_files(tmp_path, ledger):
     conv, _ = convs.begin("me", "draw it", session_id="s1")
     convs.finish(conv.id, "s1", "done", "Here it is.", attachments=[{"id": "a1", "title": "Flow", "path": "/w/flow.html"}])
     assert convs.get(conv.id).history()[-1].content == "Here it is.\n(Attached: Flow (flow.html))"
+
+
+def test_a_helper_exchange_records_its_bot_and_reads_back_with_a_prefix_and_a_suffix(tmp_path, ledger):
+    convs = make(tmp_path, ledger)
+    conv, ex = convs.begin("designer", "hi", session_id="s1", bot="copywriter")
+    assert ex.bot == "copywriter" and not ex.set_aside
+    convs.finish(conv.id, "s1", "done", "Rewrote it.")
+    assert convs.get(conv.id).history()[-1].content == "(copywriter changed the design) Rewrote it."
+    convs.set_aside(conv.id, "s1")
+    assert convs.get(conv.id).history()[-1].content.endswith("Rewrote it. (These changes were set aside.)")
+    again = make(tmp_path, ledger)
+    assert again.get(conv.id).exchanges[0].set_aside is True
+
+
+def test_an_old_record_without_bot_or_set_aside_loads_and_the_owners_reply_is_plain(tmp_path, ledger):
+    convs = make(tmp_path, ledger)
+    conv, _ = convs.begin("designer", "hi", session_id="s1")
+    convs.finish(conv.id, "s1", "done", "ok")
+    path = tmp_path / "conv" / f"{conv.id}.json"
+    rec = json.loads(path.read_text())
+    rec["exchanges"][0].pop("bot", None)
+    rec["exchanges"][0].pop("set_aside", None)
+    path.write_text(json.dumps(rec))
+    ex = make(tmp_path, ledger).get(conv.id).exchanges[0]
+    assert (ex.bot, ex.set_aside) == ("", False)
+    assert reply_text(ex) == "ok"
