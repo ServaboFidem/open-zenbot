@@ -431,11 +431,16 @@ was written: its first build is the release workflow's first run.
   `setup.json`; `<userData>/.env` is the installed app's `.env` (`ZEN_ENV_FILE`, read by `src/harness/main.py`
   `env_file` and by `env-file.cjs`); `<userData>/logs` has the logs. The harness runs on port 8765 with
   `ZEN_USER_CONTENT=1`, and a harness already answering `/health` there is adopted, never stopped.
-- **Setup** (`setup.cjs`): checks free space, `uv python install` 3.12, `uv sync --frozen --no-dev` against the packaged
-  lock, then Node.js only when no node 24 or newer is on PATH, then writes the stamp. It refuses to start with less than about 6 GB free
-  (`NEEDED_BYTES`); the install itself was measured at about 2 GB on disk
+- **Setup** (`setup.cjs`): checks free space, `uv python install --no-bin --no-registry` 3.12 (nothing in
+  `~/.local/bin` or the Windows registry), `uv sync --frozen --no-dev` against the packaged
+  lock, then Node.js only when no node 24 or newer is on PATH, then writes the stamp. It refuses to start with less than about 5 GB free
+  (`NEEDED_BYTES`), or 1 GB (`UPDATE_NEEDED_BYTES`) when a runtime is already there (a stamp or the venv's Python),
+  since that re-sync is incremental; the install itself was measured at about 2 GB on disk
   for the Python environment on Linux (CPU-only PyTorch); Windows was not measured. A change of app version or of the
-  lock file sets it up again.
+  lock file sets it up again, and so does a venv Python that is gone while the stamp survives. The harness child gets
+  the venv's bin folder first on PATH, as under `uv run`, but neither `UV_PROJECT_ENVIRONMENT` nor `VIRTUAL_ENV`
+  (`harness-process.cjs` `childEnv`): bots' shell commands and stdio servers inherit that environment, and a bot's
+  own `uv sync`, `uv run` or `--active` must never write into the harness's venv.
 - **`pins.json`** holds the uv and Node.js downloads (URL and SHA-256 per platform). Setup and `fetch-uv.mjs` download
   only through `download.cjs`, which renames a file into place after its whole content matched the pinned SHA-256. To
   bump a pin: take the new version's URL and checksum from the official release (uv's GitHub release, Node's

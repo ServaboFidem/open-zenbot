@@ -126,13 +126,20 @@ function portInUseWith(net) {
   });
 }
 
-// SHA-256 of a file, '' when it cannot be read (then needsSetup never matches and setup runs).
+// SHA-256 of a file, '' when it cannot be read. An empty hash is still compared like any other: it differs from a
+// stamp's real hash, so setup runs, and that setup's `uv sync --frozen` fails without the lock file, so no stamp
+// with an empty hash is written.
 function fileSha256(fs, file) {
   try { return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); } catch { return ''; }
+}
+
+// An existing file (statSync follows a link, so a venv python whose managed Python was deleted is not one).
+function isFile(fs, file) {
+  try { return fs.statSync(file).isFile(); } catch { return false; }
 }
 
 function readStamp(fs, file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
 }
 
-module.exports = { createRun, createExtract, killTreeWith, freeBytesWith, findNodeWith, nodeMajor, portInUseWith, fileSha256, readStamp };
+module.exports = { createRun, createExtract, killTreeWith, freeBytesWith, findNodeWith, nodeMajor, portInUseWith, fileSha256, readStamp, isFile };

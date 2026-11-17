@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { runtimePaths, uvEnv } = require('../../src/electron/runtime-paths.cjs');
-const { needsSetup, NEEDED_BYTES, createSetup, isOfflineOutput } = require('../../src/electron/setup.cjs');
+const { needsSetup, NEEDED_BYTES, UPDATE_NEEDED_BYTES, createSetup, isOfflineOutput } = require('../../src/electron/setup.cjs');
 const { OfflineError } = require('../../src/electron/download.cjs');
 const pins = require('../../src/electron/pins.json');
 
@@ -28,7 +28,7 @@ function fakeFs() {
 // A harness of fakes. opts.runs maps a uv subcommand ('python' | 'sync') to a function (args, opts, n) giving
 // { code, lines } or a promise; by default every run succeeds.
 function harness({ platform = 'linux', userData = '/home/u/.config/OpenZenBot', resources = '/opt/OpenZenBot/resources',
-  free = 50 * GB, node = null, runs = {}, download, appVersion = '0.1.0' } = {}) {
+  free = 50 * GB, node = null, runs = {}, download, appVersion = '0.1.0', runtimeExists } = {}) {
   const paths = runtimePaths({ userData, resources, platform });
   const fs = fakeFs();
   const calls = [];
@@ -52,6 +52,7 @@ function harness({ platform = 'linux', userData = '/home/u/.config/OpenZenBot', 
     extract: async (archive, dest) => { extracts.push([archive, dest]); },
     freeBytes: async () => free,
     findNode: async () => node,
+    ...(runtimeExists === undefined ? {} : { runtimeExists: async () => runtimeExists }),
     fs,
     emit: s => emitted.push(s),
   });
@@ -69,6 +70,12 @@ test('needsSetup: no stamp, another version, another lock hash, a match', () => 
   assert.equal(needsSetup({ stamp: { appVersion: '0.1.0', lockHash: 'def' }, ...want }), true);
   assert.equal(needsSetup({ stamp: { appVersion: '0.1.0' }, ...want }), true);
   assert.equal(needsSetup({ stamp: { appVersion: '0.1.0', lockHash: 'abc' }, ...want }), false);
+  assert.equal(needsSetup({ stamp: { appVersion: '0.1.0', lockHash: 'abc' }, ...want, pythonPresent: true }), false);
+});
+
+test("needsSetup: a matching stamp with the venv's Python gone sets up again", () => {
+  const stamp = { appVersion: '0.1.0', lockHash: 'abc' };
+  assert.equal(needsSetup({ stamp, appVersion: '0.1.0', lockHash: 'abc', pythonPresent: false }), true);
 });
 
 test('runtimePaths puts everything under userData/runtime and names the right python per platform', () => {
@@ -115,7 +122,8 @@ test('a clean run does every step in order and writes the stamp', async () => {
   ]);
   assert.deepEqual(await setup.start(), { ok: true });
   assert.deepEqual(calls.map(c => c.slice(0, 3)), [[paths.uv, 'python', 'install'], [paths.uv, 'sync', '--frozen']]);
-  assert.deepEqual(calls[0], [paths.uv, 'python', 'install', '3.12']);
+  // nothing outside <userData>/runtime: no python3.12 in ~/.local/bin, no Windows registry entry
+  assert.deepEqual(calls[0], [paths.uv, 'python', 'install', '--no-bin', '--no-registry', '3.12']);
   assert.deepEqual(calls[1], [paths.uv, 'sync', '--frozen', '--no-dev', '--python', '3.12', '--project', paths.harness]);
   assert.equal(runOpts[0].env.UV_PYTHON_PREFERENCE, 'only-managed');
   assert.equal(runOpts[0].env.UV_PROJECT_ENVIRONMENT, paths.venv);
@@ -146,12 +154,24 @@ test('a suitable node on PATH skips the node step and downloads nothing', async 
 
 test('too little disk fails the first step with the size in the message', async () => {
   const { setup, calls, written, paths } = harness({ free: 2.5 * GB });
-  assert.equal(NEEDED_BYTES, 6 * 1024 ** 3);
+  assert.equal(NEEDED_BYTES, 5 * 1024 ** 3);
   assert.deepEqual(await setup.start(), { ok: false });
-  assert.equal(setup.state().error, 'OpenZenBot needs about 6 GB free on this disk; 2.5 GB is free.');
+  assert.equal(setup.state().error, 'OpenZenBot needs about 5 GB free on this disk; 2.5 GB is free.');
   assert.deepEqual(setup.state().steps.map(s => s.status), ['failed', 'pending', 'pending', 'pending', 'pending']);
   assert.equal(calls.length, 0);
   assert.equal(written[paths.stamp], undefined);
+});
+
+test('an update over an existing runtime needs only 1 GB free, and a fresh install still needs 5', async () => {
+  assert.equal(UPDATE_NEEDED_BYTES, 1 * 1024 ** 3);
+  const update = harness({ free: 4 * GB, runtimeExists: true });
+  assert.deepEqual(await update.setup.start(), { ok: true });
+  const fresh = harness({ free: 4 * GB, runtimeExists: false });
+  assert.deepEqual(await fresh.setup.start(), { ok: false });
+  assert.equal(fresh.setup.state().error, 'OpenZenBot needs about 5 GB free on this disk; 4 GB is free.');
+  const tight = harness({ free: 0.5 * GB, runtimeExists: true });
+  assert.deepEqual(await tight.setup.start(), { ok: false });
+  assert.equal(tight.setup.state().error, 'OpenZenBot needs about 1 GB free on this disk; 0.5 GB is free.');
 });
 
 test('isOfflineOutput knows uv connection and DNS errors, and not others', () => {

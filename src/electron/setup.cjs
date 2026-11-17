@@ -9,12 +9,15 @@
 //   download({ url, dest, sha256, onProgress }) -> Promise<dest>        downloadVerified with fetch and fs bound.
 //   extract(archive, destDir) -> Promise<void>                          unpack as it is, top folder included.
 //   freeBytes(dir) -> Promise<number>; findNode() -> Promise<string|null> (a node >= 24 on PATH, else null).
+//   runtimeExists() -> Promise<boolean>: an earlier setup left a runtime (a stamp, or the venv's Python), so this
+//       run is an update whose re-sync is incremental and the smaller free-space floor applies.
 //   fs: the node:fs API (only fs.promises mkdir, writeFile, rm, rename are used); emit(state) on every change.
 const path = require('node:path');
 const { pinFor, OfflineError } = require('./download.cjs');
 const { uvEnv } = require('./runtime-paths.cjs');
 
-const NEEDED_BYTES = 6 * 1024 ** 3;
+const NEEDED_BYTES = 5 * 1024 ** 3;         // a fresh install
+const UPDATE_NEEDED_BYTES = 1 * 1024 ** 3;  // an update over a runtime that is already there
 const DETAIL_MAX = 200;
 const PYTHON = '3.12';
 const OFFLINE_MESSAGE = 'No internet connection. Connect and press Retry.';
@@ -33,7 +36,10 @@ const STEPS = [
 const OFFLINE_RE = /connection refused|connection reset|dns error|name resolution|failed to lookup address|no such host is known|name or service not known|timed out|network is unreachable/i;
 const isOfflineOutput = lines => lines.some(l => OFFLINE_RE.test(l));
 
-function needsSetup({ stamp, appVersion, lockHash }) {
+// pythonPresent: whether the venv's Python is an existing file (the caller looks; false when the runtime was
+// deleted, quarantined or damaged while the stamp survived).
+function needsSetup({ stamp, appVersion, lockHash, pythonPresent = true }) {
+  if (!pythonPresent) return true;
   if (!stamp || typeof stamp !== 'object' || Array.isArray(stamp)) return true;
   if (typeof stamp.appVersion !== 'string' || typeof stamp.lockHash !== 'string') return true;
   return stamp.appVersion !== appVersion || stamp.lockHash !== lockHash;
@@ -41,7 +47,7 @@ function needsSetup({ stamp, appVersion, lockHash }) {
 
 class StepError extends Error {}
 
-function createSetup({ paths, platform, arch, appVersion, lockHash, pins, run, download, extract, freeBytes, findNode, fs, emit = () => {}, baseEnv = process.env }) {
+function createSetup({ paths, platform, arch, appVersion, lockHash, pins, run, download, extract, freeBytes, findNode, runtimeExists = async () => false, fs, emit = () => {}, baseEnv = process.env }) {
   const p = platform === 'win32' ? path.win32 : path.posix;
   const state = { steps: STEPS.map(([id, title]) => ({ id, title, status: 'pending' })), line: '', detail: [], error: null };
   let running = null;
@@ -77,10 +83,13 @@ function createSetup({ paths, platform, arch, appVersion, lockHash, pins, run, d
   const work = {
     async disk() {
       await fs.promises.mkdir(paths.root, { recursive: true });
+      const needed = (await runtimeExists()) ? UPDATE_NEEDED_BYTES : NEEDED_BYTES;
       const free = await freeBytes(paths.root);
-      if (free < NEEDED_BYTES) throw new StepError(`OpenZenBot needs about ${gb(NEEDED_BYTES)} GB free on this disk; ${gb(free)} GB is free.`);
+      if (free < needed) throw new StepError(`OpenZenBot needs about ${gb(needed)} GB free on this disk; ${gb(free)} GB is free.`);
     },
-    python: () => uv(['python', 'install', PYTHON], paths.root),
+    // --no-bin: no python3.12 in the user's ~/.local/bin; --no-registry: no Windows registry entry. Both would sit
+    // outside <userData>/runtime and dangle after an uninstall.
+    python: () => uv(['python', 'install', '--no-bin', '--no-registry', PYTHON], paths.root),
     packages: () => uv(['sync', '--frozen', '--no-dev', '--python', PYTHON, '--project', paths.harness], paths.harness),
     async node() {
       const found = await findNode();
@@ -161,4 +170,4 @@ function createSetup({ paths, platform, arch, appVersion, lockHash, pins, run, d
   };
 }
 
-module.exports = { needsSetup, createSetup, isOfflineOutput, NEEDED_BYTES };
+module.exports = { needsSetup, createSetup, isOfflineOutput, NEEDED_BYTES, UPDATE_NEEDED_BYTES };

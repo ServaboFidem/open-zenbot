@@ -71,6 +71,7 @@ function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, 
       extract: host.createExtract({ run, platform }),
       freeBytes: host.freeBytesWith(fs),
       findNode: host.findNodeWith({ platform, fs, execFile }),
+      runtimeExists: async () => host.readStamp(fs, paths.stamp) !== null || host.isFile(fs, paths.python),
     });
   }
 
@@ -87,7 +88,9 @@ function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, 
 
   const ctl = createManaged({
     checker, makeSetup, makeHarness, show,
-    needsSetup: async () => needsSetup({ stamp: host.readStamp(fs, paths.stamp), appVersion, lockHash }),
+    needsSetup: async () => needsSetup({
+      stamp: host.readStamp(fs, paths.stamp), appVersion, lockHash, pythonPresent: host.isFile(fs, paths.python),
+    }),
     send: state => {
       log(state);
       const w = winOf();

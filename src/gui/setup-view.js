@@ -43,7 +43,7 @@ function setupView(setup) {
   return {
     heading: 'Setting up OpenZenBot',
     body: 'OpenZenBot is downloading Python and its packages, and Node.js if this computer has none: up to a few gigabytes, '
-      + 'with about 6 GB of free disk space needed. This happens once; later launches start straight away.',
+      + 'with about 5 GB of free disk space needed for a first install. This happens once, and again after an update that changes what it needs.',
     steps,
     actions: ['details'],
     line: text(setup && setup.line),

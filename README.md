@@ -52,7 +52,7 @@ For people who just want to use OpenZenBot. You do not need Python, Node.js or a
 
 1. Open the [Releases page](https://github.com/ServaboFidem/open-zenbot/releases) and download the installer for your computer from the newest release.
 2. **Windows:** run `OpenZenBot-Setup-<version>.exe`. The installer is not signed yet, so Windows SmartScreen warns about an unknown publisher: click "More info", then "Run anyway". **Ubuntu or Debian:** open a terminal in the download folder and run `sudo apt install ./OpenZenBot_<version>_amd64.deb`, then start OpenZenBot from your applications menu (or run `openzenbot`).
-3. The first time you start it, OpenZenBot sets itself up. It needs a connection to the internet and about 6 GB of free disk space: it checks first and does not start with less. What it installs takes about 2 GB of that on Linux. This can take several minutes. You see each step as it happens. This happens once, and again after an update that changes what it needs.
+3. The first time you start it, OpenZenBot sets itself up. It needs a connection to the internet and about 5 GB of free disk space: it checks first and does not start with less (an update over an existing install needs about 1 GB). The Python environment takes about 2 GB of that on Linux, and roughly 2 GB more is fetched the first time the app starts (models and tool servers). This can take several minutes. You see each step as it happens. This happens once, and again after an update that changes what it needs.
 4. It then asks for an [OpenRouter](https://openrouter.ai/) key. OpenRouter is the service that runs the AI models for your bots; you need an account there to get a key. The key is kept in your OpenZenBot settings, not in the app.
 
 Good to know:

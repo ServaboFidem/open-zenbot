@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { createRequire } from 'node:module';
 
-const { createRun, createExtract, killTreeWith, findNodeWith, nodeMajor, fileSha256, readStamp } =
+const { createRun, createExtract, killTreeWith, findNodeWith, nodeMajor, fileSha256, readStamp, isFile } =
   createRequire(import.meta.url)('../../src/electron/managed-host.cjs');
 
 function fakeChild(pid = 4242) {
@@ -104,4 +104,15 @@ test('the lock hash and the stamp read safely', () => {
   assert.equal(fileSha256(fs, 'missing'), '');
   assert.deepEqual(readStamp(fs, 'stamp'), { appVersion: '0.1.0' });
   assert.equal(readStamp(fs, 'missing'), null);
+});
+
+test('isFile is true only for an existing file, following a link, and never throws', () => {
+  const fs = { statSync: f => {
+    if (f === 'python') return { isFile: () => true };
+    if (f === 'venv') return { isFile: () => false };
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });  // missing, or a link whose target is gone
+  } };
+  assert.equal(isFile(fs, 'python'), true);
+  assert.equal(isFile(fs, 'venv'), false);
+  assert.equal(isFile(fs, 'dangling'), false);
 });
