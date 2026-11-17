@@ -115,6 +115,36 @@ async def test_gone_clears_pulled_events_and_reads_in_full(sync, store, fake):
     assert {c["id"]: c for c in store.calendars()}["work"]["sync_token"] not in ("", None, "stale")
 
 
+async def test_gone_keeps_pending_changes_to_pulled_events(sync, store, fake):
+    fake.put("work", timed("e", "From Google"))
+    fake.put("work", timed("d", "Deleted here"))
+    await sync.pull()
+    edited = store.by_google("work", "e")
+    store.update(edited["id"], {**local(), "title": "Edited here"})
+    deleted = store.by_google("work", "d")
+    store.delete(deleted["id"])
+    store.set_sync_token("work", "stale")
+    out = await sync.pull()
+    assert (out["changed"], out["removed"], out["lost_edits"]) == (0, 0, 0)
+    kept = store.event(edited["id"])
+    assert kept["title"] == "Edited here" and kept["dirty"] is True
+    assert store.event(deleted["id"])["deleted"] is True
+    assert titles(store) == ["Edited here"]
+    assert len([r for r in store.pending()]) == 2
+
+
+async def test_an_item_that_does_not_convert_changes_nothing(sync, store, fake):
+    fake.put("work", timed("a", "Held"))
+    await sync.pull()
+    held = store.by_google("work", "a")
+    fake.put("work", {"id": "a", "status": "confirmed", "summary": "Broken", "start": {"dateTime": "not a time"},
+                      "end": {"dateTime": "2026-11-20T10:00:00Z"}})
+    fake.put("work", {"id": "n", "status": "confirmed", "summary": "Broken too", "start": {"dateTime": "nope"}})
+    out = await sync.pull()
+    assert (out["changed"], out["removed"]) == (0, 0)
+    assert store.by_google("work", "a") == held and store.by_google("work", "n") is None
+
+
 async def test_gone_twice_is_raised(sync, store, fake):
     fake.fail["calendars/work/events"] = 410
     with pytest.raises(GoogleError) as e:

@@ -148,6 +148,28 @@ def test_clear_pulled_and_drop_google(store):
     assert store.by_google("c2", "g2") is None and store.event(local["id"]) is not None
 
 
+def test_clear_clean_pulled_keeps_pending_changes(store):
+    store.upsert_google([gcal("c1"), gcal("c2")])
+    store.set_sync_token("c1", "t")
+    store.set_sync_token("c2", "t2")
+    pull(store, "c1", "clean")
+    pull(store, "c1", "edited")
+    pull(store, "c1", "deleted")
+    pull(store, "c2", "other")
+    edited = store.by_google("c1", "edited")
+    store.update(edited["id"], ev(title="Edited"))
+    store.delete(store.by_google("c1", "deleted")["id"])
+    mine = store.add(ev())
+    store.mark_pushed(mine["id"], google_calendar="c1", google_id="m1", etag="e", link="")
+    store.clear_clean_pulled("c1")
+    assert store.by_google("c1", "clean") is None
+    assert store.by_google("c1", "edited")["title"] == "Edited" and store.by_google("c1", "edited")["dirty"]
+    assert store.by_google("c1", "deleted")["deleted"] is True
+    assert store.by_google("c2", "other") is not None and store.event(mine["id"]) is not None
+    cals = {c["id"]: c for c in store.calendars()}
+    assert cals["c1"]["sync_token"] is None and cals["c2"]["sync_token"] == "t2"
+
+
 def test_apply_remote_inserts_then_replaces(store):
     store.upsert_google([gcal("c1")])
     pull(store, "c1", "g1")

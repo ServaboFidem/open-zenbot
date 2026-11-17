@@ -192,6 +192,14 @@ class CalendarStore:
             self._db.execute("DELETE FROM events WHERE origin='google' AND calendar_id=?", (calendar_id,))
             self._db.execute("UPDATE calendars SET sync_token=NULL WHERE id=?", (calendar_id,))
 
+    def clear_clean_pulled(self, calendar_id: str) -> None:
+        """Before a full re-read: drop the calendar's pulled events and sync token, but keep a pulled event
+        with a pending local edit (``dirty``) or a local delete (a tombstone) for push."""
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM events WHERE origin='google' AND calendar_id=? AND dirty=0"
+                             " AND deleted=0", (calendar_id,))
+            self._db.execute("UPDATE calendars SET sync_token=NULL WHERE id=?", (calendar_id,))
+
     def drop_google(self) -> None:
         with self._lock, self._db:
             self._db.execute("DELETE FROM events WHERE origin='google'")

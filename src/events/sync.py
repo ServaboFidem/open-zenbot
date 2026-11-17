@@ -59,7 +59,8 @@ class Sync:
     async def _read(self, calendar_id: str, token: str | None, time_min: str,
                     time_max: str) -> tuple[list[dict], str]:
         """A sync token's changes, else the window in full. A ``gone`` answer clears the calendar's pulled
-        events and reads it in full once; a second ``gone`` or any other error goes to the caller."""
+        events that have no pending local change and reads it in full once; a second ``gone`` or any other
+        error goes to the caller."""
         try:
             if token:
                 return await self.google.list_events(calendar_id, sync_token=token)
@@ -67,7 +68,7 @@ class Sync:
         except GoogleError as e:
             if e.kind != "gone":
                 raise
-        self.store.clear_pulled(calendar_id)
+        self.store.clear_clean_pulled(calendar_id)
         return await self.google.list_events(calendar_id, time_min=time_min, time_max=time_max)
 
     def _take(self, calendar_id: str, item: dict, window: tuple[str, str, str, str], out: dict) -> None:
@@ -75,10 +76,12 @@ class Sync:
         if not isinstance(google_id, str) or not google_id:
             return
         row = self.store.by_google(calendar_id, google_id)
-        fields = to_local(item)
-        if fields is None:
+        if item.get("status") == "cancelled":
             self._cancelled(row, out)
             return
+        fields = to_local(item)
+        if fields is None:
+            return  # not an event this calendar can show: change nothing
         if row is not None and (row["dirty"] or row["deleted"]):
             return  # the built-in copy wins
         made_here = row is not None and row["origin"] == "local"
