@@ -1638,6 +1638,23 @@ async def test_studio_flag_survives_a_bot_edit(monkeypatch, vault: Path, tmp_pat
     assert "studio: true" in (prompts / "designer.md").read_text(encoding="utf-8")
 
 
+async def test_places_survive_a_bot_edit(monkeypatch, vault: Path, tmp_path: Path):
+    from src.harness.main import build_harness
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("ZEN_MEMORY_BACKEND", "local")
+    prompts = tmp_path / "bot-prompts"
+    prompts.mkdir()
+    (prompts / "writer.md").write_text("---\nname: Writer\nrole: Old role\nplaces: [text]\n---\nWrite.\n", encoding="utf-8")
+    h = build_harness(HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=prompts))
+    transport = httpx.ASGITransport(app=create_app(h))
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
+        assert (await c.patch("/bots/writer", json={"role": "New role"})).status_code == 200
+        bots = {b["id"]: b for b in (await c.get("/bots")).json()}
+    assert bots["writer"]["places"] == ["text"] and bots["writer"]["role"] == "New role"
+    assert "places:\n- text" in (prompts / "writer.md").read_text(encoding="utf-8") or "places: [text]" in (prompts / "writer.md").read_text(encoding="utf-8")
+
+
 # design comments on a task
 
 def _comment(att_id: str, note: str = "Make this bigger") -> dict:

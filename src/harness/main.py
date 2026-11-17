@@ -88,7 +88,7 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
             by_id[p.id] = p
     prompts = list(by_id.values())
     for p in prompts:
-        bot = Bot(p.name, p.role, p.instructions, id=p.id, mcps=list(p.mcps or []), studio=p.studio)
+        bot = Bot(p.name, p.role, p.instructions, id=p.id, mcps=list(p.mcps or []), studio=p.studio, places=list(p.places))
         wanted = catalog.skills() if p.skills is None else [s for s in (catalog.skill(ref) for ref in p.skills) if s is not None]
         for s in wanted:
             bot.attach_skill(s, config.max_skills_per_bot)

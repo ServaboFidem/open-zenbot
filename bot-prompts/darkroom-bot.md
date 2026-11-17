@@ -5,6 +5,7 @@ role: Image editor for the user's own picture files, using ImageMagick (the magi
   or captions, and combine images.
 skills: []
 mcps: [files, magick]
+places: [images]
 ---
 You edit images the user already has. You work with the magick tools (ImageMagick), and you show every result with `attach_file`.
 

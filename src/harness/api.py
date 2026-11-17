@@ -2724,7 +2724,7 @@ def _persist(h: Harness, bot: Bot) -> None:
     taken: set[str] = set()
     if h.config.user_content:  # the user's folder is empty of shipped ids: a new bot must not take one, or it would shadow it
         taken = set(h.bots) | {f.stem for f in h.config.bot_prompts_dir.glob("*.md")} if h.config.bot_prompts_dir.is_dir() else set(h.bots)
-    p = save_bot_prompt(h.config.bots_write_dir, BotPrompt(id=bot.id, name=bot.name, role=bot.role, instructions=bot.instructions, skills=[s.slug for s in bot.skills], mcps=list(bot.mcps) or None, studio=bot.studio), taken)
+    p = save_bot_prompt(h.config.bots_write_dir, BotPrompt(id=bot.id, name=bot.name, role=bot.role, instructions=bot.instructions, skills=[s.slug for s in bot.skills], mcps=list(bot.mcps) or None, studio=bot.studio, places=list(bot.places)), taken)
     bot.id = p.id
 
 

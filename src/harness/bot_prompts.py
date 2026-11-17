@@ -14,7 +14,7 @@ composed by the harness each turn (see `Bot.system_prompt`).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -22,6 +22,7 @@ import yaml
 from src.skills.loader import split_frontmatter
 
 SUFFIX = ".md"
+PLACES = ("text", "images")  # what a bot may place in another bot's design
 
 
 @dataclass
@@ -33,6 +34,7 @@ class BotPrompt:
     skills: list[str] | None = None  # None: not listed, the harness attaches every catalog skill
     mcps: list[str] | None = None  # MCP servers loaded on every task, whatever routing scores; None: routing only
     studio: bool = False  # a design bot: the GUI shows its design preview pane; set only in the file
+    places: list[str] = field(default_factory=list)  # what this bot can place in another bot's design: "text", "images"; set only in the file
 
 
 def slugify(name: str) -> str:
@@ -56,7 +58,12 @@ def parse(text: str, bot_id: str) -> BotPrompt:
     studio = meta.get("studio", False)
     if not isinstance(studio, bool):
         raise ValueError("studio must be true or false")
-    return BotPrompt(id=bot_id, name=name.strip(), role=role.strip(), instructions=body.strip(), skills=skills, mcps=mcps, studio=studio)
+    places = meta.get("places", [])
+    if not isinstance(places, list) or not all(isinstance(x, str) and x in PLACES for x in places):
+        raise ValueError("places must be a list of: text, images")
+    if places and studio:
+        raise ValueError("a studio bot cannot have places")
+    return BotPrompt(id=bot_id, name=name.strip(), role=role.strip(), instructions=body.strip(), skills=skills, mcps=mcps, studio=studio, places=list(places))
 
 
 def render(p: BotPrompt) -> str:
@@ -67,6 +74,8 @@ def render(p: BotPrompt) -> str:
         meta["mcps"] = list(p.mcps)
     if p.studio:
         meta["studio"] = True
+    if p.places:
+        meta["places"] = list(p.places)
     head = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, default_flow_style=None).strip()
     return f"---\n{head}\n---\n{p.instructions.strip()}\n"
 

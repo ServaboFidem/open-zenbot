@@ -280,3 +280,25 @@ async def test_a_new_bot_never_takes_a_shipped_bots_id_in_user_content_mode(monk
     assert set(h.bots) == {"designer", "designer-2"}
     again = build_harness(cfg)
     assert {b.id: b.role for b in again.bots.values()} == {"designer": "Role of Designer", "designer-2": "Mine"}
+
+
+def test_places_is_parsed_and_checked():
+    head = "---\nname: W\nrole: R\n{}---\nGo."
+    assert parse(head.format("places: [text, images]\n"), "w").places == ["text", "images"]
+    assert parse(head.format(""), "w").places == []
+    for bad in ("places: text\n", "places: [video]\n", "places: [text]\nstudio: true\n"):
+        with pytest.raises(ValueError):
+            parse(head.format(bad), "w")
+
+
+def test_the_shipped_helpers_say_what_they_place():
+    load = lambda stem: parse(Path(f"bot-prompts/{stem}.md").read_text(encoding="utf-8"), stem)
+    assert load("copywriter").places == ["text"] and load("darkroom-bot").places == ["images"] and load("designer").places == []
+
+
+def test_places_round_trips_and_is_kept_when_a_bot_is_saved_from_the_app(tmp_path: Path):
+    p = parse("---\nname: W\nrole: R\nplaces: [images]\n---\nGo.", "w")
+    assert parse(render(p), "w").places == ["images"]
+    assert "places" not in render(parse("---\nname: W\nrole: R\n---\nGo.", "w"))
+    from src.harness.bot import Bot
+    assert Bot(name="W", role="R", places=["text"]).to_dict()["places"] == ["text"]
