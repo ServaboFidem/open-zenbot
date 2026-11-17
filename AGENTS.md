@@ -223,7 +223,8 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
   conversation it owns that has a design folder (`ToolRunner.register(offered=...)`, `specs(caller=...)`;
   `Harness._studio_session`) and to an `images` helper turn (below; its answer there says to place the picture
   with `design_set_image`), and its handler refuses any other caller. A picture is written to a temporary name in
-  `images/` and linked into place, so a failed write leaves no part of a file; `design_images.load` opens without
+  `images/` and linked into place (where the drive has no hard links, written to its name directly and removed if
+  the write fails), so a failed write leaves no part of a file; `design_images.load` opens without
   following a link and checks the open file. `design_studio.is_current` says whether
   a numbered copy still equals what `snapshot` would write now, pictures included.
 - **Design systems.** A folder with `DESIGN.md` and optionally `tokens.css`: the shipped ones in
