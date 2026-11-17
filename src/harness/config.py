@@ -46,12 +46,32 @@ class HarnessConfig:
     shell_write_pass: float = field(default_factory=lambda: float(os.environ.get("ZEN_SHELL_WRITE_PASS", "0.8")))
     # a run handed to Claude Code or Codex is killed, with its whole process tree, after this many seconds
     delegate_timeout: float = field(default_factory=lambda: float(os.environ.get("ZEN_DELEGATE_TIMEOUT", "900")))
+    # an installed app: bots (and later skills) the user makes live beside the vault, not in the shipped folders
+    user_content: bool = field(default_factory=lambda: os.environ.get("ZEN_USER_CONTENT", "").strip().lower() in ("1", "true", "yes"))
     gui_origins: list[str] = field(default_factory=lambda: [o.strip() for o in os.environ.get("ZEN_GUI_ORIGINS", "app://openzenbot").split(",") if o.strip()])
     gui_key_env: str = "ZEN_GUI_KEY"  # where a key entered in Settings lives for this process; never on disk
 
     def __post_init__(self) -> None:
         if self.shell_cwd is None:
             self.shell_cwd = (Path(self.vault_root).expanduser() / "workspace").resolve()
+
+    @property
+    def bots_write_dir(self) -> Path:
+        """Where a bot made or edited in the app is saved."""
+        if self.user_content:
+            from src.vault_settings import user_bots_dir
+
+            return user_bots_dir(self.vault_root)
+        return self.bot_prompts_dir
+
+    @property
+    def skills_write_dir(self) -> Path:
+        """Where a skill recorded in the app is saved."""
+        if self.user_content:
+            from src.vault_settings import user_skills_dir
+
+            return user_skills_dir(self.vault_root)
+        return self.skills_dir
 
     def validate(self) -> None:
         if self.host not in LOOPBACK:

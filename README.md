@@ -46,6 +46,24 @@ Routing is a scoring job, not a writing job. Before each task, the router asks t
 - **A supervisor watches the loop.** Every few steps it asks the decider whether the run is progressing, repeating itself, or done. Then it lets the run continue, nudges the bot with a single note, or pauses the session until you resume it. It never kills your work.
 - **Scoring and writing are separate.** The decider only scores fixed options and never writes prose. The generator writes summaries and compaction folds and never decides. Keeping the two apart makes every routing, recall and supervision choice a number you can inspect in the ledger.
 
+## Install
+
+For people who just want to use OpenZenBot. You do not need Python, Node.js or any developer tools.
+
+1. Open the [Releases page](https://github.com/ServaboFidem/open-zenbot/releases) and download the installer for your computer from the newest release.
+2. **Windows:** run `OpenZenBot-Setup-<version>.exe`. The installer is not signed yet, so Windows SmartScreen warns about an unknown publisher: click "More info", then "Run anyway". **Ubuntu or Debian:** open a terminal in the download folder and run `sudo apt install ./OpenZenBot_<version>_amd64.deb`, then start OpenZenBot from your applications menu (or run `openzenbot`).
+3. The first time you start it, OpenZenBot sets itself up. It needs a connection to the internet and about 5 GB of free disk space: it checks first and does not start with less (an update over an existing install needs about 1 GB). The Python environment takes about 2 GB of that on Linux, and roughly 2 GB more is fetched the first time the app starts (models and tool servers). This can take several minutes. You see each step as it happens. This happens once, and again after an update that changes what it needs.
+4. It then asks for an [OpenRouter](https://openrouter.ai/) key. OpenZenBot needs an OpenRouter account for one thing: the decider model, which picks the right skills and tools for each task and checks shell commands before they run. Everything else can run on your own computer or through NVIDIA NIM: the models your bots talk with are your choice, in Settings. The key is kept in your OpenZenBot settings, not in the app.
+
+Good to know:
+
+- **Updates.** OpenZenBot checks the releases page about once a day and tells you when a newer version is out, with its release notes. Getting it means downloading the new installer and running it; nothing installs by itself. You can turn the check off or skip a version.
+- **Where things are.** The downloaded parts live in the `runtime` folder of OpenZenBot's data folder: `~/.config/OpenZenBot/runtime` on Linux, `%APPDATA%\OpenZenBot\runtime` on Windows. Your chats, notes and bots are kept separately, under `~/.zen-agents`, and are never part of that folder.
+- **Uninstall.** Windows: uninstall OpenZenBot from Settings > Apps; this also removes the `runtime` folder. Ubuntu or Debian: `sudo apt remove openzenbot`; delete `~/.config/OpenZenBot/runtime` yourself to get the disk space back. What the first start downloads stays too: memory models in `~/.cache/huggingface`, the memory database's Postgres in `~/.pg0` (your memories are in it), and tool servers in `~/.npm`; these folders are shared with other programs that use them, so check before deleting them. Neither touches `~/.zen-agents`. Delete that folder only if you want your chats and notes gone.
+- **Not there yet.** There is no macOS app. The Windows installer is new and has not been tried on a real Windows computer yet. ImageMagick, which a few tools use, is not installed by the app.
+
+Maintainers: to cut a release, set the same new version in `package.json`, `pyproject.toml` and `packaging/harness/pyproject.toml`, run `uv lock --project packaging/harness`, commit, then tag `v<version>` and push the tag. The release workflow checks the tag and runs both test suites, builds both installers and opens a **draft** release with them attached. It is not public until a maintainer reads the notes and publishes the draft on GitHub.
+
 ## Run the harness
 
 You need [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Node.js](https://nodejs.org/) (with `npm`). From the repo root:

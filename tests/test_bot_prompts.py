@@ -17,6 +17,7 @@ from src.harness.config import HarnessConfig
 from src.harness.main import build_harness
 from src.memory.ledger import Ledger
 from src.skills.catalog import Catalog
+from src.vault_settings import user_bots_dir
 
 from .conftest import REPO
 
@@ -81,7 +82,7 @@ def test_build_harness_makes_bots_from_the_directory(monkeypatch, vault: Path, t
     h = build_harness(HarnessConfig(vault_root=vault, skills_dir=Path("skills"), bot_prompts_dir=prompts))
     assert set(h.bots) == {"research-partner", "generalist"}
     assert [s.slug for s in h.bots["research-partner"].skills] == ["research-brief"]
-    assert sorted(s.slug for s in h.bots["generalist"].skills) == ["archify", "design-studio", "discernment-nudge", "doc-coauthoring", "docx", "learn-company", "pdf", "pptx", "prompt-master", "research-brief", "skill-creator", "weekly-digest", "xlsx"]  # no skills key: every catalog skill
+    assert sorted(s.slug for s in h.bots["generalist"].skills) == ["archify", "delegation", "design-studio", "discernment-nudge", "doc-coauthoring", "docx", "learn-company", "pdf", "pptx", "prompt-master", "research-brief", "skill-creator", "weekly-digest", "xlsx"]  # no skills key: every catalog skill
 
 
 def test_build_harness_with_an_empty_directory_has_no_bots(monkeypatch, vault: Path, tmp_path: Path):
@@ -205,3 +206,68 @@ def test_the_designer_bot_file_is_a_studio_bot():
     assert p.studio is True and p.skills == ["design-studio"] and p.mcps == ["files"]
     for must in ("designs/", "data-zen-id", "attach_file", "question-form", "create_directory", "edit_file"):
         assert must in p.instructions
+
+
+def _bot_file(folder: Path, stem: str, name: str) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{stem}.md").write_text(f"---\nname: {name}\nrole: Role of {name}\nskills: []\n---\nGo.\n", encoding="utf-8")
+
+
+def test_user_bots_load_after_shipped_and_win_on_the_same_id(monkeypatch, vault: Path, tmp_path: Path):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("ZEN_MEMORY_BACKEND", "local")
+    shipped = tmp_path / "shipped"
+    _bot_file(shipped, "a", "Shipped A")
+    _bot_file(shipped, "b", "Shipped B")
+    _bot_file(user_bots_dir(vault), "a", "My A")
+    _bot_file(user_bots_dir(vault), "c", "C")
+    cfg = HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=shipped, user_content=True)
+    h = build_harness(cfg)
+    assert {b.id: b.name for b in h.bots.values()} == {"a": "My A", "b": "Shipped B", "c": "C"}
+
+
+async def _patch_b(vault: Path, shipped: Path, user_content: bool) -> None:
+    cfg = HarnessConfig(vault_root=vault, skills_dir=vault.parent / "skills", bot_prompts_dir=shipped, user_content=user_content)
+    cfg.validate()
+    h = Harness(config=cfg, provider=None, ledger=Ledger(vault), catalog=Catalog())
+    for p in load_dir(shipped):
+        from src.harness.bot import Bot
+        h.add_bot(Bot(p.name, p.role, p.instructions, id=p.id))
+    transport = httpx.ASGITransport(app=create_app(h))
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
+        r = await c.patch("/bots/b", json={"role": "A new role"})
+        assert r.status_code == 200
+
+
+async def test_saving_a_bot_writes_the_user_folder_never_the_shipped_one(vault: Path, tmp_path: Path):
+    shipped = tmp_path / "shipped"
+    _bot_file(shipped, "b", "Shipped B")
+    before = (shipped / "b.md").read_text()
+    await _patch_b(vault, shipped, True)
+    assert (user_bots_dir(vault) / "b.md").is_file()
+    assert (shipped / "b.md").read_text() == before
+
+
+async def test_without_user_content_bots_save_where_they_always_did(vault: Path, tmp_path: Path):
+    shipped = tmp_path / "shipped"
+    _bot_file(shipped, "b", "Shipped B")
+    before = (shipped / "b.md").read_text()
+    await _patch_b(vault, shipped, False)
+    assert (shipped / "b.md").read_text() != before
+    assert not user_bots_dir(vault).exists()
+
+
+async def test_a_new_bot_never_takes_a_shipped_bots_id_in_user_content_mode(monkeypatch, vault: Path, tmp_path: Path):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("ZEN_MEMORY_BACKEND", "local")
+    shipped = tmp_path / "shipped"
+    _bot_file(shipped, "designer", "Designer")
+    cfg = HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=shipped, user_content=True)
+    h = build_harness(cfg)
+    transport = httpx.ASGITransport(app=create_app(h))
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
+        r = await c.post("/bots", json={"name": "Designer", "role": "Mine", "instructions": ""})
+        assert r.status_code == 201 and r.json()["id"] == "designer-2"
+    assert set(h.bots) == {"designer", "designer-2"}
+    again = build_harness(cfg)
+    assert {b.id: b.role for b in again.bots.values()} == {"designer": "Role of Designer", "designer-2": "Mine"}

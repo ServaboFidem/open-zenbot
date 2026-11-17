@@ -30,7 +30,7 @@ from src.harness.config import HarnessConfig
 from src.harness.mcp_client import load_config
 from src.memory.ledger import Ledger
 from src.skills.catalog import Catalog
-from src.vault_settings import settings_dir
+from src.vault_settings import settings_dir, user_bots_dir, user_skills_dir
 
 FIXTURE = Path(__file__).parent / "fixtures" / "mcp_echo_server.py"
 
@@ -54,7 +54,7 @@ def test_the_harness_settings_ledger_and_music_folders_are_refused(tmp_path: Pat
     zen = tmp_path / ".zen-agents"
     vault = zen / "vault"
     private = af.private_folders(vault)
-    assert private == [zen / "vault-settings", zen / "vault-ledger", zen / "vault-music"]
+    assert private == [zen / "vault-settings", zen / "vault-ledger", zen / "vault-music", zen / "vault-bots", zen / "vault-skills"]
     for d in (vault / "notes", *private, zen / "vault-settings" / "sub"):
         d.mkdir(parents=True, exist_ok=True)
     home = tmp_path / "home"
@@ -196,3 +196,29 @@ async def test_adding_and_removing_a_folder_reconnects_the_files_server(vault: P
             assert (await c.delete("/settings/folders", params={"path": str(work)})).status_code == 404
     events = [e.data for e in h.ledger.tail(50) if e.data.get("event") == "allowed_folders"]
     assert [sorted(e) for e in events] == [["access", "added", "event"], ["access", "event", "path"], ["event", "removed"]]
+
+
+def test_the_users_bots_and_skills_folders_are_private(tmp_path: Path):
+    vault = tmp_path / "vault"
+    private = af.private_folders(vault)
+    assert user_bots_dir(vault) in private and user_skills_dir(vault) in private
+
+
+def test_a_saved_folder_that_is_private_now_is_not_loaded(tmp_path: Path, capsys):
+    """A folder saved before the harness made it private (or written into the file by hand) never reaches the
+    files server: the private folder itself, one inside it, and one holding it."""
+    vault = tmp_path / "zen" / "vault"
+    work = tmp_path / "work"
+    skills = user_skills_dir(vault)
+    for d in (vault, work, skills / "mine"):
+        d.mkdir(parents=True)
+    saved = [str(work), str(skills), str(skills / "mine"), {"path": str(tmp_path / "zen"), "access": "read_only"}]
+    (settings_dir(vault) / FILE).parent.mkdir(parents=True, exist_ok=True)
+    (settings_dir(vault) / FILE).write_text(json.dumps({"folders": saved}), encoding="utf-8")
+    loaded = AllowedFolders.load(vault)
+    assert loaded.folders == [Folder(str(work), FULL)]
+    assert loaded.server_args() == {"ZEN_ALLOWED_FOLDERS": [str(work)], "ZEN_READ_ONLY_FOLDER_ARGS": []}
+    said = capsys.readouterr().err
+    assert said.count("allowed folder not used") == 3 and str(skills) in said
+    AllowedFolders.load(vault)
+    assert capsys.readouterr().err == ""  # each one is reported once a run

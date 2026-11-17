@@ -1,0 +1,24 @@
+{
+  "uv": {
+    "version": "0.13.8",
+    "linux-x64": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.13.8/uv-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "5acfd9177cfecf0bf87578f059728215ccc884388988f55f7a65041b57387d91"
+    },
+    "win32-x64": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.13.8/uv-x86_64-pc-windows-msvc.zip",
+      "sha256": "529e78a9cec6cd7e3e014f7ecd8bda0c113969d4ed0f2efeedb85c30943325b8"
+    }
+  },
+  "node": {
+    "version": "24.22.3",
+    "linux-x64": {
+      "url": "https://nodejs.org/dist/v24.22.3/node-v24.22.3-linux-x64.tar.gz",
+      "sha256": "061ec3e3062115705b56b51fa9cc330ab50d34b6969387d4e4b1a50c6809acc2"
+    },
+    "win32-x64": {
+      "url": "https://nodejs.org/dist/v24.22.3/node-v24.22.3-win-x64.zip",
+      "sha256": "e612af99f626ab415ea225af6bce5c971feb448cb5cae250bb1c3fa50c5f7d9f"
+    }
+  }
+}

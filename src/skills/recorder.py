@@ -228,6 +228,7 @@ def draft_skill(
     skills_dir: Path,
     catalog: Any | None = None,
     config: SkillConfig | None = None,
+    taken: frozenset[str] | set[str] = frozenset(),
 ) -> LoadResult:
     """Write the draft and read it back through the loader. States and
     reasons are the loader's own: nothing/empty, nothing/too-large,
@@ -235,6 +236,14 @@ def draft_skill(
     staged (on disk), added (in the catalog)."""
     config = config or SkillConfig()
     slug = _slugify(name)
+    base, n = name, 1
+    # a slug in `taken` (a shipped skill's) is never reused: "Name 2", "Name 3"... A numbered name was not the
+    # user's choice, so it never lands on a skill already saved either (a name the user gave still replaces
+    # their own earlier recording of it)
+    while slug in taken or (n > 1 and (Path(skills_dir) / slug / SKILL_FILENAME).exists()):
+        n += 1
+        name = f"{base} {n}"
+        slug = _slugify(name)
     path = Path(skills_dir) / slug / SKILL_FILENAME
     if recording.source != "browser-actions":
         return LoadResult(SkillState.nothing, Reason.unsupported, path=path, detail=recording.source)

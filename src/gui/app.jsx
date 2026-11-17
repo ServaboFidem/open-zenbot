@@ -18,6 +18,9 @@ import { ProgramPathSection } from './ProgramPathSettings';
 import { CodingAgentsSection } from './AgentSettings';
 import { SettingsHome } from './SettingsHome';
 import { PANELS, anchorId, liveSections } from './settings-index';
+import { UpdateNotice, VersionSection } from './UpdateNotice';
+import { WelcomeKey } from './WelcomeKey';
+import { showWelcome } from './welcome';
 import McpKeys from './McpKeys';
 import McpDeps from './McpDeps';
 import MusicArea from './music/MusicArea';
@@ -175,6 +178,7 @@ function App() {
   const roomSpeakerId = room?.open_turn?.bot_id || room?.active_speaker || '';
   const pending = approvals.filter(a => a.state === 'pending');
   const online = harness.status === 'online';
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);  // "Not now" on the key screen, for this run only
   const bound = !!harness.settings?.key_set && harness.settings?.provider !== 'unbound';
   const assistant = bots.find(b => b.id === ASSISTANT_ID);
   const studioBot = bots.find(b => b.studio);  // the design bot the Design page starts a new design with
@@ -753,9 +757,11 @@ function App() {
   </div>;
 
   const booting = harness.status === 'connecting' || (harness.status === 'online' && warming(warm));
+  const welcome = !booting && showWelcome({ online, settings: harness.settings, dismissed: welcomeDismissed });
   return <FluentProvider theme={webLightTheme} className="provider">
     {booting && <BootOverlay connecting={harness.status === 'connecting'} warm={warm}/>}
-    <div className="workspace" aria-hidden={booting || undefined}>
+    {welcome && <WelcomeKey api={api} onSaved={refreshHealth} onSkip={() => setWelcomeDismissed(true)}/>}
+    <div className="workspace" aria-hidden={booting || welcome || undefined} inert={welcome ? '' : undefined}>
       <aside className={`sidebar ${mobileNav ? 'mobile-open' : ''}`}>
         <a className="brand od-row" href="#" onClick={e => { e.preventDefault(); navigate('Overview'); }}><span className="brand-mark"><img src={logo} alt=""/></span><span>OpenZenBot</span></a>
         <div className="workspace-name od-row"><span className="workspace-initial">P</span><div className="od-field od-fill"><strong>Personal workspace</strong><span>Local · {api.baseUrl.replace('http://', '')}</span></div></div>
@@ -766,6 +772,7 @@ function App() {
       <div className="main-shell">
         <header className="topbar od-row"><Button className="menu-button" appearance="subtle" icon={<Navigation24Regular/>} aria-label="Toggle navigation" onClick={() => setMobileNav(!mobileNav)}/><span className="breadcrumb">Workspace</span><ChevronRight24Regular/><strong>{page === 'Conversation' ? (mode === 'room' ? room?.name || 'Room' : bot?.name) : page}</strong><div className="od-fill"/><span className="simulation-label"><span className="status-dot"/> {statusLabel}</span><Button appearance="subtle" icon={<ShieldCheckmark24Regular/>} aria-label="Open approvals" onClick={() => navigate('Approvals')}/></header>
         {arrival && page !== 'Music' && <div className="storage-warning od-row" role="status"><span className="od-fill">{arrivalText(arrival.count)}.</span><Button appearance="outline" onClick={() => navigate('Music')}>Open digest</Button><Button appearance="subtle" onClick={markArrivalRead}>Mark as read</Button></div>}
+        <UpdateNotice/>
         {storageError && <div className="storage-warning" role="status">Local storage is unavailable. Activity will last for this session only.</div>}
         {harness.status === 'offline' && <div className="storage-warning" role="status">The harness at {api.baseUrl} is not answering. Start it with <code>uv run python -m src.harness.main</code>; this page retries every few seconds.</div>}
         {online && !bound && page !== 'Settings' && <div className="storage-warning" role="status">No provider is bound. <button className="text-link" onClick={() => { navigate('Settings'); openSettings('providers'); }}>Add a provider key and choose models in Settings</button> before sending tasks.</div>}
@@ -828,7 +835,7 @@ function App() {
             {settingsTab === 'memory' && <>{profile ? <form className="resource-row editor-form" onSubmit={saveOwner}><h3 id={anchorId('memory', 'About you')}>About you</h3><Field label="Your name" required><Input required value={ownerForm.name} onChange={(e, d) => setOwnerForm(f => ({ ...f, name: d.value }))}/></Field><Field label="Also called" hint="Nicknames, separated by commas"><Input value={ownerForm.also} onChange={(e, d) => setOwnerForm(f => ({ ...f, also: d.value }))}/></Field><Button appearance="primary" type="submit">Save name</Button></form> : <div className="resource-row"><h3 id={anchorId('memory', 'About you')}>About you</h3><p>Your name and nicknames are kept in the memory store, which this harness is not running.</p></div>}{profile && <div className="resource-row od-row"><div className="od-field od-fill"><h3 id={anchorId('memory', 'Rebuild memory')}>Rebuild memory</h3><p>Re-learn everything shared under the current knowledge model: people, organizations, and how they relate. Your facts and each bot's private memory stay.</p>{!profile.owner && <p className="field-hint">Add your name above first: the rebuild re-learns your people under it.</p>}</div><Button appearance="outline" disabled={!online || !bound || !profile.owner} onClick={previewRebuild}>Rebuild memory…</Button></div>}</>}
             {settingsTab === 'apps' && <><div className="storage-warning od-row" role="note"><Apps24Regular/><span className="od-fill"><strong>Mockup: connected apps don't work yet.</strong> Connect only marks an app as connected in this window. It signs in to nothing, asks for no credentials, and gives bots no access to your accounts. Real connectors will come through the harness. Until then, bots reach outside services through the MCP servers page.</span></div>
               <div className="apps-grid">{appOptions.map(([name, description, initials]) => { const connected = data.connections.includes(name); return <article className="app-card od-stack" key={name}><div className="od-row"><span className="app-lettermark">{initials}</span><div className="od-fill"/>{connected ? <Badge color="success" appearance="tint">Marked connected</Badge> : <Badge appearance="outline" color="informative">Mockup</Badge>}</div><h2>{name}</h2><p>{description}</p><Button appearance={connected ? 'outline' : 'primary'} onClick={() => { if (connected) { setModal('disconnect'); setForm({ name }); } else { update(d => ({ ...d, connections: [...d.connections, name], activity: addActivity(d, `${name} marked connected`, 'Mockup; no account access.') })); setNotice(`${name} marked as connected (mockup)`); } }}>{connected ? 'Disconnect' : 'Connect app'}</Button></article>; })}</div></>}
-            {settingsTab === 'about' && <><div className="resource-row"><h3 id={anchorId('about', 'What this app does')}>What this app does</h3><p>Bots, skills, approvals, rooms, memory, and the ledger come from the zen-agents harness on localhost. The connected-apps list and bot colours stay in this browser or Electron profile. Routines are scheduled by the harness.</p></div><div className="resource-row"><h3 id={anchorId('about', 'Open source')}>Open source</h3><p>Authored source is MIT licensed. See README.md for setup, source locations, and dependency licenses.</p></div></>}</div></>}
+            {settingsTab === 'about' && <><VersionSection/><div className="resource-row"><h3 id={anchorId('about', 'What this app does')}>What this app does</h3><p>Bots, skills, approvals, rooms, memory, and the ledger come from the zen-agents harness on localhost. The connected-apps list and bot colours stay in this browser or Electron profile. Routines are scheduled by the harness.</p></div><div className="resource-row"><h3 id={anchorId('about', 'Open source')}>Open source</h3><p>Authored source is MIT licensed. See README.md for setup, source locations, and dependency licenses.</p></div></>}</div></>}
         </MediaProvider></main>
       </div>
     </div>

@@ -1,0 +1,11 @@
+# Ubuntu 23.10 and later block unprivileged user namespaces, which Chromium's sandbox needs. This lets only the
+# installed OpenZenBot binary use them (the same rule scripts/ubuntu-apparmor-profile.sh writes for a dev checkout).
+# Never work around this by turning the sandbox off: the design pane runs bot-made pages.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile openzenbot /opt/OpenZenBot/openzenbot flags=(unconfined) {
+  userns,
+
+  include if exists <local/openzenbot>
+}

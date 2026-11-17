@@ -22,6 +22,7 @@ from src.providers.openai_compatible import OpenAICompatibleProvider
 from src.providers.secrets import Secret
 from src.providers.store import ProviderStore, ProviderStoreError
 from src.skills.catalog import Catalog
+from src.vault_settings import settings_dir
 
 from .conftest import ScriptedProvider
 
@@ -425,3 +426,107 @@ async def test_a_bot_whose_model_was_disabled_falls_back_to_chat(client, harness
     harness.bot_models["old"] = Choice("gone", "x/y")
     assert harness._model_for(bot) == (harness.provider, None)
     assert any(e.kind == "error" and e.data.get("where") == "bot_model" for e in harness.ledger.iter())
+
+
+# -- the OpenRouter key, from the first-start screen ----------------------------
+
+
+def _or_transport(status: int = 200, offline: bool = False, timeout: bool = False, seen: list | None = None) -> httpx.MockTransport:
+    """OpenRouter as the key check sees it: the authenticated key endpoint answers `status`; the model list is public."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(request)
+        if offline:
+            raise httpx.ConnectError("no route to host", request=request)
+        if timeout:
+            raise httpx.ReadTimeout("slow", request=request)
+        if request.url.path == "/api/v1/auth/key":
+            return httpx.Response(status, json={"data": {"label": "x"}} if status == 200 else {"error": {"message": "no"}})
+        return httpx.Response(200, json=OR_MODELS)
+    return httpx.MockTransport(handler)
+
+
+@pytest.fixture
+def harness_without_key(vault: Path, tmp_path: Path, monkeypatch) -> Harness:
+    monkeypatch.delenv("ZEN_TEST_OR_KEY", raising=False)
+    monkeypatch.setenv("ZEN_PROVIDER_OPENROUTER_API_KEY", "")  # so the stored key's export is undone after the test
+    monkeypatch.delenv("ZEN_PROVIDER_OPENROUTER_API_KEY")
+    cfg = HarnessConfig(vault_root=vault, shell_cwd=tmp_path, key_ref="env:ZEN_TEST_OR_KEY")
+    h = Harness(config=cfg, provider=ScriptedProvider(), ledger=Ledger(vault), catalog=Catalog())
+    h.model_lister = ModelLister(transport=_or_transport())
+    return h
+
+
+@pytest.fixture
+async def client_without_key(harness_without_key: Harness):
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(harness_without_key)), base_url="http://localhost") as c:
+        yield c
+
+
+def _providers_text(vault: Path) -> str:
+    return (settings_dir(vault) / "providers.json").read_text(encoding="utf-8")
+
+
+def _ledger_text(h: Harness) -> str:
+    return json.dumps([e.to_dict() for e in h.ledger.iter()])
+
+
+async def test_settings_say_whether_an_openrouter_key_is_present(client_without_key):
+    assert (await client_without_key.get("/settings")).json()["openrouter_key"] is False
+
+
+async def test_saving_an_openrouter_key_binds_the_decider_and_persists(client_without_key, harness_without_key: Harness, vault: Path):
+    seen: list[httpx.Request] = []
+    harness_without_key.model_lister = ModelLister(transport=_or_transport(seen=seen))
+    r = await client_without_key.post("/settings/openrouter-key", json={"key": "  sk-or-good  "})
+    assert r.status_code == 200, r.text
+    assert r.json()["openrouter_key"] is True and r.json()["key_set"] is True
+    assert r.json()["scorer"] == "openrouter-decision-1"
+    assert "sk-or-good" in _providers_text(vault)  # kept for the next start
+    assert ProviderStore(vault).load().get("openrouter").key == "sk-or-good"
+    assert "sk-or-good" not in _ledger_text(harness_without_key)
+    assert "provider_changed" in _ledger_text(harness_without_key)
+    assert ModelRoles.load(vault) is not None
+    [check] = [q for q in seen if q.url.path == "/api/v1/auth/key"]  # checked with the authenticated endpoint
+    assert check.headers["authorization"] == "Bearer sk-or-good"
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_a_refused_key_is_not_saved(client_without_key, harness_without_key: Harness, vault: Path, status: int):
+    harness_without_key.model_lister = ModelLister(transport=_or_transport(status=status))
+    r = await client_without_key.post("/settings/openrouter-key", json={"key": "sk-or-bad"})
+    assert r.status_code == 422 and r.json()["detail"] == "OpenRouter did not accept that key."
+    assert "sk-or-bad" not in _providers_text(vault)
+    assert "sk-or-bad" not in _ledger_text(harness_without_key)
+    assert (await client_without_key.get("/settings")).json()["openrouter_key"] is False
+
+
+@pytest.mark.parametrize("fault", [{"offline": True}, {"timeout": True}, {"status": 402}, {"status": 500}, {"status": 429}])
+async def test_offline_is_503_and_nothing_is_saved(client_without_key, harness_without_key: Harness, vault: Path, fault: dict):
+    before = _providers_text(vault)
+    harness_without_key.model_lister = ModelLister(transport=_or_transport(**fault))
+    r = await client_without_key.post("/settings/openrouter-key", json={"key": "sk-or-offline"})
+    assert r.status_code == 503
+    assert r.json()["detail"] == "Could not reach OpenRouter. Check your connection and try again."
+    assert _providers_text(vault) == before and "sk-or-offline" not in _providers_text(vault)
+    assert "sk-or-offline" not in _ledger_text(harness_without_key)
+    assert (await client_without_key.get("/settings")).json()["openrouter_key"] is False
+
+
+async def test_an_accepted_key_stays_saved_when_binding_fails(client_without_key, harness_without_key: Harness, vault: Path, monkeypatch):
+    """A decision, not an accident: OpenRouter accepted the key, so it is kept even when the models cannot bind."""
+    def refuse(roles):
+        raise ProviderStoreError("Chat model: not enabled")
+    monkeypatch.setattr(harness_without_key, "apply_models", refuse)
+    r = await client_without_key.post("/settings/openrouter-key", json={"key": "sk-or-kept"})
+    assert r.status_code == 422 and r.json()["detail"] == "Chat model: not enabled"
+    assert "sk-or-kept" in _providers_text(vault)
+    assert (await client_without_key.get("/settings")).json()["openrouter_key"] is True
+
+
+async def test_an_empty_key_is_422(client_without_key, vault: Path):
+    before = _providers_text(vault)
+    for key in ("", "   \t"):
+        r = await client_without_key.post("/settings/openrouter-key", json={"key": key})
+        assert r.status_code == 422 and r.json()["detail"] == "key is empty"
+    assert _providers_text(vault) == before

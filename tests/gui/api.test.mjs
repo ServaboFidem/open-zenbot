@@ -154,6 +154,16 @@ test('setProvider sends the key once and the client keeps nothing', async () => 
   assert.equal(Object.values(api).some(v => typeof v === 'string' && v.includes('secret')), false);
 });
 
+test('saveOpenRouterKey posts the key to /settings/openrouter-key', async () => {
+  const { fetch, calls } = fakeFetch({ 'POST /settings/openrouter-key': { status: 200, body: { openrouter_key: true, key_set: true } } });
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  const out = await api.saveOpenRouterKey('k');
+  assert.equal(out.openrouter_key, true);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(new URL(calls[0].url).pathname, '/settings/openrouter-key');
+  assert.deepEqual(calls[0].body, { key: 'k' });
+});
+
 test('errors carry the harness detail and status', async () => {
   const { fetch } = fakeFetch({ 'POST /bots/b1/tasks': { status: 503, body: { detail: 'no provider bound; enter a provider and key in Settings' } } });
   const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });

@@ -1,4 +1,5 @@
-// The Electron shell: the preload exposes only the harness URL, the two OS pickers and Save…; the CSP
+// The Electron shell: the preload exposes only the harness URL, the two OS pickers, Save…, the version, the
+// update check and the setup page's few calls; the CSP
 // lets the renderer connect to the harness loopback origin and nothing else;
 // the main process serves the app from its own origin so CORS can name it.
 import test from 'node:test';
@@ -9,7 +10,7 @@ import { readFileSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
 
-function loadPreload(env) {
+function loadPreload(env, argv = []) {
   const exposed = {};
   const invoked = [];
   const listeners = [];
@@ -20,6 +21,8 @@ function loadPreload(env) {
   const original = Module._load;
   Module._load = function (request, ...rest) { return request === 'electron' ? stub : original.call(this, request, ...rest); };
   const saved = { ...process.env };
+  const savedArgv = process.argv;
+  process.argv = [...savedArgv, ...argv];
   Object.assign(process.env, { ZEN_GLITCHTIP_DSN: '' }, env);
   const hadWindow = 'window' in globalThis;
   if (!hadWindow) globalThis.window = {};  // the sentry bridge writes window.__SENTRY_IPC__
@@ -27,14 +30,16 @@ function loadPreload(env) {
     delete require.cache[require.resolve('../../src/electron/preload.cjs')];
     require('../../src/electron/preload.cjs');
     delete require.cache[require.resolve('@sentry/electron/preload')];
-  } finally { Module._load = original; process.env = saved; if (!hadWindow) delete globalThis.window; }
+  } finally { Module._load = original; process.env = saved; process.argv = savedArgv; if (!hadWindow) delete globalThis.window; }
   return { exposed, invoked, listeners };
 }
 
-test('preload exposes the harness url, the directory and file pickers, and save, nothing else', async () => {
+const KEYS = ['harnessUrl', 'managed', 'onOpenMusic', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'updates', 'version'];
+
+test('preload exposes the harness url, the directory and file pickers, save, the version and two narrow groups, nothing else', async () => {
   const { exposed, invoked } = loadPreload({ ZEN_HARNESS_URL: '' });
   assert.deepEqual(Object.keys(exposed), ['openzenbot']);
-  assert.deepEqual(Object.keys(exposed.openzenbot).sort(), ['harnessUrl', 'onOpenMusic', 'origin', 'pickDirectory', 'pickFile', 'saveMedia']);
+  assert.deepEqual(Object.keys(exposed.openzenbot).sort(), KEYS);
   assert.equal(exposed.openzenbot.harnessUrl, 'http://127.0.0.1:8765');
   assert.equal(exposed.openzenbot.origin, 'app://openzenbot');
   assert.equal(await exposed.openzenbot.pickDirectory(), 'F:/picked');
@@ -44,10 +49,38 @@ test('preload exposes the harness url, the directory and file pickers, and save,
   assert.equal(loadPreload({ ZEN_HARNESS_URL: 'http://127.0.0.1:9000' }).exposed.openzenbot.harnessUrl, 'http://127.0.0.1:9000');
 });
 
+test('preload reads the version and the managed switch from the main process\'s --zen-* arguments', () => {
+  const dev = loadPreload({}).exposed.openzenbot;
+  assert.equal(dev.version, '');
+  assert.equal(dev.managed, false);
+  const app = loadPreload({}, ['--zen-version=0.1.0', '--zen-managed=1']).exposed.openzenbot;
+  assert.equal(app.version, '0.1.0');
+  assert.equal(app.managed, true);
+  assert.equal(loadPreload({ ZEN_MANAGED: '1' }, ['--zen-managed=0']).exposed.openzenbot.managed, false);
+});
+
+test('preload updates and setup are one invoke each, and onState returns an unsubscribe', async () => {
+  const { exposed, invoked, listeners } = loadPreload({});
+  const { updates, setup } = exposed.openzenbot;
+  assert.deepEqual(Object.keys(updates).sort(), ['check', 'get', 'open', 'setAuto', 'skip']);
+  assert.deepEqual(Object.keys(setup).sort(), ['onState', 'openLogs', 'proceed', 'restartHarness', 'retry', 'state']);
+  await updates.get(); await updates.check(); await updates.skip('0.2.0'); await updates.setAuto(false); await updates.open();
+  await setup.state(); await setup.retry(); await setup.proceed(); await setup.openLogs(); await setup.restartHarness();
+  assert.deepEqual(invoked, [['updates:get'], ['updates:check'], ['updates:skip', '0.2.0'], ['updates:set-auto', false], ['updates:open'],
+    ['setup:state'], ['setup:retry'], ['setup:proceed'], ['setup:open-logs'], ['setup:restart-harness']]);
+  const got = [];
+  const off = setup.onState(s => got.push(s));
+  const [channel, handler] = listeners.at(-1);
+  assert.equal(channel, 'setup:state');
+  handler({ sender: 'not passed on' }, { phase: 'setup' });
+  assert.deepEqual(got, [{ phase: 'setup' }]);
+  assert.equal(typeof off, 'function');
+});
+
 test('preload adds the sentry ipc bridge only when ZEN_GLITCHTIP_DSN is set', () => {
   const { exposed } = loadPreload({ ZEN_GLITCHTIP_DSN: 'https://key@glitchtip.example/1' });
   assert.deepEqual(Object.keys(exposed).sort(), ['__SENTRY_IPC__', 'openzenbot']);
-  assert.deepEqual(Object.keys(exposed.openzenbot).sort(), ['harnessUrl', 'onOpenMusic', 'origin', 'pickDirectory', 'pickFile', 'saveMedia']);
+  assert.deepEqual(Object.keys(exposed.openzenbot).sort(), KEYS);
   assert.ok(!JSON.stringify(Object.keys(exposed.__SENTRY_IPC__)).includes('glitchtip'));  // the page never sees the DSN
 });
 
@@ -59,9 +92,11 @@ test('main starts sentry only from ZEN_GLITCHTIP_DSN, over classic ipc', () => {
   assert.match(src, /sendDefaultPii: false/);
 });
 
-test('main registers exactly three ipc handlers, the directory and file pickers and save', () => {
+test('main registers the directory and file pickers, save, and the update check\'s five channels, from the app\'s own pages', () => {
   const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8');
-  assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 3);
+  assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 4);  // three, and the updates:* helper
+  assert.deepEqual(src.match(/handle\('updates:[a-z-]+'/g), ["handle('updates:get'", "handle('updates:check'", "handle('updates:skip'", "handle('updates:set-auto'", "handle('updates:open'"]);
+  assert.match(src, /if \(!fromApp\(event\)\) throw/);
   assert.match(src, /ipcMain\.handle\('save-media'/);
   assert.match(src, /require\('\.\/save-media\.cjs'\)/);
   assert.match(src, /ipcMain\.handle\('pick-directory'/);
@@ -82,7 +117,8 @@ test('main registers the app scheme, loads the preload, and keeps the sandbox', 
   const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8');
   assert.match(src, /registerSchemesAsPrivileged\(\[\{ scheme: 'app'/);
   assert.match(src, /protocol\.handle\('app'/);
-  assert.match(src, /loadURL\('app:\/\/openzenbot\/index\.html'\)/);
+  assert.match(src, /function createWindow\(page = 'index\.html'\)/);
+  assert.match(src, /loadURL\(`app:\/\/openzenbot\/\$\{page\}`\)/);
   assert.match(src, /preload: path\.join\(ROOT, 'preload\.cjs'\)/);  // bundled into dist/ by build-gui
   assert.match(src, /contextIsolation: true, sandbox: true/);
 });
@@ -120,4 +156,23 @@ test('onOpenMusic subscribes to the one open-music channel and hands the page no
   listeners[0][1]({ sender: 'ipc' }, 'x');
   assert.equal(calls, 1);
   assert.deepEqual(arg, []);
+});
+
+test('the setup page\'s channels answer setup.html only and take no argument', () => {
+  const src = readFileSync(new URL('../../src/electron/managed-app.cjs', import.meta.url), 'utf8');
+  assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 1);
+  assert.match(src, /ipcMain\.handle\(channel, event => \{\n    if \(!fromApp\(event, 'setup\.html'\)\) throw/);
+  assert.deepEqual(src.match(/handle\('setup:[a-z-]+'/g), ["handle('setup:state'", "handle('setup:proceed'", "handle('setup:retry'", "handle('setup:restart-harness'", "handle('setup:open-logs'"]);
+  assert.match(src, /shell\.openPath\(paths\.logs\)/);
+});
+
+test('the setup page has its own closed CSP and sets text, never markup', () => {
+  const html = readFileSync(new URL('../../src/gui/setup.html', import.meta.url), 'utf8');
+  const csp = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
+  assert.equal(csp, "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'");
+  const js = readFileSync(new URL('../../src/gui/setup.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(js, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
+  const build = readFileSync(new URL('../../scripts/build-gui.mjs', import.meta.url), 'utf8');
+  assert.match(build, /entryPoints: \['src\/gui\/setup\.js'\]/);
+  assert.match(build, /copyFileSync\('src\/gui\/setup\.html', 'dist\/setup\.html'\)/);
 });

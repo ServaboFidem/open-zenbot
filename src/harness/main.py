@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -23,6 +24,12 @@ from .config import HarnessConfig
 from .model_roles import ModelRoles
 
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"  # the repo's .env, wherever the harness is started from
+
+
+def env_file(env: Mapping[str, str] = os.environ) -> Path:
+    """ZEN_ENV_FILE when set and non-empty (the installed app keeps its .env outside the repo), else the repo's."""
+    moved = env.get("ZEN_ENV_FILE")
+    return Path(moved) if moved else ENV_FILE
 
 
 def load_env_file(path: Path) -> list[str]:
@@ -50,9 +57,16 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
         provider, scorer = None, None
     ledger = Ledger(config.vault_root)
     catalog = Catalog()
-    for r in load_dir(config.skills_dir, skill_config(config)):
-        if r.ok:
-            catalog.add_skill(r.skill)
+    # the catalog keeps the first skill of a slug, so the user's folder goes first and wins
+    folders = [config.skills_dir]
+    if config.user_content:
+        from src.vault_settings import user_skills_dir
+
+        folders.insert(0, user_skills_dir(config.vault_root))
+    for folder in folders:
+        for r in load_dir(folder, skill_config(config)):
+            if r.ok:
+                catalog.add_skill(r.skill)
     h = Harness(config=config, provider=provider, ledger=ledger, catalog=catalog, scorer=scorer)
     saved = ModelRoles.load(config.vault_root)  # Settings > Harness settings, once saved, wins over the environment
     if saved is not None:
@@ -60,9 +74,19 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
             h.apply_models(saved)
         except ProviderStoreError as e:
             print(f"vault-settings/harness.json not applied: {e}", file=sys.stderr)
-    prompts, errors = load_bot_prompts(config.bot_prompts_dir, report=True)
-    for err in errors:
-        print(f"bot-prompts: skipped {err}", file=sys.stderr)
+    folders = [config.bot_prompts_dir]
+    if config.user_content:
+        from src.vault_settings import user_bots_dir
+
+        folders.append(user_bots_dir(config.vault_root))
+    by_id = {}
+    for folder in folders:  # the user's folder loads last and wins on the same id
+        found, errors = load_bot_prompts(folder, report=True)
+        for err in errors:
+            print(f"{folder.name}: skipped {err}", file=sys.stderr)
+        for p in found:
+            by_id[p.id] = p
+    prompts = list(by_id.values())
     for p in prompts:
         bot = Bot(p.name, p.role, p.instructions, id=p.id, mcps=list(p.mcps or []), studio=p.studio)
         wanted = catalog.skills() if p.skills is None else [s for s in (catalog.skill(ref) for ref in p.skills) if s is not None]
@@ -84,9 +108,10 @@ def main() -> int:
     from .telemetry import DSN_ENV, init_tracing
 
     # first: the settings below, the provider key, and the MCP servers' ${VAR}s all read the environment
-    loaded = load_env_file(ENV_FILE)
+    env_path = env_file()
+    loaded = load_env_file(env_path)
     if loaded:
-        print(f"{ENV_FILE.name}: {len(loaded)} {'setting' if len(loaded) == 1 else 'settings'} ({', '.join(sorted(loaded))})", file=sys.stderr)
+        print(f"{env_path.name}: {len(loaded)} {'setting' if len(loaded) == 1 else 'settings'} ({', '.join(sorted(loaded))})", file=sys.stderr)
     from src.providers import tracing as llm_tracing
     from src.vault_settings import migrate, settings_dir
 
