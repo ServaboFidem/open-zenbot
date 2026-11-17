@@ -4,6 +4,7 @@ What changed on `main`, newest first. Updated automatically on every push to `ma
 
 ## 2026-11-17
 
+- Let other bots revise a design: studio helpers ([#7](https://github.com/ServaboFidem/open-zenbot/pull/7), [`6665b3b`](https://github.com/ServaboFidem/open-zenbot/commit/6665b3b291b675aa4490d6c9c12d332b4bdd0cdb))
 - Add the Copywriter bot and fourteen vendored writing and design skills ([#6](https://github.com/ServaboFidem/open-zenbot/pull/6), [`0b5d91f`](https://github.com/ServaboFidem/open-zenbot/commit/0b5d91f630f44232819a253f1b63d1d36c698b5b))
 - bump ([`06ed7c8`](https://github.com/ServaboFidem/open-zenbot/commit/06ed7c84442327154b3229df028a9c671641920c))
 - README: point to the wiki for more information, and say it is a work in progress ([`080351b`](https://github.com/ServaboFidem/open-zenbot/commit/080351bc4bd4001c5b6b07ca51464a5d168b0044))
