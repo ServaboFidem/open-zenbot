@@ -13,8 +13,8 @@
   "node": {
     "version": "24.22.3",
     "linux-x64": {
-      "url": "https://nodejs.org/dist/v24.22.3/node-v24.22.3-linux-x64.tar.xz",
-      "sha256": "4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb"
+      "url": "https://nodejs.org/dist/v24.22.3/node-v24.22.3-linux-x64.tar.gz",
+      "sha256": "061ec3e3062115705b56b51fa9cc330ab50d34b6969387d4e4b1a50c6809acc2"
     },
     "win32-x64": {
       "url": "https://nodejs.org/dist/v24.22.3/node-v24.22.3-win-x64.zip",

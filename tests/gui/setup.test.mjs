@@ -137,7 +137,7 @@ test('a clean run does every step in order and writes the stamp', async () => {
   assert.equal(downloads.length, 1);
   assert.equal(downloads[0].url, pin.url);
   assert.equal(downloads[0].sha256, pin.sha256);
-  assert.equal(downloads[0].dest, `${paths.downloads}/node-v${pins.node.version}-linux-x64.tar.xz`);
+  assert.equal(downloads[0].dest, `${paths.downloads}/node-v${pins.node.version}-linux-x64.tar.gz`);
   assert.deepEqual(extracts, [[downloads[0].dest, `${paths.node}.part`]]);
   assert.ok(fs.ops.some(o => o[0] === 'rename' && o[1] === `${paths.node}.part/node-v${pins.node.version}-linux-x64` && o[2] === paths.node));
   assert.ok(fs.ops.some(o => o[0] === 'rm' && o[1] === downloads[0].dest));

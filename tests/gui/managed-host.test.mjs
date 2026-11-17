@@ -81,8 +81,8 @@ test('extract runs the system tar on the archive as it is, without stripping its
   const extract = createExtract({ platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, run: async (cmd, args) => { calls.push([cmd, args]); return { code: 0 }; } });
   await extract('C:\\Users\\Zoë\\runtime\\downloads\\node.zip', 'C:\\Users\\Zoë\\runtime\\node.part');
   assert.deepEqual(calls, [['C:\\Windows\\System32\\tar.exe', ['-xf', 'C:\\Users\\Zoë\\runtime\\downloads\\node.zip', '-C', 'C:\\Users\\Zoë\\runtime\\node.part']]]);
-  const failing = createExtract({ platform: 'linux', run: async (cmd, args, { onLine }) => { onLine('xz: not found'); return { code: 2 }; } });
-  await assert.rejects(failing('/r/node.tar.xz', '/r/node.part'), /Could not unpack node\.tar\.xz: xz: not found/);
+  const failing = createExtract({ platform: 'linux', run: async (cmd, args, { onLine }) => { onLine('gzip: stdin: unexpected end of file'); return { code: 2 }; } });
+  await assert.rejects(failing('/r/node.tar.gz', '/r/node.part'), /Could not unpack node\.tar\.gz: gzip: stdin: unexpected end of file/);
 });
 
 test('findNode takes the first node on PATH, and only Node 24 or newer', async () => {

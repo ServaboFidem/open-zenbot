@@ -73,7 +73,8 @@ function createRun({ spawn, platform, kill = process.kill.bind(process), killTre
 }
 
 // extract(archive, destDir): unpacks as it is, top folder included, with the system tar (Windows 10 and later
-// ship bsdtar as System32\tar.exe, which reads .zip; Linux reads .tar.xz).
+// ship bsdtar as System32\tar.exe, which reads .zip; on Linux the Node.js archive is .tar.gz, which needs only
+// gzip, not xz).
 function createExtract({ run, platform, env = process.env }) {
   const tar = platform === 'win32' ? systemExe(env, 'tar.exe') : 'tar';
   return async (archive, destDir) => {

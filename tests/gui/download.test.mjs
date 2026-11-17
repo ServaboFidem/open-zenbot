@@ -101,4 +101,6 @@ test('pins.json names an https url and a 64-hex sha256 for every platform', () =
     assert.match(pins[tool][plat].sha256, /^[0-9a-f]{64}$/);
   }
   assert.match(pins.node.version, /^24\./);
+  // the system tar unpacks .tar.gz with gzip, which every Linux has; .tar.xz needs xz, which a minimal install may lack
+  assert.equal(pins.node['linux-x64'].url, `https://nodejs.org/dist/v${pins.node.version}/node-v${pins.node.version}-linux-x64.tar.gz`);
 });
