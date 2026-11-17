@@ -104,7 +104,23 @@ test("open() goes only to this repo's release pages", async () => {
   assert.equal(checker.open(), true);
   assert.deepEqual(t.opened, [`${RELEASE_PAGES}tag/v0.2.0`]);
 
-  for (const url of ['https://evil.example/x', 'https://github.com/ServaboFidem/open-zenbot/releases', 'javascript:alert(1)']) {
+  const bad = [
+    'https://evil.example/x', 'https://github.com/ServaboFidem/open-zenbot/releases', 'javascript:alert(1)',
+    `${RELEASE_PAGES}../../../other/repo`, `${RELEASE_PAGES}tag/../../../../other/repo/releases/`,
+    `${RELEASE_PAGES}%2e%2e/%2e%2e/%2e%2e/other/repo`, `${RELEASE_PAGES}%2E%2E/%2E%2E/%2E%2E/other/repo`,
+    `${RELEASE_PAGES}.%2e/x`, `${RELEASE_PAGES}tag%2f..%2f..%2fx`, `${RELEASE_PAGES}tag%2F..`, `${RELEASE_PAGES}x%5c..%5cy`, `${RELEASE_PAGES}x%5C..`,
+    `${RELEASE_PAGES}..\\..\\..\\other\\repo`, 'https://github.com\\ServaboFidem/open-zenbot/releases/tag/v1.0.0',
+    'https://evil.example@github.com/ServaboFidem/open-zenbot/releases/tag/v1.0.0',
+    'https://github.com@evil.example/ServaboFidem/open-zenbot/releases/tag/v1.0.0',
+    'https://user:pw@github.com/ServaboFidem/open-zenbot/releases/tag/v1.0.0',
+    'https://github.com.evil.example/ServaboFidem/open-zenbot/releases/tag/v1.0.0',
+    'https://api.github.com/ServaboFidem/open-zenbot/releases/tag/v1.0.0',
+    'https://github.com:8443/ServaboFidem/open-zenbot/releases/tag/v1.0.0',
+    'http://github.com/ServaboFidem/open-zenbot/releases/tag/v1.0.0',
+    'https://github.com/ServaboFidem/open-zenbot-evil/releases/tag/v1.0.0',
+    'https://github.com/servabofidem/open-zenbot/releases/../../x',
+  ];
+  for (const url of bad) {
     const e = setup({ answer: release('v0.2.0', { html_url: url }) });
     const s = await e.checker.check();
     assert.equal(s.url, null);
@@ -112,9 +128,16 @@ test("open() goes only to this repo's release pages", async () => {
     assert.deepEqual(e.t.opened, []);
   }
   // a stored url from somewhere else is never opened either
-  const f = setup({ stored: { latest: '0.5.0', url: 'https://evil.example/x' } });
-  assert.equal(f.checker.open(), false);
-  assert.deepEqual(f.t.opened, []);
+  for (const url of bad) {
+    const f = setup({ stored: { latest: '0.5.0', url } });
+    assert.equal(f.checker.get().url, null, url);
+    assert.equal(f.checker.open(), false, url);
+    assert.deepEqual(f.t.opened, [], url);
+  }
+  // a good stored link opens as the parsed URL
+  const g = setup({ stored: { latest: '0.5.0', url: `${RELEASE_PAGES}tag/v0.5.0` } });
+  assert.equal(g.checker.open(), true);
+  assert.deepEqual(g.t.opened, ['https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.5.0']);
 });
 
 test('setAuto saves the switch', () => {

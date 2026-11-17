@@ -2,8 +2,8 @@
 // sends a User-Agent with the app version and nothing else about the machine or the user, and never
 // installs anything. fetch(url, {headers, signal}), readStore() -> the saved object or null,
 // writeStore(obj), now() -> ms and openExternal(url) are passed in, so this file needs no Electron.
-// open() takes no argument and opens only a stored link under RELEASE_PAGES: a release's html_url that
-// points anywhere else is dropped when it is read and never offered.
+// open() takes no argument and opens only a stored link under RELEASE_PAGES (safeUrl): a release's html_url that
+// points anywhere else is dropped when it is read from GitHub or from the store, and checked again by open().
 const RELEASES_API = 'https://api.github.com/repos/ServaboFidem/open-zenbot/releases/latest';
 const RELEASE_PAGES = 'https://github.com/ServaboFidem/open-zenbot/releases/';
 const NOTES_MAX = 2000;
@@ -25,7 +25,21 @@ function compareVersions(a, b) {
 }
 
 const bare = v => (typeof v === 'string' && SEMVER.test(v) ? v.replace(/^v/, '') : null);
-const safeUrl = u => (typeof u === 'string' && u.startsWith(RELEASE_PAGES) ? u : null);
+const RELEASE_PATH = new URL(RELEASE_PAGES).pathname;
+
+// The parsed, normalised link when it is a page under this repo's releases on https://github.com, else null. A
+// prefix test on the raw string is not enough: a browser resolves `..`, `%2e%2e` and backslashes into another
+// repository. So the string must hold no backslash and no encoded dot, slash or backslash, the parsed origin must be
+// exactly https://github.com with no user or password, and the parser's normalised path must still be under the
+// releases. The caller opens the parsed href, never the raw string. Used on GitHub's answer and on the stored one.
+function safeUrl(u) {
+  if (typeof u !== 'string' || u.includes('\\') || /%(2e|2f|5c)/i.test(u)) return null;
+  let url;
+  try { url = new URL(u); } catch { return null; }
+  if (url.origin !== 'https://github.com' || url.username || url.password) return null;
+  if (!url.pathname.startsWith(RELEASE_PATH)) return null;
+  return url.href;
+}
 
 function createUpdateChecker({ version, fetch, readStore = () => null, writeStore = () => {}, now = Date.now, openExternal = () => {} }) {
   let saved;       // undefined until read
