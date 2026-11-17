@@ -561,7 +561,13 @@ class Harness:
             return target
         att = Attachment(uuid4().hex[:10], title or Path(path).name, str(target))  # the file's own name, not its numbered copy's
         self.task_attachments.setdefault(session_id, []).append(att)
-        return f"Attached {att.title!r}; it will show under your reply."
+        msg = f"Attached {att.title!r}; it will show under your reply."
+        rev = design_studio.revision_of(self.config.vault_root, target)
+        if rev:  # a studio bot's design: say which pictures stayed as written
+            notes = design_studio.embed_notes(self.config.vault_root, self.config.vault_root / "designs" / rev[0] / rev[2])
+            if notes:
+                msg += " Not embedded: " + "; ".join(notes) + "."
+        return msg
 
     def _in_routine(self, session_id: str) -> bool:
         """A session with no conversation and no room (a routine), or one the harness does not know: nobody is

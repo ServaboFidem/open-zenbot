@@ -5,6 +5,8 @@ import re
 import stat
 from pathlib import Path
 
+from src.harness import design_images
+
 _SUFFIXES = {".html", ".htm"}
 _COPY = re.compile(r"^(\d+)\.(.+\.html?)$", re.IGNORECASE)  # `<n>.<the design file's own name>`
 
@@ -96,7 +98,7 @@ def snapshot(vault_root: Path, target: Path) -> Path | None:
             m = _COPY.match(p.name)
             if m and m.group(2) == name:
                 have.append((int(m.group(1)), p))
-    data = real.read_bytes()
+    data = design_images.embed(real.read_bytes(), real.parent)[0]  # the copy is fixed: its pictures go inside it
     n = 0
     if have:
         n, newest = max(have)  # a number in use stays reserved, whatever sits there
@@ -110,6 +112,46 @@ def snapshot(vault_root: Path, target: Path) -> Path | None:
     except FileExistsError:
         raise SnapshotRefused(f"designs/{parts[0]}/.versions/{copy.name} is already there; attach again") from None
     return copy
+
+
+def _live(vault_root: Path, live: Path) -> Path | None:
+    """The design file `live` names, resolved, when it is one `snapshot` would copy; else None."""
+    try:
+        real = live.resolve(strict=True)
+        parts = real.relative_to(_designs(vault_root)).parts
+    except (OSError, ValueError):
+        return None
+    if len(parts) != 2 or parts[0].startswith(".") or real.suffix.lower() not in _SUFFIXES or not real.is_file():
+        return None
+    return real
+
+
+def is_current(vault_root: Path, live: Path, copy: Path) -> bool:
+    """True when the copy holds exactly what `snapshot` would write for the live file now (its pictures
+    embedded). False when either cannot be read."""
+    real = _live(vault_root, live)
+    if real is None:
+        return False
+    try:
+        return design_images.embed(real.read_bytes(), real.parent)[0] == copy.read_bytes()
+    except OSError:
+        return False
+
+
+def embed_notes(vault_root: Path, live: Path) -> list[str]:
+    """What a bot should fix before the next attach: `images/x.png: <reason>` for each picture left as
+    written, and one line when the copy with its pictures is over BRIDGE_MAX_BYTES (it could not be commented on)."""
+    real = _live(vault_root, live)
+    if real is None:
+        return []
+    try:
+        data, left = design_images.embed(real.read_bytes(), real.parent)
+    except OSError:
+        return []
+    notes = [f"{src}: {why}" for src, why in left]
+    if len(data) > BRIDGE_MAX_BYTES:
+        notes.append("the design is too large to comment on (over 5 MB with its pictures)")
+    return notes
 
 
 def revision_of(vault_root: Path, path: Path) -> tuple[str, int, str] | None:

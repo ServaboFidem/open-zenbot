@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from src.harness.design_studio import SnapshotRefused, comment_block, revision_of, snapshot, with_bridge
+from src.harness.design_studio import (SnapshotRefused, comment_block, embed_notes, is_current, revision_of, snapshot,
+                                       with_bridge)
 
 
 def test_snapshot_numbers_copies_and_skips_an_unchanged_file(tmp_path):
@@ -153,3 +154,58 @@ def test_fresh_folder_refuses_a_linked_designs_folder(tmp_path):
     with pytest.raises(SnapshotRefused):
         fresh_folder(vault, "Honey shop")
     assert list(elsewhere.iterdir()) == []
+
+
+PNG = bytes.fromhex("89504e470d0a1a0a") + b"\0" * 16
+JPEG = b"\xff\xd8\xff\xe0" + b"\0" * 16
+
+
+def _site(tmp_path, html='<img data-zen-id="h" src="images/hero.png">', pic=PNG):
+    d = tmp_path / "designs" / "site"; (d / "images").mkdir(parents=True)
+    (d / "images" / "hero.png").write_bytes(pic)
+    live = d / "index.html"; live.write_text(html, encoding="utf-8")
+    return d, live
+
+
+def test_the_numbered_copy_embeds_pictures_and_the_live_file_keeps_the_reference(tmp_path):
+    d, live = _site(tmp_path)
+    copy = snapshot(tmp_path, live)
+    assert b"data:image/png;base64," in copy.read_bytes() and b"images/hero.png" not in copy.read_bytes()
+    assert "images/hero.png" in live.read_text(encoding="utf-8")
+    assert snapshot(tmp_path, live) == copy and is_current(tmp_path, live, copy)   # same embedded bytes: reused
+
+
+def test_a_changed_picture_makes_a_new_copy_and_the_old_one_keeps_its_picture(tmp_path):
+    d, live = _site(tmp_path)
+    first = snapshot(tmp_path, live)
+    (d / "images" / "hero.png").write_bytes(JPEG)
+    second = snapshot(tmp_path, live)
+    assert second.name == "2.index.html" and first.name == "1.index.html"
+    assert b"data:image/png;base64," in first.read_bytes()
+    assert not is_current(tmp_path, live, first) and is_current(tmp_path, live, second)
+
+
+def test_embed_notes_name_what_was_left_and_an_oversized_copy(tmp_path):
+    d, live = _site(tmp_path, html='<img src="images/gone.png">')
+    assert embed_notes(tmp_path, live) == ["images/gone.png: not found"]
+    big = "".join(f'<img src="images/p{i}.png">' for i in range(4))
+    live.write_text(big, encoding="utf-8")
+    for i in range(4):
+        (d / "images" / f"p{i}.png").write_bytes(PNG + b"\1" * 1_400_000)
+    assert any("too large to comment on" in n for n in embed_notes(tmp_path, live))
+
+
+def test_a_picture_file_is_never_a_design(tmp_path):
+    d, live = _site(tmp_path)
+    assert snapshot(tmp_path, d / "images" / "hero.png") is None
+    assert embed_notes(tmp_path, d / "images" / "hero.png") == []
+    assert not is_current(tmp_path, d / "images" / "hero.png", live)
+
+
+def test_a_design_folder_that_links_out_is_not_followed(tmp_path):
+    out = tmp_path / "elsewhere"; out.mkdir()
+    (out / "index.html").write_text('<img src="images/x.png">', encoding="utf-8")
+    (tmp_path / "designs").mkdir()
+    (tmp_path / "designs" / "site").symlink_to(out, target_is_directory=True)
+    live = tmp_path / "designs" / "site" / "index.html"
+    assert embed_notes(tmp_path, live) == [] and not is_current(tmp_path, live, live)
