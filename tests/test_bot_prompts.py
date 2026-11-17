@@ -216,11 +216,13 @@ def test_the_copywriter_bot_file_works_from_the_conversation_alone():
     assert p.skills == ["humanizer", "clarify-crit"]
     assert "ghostwriter" in p.instructions and "ask the user" in p.instructions
     assert "design_set_text" in p.instructions and "never open" in p.instructions.lower()
+    assert "never call `attach_file` for the design" in p.instructions
 
 
 def test_imageeditor_places_pictures_through_the_tool():
     p = parse(Path("bot-prompts/darkroom-bot.md").read_text(encoding="utf-8"), "darkroom-bot")
     assert "design_set_image" in p.instructions and "design_add_image" in p.instructions
+    assert "never call `attach_file` for the design" in p.instructions
 
 
 def _bot_file(folder: Path, stem: str, name: str) -> None:

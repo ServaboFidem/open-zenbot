@@ -259,7 +259,7 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     takes the revision only as the single winner at or above `ZEN_STUDIO_HELP_MIN` (0.7) inside `ZEN_STUDIO_HELP_BAND`
     (0.1). A scorer error, a missing or malformed answer, two winners or a low score all give the task to the
     Designer; so does a worksheet with nothing in it, or a working file that is not the newest numbered copy
-    (`design_studio.is_current`). Scores are logged either way (`design_part`, event `route`). A form's answers skip
+    (`design_studio.is_current`). When the scorer answers, the scores are logged (`design_part`, event `route`); a scorer failure is an `error` entry (`where: studio_help`) instead. A form's answers skip
     routing: `answers_to`, the session id of the reply that carried the form, sends them to that bot.
   - *One task at a time.* A studio conversation with a task that has not ended answers 409 (`_require_idle`),
     checked again after the scorer answers, since the apply depends on there being one.
