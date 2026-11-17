@@ -54,3 +54,35 @@ export function commentsFor(attId, picks, { fallback } = {}) {
     .map(p => ({ attachment_id: attId, element_id: p.elementId, selector: p.selector, tag: p.tag, text: p.text, note: String(p.note || '').trim() || spare }))
     .filter(c => c.note);
 }
+
+// The exchange a helper answered that the user may send back to the owner: the newest one, a helper's, ended, not
+// set aside, and it attached a design revision. Else null.
+export function redoTarget(exchanges) {
+  const ex = (exchanges || []).at(-1);
+  if (!ex || !ex.bot || !ex.outcome || ex.outcome === 'pending' || ex.set_aside) return null;
+  return designRevisions([ex]).length ? ex : null;
+}
+
+// The attachment id of the version a helper's change started from, by the harness's rule (`_redo_target`): of the
+// same design and file name as the copy `exchange` attached (its first), the one with the highest version below it,
+// taking the first attachment of that version; else null.
+export function startedFrom(exchanges, exchange) {
+  const mine = (exchange?.attachments || []).find(a => typeof a.version === 'number');
+  if (!mine) return null;
+  let best = null;
+  for (const ex of exchanges || []) {
+    if (ex === exchange) break;
+    for (const a of ex.attachments || [])
+      if (typeof a.version === 'number' && a.design === mine.design && a.name === mine.name && a.version < mine.version
+          && (!best || a.version > best.version)) best = a;
+  }
+  return best?.id ?? null;
+}
+
+// Whether starting a task clears the composer and the pending picks: only a message the user wrote there. A routine
+// joins no conversation, a redo re-sends an earlier message, and a form's answers come from the form, so all three
+// leave what the user is writing alone.
+export const clearsComposer = ({ conversation = true, redoOf, answersTo } = {}) => conversation && !redoOf && !answersTo;
+
+// The pending picks a message sends: none with a form's answers, which carry only the answers.
+export const picksSent = (picks, { answersTo } = {}) => (answersTo ? [] : picks);

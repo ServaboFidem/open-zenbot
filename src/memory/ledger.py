@@ -60,6 +60,7 @@ class Kind(StrEnum):
     image = "image"
     routine = "routine"
     delegate = "delegate"
+    design_part = "design_part"
 
 
 def _on_loop(loop: asyncio.AbstractEventLoop) -> bool:

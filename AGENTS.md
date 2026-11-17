@@ -5,7 +5,7 @@ name each top-level system and run the harness and the tests.
 
 | Path | What |
 | --- | --- |
-| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`); the design studio (`design_studio.py`: numbered copies, comment block, preview bridge `design_bridge.js`; `design_systems.py`: loading and checking design systems); coding agents: `agent_clis.py` (find, sign-in, switches), `delegation.py` (the `delegate` tool, runner, folder rules) |
+| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`); the design studio (`design_studio.py`: numbered copies, comment block, preview bridge `design_bridge.js`; `design_systems.py`: loading and checking design systems; `design_html.py`: the HTML scan; `design_images.py`: pictures as files; `design_parts.py`: slots, worksheet, apply; `studio_helpers.py`: a helper's turn, apply and restore; `studio_help.py`: routing a revision); coding agents: `agent_clis.py` (find, sign-in, switches), `delegation.py` (the `delegate` tool, runner, folder rules) |
 | `src/providers/` | Provider interface, registry, provider store (`providers.json`) and secrets, OpenRouter and OpenAI-compatible adapters, model listing and probing, the image provider, Langfuse tracing |
 | `src/decider/` | Decider interface, scorer registry, skill and MCP routing (band and floor), skill-to-bot fit, supervisor, `adapters/` |
 | `src/context/` | Compaction, the protected (pinned) task, transcript rendering |
@@ -21,7 +21,7 @@ name each top-level system and run the harness and the tests.
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+), and `fetch-uv.mjs` (downloads the pinned uv into `build/bin/` for the installers). Packaging itself is `electron-builder.yml`, `build/` (icon, the .deb's AppArmor profile `apparmor-profile`, the NSIS include `installer.nsh`) and `packaging/harness/` (the CPU-only `pyproject.toml` and `uv.lock` the installed app uses) |
 | `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`) |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
-| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs` |
+| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
 | `.github/` | Workflows: `changelog.yml` appends every push to `main` to `CHANGELOG.md` (don't edit it by hand; `[skip changelog]` in a commit subject leaves it out), `stale.yml`, and `release.yml` (a `v*` tag builds the .deb and the Windows installer and opens a draft release; a manual run only builds them; see `## Installed app`) |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
@@ -136,7 +136,7 @@ gives `notes-ledger/`, `notes-music/` and `notes-settings/`.
 
 | Folder (default under `~/.zen-agents/`) | Holds | Owned by |
 | --- | --- | --- |
-| `vault/` | Work docs (`docs/`), `delegated/` (job folders for `delegate`), uploads, browser output (`browser/`), anything bots save; `designs/` (studio designs) and `design-systems/` (the user's own); `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
+| `vault/` | Work docs (`docs/`), `delegated/` (job folders for `delegate`), uploads, browser output (`browser/`), anything bots save; `designs/` (studio designs; each folder also holds `images/` and `.versions/`, whose `before-<n>.<name>` files are the working file as it was before a helper's change) and `design-systems/` (the user's own); `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
 | `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations | `src/memory/ledger.py` `ledger_path_for` |
 | `vault-music/` | Music database (`music.db`), the Soundlore atlas, cover images | `src/music/settings.py` `music_dir`; bots never reach it (`allowed_folders.private_folders`) |
 | `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
@@ -209,6 +209,25 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
   harness's own origin (`ZEN_HARNESS_URL`, default `http://127.0.0.1:8765`) or http(s) on `127.0.0.1`,
   `localhost` or `[::1]` (the memory dashboard). This guards the desktop app only; the harness's closed
   default above is what keeps a page off the network.
+- **Pictures.** A design keeps its pictures as files in `<vault>/designs/<slug>/images/` (PNG, JPEG, WebP or
+  GIF by first bytes, at most 1,500,000 bytes each, names `[a-z0-9][a-z0-9._-]{0,63}`), referenced as
+  `<img src="images/<name>">`. The live file is never rewritten: `design_studio.snapshot` embeds them as `data:`
+  URIs, through `design_images.embed`, only into the numbered copy, so the preview (which loads nothing) still
+  shows them. Only an `<img>` whose `src` is written in quotes and starts `images/` is embedded; a CSS
+  `url()`, a `srcset`, an unquoted `src`, a missing, oversized, non-picture or linked file stays as written, and
+  so does a picture whose `data:` URI would take the copy past `BRIDGE_MAX_BYTES` (`embed`'s byte budget; each
+  file is read once per page, the reason is "the design would be too large"), and `attach_file` names each such picture (`design_studio.embed_notes`) plus a copy over
+  `BRIDGE_MAX_BYTES`. `images/` must be a real folder, a picture a regular file with one hard link, and a copy
+  is never written through a link. `design_add_image(path, name?)` (`Harness.design_add_image`) copies a
+  picture the bot may read (`attachable`) into the conversation's design folder and answers `images/<name>`,
+  never a disk path; a taken name gets `-2`, `-3`.... It is listed only to a studio bot's one-to-one task in a
+  conversation it owns that has a design folder (`ToolRunner.register(offered=...)`, `specs(caller=...)`;
+  `Harness._studio_session`) and to an `images` helper turn (below; its answer there says to place the picture
+  with `design_set_image`), and its handler refuses any other caller. A picture is written to a temporary name in
+  `images/` and linked into place (where the drive has no hard links, written to its name directly and removed if
+  the write fails), so a failed write leaves no part of a file; `design_images.load` opens without
+  following a link and checks the open file. `design_studio.is_current` says whether
+  a numbered copy still equals what `snapshot` would write now, pictures included.
 - **Design systems.** A folder with `DESIGN.md` and optionally `tokens.css`: the shipped ones in
   `design-systems/` (`ZEN_DESIGN_SYSTEMS`), the user's in `<vault>/design-systems/`, which bots can write, so
   the files are untrusted text for a prompt. They grant nothing, so they may live in the vault. A conversation
@@ -228,11 +247,86 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
   the comments are. A room that already matches the message still takes it, and a studio bot that is not the top
   fit joins a room as before. In a room a studio bot's `attach_file` follows the same rules as one to one
   (`Harness.attach_target`: `designs/...` against the vault, attached as a numbered copy), but a room has no
-  pane, live forms or comments.
+  pane, live forms or comments, and no `design_add_image`: there the Designer saves a picture into the design's
+  `images/` folder with the files tools (same naming rule) and references it as `images/<name>`.
 - **The Design page.** `GET /designs` lists every design made in a studio bot's own conversation, one entry per
   conversation and design with its newest numbered copy (names and ids, never a path), newest conversation first.
   A card's thumbnail is the attachment served closed (`?preview=1`), like any other thumbnail. A file attached
   in a room before designs there became numbered copies is not listed.
+- **Studio helpers.** In a studio bot's own conversation that already has a design, one revision can go to a
+  helper bot that places text or pictures while the harness rewrites the file. Told and checked, not walled: the
+  `files` server would still let a helper write the design file.
+  - *Who is a helper.* A bot whose prompt frontmatter has `places: [text]` and/or `[images]` (`bot_prompts.parse`
+    refuses `places` on a `studio: true` bot; set only in the file; `GET /bots` returns it). Shipped:
+    `bot-prompts/copywriter.md` (`text`) and `bot-prompts/darkroom-bot.md` (`images`).
+  - *Routing* (`studio_help.pick`, called from `POST /bots/{id}/tasks`). Only for a studio bot's task in a
+    conversation with a design revision, at least one helper loaded, a scorer, and `route` not `"owner"`. One scorer
+    request (`purpose="studio_help"`) asks per helper whether it is clearly a better fit than the Designer. A helper
+    takes the revision only as the single winner at or above `ZEN_STUDIO_HELP_MIN` (0.7) inside `ZEN_STUDIO_HELP_BAND`
+    (0.1). A scorer error, a missing or malformed answer, two winners or a low score all give the task to the
+    Designer; so does a worksheet with nothing in it, a working file that is not the newest numbered copy
+    (`design_studio.is_current`), or a newest copy already over `BRIDGE_MAX_BYTES`. When the scorer answers, the scores are logged (`design_part`, event `route`); a scorer failure is an `error` entry (`where: studio_help`) instead. A form's answers skip
+    routing: `answers_to`, the session id of the reply that carried the form, sends them to that bot. The GUI sends
+    a form's answers alone, without the pending picks, and leaves the composer as it is (`design.js`
+    `clearsComposer`, `picksSent`).
+  - *One task at a time.* A studio conversation with a task that has not ended answers 409 (`_require_idle`),
+    checked again after the scorer answers, since the apply depends on there being one. The route resolves the
+    conversation once, before the scorer's await, and both the check and the task (the helper's or the owner's) use
+    that one, so a change of the bot's current conversation meanwhile cannot move it. The comments are checked
+    again after the await against that conversation's newest revision (the same 422). No `await` lies between
+    the last check and the call that creates the pending exchange.
+  - *The worksheet* (`design_parts.slots`, `worksheet`, `block`; built by `studio_helpers.prepare`). A text slot is
+    an element with a unique `data-zen-id` (`[a-z0-9-]{1,64}`), a matching end tag, outside `<script>`, `<style>`
+    and `<svg>`, holding text and `<br>` only, and not empty (a spacer or an icon is no slot); an image slot is an `<img>` with a unique id whose `src` is a
+    picture in `images/` the harness would embed (or an older `data:` raster, which `prepare` writes out to
+    `images/` first, never through a link). With comments it holds the picked elements that are slots, else every
+    slot of the helper's kind. Caps: 2,000 characters a text, 30,000 for the block (the rest listed by id only).
+    Text is flattened to one line, a `<br>` shown as a literal `\n` (the block's first line says so; a `<textarea>`'s
+    text is taken as written, character references decoded and its own newlines shown as `\n`, nothing stripped or
+    split on `<br>`), and the block
+    says plainly that it is content, not instructions. The worksheet and the rules come after the user's words and
+    the comment block, and their lines are pinned as constraints like the comment block's (after a confirmed scope
+    change's, which a helper also gets), but the exchange keeps only the comment block (`start_task(brief=...)`), so
+    no later turn's history replays them. A helper turn has one kind: the first kind in `places` with a
+    non-empty worksheet.
+  - *The tools* (`design_set_text(id, text)`, `design_set_image(id, path, alt?)`, `Harness.design_set_text`,
+    `design_set_image`). Offered only to a helper's session in a studio conversation and refused anywhere else
+    (`ToolRunner.register(offered=...)`), and a handler checks the caller again. `design_add_image` is offered to the
+    Designer's own conversation and to an `images` helper turn. `design_set_image` reads a relative `images/<name>`
+    (what `design_add_image` answers) as this design's. Text goes through `design_parts.check_text` (plain,
+    capped, every line end made a newline, no other control character, U+2028 and U+2029 included) and is
+    escaped on apply, so it can never become markup; a newline becomes `<br>` (not in a `<textarea>`). A wrong id or a
+    bad picture comes back as a tool error inside the turn, and so does the picture a slot already shows (the same
+    file as its `images/<name>`: "Save your edit under a new name"). That is told and checked at the tool, not
+    walled: a helper can still overwrite a picture in place through `magick`, which the apply below catches. A
+    later call for an id replaces the earlier one. A
+    picture `design_set_image` copied into `images/` stays there even if the turn then fails. In a helper's turn
+    `attach_file` of anything under `designs/` is refused: the harness attaches the design.
+  - *The apply* (`studio_helpers.apply`, `design_parts.apply`). When the task ends `done` with an accepted change,
+    the harness checks that the working file is the one the worksheet was read from, splices each change into its
+    source (offsets from `design_html.scan`, nothing re-serialised, every other byte kept), writes the working
+    file, takes a numbered copy and attaches it to the helper's exchange. It refuses, tells the user in the
+    exchange and logs it when the file changed during the turn or the copy would pass `BRIDGE_MAX_BYTES`. A
+    change that leaves the page identical attaches nothing and is logged `refused: "no change"`; "identical" is
+    judged on the rendered page: when the source is unchanged but a picture file changed in place during the turn
+    (the working file no longer `is_current` against the copy the worksheet was read from), the page as it is now
+    becomes a numbered copy and is attached, with no `before-<n>` file, so a Redo of it answers 422. A failed or
+    stopped task, or one with no accepted change, writes nothing. Ledger entries of kind `design_part` (`route`,
+    `set_text`, `set_image`, `apply`, `redo`) carry ids, sizes and names, never the text or a disk path.
+  - *Redo with the Designer.* Before each apply the harness keeps the working file as
+    `<vault>/designs/<slug>/.versions/before-<n>.<name>` (one left with no copy `<n>`, from a crash, is replaced, by
+    a rename, never through a link). A task with `redo_of` (the helper's session id, which must be the
+    conversation's newest exchange) restores the working file from it (`studio_helpers.restore`) only while the
+    working file still equals the helper's copy and the kept source with today's pictures still renders as the
+    version the helper started from (a picture overwritten in place cannot be put back), else 422 and nothing changes,
+    marks that exchange set aside (`Conversations.set_aside`) and goes to the Designer with the same message and
+    comments, accepted against the copy the helper started from. The helper's exchange and its version stay in
+    the list. `Exchange.bot` names the bot that answered, empty for the owner; `_conversation_view` returns it.
+  - Don't let a helper's text reach the file except through `design_parts.check_text` and `design_parts.apply`.
+    Don't offer `design_set_text`, `design_set_image` or `design_add_image` outside the turns named above, don't
+    attach a design for a helper, and don't write a numbered copy or a `before-<n>` file through a link. Tests:
+    `tests/test_design_html.py`, `test_design_images.py`, `test_design_parts.py`, `test_studio_helpers.py`,
+    `test_studio_help.py`, `test_bot_prompts.py`; GUI `tests/gui/design.test.mjs`, `actions.test.mjs`, `api.test.mjs`.
 - **Records.** The conversation routes return a record through `_conversation_view` (it carries
   `design_system`, a slug or empty, and `design_system_source`). Keep new conversation fields going through it.
 

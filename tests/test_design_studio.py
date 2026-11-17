@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from src.harness.design_studio import SnapshotRefused, comment_block, revision_of, snapshot, with_bridge
+from src.harness.design_studio import (BRIDGE_MAX_BYTES, SnapshotRefused, comment_block, embed_notes, is_current, revision_of, snapshot,
+                                       with_bridge)
 
 
 def test_snapshot_numbers_copies_and_skips_an_unchanged_file(tmp_path):
@@ -153,3 +154,136 @@ def test_fresh_folder_refuses_a_linked_designs_folder(tmp_path):
     with pytest.raises(SnapshotRefused):
         fresh_folder(vault, "Honey shop")
     assert list(elsewhere.iterdir()) == []
+
+
+PNG = bytes.fromhex("89504e470d0a1a0a") + b"\0" * 16
+JPEG = b"\xff\xd8\xff\xe0" + b"\0" * 16
+
+
+def _site(tmp_path, html='<img data-zen-id="h" src="images/hero.png">', pic=PNG):
+    d = tmp_path / "designs" / "site"; (d / "images").mkdir(parents=True)
+    (d / "images" / "hero.png").write_bytes(pic)
+    live = d / "index.html"; live.write_text(html, encoding="utf-8")
+    return d, live
+
+
+def test_the_numbered_copy_embeds_pictures_and_the_live_file_keeps_the_reference(tmp_path):
+    d, live = _site(tmp_path)
+    copy = snapshot(tmp_path, live)
+    assert b"data:image/png;base64," in copy.read_bytes() and b"images/hero.png" not in copy.read_bytes()
+    assert "images/hero.png" in live.read_text(encoding="utf-8")
+    assert snapshot(tmp_path, live) == copy and is_current(tmp_path, live, copy)   # same embedded bytes: reused
+
+
+def test_a_changed_picture_makes_a_new_copy_and_the_old_one_keeps_its_picture(tmp_path):
+    d, live = _site(tmp_path)
+    first = snapshot(tmp_path, live)
+    (d / "images" / "hero.png").write_bytes(JPEG)
+    second = snapshot(tmp_path, live)
+    assert second.name == "2.index.html" and first.name == "1.index.html"
+    assert b"data:image/png;base64," in first.read_bytes()
+    assert not is_current(tmp_path, live, first) and is_current(tmp_path, live, second)
+
+
+def test_embed_notes_name_what_was_left_and_an_oversized_copy(tmp_path):
+    d, live = _site(tmp_path, html='<img src="images/gone.png">')
+    assert embed_notes(tmp_path, live) == ["images/gone.png: not found"]
+    big = "".join(f'<img src="images/p{i}.png">' for i in range(4))
+    live.write_text(big, encoding="utf-8")
+    for i in range(4):
+        (d / "images" / f"p{i}.png").write_bytes(PNG + b"\1" * 1_400_000)
+    # two fit in the copy; the others would take it past BRIDGE_MAX_BYTES, so they stay as written
+    assert embed_notes(tmp_path, live) == [f"images/p{i}.png: the design would be too large" for i in (2, 3)]
+    live.write_text(big + "x" * BRIDGE_MAX_BYTES, encoding="utf-8")  # the page alone is over
+    notes = embed_notes(tmp_path, live)
+    assert notes[-1] == "the design is too large to comment on (over 5 MB)" and len(notes) == 5
+
+
+def test_a_picture_file_is_never_a_design(tmp_path):
+    d, live = _site(tmp_path)
+    assert snapshot(tmp_path, d / "images" / "hero.png") is None
+    assert embed_notes(tmp_path, d / "images" / "hero.png") == []
+    assert not is_current(tmp_path, d / "images" / "hero.png", live)
+
+
+def test_a_design_folder_that_links_out_is_not_followed(tmp_path):
+    out = tmp_path / "elsewhere"; out.mkdir()
+    (out / "index.html").write_text('<img src="images/x.png">', encoding="utf-8")
+    (tmp_path / "designs").mkdir()
+    (tmp_path / "designs" / "site").symlink_to(out, target_is_directory=True)
+    live = tmp_path / "designs" / "site" / "index.html"
+    assert embed_notes(tmp_path, live) == [] and not is_current(tmp_path, live, live)
+
+
+def test_keep_before_keeps_the_source_for_the_copy_about_to_be_made(tmp_path):
+    from src.harness.design_studio import before_of, keep_before, next_number
+
+    d, live = _site(tmp_path)
+    assert next_number(tmp_path, live) == 1
+    one = snapshot(tmp_path, live)
+    assert next_number(tmp_path, live) == 2
+    kept = keep_before(tmp_path, live, 2, b"<p>old</p>")
+    assert kept == d / ".versions" / "before-2.index.html" and kept.read_bytes() == b"<p>old</p>"
+    assert revision_of(tmp_path, kept) is None and next_number(tmp_path, live) == 2  # never counted as a copy
+    assert keep_before(tmp_path, live, 2, b"<p>old</p>") == kept  # no copy 2 yet: a kept source there is replaced
+    assert kept.read_bytes() == b"<p>old</p>"
+    live.write_text("<p>new</p>")
+    two = snapshot(tmp_path, live)
+    assert before_of(tmp_path, two) == kept and before_of(tmp_path, one) is None
+    assert before_of(tmp_path, kept) is None
+
+
+def test_keep_before_refuses_a_linked_versions_folder_and_a_non_design(tmp_path):
+    from src.harness.design_studio import keep_before, next_number
+
+    d, live = _site(tmp_path)
+    elsewhere = tmp_path / "elsewhere"; elsewhere.mkdir()
+    (d / ".versions").symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(SnapshotRefused, match="link"):
+        keep_before(tmp_path, live, 1, b"x")
+    with pytest.raises(SnapshotRefused, match="link"):
+        next_number(tmp_path, live)
+    assert list(elsewhere.iterdir()) == []
+    with pytest.raises(SnapshotRefused):
+        keep_before(tmp_path, d / "images" / "hero.png", 1, b"x")
+
+
+def test_before_of_ignores_a_kept_source_that_is_a_link(tmp_path):
+    from src.harness.design_studio import before_of
+
+    d, live = _site(tmp_path)
+    snapshot(tmp_path, live)
+    live.write_text("<p>two</p>")
+    two = snapshot(tmp_path, live)
+    (d / ".versions" / "before-2.index.html").symlink_to(live)
+    assert before_of(tmp_path, two) is None
+
+
+def test_keep_before_replaces_a_stale_kept_source_whose_copy_was_never_made(tmp_path):
+    from src.harness.design_studio import keep_before
+
+    d, live = _site(tmp_path)
+    snapshot(tmp_path, live)
+    stale = d / ".versions" / "before-2.index.html"
+    stale.write_bytes(b"<p>crashed</p>")  # kept, then the copy was never made
+    kept = keep_before(tmp_path, live, 2, b"<p>now</p>")
+    assert kept == stale and kept.read_bytes() == b"<p>now</p>"
+    assert sorted(p.name for p in (d / ".versions").iterdir()) == ["1.index.html", "before-2.index.html"]
+    # with copy 2 there, the kept source is its own and stays
+    live.write_text("<p>two</p>")
+    snapshot(tmp_path, live)
+    with pytest.raises(SnapshotRefused, match="already there"):
+        keep_before(tmp_path, live, 2, b"<p>other</p>")
+    assert kept.read_bytes() == b"<p>now</p>"
+
+
+def test_keep_before_replaces_a_stale_link_without_writing_through_it(tmp_path):
+    from src.harness.design_studio import keep_before
+
+    d, live = _site(tmp_path)
+    snapshot(tmp_path, live)
+    target = tmp_path / "outside.html"
+    target.write_bytes(b"outside")
+    (d / ".versions" / "before-2.index.html").symlink_to(target)
+    kept = keep_before(tmp_path, live, 2, b"<p>now</p>")
+    assert not kept.is_symlink() and kept.read_bytes() == b"<p>now</p>" and target.read_bytes() == b"outside"

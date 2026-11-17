@@ -206,8 +206,9 @@ def test_the_designer_bot_file_is_a_studio_bot():
     assert p.studio is True and p.skills[0] == "design-studio" and p.mcps == ["files"]
     assert {"frontend-design", "high-end-visual-design", "design-everyday-things", "hooked-ux", "improve-retention", "drive-motivation"} <= set(p.skills)
     assert "Never use `shell`" not in p.instructions  # its skills' reference files are read with the shell
-    for must in ("designs/", "data-zen-id", "attach_file", "question-form", "create_directory", "edit_file"):
+    for must in ("designs/", "data-zen-id", "attach_file", "question-form", "create_directory", "edit_file", "every element that holds text"):
         assert must in p.instructions
+    assert "When `design_add_image` is not among your tools (in a room), save the picture into the design's `images/` folder" in p.instructions
 
 
 def test_the_copywriter_bot_file_works_from_the_conversation_alone():
@@ -215,6 +216,16 @@ def test_the_copywriter_bot_file_works_from_the_conversation_alone():
     assert p.name == "Copywriter" and p.studio is False and p.mcps is None
     assert p.skills == ["humanizer", "clarify-crit"]
     assert "ghostwriter" in p.instructions and "ask the user" in p.instructions
+    assert "design_set_text" in p.instructions and "never open" in p.instructions.lower()
+    assert "never call `attach_file` for the design" in p.instructions
+    assert "A `\\n` in a line of the list is a line break" in p.instructions
+
+
+def test_imageeditor_places_pictures_through_the_tool():
+    p = parse(Path("bot-prompts/darkroom-bot.md").read_text(encoding="utf-8"), "darkroom-bot")
+    assert "design_set_image" in p.instructions and "design_add_image" in p.instructions
+    assert "never call `attach_file` for the design" in p.instructions
+    assert "Never overwrite a picture that is on the page" in p.instructions
 
 
 def _bot_file(folder: Path, stem: str, name: str) -> None:
@@ -280,3 +291,25 @@ async def test_a_new_bot_never_takes_a_shipped_bots_id_in_user_content_mode(monk
     assert set(h.bots) == {"designer", "designer-2"}
     again = build_harness(cfg)
     assert {b.id: b.role for b in again.bots.values()} == {"designer": "Role of Designer", "designer-2": "Mine"}
+
+
+def test_places_is_parsed_and_checked():
+    head = "---\nname: W\nrole: R\n{}---\nGo."
+    assert parse(head.format("places: [text, images]\n"), "w").places == ["text", "images"]
+    assert parse(head.format(""), "w").places == []
+    for bad in ("places: text\n", "places: [video]\n", "places: [text]\nstudio: true\n"):
+        with pytest.raises(ValueError):
+            parse(head.format(bad), "w")
+
+
+def test_the_shipped_helpers_say_what_they_place():
+    load = lambda stem: parse(Path(f"bot-prompts/{stem}.md").read_text(encoding="utf-8"), stem)
+    assert load("copywriter").places == ["text"] and load("darkroom-bot").places == ["images"] and load("designer").places == []
+
+
+def test_places_round_trips_and_is_kept_when_a_bot_is_saved_from_the_app(tmp_path: Path):
+    p = parse("---\nname: W\nrole: R\nplaces: [images]\n---\nGo.", "w")
+    assert parse(render(p), "w").places == ["images"]
+    assert "places" not in render(parse("---\nname: W\nrole: R\n---\nGo.", "w"))
+    from src.harness.bot import Bot
+    assert Bot(name="W", role="R", places=["text"]).to_dict()["places"] == ["text"]

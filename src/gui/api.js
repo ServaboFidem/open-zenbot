@@ -114,8 +114,8 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     patchBot: (id, body) => call('PATCH', `/bots/${enc(id)}`, body),
     // A task joins the bot's current conversation (or the one named); a routine passes conversation: false.
     // designComments: notes on elements of the newest design revision, sent only when there are some.
-    startTask: (botId, task, { conversationId, conversation = true, protected: block, designComments } = {}) =>
-      post(`/bots/${enc(botId)}/tasks`, { task, ...(conversationId ? { conversation_id: conversationId } : {}), conversation, ...(block ? { protected: block } : {}), ...(designComments?.length ? { design_comments: designComments } : {}) }),
+    startTask: (botId, task, { conversationId, conversation = true, protected: block, designComments, route, answersTo, redoOf } = {}) =>
+      post(`/bots/${enc(botId)}/tasks`, { task, ...(conversationId ? { conversation_id: conversationId } : {}), conversation, ...(block ? { protected: block } : {}), ...(designComments?.length ? { design_comments: designComments } : {}), ...(route ? { route } : {}), ...(answersTo ? { answers_to: answersTo } : {}), ...(redoOf ? { redo_of: redoOf } : {}) }),
     // conversations
     conversations: botId => get(`/bots/${enc(botId)}/conversations`),
     designs: () => get('/designs'),  // every design made in a studio bot's conversation, newest first

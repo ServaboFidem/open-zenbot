@@ -1,9 +1,13 @@
 """Design studio: each attached design is one fixed revision, a numbered copy kept beside the file."""
 from __future__ import annotations
 
+import os
 import re
 import stat
 from pathlib import Path
+from uuid import uuid4
+
+from src.harness import design_images
 
 _SUFFIXES = {".html", ".htm"}
 _COPY = re.compile(r"^(\d+)\.(.+\.html?)$", re.IGNORECASE)  # `<n>.<the design file's own name>`
@@ -85,18 +89,11 @@ def snapshot(vault_root: Path, target: Path) -> Path | None:
         return None
     if len(parts) != 2 or parts[0].startswith(".") or real.suffix.lower() not in _SUFFIXES or not real.is_file():
         return None
-    vdir = real.parent / ".versions"
     # a symlinked .versions would send the copy elsewhere; refuse before any read, mkdir or write
-    if vdir.is_symlink() or (vdir.exists() and vdir.resolve() != vdir):
-        raise SnapshotRefused(f"designs/{parts[0]}/.versions is a link or not a folder; remove it and attach again")
+    vdir = _versions(real, parts[0])
     name = real.name
-    have: list[tuple[int, Path]] = []
-    if vdir.is_dir():
-        for p in vdir.iterdir():
-            m = _COPY.match(p.name)
-            if m and m.group(2) == name:
-                have.append((int(m.group(1)), p))
-    data = real.read_bytes()
+    have = _copies(vdir, name)
+    data = design_images.embed(real.read_bytes(), real.parent, BRIDGE_MAX_BYTES)[0]  # the copy is fixed: its pictures go inside it
     n = 0
     if have:
         n, newest = max(have)  # a number in use stays reserved, whatever sits there
@@ -110,6 +107,117 @@ def snapshot(vault_root: Path, target: Path) -> Path | None:
     except FileExistsError:
         raise SnapshotRefused(f"designs/{parts[0]}/.versions/{copy.name} is already there; attach again") from None
     return copy
+
+
+def _copies(vdir: Path, name: str) -> list[tuple[int, Path]]:
+    have: list[tuple[int, Path]] = []
+    if vdir.is_dir():
+        for p in vdir.iterdir():
+            m = _COPY.match(p.name)
+            if m and m.group(2) == name:
+                have.append((int(m.group(1)), p))
+    return have
+
+
+def _versions(real: Path, slug: str) -> Path:
+    """The design's `.versions` folder, refused when it is a link or not a folder (as `snapshot` refuses it)."""
+    vdir = real.parent / ".versions"
+    if vdir.is_symlink() or (vdir.exists() and vdir.resolve() != vdir):
+        raise SnapshotRefused(f"designs/{slug}/.versions is a link or not a folder; remove it and attach again")
+    return vdir
+
+
+def next_number(vault_root: Path, live: Path) -> int:
+    """The number the next new numbered copy of this design file takes. Raises SnapshotRefused for a path
+    that is not a design or a linked `.versions`."""
+    real = _live(vault_root, live)
+    if real is None:
+        raise SnapshotRefused("not a design file")
+    have = _copies(_versions(real, real.parent.name), real.name)
+    return max(have)[0] + 1 if have else 1
+
+
+def keep_before(vault_root: Path, live: Path, n: int, source: bytes) -> Path:
+    """Keep the design file's source as it was before a helper's change: `.versions/before-<n>.<name>`,
+    where `<n>` is the number of the copy the change is about to make. Never overwrites or follows what is
+    at the name. A kept source left with no copy `<n>` (the copy was never made) is stale and is replaced:
+    written beside it, then renamed over it, which replaces a link rather than writing through it. Raises
+    SnapshotRefused (the message names no disk path) or OSError."""
+    real = _live(vault_root, live)
+    if real is None:
+        raise SnapshotRefused("not a design file")
+    vdir = _versions(real, real.parent.name)
+    vdir.mkdir(exist_ok=True)
+    kept = vdir / f"before-{n}.{real.name}"
+    try:
+        with open(kept, "xb") as out:  # exclusive, as the numbered copies are
+            out.write(source)
+        return kept
+    except FileExistsError:
+        if any(k == n for k, _ in _copies(vdir, real.name)):
+            raise SnapshotRefused(f"designs/{real.parent.name}/.versions/{kept.name} is already there") from None
+    tmp = vdir / f".{kept.name}.{uuid4().hex[:8]}.tmp"
+    try:
+        with open(tmp, "xb") as out:
+            out.write(source)
+        os.replace(tmp, kept)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return kept
+
+
+def before_of(vault_root: Path, copy: Path) -> Path | None:
+    """The source kept before the helper's change that made this numbered copy, when there is one."""
+    rev = revision_of(vault_root, copy)
+    if rev is None:
+        return None
+    vdir = _designs(vault_root) / rev[0] / ".versions"
+    if vdir.is_symlink() or not vdir.is_dir():
+        return None
+    kept = vdir / f"before-{rev[1]}.{rev[2]}"
+    return kept if _fixed(kept) else None
+
+
+def _live(vault_root: Path, live: Path) -> Path | None:
+    """The design file `live` names, resolved, when it is one `snapshot` would copy; else None."""
+    try:
+        real = live.resolve(strict=True)
+        parts = real.relative_to(_designs(vault_root)).parts
+    except (OSError, ValueError):
+        return None
+    if len(parts) != 2 or parts[0].startswith(".") or real.suffix.lower() not in _SUFFIXES or not real.is_file():
+        return None
+    return real
+
+
+def is_current(vault_root: Path, live: Path, copy: Path) -> bool:
+    """True when the copy holds exactly what `snapshot` would write for the live file now (its pictures
+    embedded). False when either cannot be read."""
+    real = _live(vault_root, live)
+    if real is None:
+        return False
+    try:
+        return design_images.embed(real.read_bytes(), real.parent, BRIDGE_MAX_BYTES)[0] == copy.read_bytes()
+    except OSError:
+        return False
+
+
+def embed_notes(vault_root: Path, live: Path) -> list[str]:
+    """What a bot should fix before the next attach: `images/x.png: <reason>` for each picture left as
+    written (one that would take the copy past BRIDGE_MAX_BYTES among them), and one line when the copy is
+    over BRIDGE_MAX_BYTES even so (it could not be commented on)."""
+    real = _live(vault_root, live)
+    if real is None:
+        return []
+    try:
+        data, left = design_images.embed(real.read_bytes(), real.parent, BRIDGE_MAX_BYTES)
+    except OSError:
+        return []
+    notes = [f"{src}: {why}" for src, why in left]
+    if len(data) > BRIDGE_MAX_BYTES:
+        notes.append("the design is too large to comment on (over 5 MB)")
+    return notes
 
 
 def revision_of(vault_root: Path, path: Path) -> tuple[str, int, str] | None:
@@ -143,7 +251,7 @@ def comment_block(file: str, version: int, comments: list[dict[str, str]]) -> st
 
 
 # the studio page is framed with the preview policy; the app picks elements through this one script
-BRIDGE_MAX_BYTES = 5 * 1024 * 1024
+BRIDGE_MAX_BYTES = design_images.PAGE_MAX_BYTES
 _BRIDGE = (b"<script data-zen-bridge>" + (Path(__file__).with_name("design_bridge.js")).read_bytes().strip()
            + b"</script>")
 _BODY_CLOSE = re.compile(rb"</body\s*>", re.IGNORECASE)

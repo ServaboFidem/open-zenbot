@@ -26,7 +26,7 @@ Checkable rules that separate a designed page from default model output.
   unexpected section: a full-bleed quote, pricing set against the status quo, a
   small inline demo.
 - Placeholder image sites (unsplash, placehold.co, picsum). They also cannot load
-  in the preview. Use a flat tinted block, an inline SVG or a `data:` image.
+  in the preview. Use a flat tinted block, an inline SVG or a picture file added with `design_add_image`.
 - More than about 12 raw hex values outside `:root`: the tokens were ignored.
 - `var(--accent)` used six or more times on one screen. Cap it at two.
 
@@ -34,7 +34,7 @@ Checkable rules that separate a designed page from default model output.
 
 - Decorative blob or wave backgrounds that mean nothing.
 - Perfect symmetry with no tension. Alternate dense and airy sections.
-- Sections or elements with no `data-zen-id`, which the user cannot point at.
+- Sections or elements with no `data-zen-id`, which the user cannot point at, and text elements with no id, which a writer cannot reach.
 
 ## Adding soul
 

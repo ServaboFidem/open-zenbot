@@ -55,12 +55,19 @@ class Exchange:
     attachments: list[dict[str, str]] = field(default_factory=list)  # {id, title, path}: files the bot attached; path never leaves the harness
     comments: list[dict[str, str]] = field(default_factory=list)  # the user's design comments, as the chat shows them
     addendum: str = ""  # the comment block the bot read after the user's text; the GUI never gets it
+    bot: str = ""  # the bot that answered, when it is not the conversation's owner
+    set_aside: bool = False  # a helper's change the user sent back to the owner
 
 
 def reply_text(ex: Exchange) -> str:
     text = _reply_text(ex)
     if ex.attachments:  # the bot knows, next turn, which files the user already has
         text += "\n(Attached: " + "; ".join(f"{a['title']} ({Path(a['path']).name})" for a in ex.attachments) + ")"
+    if ex.bot and ex.outcome == "done" and ex.attachments:
+        # a helper changed the design: the owner reads which bot did, and whether the user sent it back
+        text = f"({ex.bot} changed the design) {text}"
+        if ex.set_aside:
+            text += " (These changes were set aside.)"
     return text
 
 
@@ -232,7 +239,7 @@ class Conversations:
 
     def begin(
         self, owner: str, user_text: str, session_id: str = "", conv_id: str | None = None,
-        comments: list[dict[str, str]] | None = None, addendum: str = "",
+        comments: list[dict[str, str]] | None = None, addendum: str = "", bot: str = "",
     ) -> tuple[Conversation, Exchange]:
         c = self.get(conv_id) if conv_id else self.current(owner)
         if conv_id and (c is None or c.owner != owner):
@@ -241,7 +248,8 @@ class Conversations:
             c = self.start_new(owner)
         if not c.title:
             c.title = title_of(user_text)
-        ex = Exchange(user=user_text, session_id=session_id, comments=list(comments or []), addendum=addendum)
+        ex = Exchange(user=user_text, session_id=session_id, comments=list(comments or []), addendum=addendum,
+                      bot=bot)
         c.exchanges.append(ex)
         self._touch(c)
         return c, ex
@@ -256,6 +264,17 @@ class Conversations:
                 ex.outcome, ex.reply = outcome, reply
                 if attachments:
                     ex.attachments = list(attachments)
+                self._touch(c)
+                return
+
+    def set_aside(self, conv_id: str, session_id: str) -> None:
+        """Mark a helper's exchange as sent back to the owner, so the owner's history says so."""
+        c = self._by_id.get(conv_id)
+        if c is None or not session_id:
+            return
+        for ex in c.exchanges:
+            if ex.session_id == session_id:
+                ex.set_aside = True
                 self._touch(c)
                 return
 

@@ -72,6 +72,7 @@ class Session:
     scope_pending: dict[str, Any] | None = None  # a scope change waiting for the user
     context: str = ""  # this task's recalled facts and skills; kept out of compaction, not serialised
     conversation_id: str = ""  # the conversation this session belongs to; empty outside conversations
+    conversation_owner: str = ""  # the conversation's owner bot id; empty outside conversations
     room_id: str = ""  # the room this session is a turn of; empty outside rooms
     recall_query: str = ""  # what recall searches; empty means the task (a room turn's task is the whole thread)
     pinned_skills: list[str] = field(default_factory=list)  # skill slugs a routine forces; the selector is skipped
@@ -103,6 +104,7 @@ class Session:
             "scope_pending": self.scope_pending,
             "room_id": self.room_id,
             "conversation_id": self.conversation_id,
+            "conversation_owner": self.conversation_owner,
             "created_at": self.created_at,
             "messages": [m.to_dict() for m in self.messages],
         }
@@ -233,7 +235,8 @@ class TaskLoop:
             self.ledger.append(Kind.session, bot.id, session.id, event=str(session.state), steps=session.steps)
 
     async def _drive(self, bot: Bot, session: Session, skills: list[Skill]) -> None:
-        specs = self.tools.specs(allowed_tool_groups(session.route), room=bool(session.room_id))
+        specs = self.tools.specs(allowed_tool_groups(session.route), room=bool(session.room_id),
+                                  caller=(session.bot_id, session.id))
         while session.steps < self.max_steps:
             if session.stop_requested:
                 session.state = SessionState.stopped
