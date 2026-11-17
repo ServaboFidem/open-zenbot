@@ -217,6 +217,7 @@ def test_the_copywriter_bot_file_works_from_the_conversation_alone():
     assert "ghostwriter" in p.instructions and "ask the user" in p.instructions
     assert "design_set_text" in p.instructions and "never open" in p.instructions.lower()
     assert "never call `attach_file` for the design" in p.instructions
+    assert "A `\\n` in a line of the list is a line break" in p.instructions
 
 
 def test_imageeditor_places_pictures_through_the_tool():

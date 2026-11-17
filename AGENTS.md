@@ -221,7 +221,10 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
   picture the bot may read (`attachable`) into the conversation's design folder and answers `images/<name>`,
   never a disk path; a taken name gets `-2`, `-3`.... It is listed only to a studio bot's one-to-one task in a
   conversation it owns that has a design folder (`ToolRunner.register(offered=...)`, `specs(caller=...)`;
-  `Harness._studio_session`), and its handler refuses any other caller. `design_studio.is_current` says whether
+  `Harness._studio_session`) and to an `images` helper turn (below; its answer there says to place the picture
+  with `design_set_image`), and its handler refuses any other caller. A picture is written to a temporary name in
+  `images/` and linked into place, so a failed write leaves no part of a file; `design_images.load` opens without
+  following a link and checks the open file. `design_studio.is_current` says whether
   a numbered copy still equals what `snapshot` would write now, pictures included.
 - **Design systems.** A folder with `DESIGN.md` and optionally `tokens.css`: the shipped ones in
   `design-systems/` (`ZEN_DESIGN_SYSTEMS`), the user's in `<vault>/design-systems/`, which bots can write, so
@@ -258,25 +261,30 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     request (`purpose="studio_help"`) asks per helper whether it is clearly a better fit than the Designer. A helper
     takes the revision only as the single winner at or above `ZEN_STUDIO_HELP_MIN` (0.7) inside `ZEN_STUDIO_HELP_BAND`
     (0.1). A scorer error, a missing or malformed answer, two winners or a low score all give the task to the
-    Designer; so does a worksheet with nothing in it, or a working file that is not the newest numbered copy
-    (`design_studio.is_current`). When the scorer answers, the scores are logged (`design_part`, event `route`); a scorer failure is an `error` entry (`where: studio_help`) instead. A form's answers skip
+    Designer; so does a worksheet with nothing in it, a working file that is not the newest numbered copy
+    (`design_studio.is_current`), or a newest copy already over `BRIDGE_MAX_BYTES`. When the scorer answers, the scores are logged (`design_part`, event `route`); a scorer failure is an `error` entry (`where: studio_help`) instead. A form's answers skip
     routing: `answers_to`, the session id of the reply that carried the form, sends them to that bot.
   - *One task at a time.* A studio conversation with a task that has not ended answers 409 (`_require_idle`),
     checked again after the scorer answers, since the apply depends on there being one.
   - *The worksheet* (`design_parts.slots`, `worksheet`, `block`; built by `studio_helpers.prepare`). A text slot is
     an element with a unique `data-zen-id` (`[a-z0-9-]{1,64}`), a matching end tag, outside `<script>`, `<style>`
-    and `<svg>`, holding text and `<br>` only; an image slot is an `<img>` with a unique id whose `src` is a
+    and `<svg>`, holding text and `<br>` only, and not empty (a spacer or an icon is no slot); an image slot is an `<img>` with a unique id whose `src` is a
     picture in `images/` the harness would embed (or an older `data:` raster, which `prepare` writes out to
     `images/` first, never through a link). With comments it holds the picked elements that are slots, else every
     slot of the helper's kind. Caps: 2,000 characters a text, 30,000 for the block (the rest listed by id only).
-    Text is flattened to one line, and the block says plainly that it is content, not instructions. Its lines are
-    pinned as constraints like the comment block's. A helper turn has one kind: the first kind in `places` with a
+    Text is flattened to one line, a `<br>` shown as a literal `\n` (the block's first line says so), and the block
+    says plainly that it is content, not instructions. The worksheet and the rules come after the user's words and
+    the comment block, and their lines are pinned as constraints like the comment block's (after a confirmed scope
+    change's, which a helper also gets), but the exchange keeps only the comment block (`start_task(brief=...)`), so
+    no later turn's history replays them. A helper turn has one kind: the first kind in `places` with a
     non-empty worksheet.
   - *The tools* (`design_set_text(id, text)`, `design_set_image(id, path, alt?)`, `Harness.design_set_text`,
     `design_set_image`). Offered only to a helper's session in a studio conversation and refused anywhere else
     (`ToolRunner.register(offered=...)`), and a handler checks the caller again. `design_add_image` is offered to the
-    Designer's own conversation and to an `images` helper turn. Text goes through `design_parts.check_text`
-    (plain, capped, no control characters) and is escaped on apply, so it can never become markup. A wrong id or a
+    Designer's own conversation and to an `images` helper turn. `design_set_image` reads a relative `images/<name>`
+    (what `design_add_image` answers) as this design's. Text goes through `design_parts.check_text` (plain,
+    capped, every line end made a newline, no other control character, U+2028 and U+2029 included) and is
+    escaped on apply, so it can never become markup; a newline becomes `<br>` (not in a `<textarea>`). A wrong id or a
     bad picture comes back as a tool error inside the turn. A later call for an id replaces the earlier one. A
     picture `design_set_image` copied into `images/` stays there even if the turn then fails. In a helper's turn
     `attach_file` of anything under `designs/` is refused: the harness attaches the design.
@@ -289,8 +297,10 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     stopped task, or one with no accepted change, writes nothing. Ledger entries of kind `design_part` (`route`,
     `set_text`, `set_image`, `apply`, `redo`) carry ids, sizes and names, never the text or a disk path.
   - *Redo with the Designer.* Before each apply the harness keeps the working file as
-    `<vault>/designs/<slug>/.versions/before-<n>.<name>`. A task with `redo_of` (the helper's session id, which
-    must be the conversation's newest exchange) restores the working file from it (`studio_helpers.restore`),
+    `<vault>/designs/<slug>/.versions/before-<n>.<name>` (one left with no copy `<n>`, from a crash, is replaced, by
+    a rename, never through a link). A task with `redo_of` (the helper's session id, which must be the
+    conversation's newest exchange) restores the working file from it (`studio_helpers.restore`) only while the
+    working file still equals the helper's copy, else 422 and nothing changes,
     marks that exchange set aside (`Conversations.set_aside`) and goes to the Designer with the same message and
     comments, accepted against the copy the helper started from. The helper's exchange and its version stay in
     the list. `Exchange.bot` names the bot that answered, empty for the owner; `_conversation_view` returns it.
