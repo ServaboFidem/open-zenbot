@@ -29,7 +29,8 @@ class FakeGoogle:
       items. List pages by ``page_size`` (default 250) with ``pageToken``, supports ``syncToken`` (only items
       changed since that token; 410 for a token it never issued) and answers ``nextSyncToken`` on the last page.
       ``timeMin``/``timeMax`` are recorded but not applied. Insert answers 409 when the id exists (a cancelled
-      one too); patch 404 when absent; delete marks ``status: "cancelled"`` (410 when already cancelled; 404
+      one too); patch 404 when absent or cancelled (``patch_cancelled = True`` instead patches a cancelled item
+      and answers it, still cancelled); delete marks ``status: "cancelled"`` (410 when already cancelled; 404
       when absent). Every write gives the item a new ``etag``. Seed items with ``put`` so sync sees them.
     - ``requests``: every request, in order. ``fail``: path fragment -> status, answered before anything else
       (``fail_reason`` is the error reason inside the body, e.g. ``rateLimitExceeded``).
@@ -48,6 +49,7 @@ class FakeGoogle:
         self.access_tokens = 0
         self.calendars_by_token: dict[str, list[dict]] = {}  # bearer token -> the list that token sees
         self.omit_expiry = False  # a code-exchange answer without expires_in
+        self.patch_cancelled = False  # patching a cancelled item answers 200 (still cancelled), not 404
         self._clock = 0
         self._changed: dict[tuple[str, str], int] = {}
         self._issued: set[str] = set()
@@ -116,6 +118,8 @@ class FakeGoogle:
         if event_id not in items:
             return self._error(404)
         if method == "PATCH":
+            if items[event_id].get("status") == "cancelled" and not self.patch_cancelled:
+                return self._error(404)
             return httpx.Response(200, json=self.put(cal, {**items[event_id], **json.loads(request.content)}))
         if method == "DELETE":
             if items[event_id].get("status") == "cancelled":
@@ -218,6 +222,22 @@ def sync(store, fake, conn, conn_factory):
     store.set_calendar("work", selected=True)
     now = datetime.strptime(SYNC_NOW, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     return Sync(store, conn.google, conn, conn_factory.ledger, now=lambda: now)
+
+
+@pytest.fixture
+def push_on(sync, store, fake, conn):
+    """``sync`` with push switched on: the write scope granted and ``dest`` (owner, selected) as the
+    destination. ``dest`` is in ``fake.calendars`` too, so ``refresh_calendars`` keeps it."""
+    from src.events.convert import calendar_row
+    from src.events.google import READ_SCOPES, WRITE_SCOPE
+
+    fake.calendars.append({"id": "dest", "summary": "Dest", "accessRole": "owner"})
+    store.upsert_google([calendar_row(c) for c in fake.calendars])
+    store.set_calendar("dest", selected=True)
+    conn.settings.scopes = [*READ_SCOPES, WRITE_SCOPE]
+    conn.settings.push = True
+    conn.settings.destination = "dest"
+    return conn
 
 
 def state_of(url: str) -> str:

@@ -1,8 +1,13 @@
-"""Bringing Google into the built-in calendar (pull); Task 6 adds sending to Google (push).
+"""Bringing Google into the built-in calendar (pull), sending its changes back (push), and one sync run.
 
 The built-in calendar is the master. A pending local edit (``dirty``) or a local delete (a tombstone) is never
 overwritten by pull; an event deleted on Google that was edited here survives when it was made here (push makes
-it again) and is lost when it was pulled from Google (counted in ``lost_edits``)."""
+it again) and is lost when it was pulled from Google (counted in ``lost_edits``).
+
+Push sends only what the user switched on: nothing unless ``can_push``. A made-here event goes to the
+destination calendar under its own id (``google_event_id``), so a retried insert meets a 409 instead of making a
+second copy; once pushed, an event stays on the calendar it was pushed to. A pulled event goes back to its own
+calendar. The body is ``to_google`` only: no guests, no reminders, no ``If-Match`` (the local copy wins)."""
 
 from __future__ import annotations
 
@@ -10,12 +15,16 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from src.events.connect import Connection
-from src.events.convert import calendar_row, to_local
+from src.events.convert import calendar_row, to_google, to_local
 from src.events.google import Google, GoogleError
-from src.events.store import CalendarStore
-from src.memory.ledger import Ledger
+from src.events.store import CalendarStore, google_event_id
+from src.memory.ledger import Kind, Ledger
 
 LOST_EDITS = "lost_edits"
+LAST_SYNC = "last_sync"
+LAST_ERROR = "last_error"
+INSERT_TRIES = 3
+_GONE = ("missing", "gone")
 
 
 def _z(moment: datetime) -> str:
@@ -127,3 +136,155 @@ class Sync:
         if fields["all_day"]:
             return fields["end"] <= lo_day or fields["start"] > hi_day
         return fields["end"] < lo or fields["start"] > hi
+
+    # push -------------------------------------------------------------------
+
+    def can_push(self) -> bool:
+        s = self.conn.settings
+        return self.conn.state() == "connected" and self.conn.can_write() and s.push and bool(s.destination)
+
+    def _writable(self) -> set[str]:
+        return {c["id"] for c in self.store.calendars() if c["writable"]}
+
+    @staticmethod
+    def _held_back(row: dict, writable: set[str]) -> bool:
+        """A pulled row on a calendar this account may not write (or one no longer listed): never sent."""
+        return row["origin"] == "google" and row["calendar_id"] not in writable
+
+    def preview(self, destination: str) -> dict:
+        """What push would send now. No network. ``destination`` is the calendar new events would go to."""
+        out = {"add": 0, "update": 0, "remove": 0}
+        writable = self._writable()
+        for row in self.store.pending():
+            if self._held_back(row, writable):
+                continue
+            if row["deleted"]:
+                out["remove"] += 1
+            elif row["origin"] == "local" and not row["google_id"]:
+                out["add"] += 1
+            else:
+                out["update"] += 1
+        return out
+
+    async def push(self) -> dict:
+        out = {"added": 0, "updated": 0, "removed": 0, "failed": 0}
+        if not self.can_push():
+            return out
+        destination = self.conn.settings.destination
+        writable = self._writable()
+        for row in self.store.pending():
+            if self._held_back(row, writable):
+                # it should never be dirty; clearing it keeps a bad row from retrying forever
+                self.store.mark_pushed(row["id"], google_calendar=row["google_calendar"],
+                                       google_id=row["google_id"], etag=row["etag"], link=row["link"])
+                continue
+            try:
+                counted = await self._push_one(row, destination)
+            except GoogleError as e:
+                if e.kind == "auth":
+                    raise
+                self.store.push_failed(row["id"], e.kind)
+                out["failed"] += 1
+                continue
+            if counted:
+                out[counted] += 1
+        return out
+
+    async def _push_one(self, row: dict, destination: str) -> str | None:
+        """Send one pending row; answers the count it falls under (None for a pulled event whose Google copy
+        is gone: dropped and counted in ``lost_edits``). Raises ``GoogleError`` on a failure."""
+        if row["deleted"]:
+            if row["google_id"]:
+                try:
+                    await self.google.delete_event(row["google_calendar"], row["google_id"])
+                except GoogleError as e:
+                    if e.kind != "missing":
+                        raise
+            self.store.purge(row["id"])
+            return "removed"
+        if not row["google_id"]:
+            await self._insert(row["id"], destination)
+            return "added"
+        item: dict | None
+        try:
+            item = await self.google.patch_event(row["google_calendar"], row["google_id"], to_google(row))
+        except GoogleError as e:
+            if e.kind not in _GONE:
+                raise
+            item = None
+        if item is not None and item.get("status") != "cancelled":
+            self._pushed(row["id"], row["google_calendar"], row["google_id"], item)
+            return "updated"
+        # the Google copy is gone
+        if row["origin"] == "local":
+            self.store.unlink(row["id"])
+            self.store.bump_generation(row["id"])
+            await self._insert(row["id"], destination)
+            return "added"
+        self.store.purge(row["id"])
+        self._count_lost_edit()
+        return None
+
+    async def _insert(self, id: str, destination: str) -> None:
+        """Insert a made-here event at ``destination`` under its own id. A 409 means the id is taken: a live
+        copy (an earlier insert whose answer was lost) is adopted and patched; a cancelled one takes the next
+        generation. Gives up with ``conflict`` after ``INSERT_TRIES`` inserts."""
+        for _ in range(INSERT_TRIES):
+            row = self.store.event(id)
+            gid = google_event_id(row)
+            try:
+                item = await self.google.insert_event(destination, {**to_google(row), "id": gid})
+            except GoogleError as e:
+                if e.kind != "conflict":
+                    raise
+                item = await self._adopt(destination, gid, row)
+                if item is None:
+                    self.store.bump_generation(id)
+                    continue
+            self._pushed(id, destination, gid, item)
+            return
+        raise GoogleError("conflict", "Google kept refusing the event's id")
+
+    async def _adopt(self, calendar_id: str, gid: str, row: dict) -> dict | None:
+        """The live copy at ``gid`` patched with the local fields, or None when that id is cancelled or gone."""
+        try:
+            held = await self.google.get_event(calendar_id, gid)
+            if held.get("status") == "cancelled":
+                return None
+            item = await self.google.patch_event(calendar_id, gid, to_google(row))
+        except GoogleError as e:
+            if e.kind in _GONE:
+                return None
+            raise
+        return None if item.get("status") == "cancelled" else item
+
+    def _pushed(self, id: str, calendar_id: str, gid: str, item: dict) -> None:
+        self.store.mark_pushed(id, google_calendar=calendar_id, google_id=str(item.get("id") or gid),
+                               etag=str(item.get("etag") or ""), link=str(item.get("htmlLink") or ""))
+
+    # one run ----------------------------------------------------------------
+
+    async def run(self) -> dict:
+        out = {"pull": {"calendars": 0, "changed": 0, "removed": 0, "lost_edits": 0},
+               "push": {"added": 0, "updated": 0, "removed": 0, "failed": 0}}
+        if self.conn.state() != "connected":
+            return out
+        self.store.set_meta(LOST_EDITS, "0")
+        try:
+            await self.refresh_calendars()
+            out["pull"] = await self.pull()
+            out["push"] = await self.push()
+        except GoogleError as e:
+            if e.kind == "auth":
+                self.conn.mark_needs_reconnect()
+            self.store.set_meta(LAST_ERROR, e.kind)
+            self._log(out, error=e.kind)
+            raise
+        self.store.set_meta(LAST_SYNC, _z(self._now()))
+        self.store.set_meta(LAST_ERROR, "")
+        self._log(out)
+        return out
+
+    def _log(self, out: dict, **extra) -> None:
+        self.ledger.append(Kind.calendar, "", "", event="sync", pull=dict(out["pull"]), push=dict(out["push"]),
+                           **extra)

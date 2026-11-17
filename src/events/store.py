@@ -308,6 +308,12 @@ class CalendarStore:
                 "UPDATE events SET google_calendar=?, google_id=?, etag=?, link=?, dirty=0,"
                 " push_error='' WHERE id=?", (google_calendar, google_id, etag, link, id))
 
+    def unlink(self, id: str) -> None:
+        """Forget a made-here event's Google copy (gone on Google); it stays dirty so push makes it again."""
+        with self._lock, self._db:
+            self._db.execute("UPDATE events SET google_calendar='', google_id='', etag='', link='', dirty=1"
+                             " WHERE id=?", (id,))
+
     def push_failed(self, id: str, kind: str) -> None:
         with self._lock, self._db:
             self._db.execute("UPDATE events SET push_error=? WHERE id=?", (kind, id))
