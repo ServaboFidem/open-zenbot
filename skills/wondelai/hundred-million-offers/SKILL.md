@@ -9,7 +9,7 @@ steps:
 - Its reference files live at skills/wondelai/hundred-million-offers/references/ in the harness repo; read one with the shell only when the instructions point to it.
 band_width: 0.1
 ---
-<!-- Vendored from wondelai/skills (https://github.com/wondelai/skills), hundred-million-offers v1.4.0, MIT: see LICENSE and NOTICE.md in skills/wondelai/. The frontmatter above is this harness's; the instructions below are as vendored. Paths are relative to skills/wondelai/hundred-million-offers/. -->
+<!-- Vendored from wondelai/skills (https://github.com/wondelai/skills), hundred-million-offers v1.4.0, MIT: see LICENSE and NOTICE.md in skills/wondelai/. The frontmatter above is this harness's; the instructions below are as vendored, but for the changes NOTICE.md lists. Paths are relative to skills/wondelai/hundred-million-offers/. -->
 
 # Grand Slam Offer Creation Framework
 
@@ -298,7 +298,7 @@ Use this table to audit any existing offer:
 | Does the guarantee reverse the prospect's risk? | Fear blocks the sale | Add a guarantee that makes yes feel safe |
 | Are there at least 3 named bonuses with dollar values? | Offer feels thin | Create objection-killing bonuses |
 | Is there a real reason to act now? | "I'll think about it" | Add ethical scarcity/urgency with a real deadline |
-| Could a competitor offer the exact same thing? | Commodity; price war | Bundle elements that defy comparison |
+| Is the offer hard for a competitor to copy exactly? | Commodity; price war | Bundle elements that defy comparison |
 | Does the name say who it's for and what they get? | No self-selection | Rename using MAGIC |
 
 ## Further Reading

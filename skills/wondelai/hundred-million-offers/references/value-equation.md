@@ -133,9 +133,9 @@ Rate your offer on each lever (1-10) and calculate the composite:
 | Time Delay (invert: 10 = fast) | ___ | Denominator (divide) |
 | Effort & Sacrifice (invert: 10 = easy) | ___ | Denominator (divide) |
 
-**Composite formula:** (Dream Outcome x Perceived Likelihood) / (Time Delay inverted x Effort inverted)
+**Composite formula:** (Dream Outcome x Perceived Likelihood) / ((11 - Time Delay score) x (11 - Effort score))
 
-Where "inverted" means: if your Time Delay score is 8 (fast), use 8. A perfect score on all four levers yields (10 x 10) / (1 x 1) = 100. A poor score yields (2 x 2) / (8 x 8) = 0.06.
+The two denominator scores are rated so that 10 is best (fast, easy), so subtract each from 11 before dividing: a Time Delay score of 8 (fast) divides by 3. A perfect score on all four levers yields (10 x 10) / (1 x 1) = 100. A score of 2 on all four yields (2 x 2) / (9 x 9) = 0.05.
 
 **Interpretation:**
 - 50-100: Grand Slam Offer territory. You can charge premium prices.

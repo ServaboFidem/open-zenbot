@@ -184,6 +184,19 @@ def test_the_other_vendored_writing_and_design_skills_load():
     assert (REPO / "skills" / "humanizer" / "scripts" / "check_tells.py").is_file()
 
 
+def test_the_humanizer_check_catches_a_double_hyphen_dash_however_it_is_spaced():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("check_tells", REPO / "skills" / "humanizer" / "scripts" / "check_tells.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    dash = mod.HARD_PATTERNS["double-hyphen dash ( -- )"]
+    for line in ("Wait -- what?", "Wait--what?", "Wait-- what?", "-- and then", "and then --", "and then--"):
+        assert dash.search(line), line
+    for line in ("A well-made plan.", "---", "| --- | --- |", "Run it with --text or --soft-fail.", "--text=hello"):
+        assert not dash.search(line), line
+
+
 def test_learn_company_skill_loads_from_the_repo():
     s = load_skill(REPO / "skills" / "learn-company").skill
     assert s.slug == "learn-company" and "learn_page" in s.access and s.band_width == 0.1

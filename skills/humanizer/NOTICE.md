@@ -7,4 +7,6 @@ This copy is the one adapted for the pydantic-dxl-crew harness on 2026-11-03
 
 This harness changed only the YAML frontmatter of `SKILL.md` (to the contract
 `src/skills/loader.py` requires) and added the provenance comment under it.
-`references/` and `scripts/check_tells.py` are as vendored.
+`references/` is as vendored. `scripts/check_tells.py` has one change: the
+double-hyphen pattern also catches a dash at a line edge and one attached to the
+word before it (`Wait-- what?`), which it used to pass.

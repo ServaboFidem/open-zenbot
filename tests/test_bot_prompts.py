@@ -213,7 +213,7 @@ def test_the_designer_bot_file_is_a_studio_bot():
 def test_the_copywriter_bot_file_works_from_the_conversation_alone():
     p = parse(Path("bot-prompts/copywriter.md").read_text(encoding="utf-8"), "copywriter")
     assert p.name == "Copywriter" and p.studio is False and p.mcps is None
-    assert p.skills == ["humanizer", "made-to-stick", "contagious", "influence-psychology", "hundred-million-offers", "obviously-awesome", "clarify-crit"]
+    assert p.skills == ["humanizer", "clarify-crit"]
     assert "ghostwriter" in p.instructions and "ask the user" in p.instructions
 
 

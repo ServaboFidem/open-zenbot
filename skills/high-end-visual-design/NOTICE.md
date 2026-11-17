@@ -5,4 +5,6 @@ Vendored by way of the pydantic-dxl-crew harness, whose copy marks it
 has not been confirmed.
 
 This harness changed only the YAML frontmatter of `SKILL.md` (to the contract
-`src/skills/loader.py` requires) and added the provenance comment under it.
+`src/skills/loader.py` requires) and added the provenance comment under it, and one line in section 2 ("Reduced
+motion comes first"): the skill otherwise requires every element to animate, with
+no allowance for `prefers-reduced-motion`.

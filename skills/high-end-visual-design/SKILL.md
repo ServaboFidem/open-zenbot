@@ -6,7 +6,7 @@ steps:
 - Follow the instructions below.
 band_width: 0.1
 ---
-<!-- Vendored by way of the pydantic-dxl-crew harness, which marks it MIT: see NOTICE.md in this folder. The frontmatter above is this harness's; the instructions below are as vendored. Paths are relative to skills/high-end-visual-design/. -->
+<!-- Vendored by way of the pydantic-dxl-crew harness, which marks it MIT: see NOTICE.md in this folder. The frontmatter above is this harness's; the instructions below are as vendored, but for the changes NOTICE.md lists. Paths are relative to skills/high-end-visual-design/. -->
 
 # Agent Skill: Principal UI/UX Architect & Motion Choreographer (Awwwards-Tier)
 
@@ -22,6 +22,7 @@ If your generated code includes ANY of the following, the design instantly fails
 - **Banned Borders & Shadows:** Generic 1px solid gray borders. Harsh, dark drop shadows (`shadow-md`, `rgba(0,0,0,0.3)`). 
 - **Banned Layouts:** Edge-to-edge sticky navbars glued to the top. Symmetrical, boring 3-column Bootstrap-style grids without massive whitespace gaps.
 - **Banned Motion:** Standard `linear` or `ease-in-out` transitions. Instant state changes without interpolation.
+- **Reduced motion comes first:** Under `@media (prefers-reduced-motion: reduce)`, show content at once, without entry animations, parallax or hover physics, and keep transitions short or off. The motion rules in this skill apply to everyone else.
 
 ## 3. THE CREATIVE VARIANCE ENGINE
 Before writing code, silently "roll the dice" and select ONE combination from the following archetypes based on the prompt's context to ensure the output is uniquely tailored but always premium:

@@ -30,6 +30,15 @@ repo by way of the pydantic-dxl-crew harness, not straight from upstream.
   pydantic-dxl-crew harness: it reads "retention" as any asked-for action, and
   says the affiliate tags were stripped from the links at the bottom.
 
+- Two corrections in `hundred-million-offers`, to re-apply after an update unless
+  upstream has fixed them:
+  - `references/value-equation.md`, Composite Value Score: the formula divides by
+    `11 - score` for Time Delay and Effort. Upstream rates both with 10 as best and
+    divides by the score itself, so a perfect offer scored 1, not the 100 it states.
+  - `SKILL.md`, the diagnostic table: "Could a competitor offer the exact same
+    thing?" became "Is the offer hard for a competitor to copy exactly?", so that
+    yes is the good answer, as in every other row.
+
 Everything else (the instructions and `references/`) is as it was vendored.
 
 ## Updating

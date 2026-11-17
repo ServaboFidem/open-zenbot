@@ -29,7 +29,11 @@ import sys
 HARD_PATTERNS = {
     "em dash (—)": re.compile(r"—"),
     "en dash (–)": re.compile(r"–"),
-    "double-hyphen dash ( -- )": re.compile(r"(?<=\s)--(?=\s)|\w--\w"),
+    "double-hyphen dash ( -- )": re.compile(
+        # " -- " (line edges count as spaces), "word--word" and "word-- word".
+        # Not "---" (a rule or a table line) and not " --word", which is how
+        # a command-line flag is written.
+        r"(?<![-\S])--(?=\s|$)|(?<=\w)--(?=\w|\s|$)"),
     "curly double quote (“ ”)": re.compile(r"[“”]"),
     "curly single quote / apostrophe (‘ ’)": re.compile(r"[‘’]"),
 }
