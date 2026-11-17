@@ -10,7 +10,7 @@ import { attachmentItem, previewFrameUrl } from './media.js';
 import ConversationPicker from './ConversationPicker';
 import DesignSystemPicker from './DesignSystemPicker';
 import DesignPane, { PickChips, SentComments } from './DesignPane';
-import { clearsComposer, commentsFor, designRevisions, redoTarget, startedFrom } from './design.js';
+import { clearsComposer, commentsFor, designRevisions, picksSent, redoTarget, startedFrom } from './design.js';
 import { HarnessSettingsTab, ModelProvidersTab } from './ModelSettings';
 import { TracingSettingsTab } from './TracingSettings';
 import { AllowedFoldersTab } from './AllowedFolders';
@@ -441,7 +441,7 @@ function App() {
   async function send(text, { skipScope = false, answersTo } = {}) {
     const typed = text.trim();
     // a pick left without a note points at the message, when there is one; with no message it is left out
-    const designComments = newestRev ? commentsFor(newestRev.attId, picks, typed ? { fallback: 'See my message.' } : {}) : [];
+    const designComments = newestRev ? commentsFor(newestRev.attId, picksSent(picks, { answersTo }), typed ? { fallback: 'See my message.' } : {}) : [];
     const task = typed || (designComments.length ? 'See my comments on the design.' : '');
     if (!bot || !task) return;
     if (interviewing && !interview.done) return sendInterview(task);
@@ -489,7 +489,7 @@ function App() {
     if (!r) return;
     // only once the harness took it: a refusal leaves the picks. Only the picks that were sent: the user
     // may have moved to another conversation and picked there while this was on its way
-    if (clearsComposer({ conversation, redoOf })) { setComposer(''); const sent = picks; setPicks(now => now.filter(p => !sent.includes(p))); }
+    if (clearsComposer({ conversation, redoOf, answersTo })) { setComposer(''); const sent = picks; setPicks(now => now.filter(p => !sent.includes(p))); }
     // a routine started while another task streams leaves that stream alone (the chat refetches when it ends);
     // the routine's activity still reaches the panel through the ledger trail
     if (!conversation && liveRef.current) { api.sessions().then(setSessions).catch(() => {}); log('Routine started', task); return; }

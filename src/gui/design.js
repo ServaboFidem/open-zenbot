@@ -80,5 +80,9 @@ export function startedFrom(exchanges, exchange) {
 }
 
 // Whether starting a task clears the composer and the pending picks: only a message the user wrote there. A routine
-// joins no conversation, and a redo re-sends an earlier message, so both leave what the user is writing alone.
-export const clearsComposer = ({ conversation = true, redoOf } = {}) => conversation && !redoOf;
+// joins no conversation, a redo re-sends an earlier message, and a form's answers come from the form, so all three
+// leave what the user is writing alone.
+export const clearsComposer = ({ conversation = true, redoOf, answersTo } = {}) => conversation && !redoOf && !answersTo;
+
+// The pending picks a message sends: none with a form's answers, which carry only the answers.
+export const picksSent = (picks, { answersTo } = {}) => (answersTo ? [] : picks);

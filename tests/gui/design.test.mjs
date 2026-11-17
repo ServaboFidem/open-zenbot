@@ -2,7 +2,7 @@
 // which picks become comments on the task.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptPick, acceptReady, addPick, clearsComposer, commentsFor, designRevisions, MAX_PICKS, redoTarget, startedFrom, studioFrameUrl } from '../../src/gui/design.js';
+import { acceptPick, acceptReady, addPick, clearsComposer, commentsFor, designRevisions, MAX_PICKS, picksSent, redoTarget, startedFrom, studioFrameUrl } from '../../src/gui/design.js';
 
 const win = {};
 const ok = { zen: 'pick', elementId: 'hero', selector: 'body > h1', tag: 'h1', text: 'Hi', rect: { x: 1, y: 2, w: 3, h: 4 } };
@@ -113,9 +113,17 @@ test('startedFrom follows the harness: the same file, the highest number below, 
   assert.equal(startedFrom([...exs, onA], onA), 'a2');
 });
 
-test('a redo leaves the composer and the pending picks alone; a message from the composer clears them', () => {
+test('a redo or a form answer leaves the composer and the pending picks alone; a message from the composer clears them', () => {
   assert.equal(clearsComposer({}), true);
   assert.equal(clearsComposer({ conversation: true }), true);
   assert.equal(clearsComposer({ conversation: false }), false);
   assert.equal(clearsComposer({ redoOf: 's2' }), false);
+  assert.equal(clearsComposer({ answersTo: 's3' }), false);
+});
+
+test('a form answer sends none of the pending picks; a message sends them all', () => {
+  const picks = [{ elementId: 'a' }, { elementId: 'b' }];
+  assert.deepEqual(picksSent(picks, { answersTo: 's3' }), []);
+  assert.equal(picksSent(picks, {}), picks);
+  assert.equal(picksSent(picks), picks);
 });
