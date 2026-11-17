@@ -37,3 +37,31 @@ def test_non_ascii_and_a_bom_keep_offsets_in_characters():
     html = '﻿<p data-zen-id="é">naïve</p>'
     p = one(html, "p")
     assert html[p.inner[0]:p.inner[1]] == "naïve"
+
+def test_a_p_is_closed_by_the_next_p():
+    html = '<p>a<p>b</p>'
+    p1, p2 = [e for e in scan(html) if e.tag == "p"]
+    assert p1.inner is None and p1.children == 0
+    assert html[p2.inner[0]:p2.inner[1]] == "b" and "p" not in p2.within
+
+def test_li_is_closed_by_the_next_li_and_the_ul_inner_is_exact():
+    html = '<ul><li>a<li>b</li></ul>'
+    ul = one(html, "ul")
+    l1, l2 = [e for e in scan(html) if e.tag == "li"]
+    assert l1.inner is None and html[l2.inner[0]:l2.inner[1]] == "b"
+    assert l2.within == ("ul",) and ul.children == 2
+    assert html[ul.inner[0]:ul.inner[1]] == "<li>a<li>b</li>"
+
+def test_a_p_is_closed_by_a_following_block_element():
+    html = '<section><p>a<div>b</div></section>'
+    p, div = one(html, "p"), one(html, "div")
+    assert p.inner is None and p.children == 0
+    assert div.within == ("section",) and html[div.inner[0]:div.inner[1]] == "b"
+    assert one(html, "section").children == 2
+
+def test_table_cells_and_options_close_their_siblings():
+    html = '<table><tr><td>a<td>b<tr><td>c</table><select><option>x<option>y</select>'
+    tds = [e for e in scan(html) if e.tag == "td"]
+    assert [t.inner for t in tds[:2]] == [None, None] and tds[1].within == ("table", "tr")
+    opts = [e for e in scan(html) if e.tag == "option"]
+    assert opts[1].within == ("select",)

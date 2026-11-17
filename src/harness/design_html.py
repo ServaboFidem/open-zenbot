@@ -15,6 +15,31 @@ VOID = frozenset({
     "param", "source", "track", "wbr",
 })
 
+_CLOSES_P = frozenset({
+    "address", "article", "aside", "blockquote", "details", "div", "dl",
+    "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3",
+    "h4", "h5", "h6", "header", "hgroup", "hr", "main", "menu", "nav", "ol",
+    "p", "pre", "section", "table", "ul",
+})
+_SECTIONS = frozenset({"thead", "tbody", "tfoot"})
+# A start tag of the key ends the nearest open element named in the value.
+IMPLIED_END = {
+    **{t: frozenset({"p"}) for t in _CLOSES_P},
+    "li": frozenset({"li"}),
+    "dt": frozenset({"dt", "dd"}),
+    "dd": frozenset({"dt", "dd"}),
+    "tr": frozenset({"tr"}),
+    "td": frozenset({"td", "th"}),
+    "th": frozenset({"td", "th"}),
+    "thead": frozenset({"tr", "td", "th"}) | _SECTIONS,
+    "tbody": frozenset({"tr", "td", "th"}) | _SECTIONS,
+    "tfoot": frozenset({"tr", "td", "th"}) | _SECTIONS,
+    "option": frozenset({"option"}),
+    "optgroup": frozenset({"option", "optgroup"}),
+}
+# The search for an element to end stops at these.
+_SCOPE = frozenset({"table", "ul", "ol", "select", "button", "template", "body", "html"})
+
 _TAG_NAME = re.compile(r"<([^\s/>]+)")
 _ATTR = re.compile(
     r"""([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]*)))?""")
@@ -89,7 +114,20 @@ class _Scanner(HTMLParser):
         line, col = self.getpos()
         return self._starts[line - 1] + col
 
+    def _imply_end(self, tag: str) -> None:
+        closes = IMPLIED_END.get(tag)
+        if not closes:
+            return
+        for i in range(len(self._stack) - 1, -1, -1):
+            name = self._stack[i].tag
+            if name in closes:
+                del self._stack[i:]  # left with inner None
+                return
+            if name in _SCOPE:
+                return
+
     def _open(self, tag: str, void: bool) -> None:
+        self._imply_end(tag)
         begin = self._offset()
         raw = self.get_starttag_text() or ""
         attrs, spans = _parse_attrs(raw, begin)
