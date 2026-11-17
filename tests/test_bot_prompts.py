@@ -208,6 +208,7 @@ def test_the_designer_bot_file_is_a_studio_bot():
     assert "Never use `shell`" not in p.instructions  # its skills' reference files are read with the shell
     for must in ("designs/", "data-zen-id", "attach_file", "question-form", "create_directory", "edit_file", "every element that holds text"):
         assert must in p.instructions
+    assert "When `design_add_image` is not among your tools (in a room), save the picture into the design's `images/` folder" in p.instructions
 
 
 def test_the_copywriter_bot_file_works_from_the_conversation_alone():
@@ -224,6 +225,7 @@ def test_imageeditor_places_pictures_through_the_tool():
     p = parse(Path("bot-prompts/darkroom-bot.md").read_text(encoding="utf-8"), "darkroom-bot")
     assert "design_set_image" in p.instructions and "design_add_image" in p.instructions
     assert "never call `attach_file` for the design" in p.instructions
+    assert "Never overwrite a picture that is on the page" in p.instructions
 
 
 def _bot_file(folder: Path, stem: str, name: str) -> None:

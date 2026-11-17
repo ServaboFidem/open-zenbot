@@ -214,8 +214,9 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
   `<img src="images/<name>">`. The live file is never rewritten: `design_studio.snapshot` embeds them as `data:`
   URIs, through `design_images.embed`, only into the numbered copy, so the preview (which loads nothing) still
   shows them. Only an `<img>` whose `src` is written in quotes and starts `images/` is embedded; a CSS
-  `url()`, a `srcset`, an unquoted `src`, a missing, oversized, non-picture or linked file stays as written,
-  and `attach_file` names each such picture (`design_studio.embed_notes`) plus a copy over
+  `url()`, a `srcset`, an unquoted `src`, a missing, oversized, non-picture or linked file stays as written, and
+  so does a picture whose `data:` URI would take the copy past `BRIDGE_MAX_BYTES` (`embed`'s byte budget; each
+  file is read once per page, the reason is "the design would be too large"), and `attach_file` names each such picture (`design_studio.embed_notes`) plus a copy over
   `BRIDGE_MAX_BYTES`. `images/` must be a real folder, a picture a regular file with one hard link, and a copy
   is never written through a link. `design_add_image(path, name?)` (`Harness.design_add_image`) copies a
   picture the bot may read (`attachable`) into the conversation's design folder and answers `images/<name>`,
@@ -246,7 +247,8 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
   the comments are. A room that already matches the message still takes it, and a studio bot that is not the top
   fit joins a room as before. In a room a studio bot's `attach_file` follows the same rules as one to one
   (`Harness.attach_target`: `designs/...` against the vault, attached as a numbered copy), but a room has no
-  pane, live forms or comments.
+  pane, live forms or comments, and no `design_add_image`: there the Designer saves a picture into the design's
+  `images/` folder with the files tools (same naming rule) and references it as `images/<name>`.
 - **The Design page.** `GET /designs` lists every design made in a studio bot's own conversation, one entry per
   conversation and design with its newest numbered copy (names and ids, never a path), newest conversation first.
   A card's thumbnail is the attachment served closed (`?preview=1`), like any other thumbnail. A file attached
@@ -264,16 +266,24 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     (0.1). A scorer error, a missing or malformed answer, two winners or a low score all give the task to the
     Designer; so does a worksheet with nothing in it, a working file that is not the newest numbered copy
     (`design_studio.is_current`), or a newest copy already over `BRIDGE_MAX_BYTES`. When the scorer answers, the scores are logged (`design_part`, event `route`); a scorer failure is an `error` entry (`where: studio_help`) instead. A form's answers skip
-    routing: `answers_to`, the session id of the reply that carried the form, sends them to that bot.
+    routing: `answers_to`, the session id of the reply that carried the form, sends them to that bot. The GUI sends
+    a form's answers alone, without the pending picks, and leaves the composer as it is (`design.js`
+    `clearsComposer`, `picksSent`).
   - *One task at a time.* A studio conversation with a task that has not ended answers 409 (`_require_idle`),
-    checked again after the scorer answers, since the apply depends on there being one.
+    checked again after the scorer answers, since the apply depends on there being one. The route resolves the
+    conversation once, before the scorer's await, and both the check and the task (the helper's or the owner's) use
+    that one, so a change of the bot's current conversation meanwhile cannot move it. The comments are checked
+    again after the await against that conversation's newest revision (the same 422). No `await` lies between
+    the last check and the call that creates the pending exchange.
   - *The worksheet* (`design_parts.slots`, `worksheet`, `block`; built by `studio_helpers.prepare`). A text slot is
     an element with a unique `data-zen-id` (`[a-z0-9-]{1,64}`), a matching end tag, outside `<script>`, `<style>`
     and `<svg>`, holding text and `<br>` only, and not empty (a spacer or an icon is no slot); an image slot is an `<img>` with a unique id whose `src` is a
     picture in `images/` the harness would embed (or an older `data:` raster, which `prepare` writes out to
     `images/` first, never through a link). With comments it holds the picked elements that are slots, else every
     slot of the helper's kind. Caps: 2,000 characters a text, 30,000 for the block (the rest listed by id only).
-    Text is flattened to one line, a `<br>` shown as a literal `\n` (the block's first line says so), and the block
+    Text is flattened to one line, a `<br>` shown as a literal `\n` (the block's first line says so; a `<textarea>`'s
+    text is taken as written, character references decoded and its own newlines shown as `\n`, nothing stripped or
+    split on `<br>`), and the block
     says plainly that it is content, not instructions. The worksheet and the rules come after the user's words and
     the comment block, and their lines are pinned as constraints like the comment block's (after a confirmed scope
     change's, which a helper also gets), but the exchange keeps only the comment block (`start_task(brief=...)`), so
@@ -286,7 +296,10 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     (what `design_add_image` answers) as this design's. Text goes through `design_parts.check_text` (plain,
     capped, every line end made a newline, no other control character, U+2028 and U+2029 included) and is
     escaped on apply, so it can never become markup; a newline becomes `<br>` (not in a `<textarea>`). A wrong id or a
-    bad picture comes back as a tool error inside the turn. A later call for an id replaces the earlier one. A
+    bad picture comes back as a tool error inside the turn, and so does the picture a slot already shows (the same
+    file as its `images/<name>`: "Save your edit under a new name"). That is told and checked at the tool, not
+    walled: a helper can still overwrite a picture in place through `magick`, which the apply below catches. A
+    later call for an id replaces the earlier one. A
     picture `design_set_image` copied into `images/` stays there even if the turn then fails. In a helper's turn
     `attach_file` of anything under `designs/` is refused: the harness attaches the design.
   - *The apply* (`studio_helpers.apply`, `design_parts.apply`). When the task ends `done` with an accepted change,
@@ -294,14 +307,18 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     source (offsets from `design_html.scan`, nothing re-serialised, every other byte kept), writes the working
     file, takes a numbered copy and attaches it to the helper's exchange. It refuses, tells the user in the
     exchange and logs it when the file changed during the turn or the copy would pass `BRIDGE_MAX_BYTES`. A
-    change that leaves the page identical attaches nothing and is logged `refused: "no change"`. A failed or
+    change that leaves the page identical attaches nothing and is logged `refused: "no change"`; "identical" is
+    judged on the rendered page: when the source is unchanged but a picture file changed in place during the turn
+    (the working file no longer `is_current` against the copy the worksheet was read from), the page as it is now
+    becomes a numbered copy and is attached, with no `before-<n>` file, so a Redo of it answers 422. A failed or
     stopped task, or one with no accepted change, writes nothing. Ledger entries of kind `design_part` (`route`,
     `set_text`, `set_image`, `apply`, `redo`) carry ids, sizes and names, never the text or a disk path.
   - *Redo with the Designer.* Before each apply the harness keeps the working file as
     `<vault>/designs/<slug>/.versions/before-<n>.<name>` (one left with no copy `<n>`, from a crash, is replaced, by
     a rename, never through a link). A task with `redo_of` (the helper's session id, which must be the
     conversation's newest exchange) restores the working file from it (`studio_helpers.restore`) only while the
-    working file still equals the helper's copy, else 422 and nothing changes,
+    working file still equals the helper's copy and the kept source with today's pictures still renders as the
+    version the helper started from (a picture overwritten in place cannot be put back), else 422 and nothing changes,
     marks that exchange set aside (`Conversations.set_aside`) and goes to the Designer with the same message and
     comments, accepted against the copy the helper started from. The helper's exchange and its version stay in
     the list. `Exchange.bot` names the bot that answered, empty for the owner; `_conversation_view` returns it.
