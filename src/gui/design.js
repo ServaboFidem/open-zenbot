@@ -63,15 +63,22 @@ export function redoTarget(exchanges) {
   return designRevisions([ex]).length ? ex : null;
 }
 
-// The attachment id of the revision before the one `exchange` attached, in the same design and file; else null.
+// The attachment id of the version a helper's change started from, by the harness's rule (`_redo_target`): of the
+// same design and file name as the copy `exchange` attached (its first), the one with the highest version below it,
+// taking the first attachment of that version; else null.
 export function startedFrom(exchanges, exchange) {
-  const mine = designRevisions([exchange]).at(-1);
+  const mine = (exchange?.attachments || []).find(a => typeof a.version === 'number');
   if (!mine) return null;
-  const before = [];
+  let best = null;
   for (const ex of exchanges || []) {
     if (ex === exchange) break;
-    before.push(ex);
+    for (const a of ex.attachments || [])
+      if (typeof a.version === 'number' && a.design === mine.design && a.name === mine.name && a.version < mine.version
+          && (!best || a.version > best.version)) best = a;
   }
-  const prior = designRevisions(before).filter(r => r.design === mine.design && r.version < mine.version);
-  return prior.at(-1)?.attId ?? null;
+  return best?.id ?? null;
 }
+
+// Whether starting a task clears the composer and the pending picks: only a message the user wrote there. A routine
+// joins no conversation, and a redo re-sends an earlier message, so both leave what the user is writing alone.
+export const clearsComposer = ({ conversation = true, redoOf } = {}) => conversation && !redoOf;

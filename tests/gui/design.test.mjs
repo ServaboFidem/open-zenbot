@@ -2,7 +2,7 @@
 // which picks become comments on the task.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptPick, acceptReady, addPick, commentsFor, designRevisions, MAX_PICKS, redoTarget, startedFrom, studioFrameUrl } from '../../src/gui/design.js';
+import { acceptPick, acceptReady, addPick, clearsComposer, commentsFor, designRevisions, MAX_PICKS, redoTarget, startedFrom, studioFrameUrl } from '../../src/gui/design.js';
 
 const win = {};
 const ok = { zen: 'pick', elementId: 'hero', selector: 'body > h1', tag: 'h1', text: 'Hi', rect: { x: 1, y: 2, w: 3, h: 4 } };
@@ -97,4 +97,25 @@ test('startedFrom is the revision before the one the exchange attached', () => {
   assert.equal(startedFrom([first, helperEx({ attachments: [] })], { attachments: [] }), null);
   const other = { session_id: 's0', attachments: [{ ...att('z1', 1), design: 'other' }] };
   assert.equal(startedFrom([other, ex], ex), null);
+});
+
+test('startedFrom follows the harness: the same file, the highest number below, the first attachment of it', () => {
+  const file = (id, name, version) => ({ id, name, title: name, design: 'd', version });
+  const exs = [
+    { session_id: 's1', attachments: [file('a1', 'a.html', 1)] },
+    { session_id: 's2', attachments: [file('b1', 'b.html', 1)] },
+    { session_id: 's3', attachments: [file('a2', 'a.html', 2)] },
+    { session_id: 's4', attachments: [file('b1again', 'b.html', 1)] },
+  ];
+  const ex = helperEx({ attachments: [file('b2', 'b.html', 2)] });
+  assert.equal(startedFrom([...exs, ex], ex), 'b1');  // file B's version 1, not file A's version 2
+  const onA = helperEx({ attachments: [file('a3', 'a.html', 3)] });
+  assert.equal(startedFrom([...exs, onA], onA), 'a2');
+});
+
+test('a redo leaves the composer and the pending picks alone; a message from the composer clears them', () => {
+  assert.equal(clearsComposer({}), true);
+  assert.equal(clearsComposer({ conversation: true }), true);
+  assert.equal(clearsComposer({ conversation: false }), false);
+  assert.equal(clearsComposer({ redoOf: 's2' }), false);
 });
