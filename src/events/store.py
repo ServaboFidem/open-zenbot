@@ -35,8 +35,8 @@ CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 
 _CAL_BOOLS = ("writable", "selected", "visible")
 _EVENT_BOOLS = ("all_day", "dirty", "deleted")
-_INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
-_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+_INSTANT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+_DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 class EventError(ValueError):
@@ -255,11 +255,22 @@ class CalendarStore:
 
     def apply_remote(self, calendar_id: str, google_id: str, fields: dict, *, etag: str,
                      link: str, series_id: str) -> None:
-        vals = (fields["title"], fields.get("location", ""), fields.get("description", ""),
-                int(bool(fields["all_day"])), fields["start"], fields["end"], fields.get("tz", ""),
-                etag, link, series_id)
+        """Insert a pulled event, or replace the copy already held.
+
+        A held row that is ``dirty`` (a pending local edit) or ``deleted`` (a tombstone) is left
+        untouched: the built-in calendar wins, and the pull code decides what to do with such rows
+        before calling. A replaced timed event keeps its ``tz`` when the incoming one is empty.
+        """
         with self._lock, self._db:
             have = self.by_google(calendar_id, google_id)
+            if have is not None and (have["dirty"] or have["deleted"]):
+                return
+            tz = fields.get("tz", "")
+            if have is not None and not tz and not fields["all_day"]:
+                tz = have["tz"]
+            vals = (fields["title"], fields.get("location", ""), fields.get("description", ""),
+                    int(bool(fields["all_day"])), fields["start"], fields["end"], tz,
+                    etag, link, series_id)
             if have is not None:
                 self._db.execute(
                     "UPDATE events SET title=?, location=?, description=?, all_day=?, start=?, end=?,"
@@ -306,7 +317,8 @@ class CalendarStore:
     def pushed_calendars(self) -> set[str]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT DISTINCT google_calendar FROM events WHERE origin='local' AND google_id != ''")
+                "SELECT DISTINCT google_calendar FROM events WHERE origin='local' AND google_id != ''"
+            ).fetchall()
         return {r["google_calendar"] for r in rows}
 
     def clear_links(self) -> None:

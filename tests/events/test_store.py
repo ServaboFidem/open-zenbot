@@ -170,6 +170,40 @@ def test_apply_remote_replaces_a_made_here_event_in_place(store):
     assert got["origin"] == "local"
 
 
+def test_apply_remote_skips_a_dirty_row(store):
+    e = store.add(ev(title="Mine"))
+    store.mark_pushed(e["id"], google_calendar="c1", google_id="gx", etag="e", link="l")
+    store.update(e["id"], ev(title="Edited"))
+    store.apply_remote("c1", "gx", remote(title="Remote"), etag="e9", link="l9", series_id="")
+    got = store.event(e["id"])
+    assert got["title"] == "Edited" and got["dirty"] is True and got["etag"] == "e"
+
+
+def test_apply_remote_leaves_a_tombstone(store):
+    e = store.add(ev())
+    store.mark_pushed(e["id"], google_calendar="c1", google_id="gx", etag="e", link="l")
+    store.delete(e["id"])
+    store.apply_remote("c1", "gx", remote(title="Back"), etag="e9", link="l9", series_id="")
+    got = store.event(e["id"])
+    assert got["deleted"] is True and got["dirty"] is True and got["title"] == "Dentist"
+
+
+def test_apply_remote_keeps_tz_of_a_timed_event(store):
+    e = store.add(ev())
+    store.mark_pushed(e["id"], google_calendar="c1", google_id="gx", etag="e", link="l")
+    store.apply_remote("c1", "gx", remote(title="Echo"), etag="e2", link="l", series_id="")
+    got = store.event(e["id"])
+    assert got["tz"] == "America/New_York" and got["title"] == "Echo"
+    store.update(got["id"], ev())
+
+
+def test_validate_refuses_non_ascii_digits(store):
+    with pytest.raises(EventError):
+        validate(ev(start="2026-11-17T14:00:00Z".replace("2", "\u0662", 1)))
+    with pytest.raises(EventError):
+        validate(ev(all_day=True, start="\u0662026-11-17", end="2026-11-18", tz=""))
+
+
 def test_by_google_includes_tombstones(store):
     e = store.add(ev())
     store.mark_pushed(e["id"], google_calendar="c", google_id="gz", etag="e", link="l")
