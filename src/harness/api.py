@@ -81,6 +81,8 @@ from src.context.compaction import Compactor
 from src.context.protected import ProtectedBlock, ScopeGuard
 from src.decider.supervisor import LoopSupervisor
 from src.generation.generator import Generator
+from src.events.routes import calendar_router
+from src.events.service import CalendarService
 from src.music.routes import music_router
 from src.music.service import MANAGED_BY as MUSIC_MANAGED_BY, MusicService
 from src.generation.images import DEFAULT_MODEL as DEFAULT_IMAGE_MODEL, ImageConfig, ImageGenerator
@@ -183,6 +185,7 @@ class Harness:
     agents: Agents | None = None  # Claude Code and Codex: where they are, sign-in, switches (agent_clis.py)
     delegator: Delegator | None = None  # the delegate tool: hands a job to an agent that is on; a rebind keeps it
     music: MusicService | None = None  # music discovery: settings, Discogs token, atlas, digests, the /music routes
+    calendar: CalendarService | None = None  # the built-in calendar: its store, Google sync, the /calendar routes
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
     provider_store: ProviderStore | None = None  # vault-settings/providers.json: providers, their keys, their enabled models
     model_lister: ModelLister = field(default_factory=ModelLister)
@@ -331,6 +334,8 @@ class Harness:
         if self.music is None:
             self.music = MusicService(c, self.ledger, self.memory, self.tools, self.catalog)
         self.music.register()  # the music tools appear only when music is on and the token is set
+        if self.calendar is None:
+            self.calendar = CalendarService(c, self.ledger)  # no network until Google is connected
         if self.scorer is not None:
             self.orchestrator = self.orchestrator or Orchestrator(
                 self.scorer, self.rooms, self.bots, self.ledger, Generator(summaries, model=c.summary_model).room_topic, ASSISTANT_ID)
@@ -1407,7 +1412,7 @@ def create_app(h: Harness) -> FastAPI:
     scheduler = Scheduler(lambda: routines, start_routine, h.ledger)
     scheduler.verifiers[MUSIC_MANAGED_BY] = h.music.run_failure  # a digest run that saved no digest failed
     h.music.routines, h.music.scheduler = routines, scheduler
-    app_routers = [music_router(h.music, h)]
+    app_routers = [music_router(h.music, h), calendar_router(h.calendar)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -1443,6 +1448,7 @@ def create_app(h: Harness) -> FastAPI:
         h.learner.restore()  # learn holds waiting in Approvals come back after a restart
         scheduling = asyncio.create_task(scheduler.run())
         h.music.spawn(h.music.start())  # tools, the atlas check and a first scan, when music is on
+        h.calendar.spawn(h.calendar.start())  # a sync now and every 15 minutes, while Google is connected
         stop = asyncio.Event()
         extracting = asyncio.create_task(h.extract_queue.run(stop)) if h.extract_queue else None
         try:
@@ -1458,6 +1464,7 @@ def create_app(h: Harness) -> FastAPI:
                 await h.extract_queue.shutdown(extracting)
             await h.mcps.close()
             await h.music.close()
+            await h.calendar.close()
             await h.learner.drain(timeout=30)  # background learn writes land before memory closes; a hung one does not hold shutdown
             # after the worker: the store stops its server and closes; blocks, so off the loop
             await asyncio.to_thread(h.memory.close)
