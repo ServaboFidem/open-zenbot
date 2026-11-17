@@ -1912,3 +1912,56 @@ async def test_events_end_only_after_the_exchange_is_saved(client, harness: Harn
     frames = [json.loads(l[6:]) for l in ev.text.splitlines() if l.startswith("data: ")]
     assert frames[-1] == {"kind": "end", "state": "done"}
     assert conv.exchanges[-1].outcome == "done" and conv.exchanges[-1].reply == "Here it is."
+
+
+def _studio_chat(harness: Harness, slug: str = "site"):
+    from src.harness.loop import Session
+
+    harness.add_bot(Bot(name="Designer", role="Designs", id="des", studio=True))
+    conv, _ = harness.conversations.begin("des", "make a site", session_id="s0")
+    harness.conversations.set_design_folder(conv.id, slug)
+    (harness.config.vault_root / "designs" / slug).mkdir(parents=True)
+    chat = Session(bot_id="des", task="t")
+    chat.conversation_id = conv.id
+    harness.sessions[chat.id] = chat
+    return chat
+
+
+async def test_design_add_image_copies_a_picture_into_the_design(harness: Harness, tmp_path: Path):
+    chat = _studio_chat(harness)
+    upload = harness.config.vault_root / "uploads" / "pic.jpg"
+    upload.parent.mkdir(parents=True)
+    upload.write_bytes(b"\xff\xd8\xff\xe0" + b"\0" * 20)
+    said = harness.design_add_image(chat.id, str(upload), "Team")
+    assert "images/team.jpg" in said and str(tmp_path) not in said and 'src="images/team.jpg"' in said
+    assert (harness.config.vault_root / "designs" / "site" / "images" / "team.jpg").is_file()
+    assert "design_add_image" in [s.name for s in harness.tools.specs(caller=("des", chat.id))]
+    assert "design_add_image" not in [s.name for s in harness.tools.specs(caller=("bot1", "nope"))]
+    outside = tmp_path.parent / "outside-pic.jpg"
+    outside.write_bytes(b"\xff\xd8\xff\xe0")
+    assert harness.design_add_image(chat.id, str(outside)) == harness.attachable(str(outside))
+
+
+async def test_design_add_image_refuses_outside_a_design_conversation(harness: Harness):
+    from src.harness.loop import Session
+
+    plain = Session(bot_id="bot1", task="t")
+    plain.conversation_id = "c1"
+    harness.sessions[plain.id] = plain
+    assert harness.design_add_image(plain.id, "x.png") == "design_add_image works only in a design conversation."
+    assert harness.design_add_image("unknown", "x.png") == "design_add_image works only in a design conversation."
+
+
+async def test_design_add_image_refuses_a_design_folder_that_is_a_link(harness: Harness, tmp_path: Path):
+    chat = _studio_chat(harness)
+    d = harness.config.vault_root / "designs" / "site"
+    d.rmdir()
+    elsewhere = tmp_path / "elsewhere"; elsewhere.mkdir()
+    try:
+        d.symlink_to(elsewhere, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks cannot be created here")
+    pic = harness.config.vault_root / "pic.png"
+    pic.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 20)
+    assert harness.design_add_image(chat.id, str(pic)).startswith("Not added")
+    assert list(elsewhere.iterdir()) == []

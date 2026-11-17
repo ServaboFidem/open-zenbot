@@ -209,6 +209,20 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
   harness's own origin (`ZEN_HARNESS_URL`, default `http://127.0.0.1:8765`) or http(s) on `127.0.0.1`,
   `localhost` or `[::1]` (the memory dashboard). This guards the desktop app only; the harness's closed
   default above is what keeps a page off the network.
+- **Pictures.** A design keeps its pictures as files in `<vault>/designs/<slug>/images/` (PNG, JPEG, WebP or
+  GIF by first bytes, at most 1,500,000 bytes each, names `[a-z0-9][a-z0-9._-]{0,63}`), referenced as
+  `<img src="images/<name>">`. The live file is never rewritten: `design_studio.snapshot` embeds them as `data:`
+  URIs, through `design_images.embed`, only into the numbered copy, so the preview (which loads nothing) still
+  shows them. Only an `<img>` whose `src` is written in quotes and starts `images/` is embedded; a CSS
+  `url()`, a `srcset`, an unquoted `src`, a missing, oversized, non-picture or linked file stays as written,
+  and `attach_file` names each such picture (`design_studio.embed_notes`) plus a copy over
+  `BRIDGE_MAX_BYTES`. `images/` must be a real folder, a picture a regular file with one hard link, and a copy
+  is never written through a link. `design_add_image(path, name?)` (`Harness.design_add_image`) copies a
+  picture the bot may read (`attachable`) into the conversation's design folder and answers `images/<name>`,
+  never a disk path; a taken name gets `-2`, `-3`.... It is listed only to a studio bot's one-to-one task in a
+  conversation it owns that has a design folder (`ToolRunner.register(offered=...)`, `specs(caller=...)`;
+  `Harness._studio_session`), and its handler refuses any other caller. `design_studio.is_current` says whether
+  a numbered copy still equals what `snapshot` would write now, pictures included.
 - **Design systems.** A folder with `DESIGN.md` and optionally `tokens.css`: the shipped ones in
   `design-systems/` (`ZEN_DESIGN_SYSTEMS`), the user's in `<vault>/design-systems/`, which bots can write, so
   the files are untrusted text for a prompt. They grant nothing, so they may live in the vault. A conversation

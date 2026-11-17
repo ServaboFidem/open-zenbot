@@ -45,6 +45,7 @@ class _Tool:
     fn: ToolFn
     group: str | None = None  # None: built in; else the MCP server that owns it
     room_only: bool = False  # offered only to a room turn's session
+    offered: Callable[[str, str], bool] | None = None  # (bot_id, session_id): offered only to callers it accepts
 
 
 SECRET_ENV_SUFFIXES = ("_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD")
@@ -73,8 +74,8 @@ class ToolRunner:
         )
 
     def register(self, name: str, description: str, parameters: dict[str, Any], fn: ToolFn, group: str | None = None,
-                 room_only: bool = False) -> None:
-        self._tools[name] = _Tool(ToolSpec(name, description, parameters), fn, group, room_only)
+                 room_only: bool = False, offered: Callable[[str, str], bool] | None = None) -> None:
+        self._tools[name] = _Tool(ToolSpec(name, description, parameters), fn, group, room_only, offered)
 
     def unregister(self, name: str) -> None:
         self._tools.pop(name, None)
@@ -92,11 +93,14 @@ class ToolRunner:
         tool = self._tools.get(name)
         return tool.fn if tool else None
 
-    def specs(self, groups: set[str] | None = None, room: bool = False) -> list[ToolSpec]:
+    def specs(self, groups: set[str] | None = None, room: bool = False,
+              caller: tuple[str, str] | None = None) -> list[ToolSpec]:
         """Built-in tools always; grouped (MCP) tools only when their group is in `groups` (None means every
-        group); room-only tools only when `room` is true."""
+        group); room-only tools only when `room` is true; a tool with `offered` only when `caller`
+        (bot_id, session_id) is given and `offered` accepts it."""
         return [t.spec for t in self._tools.values()
-                if (groups is None or t.group is None or t.group in groups) and (room or not t.room_only)]
+                if (groups is None or t.group is None or t.group in groups) and (room or not t.room_only)
+                and (t.offered is None or (caller is not None and t.offered(*caller)))]
 
     async def run(self, call: ToolCall) -> ToolResult:
         tool = self._tools.get(call.name)

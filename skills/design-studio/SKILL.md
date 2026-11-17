@@ -13,7 +13,7 @@ steps:
   - Write one HTML file with everything inline and a stable data-zen-id on every meaningful element.
   - Check the file against the references below before attaching it.
 validation:
-  - No external requests of any kind; fonts and images are inline.
+  - No external requests of any kind; styles, scripts and fonts are inline, and pictures are files added with `design_add_image`.
   - Every meaningful element has a data-zen-id, and ids survive revisions.
   - Contrast, focus, labels and the five states hold up (see the references).
 return: The attached design file, with a short note on what was made or changed.
@@ -34,8 +34,11 @@ decision you are making; do not load all five for a small tweak.
 
 Working rules:
 
-- The preview blocks all network access. Inline every style, script, font and
-  image (`data:` URIs). Draw icons as inline SVG with `currentColor`.
+- The preview blocks all network access. Inline every style, script and font.
+  Keep pictures as files: add a photo with `design_add_image` and reference it
+  as `<img src="images/<name>">` (with the quotes); never write a picture as
+  `data:` text, and read `attach_file`'s note on any picture not embedded.
+  Draw icons and illustrations as inline SVG with `currentColor`.
 - Put tokens on `:root` (`--bg`, `--surface`, `--fg`, `--muted`, `--border`,
   `--accent`) and use them everywhere. A design system in context overrides the
   defaults in the references.

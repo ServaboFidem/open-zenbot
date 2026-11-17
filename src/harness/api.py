@@ -64,7 +64,7 @@ from . import allowed_folders, tracing_settings
 from .allowed_folders import AllowedFolders
 from .magick_guard import Folders as GuardFolders, MagickGuard, MagickRunner
 from .write_guard import ShellWriteCheck
-from . import agent_clis, design_studio, design_systems, tool_paths
+from . import agent_clis, design_images, design_studio, design_systems, tool_paths
 from .agent_clis import Agents
 from .delegation import Delegator, Runner as DelegateRunner
 from src.vault_settings import settings_dir
@@ -285,6 +285,19 @@ class Harness:
         self.images.attach = self.tools.fn("attach_file")
         self.images.register(self.tools, self.catalog)  # idempotent, like the room tools
         self.delegator.register(self.tools)  # idempotent; offered only while an agent is on
+        self.tools.register(  # idempotent; offered only to a studio bot in its own design conversation
+            "design_add_image",
+            "Put a picture in this design's images folder so the page can show it. Give the path of a PNG, JPEG, "
+            "WebP or GIF you may read (an upload, or a file in the vault or an allowed folder). The answer is the "
+            "name to use: reference it as <img src=\"images/<name>\"> with the quotes, and never write a picture "
+            "as data: text.",
+            {"type": "object", "properties": {
+                "path": {"type": "string", "description": "the picture: a full path, or relative to your working folder"},
+                "name": {"type": "string", "description": "optional name for the picture; it is made lower case and kept safe"},
+            }, "required": ["path"]},
+            self._design_add_image_tool,
+            offered=lambda _bot, session_id: self._studio_session(session_id) is not None,
+        )
         if self.music is None:
             self.music = MusicService(c, self.ledger, self.memory, self.tools, self.catalog)
         self.music.register()  # the music tools appear only when music is on and the token is set
@@ -568,6 +581,44 @@ class Harness:
             if notes:
                 msg += " Not embedded: " + "; ".join(notes) + "."
         return msg
+
+    def _studio_session(self, session_id: str) -> tuple[Any, str] | None:
+        """(conversation, design folder slug) for a one-to-one task of a studio bot in a conversation it owns
+        that has a design folder; None for a room turn, a routine or anything else."""
+        session = self.sessions.get(session_id)
+        if session is None or session.room_id or not session.conversation_id:
+            return None
+        bot = self.bots.get(session.bot_id)
+        conv = self.conversations.get(session.conversation_id)
+        if bot is None or not bot.studio or conv is None or conv.owner != bot.id or not conv.design_folder:
+            return None
+        return conv, conv.design_folder
+
+    def _design_add_image_tool(self, path: str, name: str = "") -> str:
+        from .tools import current_call
+        return self.design_add_image(current_call.get()[1], path, name)
+
+    def design_add_image(self, session_id: str, path: str, name: str = "") -> str:
+        """`design_add_image`: copy a picture the studio bot may read into its design's `images/` folder."""
+        found = self._studio_session(session_id)
+        if found is None:
+            return "design_add_image works only in a design conversation."
+        slug = found[1]
+        source = self.attachable(path)
+        if isinstance(source, str):
+            return source
+        designs = self.config.vault_root.resolve() / "designs"
+        folder = designs / slug
+        try:
+            if folder.is_symlink() or not folder.is_dir() or folder.resolve() != folder:
+                return "Not added: the design folder is not a plain folder."
+        except OSError:
+            return "Not added: the design folder cannot be read."
+        try:
+            ref = design_images.add(folder, source, name)
+        except design_images.ImageRefused as e:
+            return f"Not added: {e}."
+        return f"Added as {ref}. Reference it as <img src=\"{ref}\"> (keep the quotes); do not write it as data: text."
 
     def _in_routine(self, session_id: str) -> bool:
         """A session with no conversation and no room (a routine), or one the harness does not know: nobody is

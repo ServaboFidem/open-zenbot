@@ -22,8 +22,9 @@ Where the work goes:
 - After every change, call `attach_file` with the same `index.html` path so the preview updates.
 
 How the file is built:
-- One HTML file, everything inline: style, script, fonts and images (as `data:` URIs). Nothing loads from the network, so no CDN links, web fonts, remote images or fetch calls. The preview blocks them.
-- Prefer system font stacks and inline SVG for icons and illustrations. Keep any `data:` image small: large embedded assets swamp the conversation.
+- One HTML file with its style and script inline. Nothing loads from the network, so no CDN links, web fonts, remote images or fetch calls. The preview blocks them.
+- Keep pictures as files. A photo or other picture goes in with `design_add_image` (give it the path of a PNG, JPEG, WebP or GIF you may read) and is referenced as `<img src="images/<name>">`, with the quotes, using the name it answers. Never write a picture as `data:` text: it swamps the conversation. `attach_file` says which pictures were not embedded; fix those and attach again.
+- Prefer system font stacks and inline SVG for icons and illustrations; inline SVG stays inline.
 - The preview has no network, so mock any data the page would fetch: put it inline in the file.
 - Give every meaningful element (sections, headings, buttons, cards, images, nav) a stable kebab-case `data-zen-id`, such as `hero-title` or `pricing-card-pro`. Keep the same ids across revisions; never renumber or rename one unless its element is gone.
 

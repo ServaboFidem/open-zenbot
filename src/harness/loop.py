@@ -233,7 +233,8 @@ class TaskLoop:
             self.ledger.append(Kind.session, bot.id, session.id, event=str(session.state), steps=session.steps)
 
     async def _drive(self, bot: Bot, session: Session, skills: list[Skill]) -> None:
-        specs = self.tools.specs(allowed_tool_groups(session.route), room=bool(session.room_id))
+        specs = self.tools.specs(allowed_tool_groups(session.route), room=bool(session.room_id),
+                                  caller=(session.bot_id, session.id))
         while session.steps < self.max_steps:
             if session.stop_requested:
                 session.state = SessionState.stopped

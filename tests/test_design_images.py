@@ -127,3 +127,11 @@ def test_add_makes_images_but_never_through_a_link(tmp_path):
     with pytest.raises(ImageRefused):
         add(e, src)
     assert list(target.iterdir()) == []
+
+
+def test_a_tool_with_offered_is_listed_only_for_its_callers():
+    from src.harness.tools import ToolRunner
+    t = ToolRunner()
+    t.register("x", "d", {"type": "object", "properties": {}}, lambda: "ok", offered=lambda b, s: b == "designer")
+    names = lambda **k: [s.name for s in t.specs(**k)]  # noqa: E731
+    assert "x" not in names() and "x" not in names(caller=("other", "s1")) and "x" in names(caller=("designer", "s1"))
