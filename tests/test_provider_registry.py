@@ -67,6 +67,8 @@ def test_no_module_outside_providers_imports_a_provider_client():
             continue
         if "music" in path.relative_to(REPO / "src").parts[:1]:  # music web APIs (Discogs, MusicBrainz), not LLM providers
             continue
+        if "events" in path.relative_to(REPO / "src").parts[:1]:  # the Google Calendar API, not an LLM provider
+            continue
         if CLIENT_IMPORTS.search(path.read_text(encoding="utf-8")):
             offenders.append(str(path.relative_to(REPO)))
     assert offenders == [], f"provider clients must stay behind src/providers/: {offenders}"
