@@ -155,6 +155,35 @@ def test_vendored_prompt_master_skill_loads_with_its_attribution():
         assert (d / f).is_file(), f
 
 
+WONDELAI = ("contagious", "design-everyday-things", "drive-motivation", "hooked-ux", "hundred-million-offers",
+            "improve-retention", "influence-psychology", "made-to-stick", "mom-test", "obviously-awesome")
+
+
+def test_vendored_wondelai_skills_load_with_their_attribution():
+    """wondelai/skills, MIT: one LICENSE and NOTICE.md for the group, each skill's references beside it."""
+    group = REPO / "skills" / "wondelai"
+    assert "Wondel.ai" in (group / "LICENSE").read_text(encoding="utf-8")
+    notice = (group / "NOTICE.md").read_text(encoding="utf-8")
+    for slug in WONDELAI:
+        r = load_skill(group / slug)
+        assert r.ok, (slug, r.reason, r.detail)
+        assert r.skill.slug == slug and r.skill.access == ["shell"] and r.skill.use
+        assert "github.com/wondelai/skills" in r.skill.body and f"`{slug}`" in notice
+        assert any((group / slug / "references").glob("*.md")), slug
+    assert "cro-methodology" not in load_skill(group / "improve-retention").skill.use  # a pointer to a skill not shipped
+
+
+def test_the_other_vendored_writing_and_design_skills_load():
+    for slug, licensed in (("clarify-crit", True), ("humanizer", True), ("frontend-design", False), ("high-end-visual-design", False)):
+        d = REPO / "skills" / slug
+        r = load_skill(d)
+        assert r.ok and r.skill.slug == slug and r.skill.use, (slug, r.reason, r.detail)
+        assert (d / "NOTICE.md").is_file()
+        if licensed:
+            assert "MIT License" in (d / "LICENSE").read_text(encoding="utf-8")
+    assert (REPO / "skills" / "humanizer" / "scripts" / "check_tells.py").is_file()
+
+
 def test_learn_company_skill_loads_from_the_repo():
     s = load_skill(REPO / "skills" / "learn-company").skill
     assert s.slug == "learn-company" and "learn_page" in s.access and s.band_width == 0.1

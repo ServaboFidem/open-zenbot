@@ -82,7 +82,7 @@ def test_build_harness_makes_bots_from_the_directory(monkeypatch, vault: Path, t
     h = build_harness(HarnessConfig(vault_root=vault, skills_dir=Path("skills"), bot_prompts_dir=prompts))
     assert set(h.bots) == {"research-partner", "generalist"}
     assert [s.slug for s in h.bots["research-partner"].skills] == ["research-brief"]
-    assert sorted(s.slug for s in h.bots["generalist"].skills) == ["archify", "delegation", "design-studio", "discernment-nudge", "doc-coauthoring", "docx", "learn-company", "pdf", "pptx", "prompt-master", "research-brief", "skill-creator", "weekly-digest", "xlsx"]  # no skills key: every catalog skill
+    assert sorted(s.slug for s in h.bots["generalist"].skills) == ["archify", "clarify-crit", "contagious", "delegation", "design-everyday-things", "design-studio", "discernment-nudge", "doc-coauthoring", "docx", "drive-motivation", "frontend-design", "high-end-visual-design", "hooked-ux", "humanizer", "hundred-million-offers", "improve-retention", "influence-psychology", "learn-company", "made-to-stick", "mom-test", "obviously-awesome", "pdf", "pptx", "prompt-master", "research-brief", "skill-creator", "weekly-digest", "xlsx"]  # no skills key: every catalog skill
 
 
 def test_build_harness_with_an_empty_directory_has_no_bots(monkeypatch, vault: Path, tmp_path: Path):
@@ -203,9 +203,18 @@ def test_studio_must_be_a_boolean():
 
 def test_the_designer_bot_file_is_a_studio_bot():
     p = parse(Path("bot-prompts/designer.md").read_text(encoding="utf-8"), "designer")
-    assert p.studio is True and p.skills == ["design-studio"] and p.mcps == ["files"]
+    assert p.studio is True and p.skills[0] == "design-studio" and p.mcps == ["files"]
+    assert {"frontend-design", "high-end-visual-design", "design-everyday-things", "hooked-ux", "improve-retention", "drive-motivation"} <= set(p.skills)
+    assert "Never use `shell`" not in p.instructions  # its skills' reference files are read with the shell
     for must in ("designs/", "data-zen-id", "attach_file", "question-form", "create_directory", "edit_file"):
         assert must in p.instructions
+
+
+def test_the_copywriter_bot_file_works_from_the_conversation_alone():
+    p = parse(Path("bot-prompts/copywriter.md").read_text(encoding="utf-8"), "copywriter")
+    assert p.name == "Copywriter" and p.studio is False and p.mcps is None
+    assert p.skills == ["humanizer", "made-to-stick", "contagious", "influence-psychology", "hundred-million-offers", "obviously-awesome", "clarify-crit"]
+    assert "ghostwriter" in p.instructions and "ask the user" in p.instructions
 
 
 def _bot_file(folder: Path, stem: str, name: str) -> None:
