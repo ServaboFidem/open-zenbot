@@ -82,7 +82,7 @@ def test_build_harness_makes_bots_from_the_directory(monkeypatch, vault: Path, t
     h = build_harness(HarnessConfig(vault_root=vault, skills_dir=Path("skills"), bot_prompts_dir=prompts))
     assert set(h.bots) == {"research-partner", "generalist"}
     assert [s.slug for s in h.bots["research-partner"].skills] == ["research-brief"]
-    assert sorted(s.slug for s in h.bots["generalist"].skills) == ["archify", "design-studio", "discernment-nudge", "doc-coauthoring", "docx", "learn-company", "pdf", "pptx", "prompt-master", "research-brief", "skill-creator", "weekly-digest", "xlsx"]  # no skills key: every catalog skill
+    assert sorted(s.slug for s in h.bots["generalist"].skills) == ["archify", "delegation", "design-studio", "discernment-nudge", "doc-coauthoring", "docx", "learn-company", "pdf", "pptx", "prompt-master", "research-brief", "skill-creator", "weekly-digest", "xlsx"]  # no skills key: every catalog skill
 
 
 def test_build_harness_with_an_empty_directory_has_no_bots(monkeypatch, vault: Path, tmp_path: Path):

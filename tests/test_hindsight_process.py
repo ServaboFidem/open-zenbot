@@ -269,7 +269,11 @@ def test_kill_tree_survives_a_gone_process(monkeypatch):
     kill_tree(5)
 
 
-def test_restart_stops_then_starts_with_the_new_key(tmp_path):
+def test_restart_stops_then_starts_with_the_new_key(tmp_path, monkeypatch):
+    # Counted through the Windows tree kill (taskkill goes through `run`, which the fake records). Unpinned, this ran
+    # the POSIX path on Linux and macOS: no `run` at all, and a real os.killpg on the fake pids.
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(hp.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False)
     s, sp, runs = server(tmp_path)
     s.start("old")
     first = list(sp.procs)

@@ -228,7 +228,7 @@ if "fail" in sys.argv:
 if "slow" in sys.argv:
     import time; time.sleep(30)
 policy = os.path.join(os.environ.get("MAGICK_CONFIGURE_PATH", ""), "policy.xml")
-print(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "env": sorted(os.environ),
+print(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "env": dict(os.environ),
                   "conf": os.environ.get("MAGICK_CONFIGURE_PATH"), "policy": open(policy).read()}))
 '''
 
@@ -242,6 +242,7 @@ async def test_the_runner_starts_magick_under_the_policy_with_a_bare_environment
     script.write_text(FAKE_MAGICK, encoding="utf-8")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-not-for-magick")
     monkeypatch.setenv("ZEN_GUI_KEY", "nor-this")
+    monkeypatch.setenv("LC_CTYPE", "en_US.UTF-8")  # a locale of the harness's own, which must not reach magick
     conf, work = tmp_path / "vault-settings" / "magick", tmp_path / "work"
     work.mkdir()
     runner = MagickRunner(conf, binary=lambda: [sys.executable, str(script)], timeout=5)
@@ -249,8 +250,14 @@ async def test_the_runner_starts_magick_under_the_policy_with_a_bare_environment
     assert got["argv"] == ["a.png", "-resize", "50%", "o.png"]  # an argument list, no shell
     assert os.path.realpath(got["cwd"]) == os.path.realpath(work)
     assert got["conf"] == str(conf) and got["policy"] == policy_xml()
-    leaked = {k.upper() for k in got["env"]} - {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR",
-                                                  "MAGICK_CONFIGURE_PATH"}
+    env = dict(got["env"])
+    # The fake is a Python, which on Linux and macOS sets LC_CTYPE in its own environment when it starts with no
+    # locale (PEP 538 locale coercion, to one of these values). That is the child's doing, not something the runner
+    # passed: the harness's own LC_CTYPE above (en_US.UTF-8) would show here if it leaked.
+    if env.get("LC_CTYPE") in {"C.UTF-8", "C.utf8", "UTF-8"}:
+        del env["LC_CTYPE"]
+    leaked = {k.upper() for k in env} - {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR",
+                                         "MAGICK_CONFIGURE_PATH"}
     assert not leaked, leaked  # no keys, nothing else
     (conf / "policy.xml").write_text("<policymap/>", encoding="utf-8")  # an edit is put back at the next run
     await runner(["x"], work)
@@ -297,7 +304,9 @@ async def test_real_magick_through_the_gate_and_under_the_policy(tmp_path: Path)
     assert raster_kind((work / "label.png").read_bytes()[:64]) == "png" and (work / "doc.pdf").read_bytes()[:5] == b"%PDF-"
 
     for args in (["text:secret.txt", "leak1.png"], ["evil.svg", "leak2.png"]):  # straight to the runner, past the gate
-        with pytest.raises(RuntimeError, match="not authorized by the security policy"):
+        # the wording of a policy refusal differs by ImageMagick release: "not authorized by the security policy"
+        # (older 7.x), "not allowed by the security policy" (7.1.2-18)
+        with pytest.raises(RuntimeError, match=r"not (authorized|allowed) by the security policy"):
             await runner(args, work)
         assert subprocess.run([REAL_MAGICK, *args], cwd=work, capture_output=True).returncode == 0  # without the policy
     assert srv.calls == []
