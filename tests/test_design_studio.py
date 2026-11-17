@@ -221,8 +221,7 @@ def test_keep_before_keeps_the_source_for_the_copy_about_to_be_made(tmp_path):
     kept = keep_before(tmp_path, live, 2, b"<p>old</p>")
     assert kept == d / ".versions" / "before-2.index.html" and kept.read_bytes() == b"<p>old</p>"
     assert revision_of(tmp_path, kept) is None and next_number(tmp_path, live) == 2  # never counted as a copy
-    with pytest.raises(SnapshotRefused, match="already there"):
-        keep_before(tmp_path, live, 2, b"<p>other</p>")
+    assert keep_before(tmp_path, live, 2, b"<p>old</p>") == kept  # no copy 2 yet: a kept source there is replaced
     assert kept.read_bytes() == b"<p>old</p>"
     live.write_text("<p>new</p>")
     two = snapshot(tmp_path, live)
@@ -254,3 +253,33 @@ def test_before_of_ignores_a_kept_source_that_is_a_link(tmp_path):
     two = snapshot(tmp_path, live)
     (d / ".versions" / "before-2.index.html").symlink_to(live)
     assert before_of(tmp_path, two) is None
+
+
+def test_keep_before_replaces_a_stale_kept_source_whose_copy_was_never_made(tmp_path):
+    from src.harness.design_studio import keep_before
+
+    d, live = _site(tmp_path)
+    snapshot(tmp_path, live)
+    stale = d / ".versions" / "before-2.index.html"
+    stale.write_bytes(b"<p>crashed</p>")  # kept, then the copy was never made
+    kept = keep_before(tmp_path, live, 2, b"<p>now</p>")
+    assert kept == stale and kept.read_bytes() == b"<p>now</p>"
+    assert sorted(p.name for p in (d / ".versions").iterdir()) == ["1.index.html", "before-2.index.html"]
+    # with copy 2 there, the kept source is its own and stays
+    live.write_text("<p>two</p>")
+    snapshot(tmp_path, live)
+    with pytest.raises(SnapshotRefused, match="already there"):
+        keep_before(tmp_path, live, 2, b"<p>other</p>")
+    assert kept.read_bytes() == b"<p>now</p>"
+
+
+def test_keep_before_replaces_a_stale_link_without_writing_through_it(tmp_path):
+    from src.harness.design_studio import keep_before
+
+    d, live = _site(tmp_path)
+    snapshot(tmp_path, live)
+    target = tmp_path / "outside.html"
+    target.write_bytes(b"outside")
+    (d / ".versions" / "before-2.index.html").symlink_to(target)
+    kept = keep_before(tmp_path, live, 2, b"<p>now</p>")
+    assert not kept.is_symlink() and kept.read_bytes() == b"<p>now</p>" and target.read_bytes() == b"outside"

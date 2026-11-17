@@ -167,3 +167,59 @@ def test_write_out_reuses_the_same_bytes_and_never_overwrites_others(tmp_path):
         write_out(d, b"<svg/>", "logo")
     with pytest.raises(ImageRefused, match="too large"):
         write_out(d, PNG + b"\0" * PICTURE_MAX_BYTES, "big")
+
+
+def test_load_never_follows_a_link_swapped_in_at_the_name(tmp_path, monkeypatch):
+    from src.harness import design_images
+
+    d = design(tmp_path)
+    real = tmp_path / "outside.png"
+    real.write_bytes(PNG)
+    os.symlink(real, d / "images" / "ln.png")
+    if hasattr(os, "O_NOFOLLOW"):  # the check is on the open file itself, not a look before it
+        monkeypatch.setattr(design_images.Path, "lstat", lambda self, real=real: os.stat(real))  # it was a file when looked at
+    with pytest.raises(ImageRefused):
+        design_images.load(d, "ln.png")
+
+
+def test_a_write_that_fails_part_way_leaves_no_file_and_is_refused(tmp_path, monkeypatch):
+    from src.harness import design_images
+
+    d = design(tmp_path)
+    src = tmp_path / "a.png"
+    src.write_bytes(PNG)
+
+    def half(fd, data):
+        os.write(fd, data[:5])
+        raise OSError("disk full")
+
+    monkeypatch.setattr(design_images, "_write_all", half)
+    with pytest.raises(ImageRefused, match="could not be written"):
+        add(d, src)
+    assert list((d / "images").iterdir()) == []
+
+
+def test_a_rename_that_fails_leaves_no_file_and_is_refused(tmp_path, monkeypatch):
+    from src.harness import design_images
+
+    d = design(tmp_path)
+    src = tmp_path / "a.png"
+    src.write_bytes(PNG)
+
+    def refuse(*_a, **_k):
+        raise OSError("no links here")
+
+    monkeypatch.setattr(design_images.os, "link", refuse)
+    with pytest.raises(ImageRefused, match="could not be written"):
+        add(d, src)
+    assert list((d / "images").iterdir()) == []
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFOs here")
+def test_a_fifo_at_the_name_is_refused_without_hanging(tmp_path):
+    from src.harness.design_images import load
+
+    d = design(tmp_path)
+    os.mkfifo(d / "images" / "pipe.png")
+    with pytest.raises(ImageRefused, match="regular file"):
+        load(d, "pipe.png")

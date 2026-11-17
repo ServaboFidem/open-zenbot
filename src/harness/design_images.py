@@ -3,9 +3,11 @@ and add one to the design's `images/` folder. Every read and write refuses a lin
 from __future__ import annotations
 
 import base64
+import os
 import re
 import stat
 from pathlib import Path
+from uuid import uuid4
 
 from src.harness import design_html
 
@@ -56,21 +58,25 @@ def load(folder: Path, name: str) -> tuple[str, bytes]:
         raise ImageRefused("not found")
     d = _images_dir(folder)
     p = d / name
+    if not hasattr(os, "O_NOFOLLOW") and p.is_symlink():  # Windows: no O_NOFOLLOW, so look first
+        raise ImageRefused("a link or not a regular file")
     try:
-        st = p.lstat()
+        # O_NONBLOCK: a FIFO at the name must not hang the open; fstat below refuses it
+        fd = os.open(p, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
     except FileNotFoundError:
         raise ImageRefused("not found") from None
-    except OSError:
-        raise ImageRefused("not readable") from None
-    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
-        raise ImageRefused("a link or not a regular file")
-    if st.st_size > PICTURE_MAX_BYTES:
-        raise ImageRefused("too large")
-    try:
-        with open(p, "rb") as f:
+    except OSError:  # a link at the name is refused here (ELOOP), never followed
+        raise ImageRefused("a link or not readable") from None
+    with os.fdopen(fd, "rb") as f:  # every check is on the file that was opened
+        try:
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+                raise ImageRefused("a link or not a regular file")
+            if st.st_size > PICTURE_MAX_BYTES:
+                raise ImageRefused("too large")
             data = f.read(PICTURE_MAX_BYTES + 1)
-    except OSError:
-        raise ImageRefused("not readable") from None
+        except OSError:
+            raise ImageRefused("not readable") from None
     if len(data) > PICTURE_MAX_BYTES:
         raise ImageRefused("too large")
     kind = sniff(data)
@@ -147,16 +153,40 @@ def _put(folder: Path, data: bytes, name: str, reuse: bool = False) -> str:
     d = folder / IMAGES
     if d.is_symlink():
         raise ImageRefused("images is a link or not a folder")
-    if not d.exists():
-        d.mkdir()
+    try:
+        d.mkdir(exist_ok=True)
+    except OSError:
+        raise ImageRefused("images could not be made") from None
     d = _images_dir(folder)
     stem, ext = _stem(name), _EXT[kind]
+    tmp = d / f".{uuid4().hex[:12]}.tmp"
+    try:
+        # written whole under a temporary name first, so a failed write never leaves part of a picture
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+        try:
+            _write_all(fd, data)
+        finally:
+            os.close(fd)
+        return _place(folder, d, tmp, stem, ext, data, reuse)
+    except OSError:
+        raise ImageRefused("the picture could not be written") from None
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view):]
+
+
+def _place(folder: Path, d: Path, tmp: Path, stem: str, ext: str, data: bytes, reuse: bool) -> str:
+    """Give the written temporary file the first free name; a taken name is never overwritten."""
     n = 1
     while True:
         leaf = f"{stem}.{ext}" if n == 1 else f"{stem}-{n}.{ext}"
         try:
-            with open(d / leaf, "xb") as out:  # exclusive: never follows or truncates what is there
-                out.write(data)
+            os.link(tmp, d / leaf)  # exclusive: fails on anything already at the name, a link included
         except FileExistsError:
             if reuse:
                 try:

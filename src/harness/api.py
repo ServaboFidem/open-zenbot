@@ -648,6 +648,8 @@ class Harness:
             ref = design_images.add(folder, source, name)
         except design_images.ImageRefused as e:
             return f"Not added: {e}."
+        if found is None:  # a helper does not write the page: it places the picture
+            return f"Added as {ref}. Place it with design_set_image, path \"{ref}\"."
         return f"Added as {ref}. Reference it as <img src=\"{ref}\"> (keep the quotes); do not write it as data: text."
 
     def _part_turn(self, session_id: str, kind: str) -> PartTurn | None:
@@ -714,16 +716,18 @@ class Harness:
                 new_alt = design_parts.check_text(alt)
             except design_parts.PartRefused as e:
                 return f"Not set: the alt text: {e}."
+        folder = studio_helpers.design_dir(self.config.vault_root, turn.slug)
+        if folder is None:
+            return "Not set: the design folder is not a plain folder."
         if not Path(path).is_absolute() and Path(path).parts[:1] == ("designs",):
             path = str(self.config.vault_root / path)  # designs live in the vault, not the working folder
+        elif not Path(path).is_absolute() and Path(path).parts[:1] == (design_images.IMAGES,):
+            path = str(folder / path)  # `images/<name>`, as design_add_image answers: this design's pictures
         source = self.attachable(path)
         if isinstance(source, str):
             if "outside the folders" in source:
                 return "Not set: that picture is outside the folders you may read."
             return f"Not set: {source.removeprefix('Refused: ').rstrip('.')}."
-        folder = studio_helpers.design_dir(self.config.vault_root, turn.slug)
-        if folder is None:
-            return "Not set: the design folder is not a plain folder."
         try:
             if source.parent == folder / design_images.IMAGES and design_images.NAME.fullmatch(source.name):
                 ref = f"{design_images.IMAGES}/{source.name}"  # already the design's: used as it is
@@ -739,18 +743,20 @@ class Harness:
         return f"Set [{slot_id}]."
 
     def start_helper(self, helper: Bot, owner: Bot, conv: Any, task: str, comments: list[dict[str, str]],
-                     addendum: str) -> Session | None:
+                     addendum: str, protected: dict[str, Any] | None = None) -> Session | None:
         """Run `helper` on the newest design of the owner's conversation `conv`: it reads a worksheet of the
         slots it may change (the commented ones, or all of its kind) and places changes with the design tools;
         the harness applies them when the task ends well. None when there is no worksheet for this helper
-        (the caller then gives the task to the owner). `addendum` is the comment block, or empty."""
+        (the caller then gives the task to the owner). `addendum` is the comment block, or empty; it is all the
+        exchange keeps, so the worksheet and the rules reach this task only, never a later turn's history.
+        `protected` is a confirmed scope change, carried as for the owner."""
         found = studio_helpers.prepare(self.config.vault_root, conv, helper.places, comments)
         if found is None:
             return None
         turn, sheet = found
-        extra = "\n\n".join(p for p in (addendum, sheet, studio_helpers.RULES) if p)
         return self.start_task(helper, task, conversation_id=conv.id, owner=owner, comments=comments,
-                               addendum=extra, part=turn)
+                               addendum=addendum, brief=f"{sheet}\n\n{studio_helpers.RULES}", part=turn,
+                               protected=protected)
 
     def _apply_part(self, bot: Bot, session: Session, turn: PartTurn | None) -> str:
         """At a helper turn's end: apply what it placed when the task ended well. Returns the sentence the
@@ -838,14 +844,16 @@ class Harness:
         self, bot: Bot, task: str, *, conversation_id: str | None = None, in_conversation: bool = True,
         protected: dict[str, Any] | None = None, pinned_skills: list[str] | None = None,
         comments: list[dict[str, str]] | None = None, addendum: str = "",
-        owner: Bot | None = None, part: PartTurn | None = None,
+        owner: Bot | None = None, part: PartTurn | None = None, brief: str = "",
     ) -> Session:
         """Run a task for a bot. `owner` is the conversation's owner when it is another bot: `bot` then acts
         in that conversation as a helper (no design folder or design system block, no turn note). It joins the bot's current conversation (or
         the one named) unless `in_conversation` is False (routines): its
         exchange is written now, pending, and completed with the outcome
         when the task ends. Raises KeyError for a named conversation that is
-        not this bot's. `part` makes the task a helper's turn on the conversation's design (`start_helper`)."""
+        not this bot's. `part` makes the task a helper's turn on the conversation's design (`start_helper`).
+        `brief` is read after the addendum and pinned with it, but not kept with the exchange (a helper's
+        worksheet and rules: a later turn must not replay them)."""
         session = Session(bot_id=bot.id, task=task, pinned_skills=list(pinned_skills or []))
         conv = None
         helper = owner is not None and owner.id != bot.id
@@ -876,7 +884,7 @@ class Harness:
             folder = self._design_folder(bot, conv, task, session.id)
             if folder:  # first in the context, before any design system
                 session.design = "\n\n".join(p for p in (design_studio.folder_block(folder), session.design) if p)
-        if addendum:
+        if addendum or brief:
             session.recall_query = task  # recall searches the user's words, not the comment block
         self.sessions[session.id] = session
         if part is not None:
@@ -897,7 +905,12 @@ class Harness:
                     # the comment block's lines are pinned as constraints so a mid-task compaction cannot fold them away
                     pinned = protected or ({"task": task, "constraints": [ln for ln in addendum.splitlines() if ln.strip()]}
                                            if addendum else None)
-                    await self.loop.run(bot, f"{task}\n\n{addendum}" if addendum else task, session, history=history,
+                    if brief:
+                        base = pinned or {"task": task, "constraints": []}
+                        pinned = {**base, "constraints": [*base.get("constraints", []),
+                                                          *(ln for ln in brief.splitlines() if ln.strip())]}
+                    told = "\n\n".join(p for p in (addendum, brief) if p)
+                    await self.loop.run(bot, f"{task}\n\n{told}" if told else task, session, history=history,
                                         protected=pinned)
                 except asyncio.CancelledError:
                     if session.state not in _ENDED:  # cancelled before the loop could mark it
@@ -2630,7 +2643,7 @@ def create_app(h: Harness) -> FastAPI:
     async def _helper_turn(bot: Bot, body: TaskIn, comments: list[dict[str, str]], addendum: str) -> Session | None:
         """A helper's turn on the design for this task, or None when the owner takes it (the route then goes
         on as before). Only a studio bot's own conversation that has a design is routed; the answers to a
-        question form go to the bot that asked, and `redo_of` counts as `route: "owner"` for now."""
+        question form go to the bot that asked."""
         if not (bot.studio and body.conversation):
             return None
         conv = h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
@@ -2650,6 +2663,7 @@ def create_app(h: Harness) -> FastAPI:
         if not helpers:
             return None
         task = body.task.strip()
+        protected = body.protected.model_dump() if body.protected else None
         if asked is not None:
             helper = h.bots.get(asked.bot) if asked.bot else None
             if helper is None or not helper.places:
@@ -2657,14 +2671,14 @@ def create_app(h: Harness) -> FastAPI:
             att, (slug, version, name) = newest
             scope = asked.comments if asked.comments and all(c.get("attachment_id") == att["id"] for c in asked.comments) else []
             block = design_studio.comment_block(f"designs/{slug}/{name}", version, scope) if scope else ""
-            return h.start_helper(helper, bot, conv, task, scope, block)
+            return h.start_helper(helper, bot, conv, task, scope, block, protected=protected)
         if h.scorer is None or body.route != "auto" or body.redo_of:
             return None
         chosen = await studio_help.pick(h.scorer, h.ledger, bot, helpers, task, comments)
         _require_idle(bot, body)  # the scorer call is an await: another task may have started meanwhile
         if chosen is None:
             return None
-        return h.start_helper(h.bots[chosen], bot, conv, task, comments, addendum)
+        return h.start_helper(h.bots[chosen], bot, conv, task, comments, addendum, protected=protected)
 
     @app.post("/bots/{bot_id}/tasks", status_code=202)
     async def start_task(bot_id: str, body: TaskIn) -> dict[str, Any]:

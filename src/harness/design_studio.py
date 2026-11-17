@@ -1,9 +1,11 @@
 """Design studio: each attached design is one fixed revision, a numbered copy kept beside the file."""
 from __future__ import annotations
 
+import os
 import re
 import stat
 from pathlib import Path
+from uuid import uuid4
 
 from src.harness import design_images
 
@@ -138,7 +140,9 @@ def next_number(vault_root: Path, live: Path) -> int:
 def keep_before(vault_root: Path, live: Path, n: int, source: bytes) -> Path:
     """Keep the design file's source as it was before a helper's change: `.versions/before-<n>.<name>`,
     where `<n>` is the number of the copy the change is about to make. Never overwrites or follows what is
-    at the name. Raises SnapshotRefused (the message names no disk path) or OSError."""
+    at the name. A kept source left with no copy `<n>` (the copy was never made) is stale and is replaced:
+    written beside it, then renamed over it, which replaces a link rather than writing through it. Raises
+    SnapshotRefused (the message names no disk path) or OSError."""
     real = _live(vault_root, live)
     if real is None:
         raise SnapshotRefused("not a design file")
@@ -148,8 +152,18 @@ def keep_before(vault_root: Path, live: Path, n: int, source: bytes) -> Path:
     try:
         with open(kept, "xb") as out:  # exclusive, as the numbered copies are
             out.write(source)
+        return kept
     except FileExistsError:
-        raise SnapshotRefused(f"designs/{real.parent.name}/.versions/{kept.name} is already there") from None
+        if any(k == n for k, _ in _copies(vdir, real.name)):
+            raise SnapshotRefused(f"designs/{real.parent.name}/.versions/{kept.name} is already there") from None
+    tmp = vdir / f".{kept.name}.{uuid4().hex[:8]}.tmp"
+    try:
+        with open(tmp, "xb") as out:
+            out.write(source)
+        os.replace(tmp, kept)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return kept
 
 

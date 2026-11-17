@@ -111,7 +111,8 @@ def _pictures(folder: Path, sheet: list[Slot], all_slots: dict[str, Slot]) -> tu
 def prepare(vault_root: Path, conv: Any, places: list[str],
             comments: list[dict[str, str]]) -> tuple[PartTurn, str] | None:
     """The turn and its worksheet block for a helper that places `places` in this conversation's newest
-    design, or None: no design, a working file that is not the newest copy, or nothing on the worksheet.
+    design, or None: no design, a working file that is not the newest copy, a copy already over
+    BRIDGE_MAX_BYTES, or nothing on the worksheet.
     With comments, the worksheet holds the picked elements that are slots; without, every slot of the kind."""
     found = newest_revision(vault_root, conv)
     if found is None:
@@ -123,6 +124,11 @@ def prepare(vault_root: Path, conv: Any, places: list[str],
     live = folder / name
     raw = _read_source(live)
     if raw is None or not design_studio.is_current(vault_root, live, Path(att["path"])) or _read_source(live) != raw:
+        return None
+    try:  # a design already too large to comment on: the helper's copy would be refused, so the Designer takes it
+        if Path(att["path"]).stat().st_size > design_studio.BRIDGE_MAX_BYTES:
+            return None
+    except OSError:
         return None
     try:
         source = raw.decode("utf-8")
@@ -156,11 +162,13 @@ def _replace(live: Path, data: bytes) -> None:
 
 
 NO_EARLIER = "the earlier version of the design is no longer there"
+CHANGED_SINCE = "the design has changed since this version; ask the Designer for the change instead"
 
 
 def restore(vault_root: Path, copy: Path) -> str | None:
     """Put the working file back to the source kept before the helper's change that made the numbered
-    `copy`. Writes whole or not at all; returns the reason when it cannot (and then changes nothing)."""
+    `copy`. Only while the working file is still the helper's result, so no later edit is lost. Writes whole
+    or not at all; returns the reason when it cannot (and then changes nothing)."""
     rev = design_studio.revision_of(vault_root, copy)
     before = design_studio.before_of(vault_root, copy)
     folder = design_dir(vault_root, rev[0]) if rev else None
@@ -170,6 +178,8 @@ def restore(vault_root: Path, copy: Path) -> str | None:
     try:
         if live.is_symlink() or not live.is_file():
             return NO_EARLIER
+        if not design_studio.is_current(vault_root, live, copy):
+            return CHANGED_SINCE
         data = before.read_bytes()
         _replace(live, data)
     except OSError:
