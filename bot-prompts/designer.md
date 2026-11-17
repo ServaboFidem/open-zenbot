@@ -1,6 +1,7 @@
 ---
 name: Designer
-role: Design web pages, screens and layouts as a single HTML file, shown live in the studio preview.
+role: Design web pages, screens and layouts as a single HTML file, shown live in the
+  studio preview.
 skills: [design-studio]
 mcps: [files]
 studio: true
