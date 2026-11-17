@@ -65,3 +65,54 @@ test('every Python package under src/ ships with the harness, and the GUI and sh
   for (const n of shipped) assert.ok(from.has(n), `src/${n} is not in extraResources`);
   for (const n of ['gui', 'electron', 'assets']) assert.ok(![...from].some(f => f === n || f.startsWith(`${n}/`)), n);
 });
+
+// "!node_modules/<package glob>/**" lines in files: the renderer libraries already bundled into dist/
+const excludes = () => lines().filter(l => /^- ["']?!node_modules\//.test(l))
+  .map(l => l.replace(/^- ["']?!node_modules\//, '').replace(/\/\*\*["']?$/, ''))
+  .map(g => new RegExp('^' + g.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$'));
+const excluded = name => excludes().some(re => re.test(name));
+const packageOf = spec => spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
+
+test('the renderer-only libraries bundled into dist/ are left out of the app', () => {
+  for (const name of ['react', 'react-dom', '@fluentui/react-components', '@fluentui/react-icons', 'pdfjs-dist', 'docx',
+                      'pptxgenjs', 'react-markdown', 'remark-gfm', 'remark-parse', 'unified', '@napi-rs/canvas',
+                      '@napi-rs/canvas-linux-x64-gnu'])
+    assert.ok(excluded(name), name);
+});
+
+test('every module the main process and preload require is a dependency the app keeps, with its own dependencies', () => {
+  const pkg = JSON.parse(read('package.json'));
+  const lock = JSON.parse(read('package-lock.json')).packages;
+  const dir = join(root, 'src', 'electron');
+  const required = new Set();
+  for (const f of readdirSync(dir).filter(n => n.endsWith('.cjs')))
+    for (const m of readFileSync(join(dir, f), 'utf8').matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g))
+      if (!m[1].startsWith('.') && !m[1].startsWith('node:') && m[1] !== 'electron') required.add(packageOf(m[1]));
+  assert.ok(required.has('@sentry/electron'));
+  // everything these reach through package-lock.json, none of it excluded
+  const seen = new Set();
+  const visit = name => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    assert.ok(!excluded(name), `${name} is needed at runtime but excluded`);
+    const entry = lock[`node_modules/${name}`];
+    for (const d of Object.keys({ ...(entry?.dependencies || {}), ...(entry?.optionalDependencies || {}) })) visit(d);
+  };
+  for (const name of required) {
+    assert.ok(pkg.dependencies[name], `${name} is not in dependencies`);
+    visit(name);
+  }
+});
+
+test('a user sees OpenZenBot, never the npm name', () => {
+  assert.equal(value('executableName'), 'openzenbot');
+  assert.equal(value('packageName'), 'openzenbot');
+  assert.equal(value('desktopName'), 'openzenbot.desktop');
+  assert.equal(value('syncDesktopName'), 'true');
+  const names = lines().filter(l => l.startsWith('artifactName:')).map(l => l.slice('artifactName:'.length).trim().replace(/^["']|["']$/g, ''));
+  assert.deepEqual(names.sort(), ['OpenZenBot-Setup-${version}.${ext}', 'OpenZenBot_${version}_${arch}.${ext}']);
+  assert.match(read('build/apparmor-profile'), /^profile openzenbot \/opt\/OpenZenBot\/openzenbot flags=\(unconfined\) \{$/m);
+  // the launcher's comment and the package description come from here, not package.json's developer description
+  assert.match(value('description') || '', /^OpenZenBot/);
+  assert.doesNotMatch(read('electron-builder.yml') + read('build/apparmor-profile'), /zen-agents/);
+});

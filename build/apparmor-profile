@@ -4,7 +4,7 @@
 abi <abi/4.0>,
 include <tunables/global>
 
-profile openzenbot /opt/OpenZenBot/zen-agents-gui flags=(unconfined) {
+profile openzenbot /opt/OpenZenBot/openzenbot flags=(unconfined) {
   userns,
 
   include if exists <local/openzenbot>

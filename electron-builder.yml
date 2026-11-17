@@ -12,6 +12,25 @@ files:
   - src/electron/**
   - src/assets/zenbot-enso-icon.png
   - package.json
+  # The renderer's libraries are bundled into dist/ (scripts/build-gui.mjs), so the app does not need them again.
+  # Only the main process's own requires stay: @sentry/electron and what it needs (tests/gui/packaging.test.mjs).
+  - "!node_modules/react/**"
+  - "!node_modules/react-dom/**"
+  - "!node_modules/@fluentui/*/**"
+  - "!node_modules/pdfjs-dist/**"
+  - "!node_modules/@napi-rs/canvas*/**"
+  - "!node_modules/docx/**"
+  - "!node_modules/pptxgenjs/**"
+  - "!node_modules/react-markdown/**"
+  - "!node_modules/remark-gfm/**"
+  - "!node_modules/remark-parse/**"
+  - "!node_modules/unified/**"
+# Written into the packed package.json only (developer runs keep theirs). Electron sets the window's app id and
+# WM_CLASS from desktopName, and electron-builder gives the .desktop file the same name and StartupWMClass, so the
+# dock and launcher tie the running window to its entry. It does not change the user data folder, which Electron
+# names after productName.
+extraMetadata:
+  desktopName: openzenbot.desktop
 extraResources:
   # The harness's Python packages, one entry each, with the data files they read (src/harness/design_bridge.js,
   # src/music/data/...). Not `from: src` as a whole: electron-builder leaves every extraResources source out of
@@ -72,7 +91,13 @@ linux:
   category: Utility
   icon: build/icon.png
   maintainer: Zen and the Art of Code
+  description: OpenZenBot, a workspace for chatting and working with your AI bots
+  # /opt/OpenZenBot/openzenbot, /usr/bin/openzenbot, openzenbot.desktop and the openzenbot icon (not the npm name)
+  executableName: openzenbot
+  syncDesktopName: true
 deb:
+  packageName: openzenbot
+  artifactName: OpenZenBot_${version}_${arch}.${ext}
   appArmorProfile: build/apparmor-profile
 win:
   target: nsis
@@ -83,4 +108,5 @@ nsis:
   createDesktopShortcut: always
   createStartMenuShortcut: true
   include: build/installer.nsh
+  artifactName: OpenZenBot-Setup-${version}.${ext}
 publish: null
