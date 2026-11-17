@@ -227,6 +227,67 @@ async def test_a_dirty_pulled_row_on_a_read_only_calendar_is_skipped_and_cleaned
     assert store.pending() == []
 
 
+async def test_a_delete_on_a_read_only_calendar_is_undone_not_hidden(sync, store, fake, push_on):
+    store.apply_remote("home", "h1", ev(title="Read only"), etag='"1"', link="", series_id="")
+    row = store.by_google("home", "h1")
+    store.delete(row["id"])
+    assert await sync.push() == ZERO
+    after = store.event(row["id"])
+    assert writes(fake) == [] and after["deleted"] is False and after["dirty"] is False
+    assert [e["title"] for e in store.events("2026-01-01", "2027-12-31")] == ["Read only"]
+
+
+def edit_once_during(fake, store, id, method, title):
+    """Make a local edit while Google handles the first ``method`` request on an event."""
+    def on_request(request):
+        if request.method == method and "/events" in request.url.path and fake.on_request is on_request:
+            fake.on_request = None
+            store.update(id, ev(title=title))
+    fake.on_request = on_request
+
+
+async def test_an_edit_made_during_its_insert_goes_out_on_the_next_push(sync, store, fake, push_on):
+    e = store.add(ev())
+    gid = google_event_id(e)
+    edit_once_during(fake, store, e["id"], "POST", "Edited meanwhile")
+    assert await sync.push() == {**ZERO, "added": 1}
+    row = store.event(e["id"])
+    assert row["dirty"] is True and row["google_id"] == gid and row["google_calendar"] == "dest"
+    assert fake.events["dest"][gid]["summary"] == "Dentist"
+    assert await sync.push() == {**ZERO, "updated": 1}
+    assert fake.events["dest"][gid]["summary"] == "Edited meanwhile" and len(fake.events["dest"]) == 1
+    assert store.event(e["id"])["dirty"] is False
+
+
+async def test_an_edit_made_during_its_patch_goes_out_on_the_next_push(sync, store, fake, push_on):
+    e = store.add(ev())
+    await sync.push()
+    gid = google_event_id(e)
+    store.update(e["id"], ev(title="First edit"))
+    edit_once_during(fake, store, e["id"], "PATCH", "Second edit")
+    assert await sync.push() == {**ZERO, "updated": 1}
+    assert fake.events["dest"][gid]["summary"] == "First edit" and store.event(e["id"])["dirty"] is True
+    assert await sync.push() == {**ZERO, "updated": 1}
+    assert fake.events["dest"][gid]["summary"] == "Second edit" and store.event(e["id"])["dirty"] is False
+
+
+async def test_a_delete_made_during_a_patch_is_sent_next(sync, store, fake, push_on):
+    e = store.add(ev())
+    await sync.push()
+    gid = google_event_id(e)
+    store.update(e["id"], ev(title="Edited"))
+
+    def on_request(request):
+        if request.method == "PATCH" and fake.on_request is on_request:
+            fake.on_request = None
+            store.delete(e["id"])
+    fake.on_request = on_request
+    await sync.push()
+    assert store.event(e["id"])["deleted"] is True and store.event(e["id"])["dirty"] is True
+    assert await sync.push() == {**ZERO, "removed": 1}
+    assert fake.events["dest"][gid]["status"] == "cancelled" and store.event(e["id"]) is None
+
+
 async def test_deleting_a_pulled_event_deletes_it_on_its_own_calendar(sync, store, fake, push_on):
     fake.put("work", timed("w1"))
     await sync.pull()

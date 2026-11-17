@@ -35,6 +35,8 @@ class FakeGoogle:
     - ``requests``: every request, in order. ``fail``: path fragment -> status, answered before anything else
       (``fail_reason`` is the error reason inside the body, e.g. ``rateLimitExceeded``).
     - ``access_tokens``: how many access tokens it issued.
+    - ``on_request``: a callable run with each request before it is answered (e.g. a local edit made while a
+      push waits on Google).
     """
 
     def __init__(self):
@@ -50,6 +52,7 @@ class FakeGoogle:
         self.calendars_by_token: dict[str, list[dict]] = {}  # bearer token -> the list that token sees
         self.omit_expiry = False  # a code-exchange answer without expires_in
         self.patch_cancelled = False  # patching a cancelled item answers 200 (still cancelled), not 404
+        self.on_request = None
         self._clock = 0
         self._changed: dict[tuple[str, str], int] = {}
         self._issued: set[str] = set()
@@ -67,6 +70,8 @@ class FakeGoogle:
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
+        if self.on_request is not None:
+            self.on_request(request)
         url = str(request.url)
         for fragment, status in self.fail.items():
             if fragment in url:

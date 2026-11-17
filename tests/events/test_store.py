@@ -320,3 +320,79 @@ def test_reopening_the_file_keeps_everything(tmp_path):
         assert s.meta("a") == "b"
     finally:
         s.close()
+
+
+def _timed(**k):
+    return {"title": "Dentist", "all_day": False, "start": "2026-11-20T09:00:00Z",
+            "end": "2026-11-20T10:00:00Z", "tz": "Europe/London", **k}
+
+
+def test_every_local_change_bumps_rev(store):
+    e = store.add(_timed())
+    assert e["rev"] == 0
+    assert store.update(e["id"], _timed(title="Moved"))["rev"] == 1
+    store.mark_pushed(e["id"], google_calendar="work", google_id="g", etag="", link="")
+    store.unlink(e["id"])
+    assert store.event(e["id"])["rev"] == 2
+    store.mark_pushed(e["id"], google_calendar="work", google_id="g", etag="", link="")
+    store.clear_links()
+    assert store.event(e["id"])["rev"] == 3
+    store.mark_pushed(e["id"], google_calendar="work", google_id="g", etag="", link="")
+    store.delete(e["id"])
+    assert store.event(e["id"])["rev"] == 4 and store.event(e["id"])["deleted"] is True
+
+
+def test_mark_pushed_clears_dirty_only_for_the_revision_sent(store):
+    e = store.add(_timed())
+    store.push_failed(e["id"], "network")
+    store.update(e["id"], _timed(title="Newer"))  # rev 1: an edit made while rev 0 was being sent
+    store.mark_pushed(e["id"], google_calendar="dest", google_id="g0", etag='"1"', link="l", rev=0)
+    row = store.event(e["id"])
+    assert (row["google_calendar"], row["google_id"], row["etag"], row["link"]) == ("dest", "g0", '"1"', "l")
+    assert row["dirty"] is True and row["push_error"] == "network"
+    store.mark_pushed(e["id"], google_calendar="dest", google_id="g0", etag='"2"', link="l", rev=1)
+    row = store.event(e["id"])
+    assert row["dirty"] is False and row["push_error"] == "" and row["etag"] == '"2"'
+
+
+def test_restore_remote_shows_a_dropped_change_again(store):
+    store.apply_remote("home", "h1", _timed(title="Pulled"), etag="", link="", series_id="")
+    row = store.by_google("home", "h1")
+    store.delete(row["id"])
+    store.restore_remote(row["id"])
+    row = store.event(row["id"])
+    assert row["deleted"] is False and row["dirty"] is False
+    assert [x["title"] for x in store.events("2026-01-01", "2027-01-01")] == ["Pulled"]
+
+
+def test_an_old_database_without_rev_still_opens(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.executescript("""
+CREATE TABLE calendars(
+  id TEXT PRIMARY KEY, name TEXT, source TEXT, color TEXT, tz TEXT, writable INTEGER,
+  selected INTEGER DEFAULT 0, visible INTEGER DEFAULT 1, sync_token TEXT);
+CREATE TABLE events(
+  id TEXT PRIMARY KEY, calendar_id TEXT, origin TEXT, title TEXT, location TEXT, description TEXT,
+  all_day INTEGER, start TEXT, end TEXT, tz TEXT, google_calendar TEXT DEFAULT '',
+  google_id TEXT DEFAULT '', generation INTEGER DEFAULT 0, etag TEXT DEFAULT '',
+  link TEXT DEFAULT '', series_id TEXT DEFAULT '', dirty INTEGER DEFAULT 0,
+  deleted INTEGER DEFAULT 0, push_error TEXT DEFAULT '');
+INSERT INTO events(id, calendar_id, origin, title, location, description, all_day, start, end, tz, dirty)
+  VALUES('e1', 'local', 'local', 'Old', '', '', 0, '2026-11-20T09:00:00Z', '2026-11-20T10:00:00Z', 'UTC', 1);
+""")
+    db.commit()
+    db.close()
+    s = CalendarStore(path)
+    try:
+        assert s.event("e1")["rev"] == 0
+        assert s.update("e1", _timed(title="New"))["rev"] == 1
+        s.mark_pushed("e1", google_calendar="dest", google_id="g", etag="", link="", rev=1)
+        assert s.event("e1")["dirty"] is False
+    finally:
+        s.close()
+    s = CalendarStore(path)  # opening it again does not add the column twice
+    assert s.event("e1")["title"] == "New"
+    s.close()

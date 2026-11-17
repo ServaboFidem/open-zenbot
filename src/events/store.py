@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS events(
   all_day INTEGER, start TEXT, end TEXT, tz TEXT, google_calendar TEXT DEFAULT '',
   google_id TEXT DEFAULT '', generation INTEGER DEFAULT 0, etag TEXT DEFAULT '',
   link TEXT DEFAULT '', series_id TEXT DEFAULT '', dirty INTEGER DEFAULT 0,
-  deleted INTEGER DEFAULT 0, push_error TEXT DEFAULT '');
+  deleted INTEGER DEFAULT 0, push_error TEXT DEFAULT '', rev INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS events_start ON events(start);
 CREATE INDEX IF NOT EXISTS events_google ON events(google_calendar, google_id);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
@@ -132,6 +132,9 @@ class CalendarStore:
         with self._lock:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.executescript(SCHEMA)
+            columns = {r["name"] for r in self._db.execute("PRAGMA table_info(events)")}
+            if "rev" not in columns:  # a calendar.db from before ``rev``
+                self._db.execute("ALTER TABLE events ADD COLUMN rev INTEGER DEFAULT 0")
             self._db.execute(
                 "INSERT OR IGNORE INTO calendars(id, name, source, color, tz, writable, selected, visible)"
                 " VALUES(?, 'OpenZenBot', 'local', '', '', 1, 0, 1)", (LOCAL,))
@@ -235,7 +238,7 @@ class CalendarStore:
         with self._lock, self._db:
             cur = self._db.execute(
                 "UPDATE events SET title=?, location=?, description=?, all_day=?, start=?, end=?,"
-                " tz=?, dirty=1 WHERE id=?",
+                " tz=?, dirty=1, rev=rev+1 WHERE id=?",
                 (f["title"], f["location"], f["description"], int(f["all_day"]), f["start"],
                  f["end"], f["tz"], id))
             if cur.rowcount == 0:
@@ -248,7 +251,7 @@ class CalendarStore:
             if e is None:
                 return False
             if e["google_id"]:
-                self._db.execute("UPDATE events SET deleted=1, dirty=1 WHERE id=?", (id,))
+                self._db.execute("UPDATE events SET deleted=1, dirty=1, rev=rev+1 WHERE id=?", (id,))
             else:
                 self._db.execute("DELETE FROM events WHERE id=?", (id,))
             return True
@@ -302,17 +305,27 @@ class CalendarStore:
         return [_row(r, _EVENT_BOOLS) for r in rows]
 
     def mark_pushed(self, id: str, *, google_calendar: str, google_id: str, etag: str,
-                    link: str) -> None:
+                    link: str, rev: int | None = None) -> None:
+        """Save the Google link. ``rev`` is the revision that was sent: the row is marked clean only when it is
+        still that revision (or ``rev`` is None), so an edit made while the request ran stays pending."""
         with self._lock, self._db:
             self._db.execute(
-                "UPDATE events SET google_calendar=?, google_id=?, etag=?, link=?, dirty=0,"
-                " push_error='' WHERE id=?", (google_calendar, google_id, etag, link, id))
+                "UPDATE events SET google_calendar=?, google_id=?, etag=?, link=? WHERE id=?",
+                (google_calendar, google_id, etag, link, id))
+            self._db.execute(
+                "UPDATE events SET dirty=0, push_error='' WHERE id=? AND (? IS NULL OR rev=?)", (id, rev, rev))
+
+    def restore_remote(self, id: str) -> None:
+        """Drop a local change that cannot be sent (a pulled event on a calendar this account may not write):
+        the copy shows again as it was pulled, and the next change from Google replaces it."""
+        with self._lock, self._db:
+            self._db.execute("UPDATE events SET dirty=0, deleted=0, push_error='' WHERE id=?", (id,))
 
     def unlink(self, id: str) -> None:
         """Forget a made-here event's Google copy (gone on Google); it stays dirty so push makes it again."""
         with self._lock, self._db:
-            self._db.execute("UPDATE events SET google_calendar='', google_id='', etag='', link='', dirty=1"
-                             " WHERE id=?", (id,))
+            self._db.execute("UPDATE events SET google_calendar='', google_id='', etag='', link='', dirty=1,"
+                             " rev=rev+1 WHERE id=?", (id,))
 
     def push_failed(self, id: str, kind: str) -> None:
         with self._lock, self._db:
@@ -340,7 +353,7 @@ class CalendarStore:
             self._db.execute("DELETE FROM events WHERE origin='local' AND deleted=1")
             self._db.execute(
                 "UPDATE events SET google_calendar='', google_id='', etag='', link='', generation=0,"
-                " dirty=1, push_error='' WHERE origin='local'")
+                " dirty=1, push_error='', rev=rev+1 WHERE origin='local'")
 
     def meta(self, key: str) -> str:
         with self._lock:

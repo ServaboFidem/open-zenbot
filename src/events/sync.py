@@ -174,9 +174,9 @@ class Sync:
         writable = self._writable()
         for row in self.store.pending():
             if self._held_back(row, writable):
-                # it should never be dirty; clearing it keeps a bad row from retrying forever
-                self.store.mark_pushed(row["id"], google_calendar=row["google_calendar"],
-                                       google_id=row["google_id"], etag=row["etag"], link=row["link"])
+                # it should never be dirty or deleted; dropping the change keeps a bad row from retrying forever
+                # and from staying hidden
+                self.store.restore_remote(row["id"])
                 continue
             try:
                 counted = await self._push_one(row, destination)
@@ -213,7 +213,7 @@ class Sync:
                 raise
             item = None
         if item is not None and item.get("status") != "cancelled":
-            self._pushed(row["id"], row["google_calendar"], row["google_id"], item)
+            self._pushed(row["id"], row["google_calendar"], row["google_id"], item, row["rev"])
             return "updated"
         # the Google copy is gone
         if row["origin"] == "local":
@@ -241,7 +241,7 @@ class Sync:
                 if item is None:
                     self.store.bump_generation(id)
                     continue
-            self._pushed(id, destination, gid, item)
+            self._pushed(id, destination, gid, item, row["rev"])
             return
         raise GoogleError("conflict", "Google kept refusing the event's id")
 
@@ -258,9 +258,10 @@ class Sync:
             raise
         return None if item.get("status") == "cancelled" else item
 
-    def _pushed(self, id: str, calendar_id: str, gid: str, item: dict) -> None:
+    def _pushed(self, id: str, calendar_id: str, gid: str, item: dict, rev: int) -> None:
+        """``rev``: the revision whose fields were sent; a newer local edit keeps the row pending."""
         self.store.mark_pushed(id, google_calendar=calendar_id, google_id=str(item.get("id") or gid),
-                               etag=str(item.get("etag") or ""), link=str(item.get("htmlLink") or ""))
+                               etag=str(item.get("etag") or ""), link=str(item.get("htmlLink") or ""), rev=rev)
 
     # one run ----------------------------------------------------------------
 
