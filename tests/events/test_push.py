@@ -288,6 +288,108 @@ async def test_a_delete_made_during_a_patch_is_sent_next(sync, store, fake, push
     assert fake.events["dest"][gid]["status"] == "cancelled" and store.event(e["id"]) is None
 
 
+def delete_once_during(fake, store, id, method, then=None):
+    """Delete an event here while Google handles the first ``method`` request on events."""
+    def on_request(request):
+        if request.method == method and "/events" in request.url.path and fake.on_request is on_request:
+            fake.on_request = None
+            store.delete(id)
+            if then:
+                then()
+    fake.on_request = on_request
+
+
+async def test_an_event_deleted_during_its_insert_is_removed_from_google(sync, store, fake, push_on):
+    e = store.add(ev())
+    gid = google_event_id(e)
+    delete_once_during(fake, store, e["id"], "POST")
+    assert await sync.push() == ZERO
+    assert store.event(e["id"]) is None and fake.events["dest"][gid]["status"] == "cancelled"
+    assert [r.method for r in writes(fake)] == ["POST", "DELETE"]
+
+
+async def test_a_copy_that_cannot_be_removed_is_counted_as_orphaned(sync, store, fake, push_on):
+    e = store.add(ev())
+    gid = google_event_id(e)
+    delete_once_during(fake, store, e["id"], "POST", then=lambda: fake.fail.update({f"/events/{gid}": 500}))
+    out = await sync.run()
+    assert out["push"] == ZERO and store.event(e["id"]) is None
+    assert fake.events["dest"][gid]["status"] == "confirmed"
+    entry = json.loads(ledger_text(sync).splitlines()[-1])["data"]
+    assert entry["orphaned"] == 1 and "error" not in entry and "Dentist" not in ledger_text(sync)
+
+
+async def test_an_event_deleted_during_its_remake_is_removed_from_google(sync, store, fake, push_on):
+    e = pushed(store, cal="work", gid="w-gone")
+    store.update(e["id"], ev(title="Edited"))
+    delete_once_during(fake, store, e["id"], "POST")
+    assert await sync.push() == ZERO
+    assert store.event(e["id"]) is None
+    assert [x["status"] for x in fake.events["dest"].values()] == ["cancelled"]
+
+
+async def test_an_event_deleted_while_a_live_copy_is_adopted_removes_that_copy(sync, store, fake, push_on):
+    e = store.add(ev())
+    gid = google_event_id(e)
+    fake.put("dest", {"id": gid, "summary": "old", "status": "confirmed"})
+    delete_once_during(fake, store, e["id"], "PATCH")
+    assert await sync.push() == ZERO
+    assert store.event(e["id"]) is None and fake.events["dest"][gid]["status"] == "cancelled"
+
+
+async def test_rows_changed_before_their_turn_are_read_again(sync, store, fake, push_on):
+    a, b, c = store.add(ev(title="First")), store.add(ev(title="Second")), store.add(ev(title="Third"))
+
+    def on_request(request):
+        if request.method == "POST" and fake.on_request is on_request:
+            fake.on_request = None
+            store.delete(b["id"])
+            store.update(c["id"], ev(title="Third, edited"))
+    fake.on_request = on_request
+    assert await sync.push() == {**ZERO, "added": 2}
+    assert store.event(b["id"]) is None and google_event_id(b) not in fake.events["dest"]
+    assert fake.events["dest"][google_event_id(c)]["summary"] == "Third, edited"
+    assert store.event(c["id"])["dirty"] is False and store.event(a["id"])["dirty"] is False
+
+
+async def test_a_read_only_edit_is_replaced_by_googles_version_on_the_next_pull(sync, store, fake, push_on):
+    store.set_calendar("home", selected=True)
+    fake.put("home", timed("h1", "Google's title"))
+    await sync.pull()
+    row = store.by_google("home", "h1")
+    assert {c["id"]: c for c in store.calendars()}["home"]["sync_token"]
+    store.update(row["id"], ev(title="Local edit"))
+    await sync.push()
+    assert {c["id"]: c for c in store.calendars()}["home"]["sync_token"] is None
+    await sync.pull()
+    assert store.event(row["id"])["title"] == "Google's title" and store.event(row["id"])["dirty"] is False
+
+
+async def test_run_makes_again_a_made_here_event_deleted_on_google(sync, store, fake, push_on):
+    e = store.add(ev())
+    await sync.run()
+    gid = google_event_id(e)
+    fake.put("dest", {**fake.events["dest"][gid], "status": "cancelled"})
+    store.update(e["id"], ev(title="Edited"))
+    out = await sync.run()
+    assert out["push"] == {**ZERO, "added": 1}
+    row = store.event(e["id"])
+    assert row["google_id"].endswith("g1") and row["dirty"] is False
+    assert fake.events["dest"][row["google_id"]]["status"] == "confirmed"
+    assert fake.events["dest"][row["google_id"]]["summary"] == "Edited"
+    assert [x["title"] for x in store.events("2026-01-01", "2027-12-31")] == ["Edited"]
+
+
+async def test_run_records_an_internal_error(sync, store, fake, push_on, monkeypatch):
+    async def broken():
+        raise RuntimeError("boom")
+    monkeypatch.setattr(sync, "push", broken)
+    with pytest.raises(RuntimeError):
+        await sync.run()
+    assert store.meta("last_error") == "internal" and store.meta("last_sync") == ""
+    assert json.loads(ledger_text(sync).splitlines()[-1])["data"]["error"] == "internal"
+
+
 async def test_deleting_a_pulled_event_deletes_it_on_its_own_calendar(sync, store, fake, push_on):
     fake.put("work", timed("w1"))
     await sync.pull()
@@ -368,7 +470,7 @@ async def test_no_guests_or_reminders_are_ever_sent(sync, store, fake, push_on):
     sent = [body(r) for r in writes(fake)]
     assert len(sent) >= 4 and google_event_id(other) in fake.events["dest"]
     for b in sent:
-        assert "attendees" not in b and "reminders" not in b
+        assert "attendees" not in b and "reminders" not in b and "conferenceData" not in b
 
 
 async def test_run_sets_last_sync_only_on_success(sync, store, fake, push_on):

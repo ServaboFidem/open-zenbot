@@ -365,6 +365,22 @@ def test_restore_remote_shows_a_dropped_change_again(store):
     assert [x["title"] for x in store.events("2026-01-01", "2027-01-01")] == ["Pulled"]
 
 
+def test_restore_remote_clears_its_calendars_sync_token(store):
+    store.upsert_google([gcal("home", writable=False), gcal("work")])
+    store.set_sync_token("home", "t1")
+    store.set_sync_token("work", "t2")
+    store.apply_remote("home", "h1", _timed(title="Pulled"), etag="", link="", series_id="")
+    store.restore_remote(store.by_google("home", "h1")["id"])
+    tokens = {c["id"]: c["sync_token"] for c in store.calendars()}
+    assert tokens["home"] is None and tokens["work"] == "t2"
+
+
+def test_mark_pushed_says_whether_the_row_is_still_there(store):
+    e = store.add(_timed())
+    assert store.mark_pushed(e["id"], google_calendar="d", google_id="g", etag="", link="") is True
+    assert store.mark_pushed("no-such-id", google_calendar="d", google_id="g", etag="", link="") is False
+
+
 def test_an_old_database_without_rev_still_opens(tmp_path):
     import sqlite3
 

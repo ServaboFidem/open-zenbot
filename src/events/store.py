@@ -305,20 +305,25 @@ class CalendarStore:
         return [_row(r, _EVENT_BOOLS) for r in rows]
 
     def mark_pushed(self, id: str, *, google_calendar: str, google_id: str, etag: str,
-                    link: str, rev: int | None = None) -> None:
+                    link: str, rev: int | None = None) -> bool:
         """Save the Google link. ``rev`` is the revision that was sent: the row is marked clean only when it is
-        still that revision (or ``rev`` is None), so an edit made while the request ran stays pending."""
+        still that revision (or ``rev`` is None), so an edit made while the request ran stays pending. False
+        when there is no such row (the event was deleted here while it was being sent)."""
         with self._lock, self._db:
-            self._db.execute(
+            cur = self._db.execute(
                 "UPDATE events SET google_calendar=?, google_id=?, etag=?, link=? WHERE id=?",
                 (google_calendar, google_id, etag, link, id))
             self._db.execute(
                 "UPDATE events SET dirty=0, push_error='' WHERE id=? AND (? IS NULL OR rev=?)", (id, rev, rev))
+            return cur.rowcount > 0
 
     def restore_remote(self, id: str) -> None:
         """Drop a local change that cannot be sent (a pulled event on a calendar this account may not write):
-        the copy shows again as it was pulled, and the next change from Google replaces it."""
+        the event shows again (not deleted, not dirty) and its calendar's sync token is cleared, so the next pull
+        reads that calendar in full and Google's version replaces the local edit."""
         with self._lock, self._db:
+            self._db.execute("UPDATE calendars SET sync_token=NULL WHERE id=(SELECT calendar_id FROM events"
+                             " WHERE id=?)", (id,))
             self._db.execute("UPDATE events SET dirty=0, deleted=0, push_error='' WHERE id=?", (id,))
 
     def unlink(self, id: str) -> None:

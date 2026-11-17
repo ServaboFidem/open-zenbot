@@ -42,6 +42,7 @@ class Sync:
         self.conn = conn
         self.ledger = ledger
         self._now = now
+        self.orphaned = 0  # copies left on Google of events deleted here during their push (latest push)
 
     async def refresh_calendars(self) -> None:
         self.store.upsert_google([calendar_row(i) for i in await self.google.calendar_list()])
@@ -172,7 +173,12 @@ class Sync:
             return out
         destination = self.conn.settings.destination
         writable = self._writable()
-        for row in self.store.pending():
+        self.orphaned = 0
+        for pending in self.store.pending():
+            # read again: an earlier row's requests let the user change or delete this one meanwhile
+            row = self.store.event(pending["id"])
+            if row is None or not row["dirty"]:
+                continue
             if self._held_back(row, writable):
                 # it should never be dirty or deleted; dropping the change keeps a bad row from retrying forever
                 # and from staying hidden
@@ -203,8 +209,7 @@ class Sync:
             self.store.purge(row["id"])
             return "removed"
         if not row["google_id"]:
-            await self._insert(row["id"], destination)
-            return "added"
+            return await self._insert(row["id"], destination)
         item: dict | None
         try:
             item = await self.google.patch_event(row["google_calendar"], row["google_id"], to_google(row))
@@ -219,18 +224,20 @@ class Sync:
         if row["origin"] == "local":
             self.store.unlink(row["id"])
             self.store.bump_generation(row["id"])
-            await self._insert(row["id"], destination)
-            return "added"
+            return await self._insert(row["id"], destination)
         self.store.purge(row["id"])
         self._count_lost_edit()
         return None
 
-    async def _insert(self, id: str, destination: str) -> None:
+    async def _insert(self, id: str, destination: str) -> str | None:
         """Insert a made-here event at ``destination`` under its own id. A 409 means the id is taken: a live
         copy (an earlier insert whose answer was lost) is adopted and patched; a cancelled one takes the next
-        generation. Gives up with ``conflict`` after ``INSERT_TRIES`` inserts."""
+        generation. Gives up with ``conflict`` after ``INSERT_TRIES`` inserts. Answers "added", or None when
+        the event was deleted here before or while it was sent (a copy just made on Google is then deleted)."""
         for _ in range(INSERT_TRIES):
             row = self.store.event(id)
+            if row is None:
+                return None
             gid = google_event_id(row)
             try:
                 item = await self.google.insert_event(destination, {**to_google(row), "id": gid})
@@ -241,8 +248,10 @@ class Sync:
                 if item is None:
                     self.store.bump_generation(id)
                     continue
-            self._pushed(id, destination, gid, item, row["rev"])
-            return
+            if self._pushed(id, destination, gid, item, row["rev"]):
+                return "added"
+            await self._drop_orphan(destination, str(item.get("id") or gid))
+            return None
         raise GoogleError("conflict", "Google kept refusing the event's id")
 
     async def _adopt(self, calendar_id: str, gid: str, row: dict) -> dict | None:
@@ -258,9 +267,22 @@ class Sync:
             raise
         return None if item.get("status") == "cancelled" else item
 
-    def _pushed(self, id: str, calendar_id: str, gid: str, item: dict, rev: int) -> None:
-        """``rev``: the revision whose fields were sent; a newer local edit keeps the row pending."""
-        self.store.mark_pushed(id, google_calendar=calendar_id, google_id=str(item.get("id") or gid),
+    async def _drop_orphan(self, calendar_id: str, gid: str) -> None:
+        """Delete a copy made on Google for an event the user deleted here while it was being sent. On failure
+        nothing is left to retry from, so it is counted in the run's ledger entry as ``orphaned``."""
+        try:
+            await self.google.delete_event(calendar_id, gid)
+        except GoogleError as e:
+            if e.kind == "auth":
+                self.orphaned += 1
+                raise
+            if e.kind != "missing":
+                self.orphaned += 1
+
+    def _pushed(self, id: str, calendar_id: str, gid: str, item: dict, rev: int) -> bool:
+        """``rev``: the revision whose fields were sent; a newer local edit keeps the row pending. False when
+        the row is gone."""
+        return self.store.mark_pushed(id, google_calendar=calendar_id, google_id=str(item.get("id") or gid),
                                etag=str(item.get("etag") or ""), link=str(item.get("htmlLink") or ""), rev=rev)
 
     # one run ----------------------------------------------------------------
@@ -271,6 +293,7 @@ class Sync:
         if self.conn.state() != "connected":
             return out
         self.store.set_meta(LOST_EDITS, "0")
+        self.orphaned = 0
         try:
             await self.refresh_calendars()
             out["pull"] = await self.pull()
@@ -281,11 +304,17 @@ class Sync:
             self.store.set_meta(LAST_ERROR, e.kind)
             self._log(out, error=e.kind)
             raise
+        except Exception:
+            self.store.set_meta(LAST_ERROR, "internal")
+            self._log(out, error="internal")
+            raise
         self.store.set_meta(LAST_SYNC, _z(self._now()))
         self.store.set_meta(LAST_ERROR, "")
         self._log(out)
         return out
 
     def _log(self, out: dict, **extra) -> None:
+        if self.orphaned:
+            extra["orphaned"] = self.orphaned
         self.ledger.append(Kind.calendar, "", "", event="sync", pull=dict(out["pull"]), push=dict(out["push"]),
                            **extra)
