@@ -6,6 +6,8 @@
 
 An open-source AI harness that runs on your desktop, remembers what it learns, and helps you get real work done. Bring your own keys.
 
+> **Just want to use it? [Download the installer (0.1.0 beta)](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.1.0)** for Windows or Ubuntu/Debian, then follow [Install](#install). No Python, Node.js or developer tools needed. To run it from the source code, see [Run from source](#run-from-source-development-builds).
+
 > **Status: experimental.** open-zenbot is a passion project, not a product. Expect rough edges, breaking changes and features that are half-built. Full documentation is on the way. Until then, this README, `AGENTS.md` and `.env.example` are the best guides.
 
 Inspired by grokbot, open-zenbot is a team of bots that live on your machine. They work in a folder you can see, with tools you choose, and they know a little more each time you use them. It isn't a chat window over a model. Bots run commands, read and write documents, call MCP servers, hand work to each other in rooms, and run routines on a schedule, and every step lands in a ledger you can read.
@@ -50,7 +52,7 @@ Routing is a scoring job, not a writing job. Before each task, the router asks t
 
 For people who just want to use OpenZenBot. You do not need Python, Node.js or any developer tools.
 
-1. Open the [Releases page](https://github.com/ServaboFidem/open-zenbot/releases) and download the installer for your computer from the newest release.
+1. Open the [0.1.0 beta release](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.1.0) and download the installer for your computer from its Assets list: the `.exe` for Windows, the `.deb` for Ubuntu or Debian. Later versions appear on the [Releases page](https://github.com/ServaboFidem/open-zenbot/releases).
 2. **Windows:** run `OpenZenBot-Setup-<version>.exe`. The installer is not signed yet, so Windows SmartScreen warns about an unknown publisher: click "More info", then "Run anyway". **Ubuntu or Debian:** open a terminal in the download folder and run `sudo apt install ./OpenZenBot_<version>_amd64.deb`, then start OpenZenBot from your applications menu (or run `openzenbot`).
 3. The first time you start it, OpenZenBot sets itself up. It needs a connection to the internet and about 5 GB of free disk space: it checks first and does not start with less (an update over an existing install needs about 1 GB). The Python environment takes about 2 GB of that on Linux, and roughly 2 GB more is fetched the first time the app starts (models and tool servers). This can take several minutes. You see each step as it happens. This happens once, and again after an update that changes what it needs.
 4. It then asks for an [OpenRouter](https://openrouter.ai/) key. OpenZenBot needs an OpenRouter account for one thing: the decider model, which picks the right skills and tools for each task and checks shell commands before they run. Everything else can run on your own computer or through NVIDIA NIM: the models your bots talk with are your choice, in Settings. The key is kept in your OpenZenBot settings, not in the app.
@@ -64,9 +66,11 @@ Good to know:
 
 Maintainers: to cut a release, set the same new version in `package.json`, `pyproject.toml` and `packaging/harness/pyproject.toml`, run `uv lock --project packaging/harness`, commit, then tag `v<version>` and push the tag. The release workflow checks the tag and runs both test suites, builds both installers and opens a **draft** release with them attached. It is not public until a maintainer reads the notes and publishes the draft on GitHub.
 
-## Run the harness
+## Run from source (development builds)
 
-You need [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Node.js](https://nodejs.org/) (with `npm`). From the repo root:
+This section is for developers and contributors who want to run OpenZenBot from a clone of this repo, with the latest unreleased code. If you only want to use the app, use the installer instead: see [Install](#install).
+
+You need [git](https://git-scm.com/), [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Node.js](https://nodejs.org/) (with `npm`). Clone the repo, then from the repo root:
 
 ### Windows
 
@@ -88,7 +92,7 @@ You need [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Node
 ./scripts/ubuntu-apparmor-profile.sh   # asks for sudo; --dry-run shows the profile, --remove deletes it
 ```
 
-Run it from a real terminal (sudo asks for a password) after `npm install`. The profile names the Electron binary by its full path, so run it again if the repo moves. Making `node_modules/electron/dist/chrome-sandbox` root-owned with mode 4755 also works, but `npm install` resets it. Don't start Electron with `--no-sandbox`: the design pane runs bot-made pages. Installable packages (`.deb`, AppImage, snap) will need to ship or install an equivalent profile for their own binary path.
+Run it from a real terminal (sudo asks for a password) after `npm install`. The profile names the Electron binary by its full path, so run it again if the repo moves. Making `node_modules/electron/dist/chrome-sandbox` root-owned with mode 4755 also works, but `npm install` resets it. Don't start Electron with `--no-sandbox`: the design pane runs bot-made pages. This is only for running from source: the `.deb` installer ships its own profile for the installed app.
 
 `dev` runs `npm install` on the first start (when `node_modules` is missing), builds the GUI, starts the harness on `http://127.0.0.1:8765`, waits for it to answer and opens the app window. Closing the window stops the harness. Use `-Port 9000` (`--port 9000` on Linux) to move it to another port. `install-deps` takes `--dry-run` to show what it would do. A server whose tool is still missing shows "needs install" on the MCP servers page, with the fix and a Recheck button.
 
