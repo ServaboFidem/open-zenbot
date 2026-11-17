@@ -17,6 +17,7 @@ Inspired by grokbot, open-zenbot is a team of bots that live on your machine. Th
 - **It's yours.** The harness and the desktop app run locally, bound to `127.0.0.1`. Your memory, files, conversations and settings live under `~/.zen-agents/` on your own disk. You pick the models and pay the provider directly, or nothing at all: alongside OpenRouter it runs on NVIDIA NIM, vLLM, LM Studio, Ollama or any OpenAI-compatible server (see [Models and providers](#models-and-providers)).
 - **It learns with Hindsight.** Memory is a [Hindsight](https://github.com/vectorize-io/hindsight) knowledge graph the harness runs for you. It learns from a short first-run interview, the files you import, the web pages bots read for you, and facts that come up while you work. A bot recalls only what bears on the task in front of it, and nothing moves into memory every bot can see until you confirm it.
 - **It does the work, not just the talking.** Bots come with a shell, the filesystem, Office and PDF skills, image tools, web search and whatever MCP servers you add. Ask ZenBot for something and it either answers itself or opens a room with the specialist bots that fit the job. Routines run the jobs you repeat. You can record a task in the browser once and keep it as a skill.
+- **It designs with you.** Ask for a web page, a screen or a layout and the Designer bot builds it as a live preview beside the chat. Click any part of the preview to comment on it, and the bot revises the same design (see [Design studio](#design-studio)).
 - **You stay in charge.** Risky actions wait in Approvals: a shell command that writes outside your allowed folders, touches the harness's private folders, or brings a new person into memory. Bots can reach only the vault and the folders you grant them, as Full Access or Read-Only. Keys and settings sit beside the vault, where no bot can read them.
 
 ## Design philosophy
@@ -62,7 +63,7 @@ Good to know:
 - **Updates.** OpenZenBot checks the releases page about once a day and tells you when a newer version is out, with its release notes. Getting it means downloading the new installer and running it; nothing installs by itself. You can turn the check off or skip a version.
 - **Where things are.** The downloaded parts live in the `runtime` folder of OpenZenBot's data folder: `~/.config/OpenZenBot/runtime` on Linux, `%APPDATA%\OpenZenBot\runtime` on Windows. Your chats, notes and bots are kept separately, under `~/.zen-agents`, and are never part of that folder.
 - **Uninstall.** Windows: uninstall OpenZenBot from Settings > Apps; this also removes the `runtime` folder. Ubuntu or Debian: `sudo apt remove openzenbot`; delete `~/.config/OpenZenBot/runtime` yourself to get the disk space back. What the first start downloads stays too: memory models in `~/.cache/huggingface`, the memory database's Postgres in `~/.pg0` (your memories are in it), and tool servers in `~/.npm`; these folders are shared with other programs that use them, so check before deleting them. Neither touches `~/.zen-agents`. Delete that folder only if you want your chats and notes gone.
-- **Not there yet.** There is no macOS app. The Windows installer is new and has not been tried on a real Windows computer yet. ImageMagick, which a few tools use, is not installed by the app.
+- **Not there yet.** There is no macOS app. ImageMagick, which a few tools use, is not installed by the app.
 
 Maintainers: to cut a release, set the same new version in `package.json`, `pyproject.toml` and `packaging/harness/pyproject.toml`, run `uv lock --project packaging/harness`, commit, then tag `v<version>` and push the tag. The release workflow checks the tag and runs both test suites, builds both installers and opens a **draft** release with them attached. It is not public until a maintainer reads the notes and publishes the draft on GitHub.
 
@@ -142,6 +143,20 @@ OpenRouter reports what each of its models can do. A plain OpenAI-compatible ser
 Many servers accept `tools` or `response_format` and then quietly ignore it, so each test checks what came back, not whether the request was accepted. A reasoning model gets a larger token budget for the later tests, so its thinking doesn't crowd out the answer. A model's kind (text, embedding) comes from which tests it passes. A model the key can't run is hidden. If the server is rate-limited, times out or is down, the model isn't enabled at all, because half a fingerprint would mislead the harness about what the model can do.
 
 The results decide where a model can be used. Each job's picker offers only models of the right kind, and the model lists tag each one with **Vision**, **JSON**, **Tools**, reasoning and cost, so you can see at a glance which local model can drive a bot that calls tools and which is only fit for summaries.
+
+## Design studio
+
+Describe a web page, an app screen or a layout, and the Designer bot builds it while you watch. Open the Design page and choose New design, or just ask ZenBot: when a request is design work, it opens the Designer for you.
+
+- **A live preview beside the chat.** The design shows in a pane docked next to the conversation and updates each time the bot finishes a revision.
+- **Point and comment.** Click any element in the preview and write a note about it ("make this heading smaller", "swap these two cards"). Your comments go to the bot with your next message, up to 20 at a time, so you never have to describe where something is.
+- **Questions as a form.** When the bot needs to know something before it starts (the audience, the tone, the sections you want), it asks in a short form you fill in, not a wall of text.
+- **Design systems.** Pick a design system for a conversation and every design there follows its look: colors, type, spacing. Two ship with the app. To add your own, make a folder in `~/.zen-agents/vault/design-systems/` with a `DESIGN.md` describing the look and, if you like, a `tokens.css`.
+- **Every version is kept.** Each revision is saved as a numbered copy, so version 1 is still there after version 5.
+- **One file you own.** A design is a single HTML file with everything inside it, saved under `~/.zen-agents/vault/designs/`. It opens in any browser, works offline and needs nothing else to go with it.
+- **All your designs in one place.** The Design page shows a card for each design; click one to go back to its conversation.
+
+The preview is locked down: a bot-made page runs in a sandbox with no access to the network, so nothing in it can load from or send to anywhere.
 
 ## Music discovery
 

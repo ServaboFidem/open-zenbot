@@ -415,8 +415,8 @@ OpenZenBot also ships as a `.deb` (`OpenZenBot_<version>_amd64.deb`, package and
 (`electron-builder.yml`; `npm run dist:linux`, `npm run dist:win`). The installer is small (about 124 MB for the .deb).
 Python, the harness's packages and Node.js are downloaded on the first launch. Not done: the installers are unsigned
 (SmartScreen warns on Windows), macOS is not packaged, ImageMagick is not installed by the app, and an update is a
-download of the new installer, not an install in place. The Windows installer was never built or installed when this
-was written: its first build is the release workflow's first run.
+download of the new installer, not an install in place. The Windows installer was first built by the release workflow
+for v0.1.0, then installed and run by hand on Windows.
 
 - **Managed mode.** `src/electron/main.cjs` is managed when `app.isPackaged` or `ZEN_MANAGED=1` (from the repo, with
   `ZEN_RESOURCES` naming a folder with `bin/` and `harness/`). Managed runs a single window, the setup page
