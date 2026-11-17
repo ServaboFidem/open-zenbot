@@ -64,7 +64,7 @@ from . import allowed_folders, tracing_settings
 from .allowed_folders import AllowedFolders
 from .magick_guard import Folders as GuardFolders, MagickGuard, MagickRunner
 from .write_guard import ShellWriteCheck
-from . import agent_clis, design_images, design_parts, design_studio, design_systems, studio_helpers, tool_paths
+from . import agent_clis, design_images, design_parts, design_studio, design_systems, studio_help, studio_helpers, tool_paths
 from .studio_helpers import PartTurn
 from .agent_clis import Agents
 from .delegation import Delegator, Runner as DelegateRunner
@@ -1122,6 +1122,9 @@ class TaskIn(BaseModel):
     conversation: bool = True  # False: the task joins no conversation (routines)
     protected: ProtectedIn | None = None  # a scope check's carried block; omitted: the task itself
     design_comments: list[DesignCommentIn] = Field(default_factory=list, max_length=20)  # on the conversation's newest design revision
+    route: Literal["auto", "owner"] = "auto"  # "owner": the Designer takes a revision, whatever the decider would say
+    answers_to: str | None = None  # the session id of the reply whose question form this answers
+    redo_of: str | None = None  # the session id of a helper's reply the user sends back (Task 10)
 
 
 class ScheduleIn(BaseModel):
@@ -2585,6 +2588,44 @@ def create_app(h: Harness) -> FastAPI:
 
     # tasks and sessions
 
+    async def _helper_turn(bot: Bot, body: TaskIn, comments: list[dict[str, str]], addendum: str) -> Session | None:
+        """A helper's turn on the design for this task, or None when the owner takes it (the route then goes
+        on as before). Only a studio bot's own conversation that has a design is routed; the answers to a
+        question form go to the bot that asked, and `redo_of` counts as `route: "owner"` for now."""
+        if not (bot.studio and body.conversation):
+            return None
+        conv = h.conversations.get(body.conversation_id) if body.conversation_id else h.conversations.current(bot.id)
+        if conv is None or conv.owner != bot.id:
+            if body.answers_to:
+                raise HTTPException(422, "answers_to is not a reply in this conversation")
+            return None
+        asked = None
+        if body.answers_to:
+            asked = next((ex for ex in conv.exchanges if ex.session_id == body.answers_to), None)
+            if asked is None:
+                raise HTTPException(422, "answers_to is not a reply in this conversation")
+        newest = studio_helpers.newest_revision(h.config.vault_root, conv)
+        if newest is None:
+            return None
+        helpers = [b for b in h.bots.values() if b.places]
+        if not helpers:
+            return None
+        task = body.task.strip()
+        if asked is not None:
+            helper = h.bots.get(asked.bot) if asked.bot else None
+            if helper is None or not helper.places:
+                return None
+            att, (slug, version, name) = newest
+            scope = asked.comments if asked.comments and all(c.get("attachment_id") == att["id"] for c in asked.comments) else []
+            block = design_studio.comment_block(f"designs/{slug}/{name}", version, scope) if scope else ""
+            return h.start_helper(helper, bot, conv, task, scope, block)
+        if h.scorer is None or body.route != "auto" or body.redo_of:
+            return None
+        chosen = await studio_help.pick(h.scorer, h.ledger, bot, helpers, task, comments)
+        if chosen is None:
+            return None
+        return h.start_helper(h.bots[chosen], bot, conv, task, comments, addendum)
+
     @app.post("/bots/{bot_id}/tasks", status_code=202)
     async def start_task(bot_id: str, body: TaskIn) -> dict[str, Any]:
         bot = _bot(h, bot_id)
@@ -2598,6 +2639,9 @@ def create_app(h: Harness) -> FastAPI:
                 raise HTTPException(409, "a task is already running in this conversation")
         comments = [c.model_dump() for c in body.design_comments]
         addendum = _comment_addendum(bot, body, comments) if comments else ""
+        helped = await _helper_turn(bot, body, comments, addendum)
+        if helped is not None:
+            return {"session_id": helped.id, "state": str(helped.state)}
         try:
             session = h.start_task(bot, body.task.strip(), conversation_id=body.conversation_id or None,
                                    in_conversation=body.conversation,

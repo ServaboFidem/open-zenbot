@@ -6,10 +6,12 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 import pytest
 
+from src.decider.interface import NoulAnswer
 from src.harness import design_studio, studio_helpers
-from src.harness.api import Harness
+from src.harness.api import Harness, create_app
 from src.harness.bot import Bot
 from src.harness.config import HarnessConfig
 from src.harness.design_images import data_uri
@@ -17,7 +19,7 @@ from src.memory.ledger import Ledger
 from src.skills.catalog import Catalog
 from src.skills.loader import load_skill
 
-from .conftest import ScriptedProvider, completion
+from .conftest import MockScorer, ScriptedProvider, completion
 
 PNG = (bytes.fromhex("89504e470d0a1a0a") + b"\0\0\0\rIHDR" + (800).to_bytes(4, "big") + (600).to_bytes(4, "big")
        + b"\x08\x06\0\0\0" + b"\0" * 8)
@@ -475,3 +477,112 @@ async def test_a_working_file_that_cannot_be_put_back_keeps_the_source_it_replac
     assert conv.exchanges[-1].attachments == []
     entry = _parts(harness, s.id)[-1]
     assert entry["refused"] == "no copy" and entry["kept_before"] is True
+
+
+# -- routing a revision (POST /bots/{bot_id}/tasks) ---------------------------
+
+
+def _favour(**by_id: float) -> MockScorer:
+    """A scorer that answers the studio_help request and says no to anything else."""
+    return MockScorer(lambda req: {k: NoulAnswer(by_id.get(k.removeprefix("bot:"), 0.0) if req.purpose == "studio_help" else 0.0)
+                                   for k in req.questions})
+
+
+def _routed(scorer: MockScorer) -> list:
+    return [r for r in scorer.requests if r.purpose == "studio_help"]
+
+
+async def _post(h: Harness, bot: str, **body):
+    transport = httpx.ASGITransport(app=create_app(h))
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
+        return await c.post(f"/bots/{bot}/tasks", json={"task": "punch it up", **body})
+
+
+def _script(h: Harness, scorer: MockScorer, provider: list | None = None) -> None:
+    h.rebind(ScriptedProvider(provider or [completion(calls=[_set_text("c1", "lede", "New lede")]), completion("Rewrote.")]), scorer)
+
+
+async def test_a_clear_helper_takes_the_revision_in_a_studio_conversation_with_a_design(harness: Harness):
+    conv, att = _studio(harness)
+    s = _favour(copywriter=0.9)
+    _script(harness, s)
+    r = await _post(harness, "designer", conversation_id=conv.id, design_comments=[_comment(att)])
+    assert r.status_code == 202
+    sid = r.json()["session_id"]
+    assert harness.sessions[sid].bot_id == "copywriter"
+    await harness.tasks[sid]
+    assert conv.exchanges[-1].bot == "copywriter" and len(_routed(s)) == 1
+    assert (_folder(harness) / "index.html").read_bytes() == PAGE.replace("Old lede", "New lede").encode()
+
+
+async def test_the_designer_keeps_it_when_nothing_is_clear(harness: Harness):
+    conv, _ = _studio(harness)
+    _script(harness, _favour(copywriter=0.5), [completion("ok")])
+    r = await _post(harness, "designer", conversation_id=conv.id)
+    assert harness.sessions[r.json()["session_id"]].bot_id == "designer"
+
+
+async def test_the_designer_takes_it_when_the_helper_has_no_worksheet(harness: Harness):
+    conv, _ = _studio(harness, html='<html><body><div data-zen-id="box"><b>x</b></div></body></html>')
+    s = _favour(copywriter=0.9)
+    _script(harness, s, [completion("ok")])
+    r = await _post(harness, "designer", conversation_id=conv.id)
+    assert len(_routed(s)) == 1 and harness.sessions[r.json()["session_id"]].bot_id == "designer"
+
+
+@pytest.mark.parametrize("case", ["no design", "owner", "not studio", "no conversation", "no helpers", "redo"])
+async def test_the_scorer_is_not_asked_when_routing_does_not_apply(harness: Harness, case: str):
+    conv, _ = _studio(harness)
+    body: dict = {"conversation_id": conv.id}
+    bot = "designer"
+    if case == "no design":
+        body["conversation_id"] = harness.conversations.start_new("designer").id
+    elif case == "owner":
+        body["route"] = "owner"
+    elif case == "not studio":
+        bot = "copywriter"
+        body = {}
+    elif case == "no conversation":
+        body["conversation"] = False
+    elif case == "no helpers":
+        for b in ("copywriter", "darkroom"):
+            harness.bots[b].places = []
+    elif case == "redo":
+        body["redo_of"] = "abc"
+    s = _favour(copywriter=0.9)
+    _script(harness, s, [completion("ok")])
+    r = await _post(harness, bot, **body)
+    assert r.status_code == 202 and _routed(s) == []
+    assert harness.sessions[r.json()["session_id"]].bot_id == bot
+
+
+@pytest.mark.parametrize("scoped", [True, False])
+async def test_answers_go_to_the_helper_that_asked_with_the_same_scope_and_no_scorer_call(harness: Harness, scoped: bool):
+    conv, att = _studio(harness)
+    first = await _help(harness, conv, [completion("Which tone?")], comments=[_comment(att)] if scoped else None)
+    assert conv.exchanges[-1].bot == "copywriter"
+    s = _favour(darkroom=0.99)
+    _script(harness, s, [completion("ok")])
+    r = await _post(harness, "designer", conversation_id=conv.id, answers_to=first.id)
+    assert r.status_code == 202 and _routed(s) == []
+    sid = r.json()["session_id"]
+    assert harness.sessions[sid].bot_id == "copywriter"
+    await harness.tasks[sid]
+    asked = harness.provider.calls[0][-1].content
+    assert ('- [lede] "Old lede"' in asked) and (('[title]' not in asked) == scoped)
+    assert ("Comments on the design" in asked) == scoped
+
+
+async def test_answers_to_the_designers_reply_go_to_the_designer(harness: Harness):
+    conv, _ = _studio(harness)
+    sid = conv.exchanges[-1].session_id
+    s = _favour(copywriter=0.99)
+    _script(harness, s, [completion("ok")])
+    r = await _post(harness, "designer", conversation_id=conv.id, answers_to=sid)
+    assert _routed(s) == [] and harness.sessions[r.json()["session_id"]].bot_id == "designer"
+
+
+async def test_answers_to_a_session_outside_the_conversation_is_refused(harness: Harness):
+    conv, _ = _studio(harness)
+    r = await _post(harness, "designer", conversation_id=conv.id, answers_to="nope")
+    assert r.status_code == 422 and r.json()["detail"] == "answers_to is not a reply in this conversation"
