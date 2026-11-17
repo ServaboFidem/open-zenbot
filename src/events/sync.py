@@ -220,7 +220,11 @@ class Sync:
         if item is not None and item.get("status") != "cancelled":
             self._pushed(row["id"], row["google_calendar"], row["google_id"], item, row["rev"])
             return "updated"
-        # the Google copy is gone
+        # the Google copy is gone. Read the row again: deleted here meanwhile, it is deleted on both sides.
+        current = self.store.event(row["id"])
+        if current is None or current["deleted"]:
+            self.store.purge(row["id"])
+            return None
         if row["origin"] == "local":
             self.store.unlink(row["id"])
             self.store.bump_generation(row["id"])
@@ -237,6 +241,11 @@ class Sync:
         for _ in range(INSERT_TRIES):
             row = self.store.event(id)
             if row is None:
+                return None
+            if row["deleted"]:
+                # deleted here: never send it. One still linked to Google is left for the delete path.
+                if not row["google_id"]:
+                    self.store.purge(id)
                 return None
             gid = google_event_id(row)
             try:

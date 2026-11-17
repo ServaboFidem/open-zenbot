@@ -337,6 +337,37 @@ async def test_an_event_deleted_while_a_live_copy_is_adopted_removes_that_copy(s
     assert store.event(e["id"]) is None and fake.events["dest"][gid]["status"] == "cancelled"
 
 
+async def test_a_made_here_event_deleted_during_a_patch_that_finds_it_gone_is_not_sent_again(
+        sync, store, fake, push_on):
+    e = pushed(store, cal="work", gid="w-gone")
+    store.update(e["id"], ev(title="Edited"))
+    delete_once_during(fake, store, e["id"], "PATCH")
+    assert await sync.push() == ZERO
+    assert store.event(e["id"]) is None and [r.method for r in writes(fake)] == ["PATCH"]
+    assert await sync.push() == ZERO
+    assert not fake.events.get("dest") and [r.method for r in writes(fake)] == ["PATCH"]
+
+
+async def test_a_pulled_event_deleted_during_a_patch_that_finds_it_gone_is_not_a_lost_edit(
+        sync, store, fake, push_on):
+    store.apply_remote("work", "w1", ev(title="Pulled"), etag='"1"', link="", series_id="")
+    row = store.by_google("work", "w1")
+    store.update(row["id"], ev(title="Edited"))
+    delete_once_during(fake, store, row["id"], "PATCH")
+    assert await sync.push() == ZERO
+    assert store.event(row["id"]) is None and store.meta("lost_edits") == ""
+
+
+async def test_an_event_deleted_between_inserts_in_the_409_loop_is_not_sent(sync, store, fake, push_on):
+    e = store.add(ev())
+    old = google_event_id(e)
+    fake.put("dest", {"id": old, "summary": "gone", "status": "cancelled"})
+    delete_once_during(fake, store, e["id"], "GET")  # the read after the 409
+    assert await sync.push() == ZERO
+    assert store.event(e["id"]) is None
+    assert [r.method for r in writes(fake)] == ["POST"] and list(fake.events["dest"]) == [old]
+
+
 async def test_rows_changed_before_their_turn_are_read_again(sync, store, fake, push_on):
     a, b, c = store.add(ev(title="First")), store.add(ev(title="Second")), store.add(ev(title="Third"))
 
