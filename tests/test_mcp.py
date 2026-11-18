@@ -128,6 +128,11 @@ def test_tool_specs_filter_by_group(tmp_path: Path):
     assert {s.name for s in tools.specs()} == {"shell", "echo.echo", "other.x"}
     assert {s.name for s in tools.specs(groups={"echo"})} == {"shell", "echo.echo"}
     assert {s.name for s in tools.specs(groups=set())} == {"shell"}
+    assert [s.name for s in tools.specs({"echo"}, builtins=False)] == ["echo.echo"]
+    tools.register("scoped", "s", {"type": "object", "properties": {}}, fn, group="echo", offered=lambda b, s: True)
+    # a tool with `offered` is a per-caller built-in: left out too
+    assert [s.name for s in tools.specs({"echo"}, caller=("b", "s"), builtins=False)] == ["echo.echo"]
+    assert "scoped" in {s.name for s in tools.specs({"echo"}, caller=("b", "s"))}
 
 
 def test_allowed_tool_groups_follow_the_mcp_band():

@@ -313,3 +313,24 @@ def test_places_round_trips_and_is_kept_when_a_bot_is_saved_from_the_app(tmp_pat
     assert "places" not in render(parse("---\nname: W\nrole: R\n---\nGo.", "w"))
     from src.harness.bot import Bot
     assert Bot(name="W", role="R", places=["text"]).to_dict()["places"] == ["text"]
+
+
+def test_closed_is_read_and_written_and_must_be_a_bool():
+    p = parse("---\nname: S\nrole: r\nmcps: [events]\nclosed: true\n---\nbody", "s")
+    assert p.closed is True and "closed: true" in render(p)
+    assert parse(render(p), "s").closed is True
+    assert parse("---\nname: S\nrole: r\n---\nbody", "s").closed is False
+    assert "closed" not in render(parse("---\nname: S\nrole: r\n---\nbody", "s"))
+    with pytest.raises(ValueError, match="closed must be true or false"):
+        parse("---\nname: S\nrole: r\nclosed: yes please\n---\nb", "s")
+
+
+def test_a_closed_bot_needs_mcps_and_cannot_be_a_studio_or_helper():
+    for extra in ("", "mcps: []\n", "mcps: [events]\nstudio: true\n", "mcps: [events]\nplaces: [text]\n"):
+        with pytest.raises(ValueError, match="closed"):
+            parse(f"---\nname: S\nrole: r\nclosed: true\n{extra}---\nb", "s")
+
+
+def test_closed_is_kept_when_a_bot_is_saved_from_the_app_and_listed():
+    assert Bot(name="S", role="r", mcps=["events"], closed=True).to_dict()["closed"] is True
+    assert Bot(name="S", role="r").to_dict()["closed"] is False

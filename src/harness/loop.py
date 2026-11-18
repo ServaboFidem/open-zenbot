@@ -235,8 +235,8 @@ class TaskLoop:
             self.ledger.append(Kind.session, bot.id, session.id, event=str(session.state), steps=session.steps)
 
     async def _drive(self, bot: Bot, session: Session, skills: list[Skill]) -> None:
-        specs = self.tools.specs(allowed_tool_groups(session.route), room=bool(session.room_id),
-                                  caller=(session.bot_id, session.id))
+        groups, builtins = offered_groups(bot, session.route)
+        specs = self.tools.specs(groups, room=bool(session.room_id), caller=(session.bot_id, session.id), builtins=builtins)
         while session.steps < self.max_steps:
             if session.stop_requested:
                 session.state = SessionState.stopped
@@ -312,6 +312,12 @@ class TaskLoop:
             session.compactions += 1
 
     async def _run_call(self, bot: Bot, session: Session, skills: list[Skill], call) -> str:
+        if bot.closed:  # the wall holds at the call, not only at the offer: a model can name a tool it was never shown
+            group = self.tools.group_of(call.name)
+            if group is None or group not in bot.mcps:
+                self.ledger.append(Kind.tool_call, bot.id, session.id, tool=call.name, arguments={}, ok=False,
+                                   error=f"{call.name} is not available to this bot", output="")
+                return f"error: {call.name} is not available to this bot"
         rule = needs_approval(skills, call)
         detail = f"Matched rule {rule!r}. Approve to run, reject to tell the bot it may not."
         rejected = "The user rejected this action. Do not retry it. Explain what you would have done and continue if possible."
@@ -370,6 +376,14 @@ class TaskLoop:
             ok=result.ok, error=result.error, output=result.output[:4000],
         )
         return result.as_content()
+
+
+def offered_groups(bot: Bot, route: dict[str, Any] | None) -> tuple[set[str] | None, bool]:
+    """(groups, builtins) for `ToolRunner.specs`. A closed bot gets its own `mcps` and no built-in tool, whatever the
+    route says (a router winner or a pinned skill's tools never widen it); any other bot gets the route's groups."""
+    if bot.closed:
+        return set(bot.mcps), False
+    return allowed_tool_groups(route), True
 
 
 def allowed_tool_groups(route: dict[str, Any] | None) -> set[str] | None:
