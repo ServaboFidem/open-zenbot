@@ -1,6 +1,6 @@
 # Handoff: Events calendar on `ui-enhancements`
 
-Written 2026-11-17, at head `d7ecb29`. Delete this file before the branch is merged.
+Written 2026-11-17, at head `d7ecb29`; updated 2026-11-18 for event discovery (piece 2). Delete this file before the branch is merged.
 
 ## What is on this branch
 
@@ -10,10 +10,21 @@ Written 2026-11-17, at head `d7ecb29`. Delete this file before the branch is mer
    calendar is the master; Google is only pulled from and pushed to. How it works is documented in
    `AGENTS.md`, section "The calendar and Google".
 
-Pieces 2 to 5 are not designed or built: finding local events (Discover), adding a found event to the
-calendar, travel-aware location, and music-matched local shows.
+3. Piece 2 of 5: event discovery. A Discover tab on the Events page, an Event discovery section in Settings > Calendar,
+   and the harness side: an Eventbrite reader, a pool of events, digests of cards, a closed scout bot with three tools and a
+   weekly routine, the `/discover` routes, and adding a card to the calendar. Commits `da9d8f7..f3e0dd0` (the build, 12 tasks), then
+   the Task 12 commits. How it works and its rules are in `AGENTS.md`, section "Event discovery"; the design is in
+   `docs/superpowers/specs/2026-11-17-event-discovery-design.md`.
+
+Pieces 3 to 5 are not designed or built: travel-aware location, and music-matched local shows (and the reactions that teach
+later picks, a non-goal of piece 2).
+
+**The owner's harness must be restarted to load this code**, and the GUI rebuilt (`npm run build`). Then pressing "Find events
+now" on the Discover tab, in the owner's own app, is the first real test of the scout: it has never run with a model.
 
 ## Where it stopped
+
+Piece 1 (the Events calendar and Google):
 
 - All 11 planned tasks are built, each reviewed on its own, with fix rounds. Done.
 - A final whole-branch review ran at `f340de8`: no critical findings, 11 important, 10 minor.
@@ -29,6 +40,51 @@ calendar, travel-aware location, and music-matched local shows.
   is not a calendar listing counts as an empty listing, so `keep_pulled` drops that calendar's clean pulled
   events until the next run reads them again.
 - Next: the manual check against real Google (below), then the owner's decisions.
+
+Piece 2 (event discovery), built 2026-11-18 by a subagent plan of 12 tasks, each reviewed on its own, with fix rounds on
+Tasks 9 and 10. There has been no whole-branch review of piece 2 yet (the final review is next).
+
+- Checks at the end of Task 12: `uv run pytest -q`: 16 failed, 2099 passed, 4 skipped, 20 errors (the same 16 failures and
+  20 errors as before this work: Windows-only, none in `tests/events/`). `npm test`: 457 pass, 2 fail (the same two Electron
+  tests, which read a source file with CRLF line ends). `npm run build`: clean.
+- One live refresh against Eventbrite, in a throwaway vault, on 2026-11-18: place `oh--columbus`, 40 pages in about 100 s,
+  727 rows read, 650 events kept, no error, no refusal. Details in `AGENTS.md`.
+- The Discover tab and the settings section were seen running in a browser (Chrome by Playwright) against a throwaway vault
+  and port, with a digest of six cards saved by hand through `Discovery.save`, not by the scout. Seen: the digest with
+  pictures, a card with none, a three-line name; following a link (it opens the right Eventbrite page) and the dialog on
+  return; "Not yet" (not asked again), "Yes, add it" and Add (the event reached My Calendar's store at the listing's time:
+  10:00 New York is 15:00Z), "Not for me" (the card leaves); a bad address refused with its sentence and a good one saved;
+  a 390 px window with no sideways scroll. Fixed from this: every category label ticked the first box (a shared id); the
+  City field stretched beside State; the dialog's "Not for me" wrapped.
+- **Not seen:** the "not set up", "no digest yet", "the scout is looking" and failed-refresh states; the Electron window's real
+  focus event (the dialog was brought up by a script-sent `focus`); the My Calendar page showing an added event (only the
+  store was read); the weekly routine firing; anything the scout does.
+
+## Open items for discovery
+
+- Eventbrite's terms on automated access were not read.
+- The scout has never run with a model. Whether its turns reach the user's memory by the usual paths was not checked.
+- The page cap reads Eventbrite's top-ranked 40 pages, not everything. Per-category page addresses were not tried.
+- The harness API has no authentication, so a bot with `shell` can call the `/discover` routes, as it can `/calendar`
+  (`POST /discover/cards/{id}/add` makes a calendar event that push then sends to Google).
+- Settings > Calendar's tile and page description still speak of Google only, though the page now holds Event discovery too.
+
+## Minor findings left for the final review
+
+- Closed bot: the `mcps` compare is order-sensitive; a refused call logs no arguments; a saved room holding a closed bot cannot
+  have its members edited until the bot is removed.
+- Settings: `parse_place` with a non-string and `validated` with a non-dict are guarded but untested; `load` does not cap
+  city or state.
+- Eventbrite reader: the host-trick tests lack backslash, upper-case scheme and tab cases; an all-day event's `end_date` is
+  inclusive in the pool (the page converts).
+- The store does not itself stop a repeated event in one digest (the gate does).
+- Scout skill says "what you remember"; the generalist bot holds the events-digest skill text but not the tools.
+- Adding: a garbage `timezone` is stored as given (the page falls back); no test at 14 hours and one second.
+- Page: a far-future date (9999-12-31) gives an extended-year instant the harness would refuse; `parseInt` and `Number` are
+  used inconsistently.
+- Polling: a scout stuck on `running: true` is polled in repeated 15-minute windows after a user-started look times out.
+- Settings section: every save failure shows under the address field; the "Tick none to see them all" wording is unconfirmed.
+- A failed refresh has no back-off beyond 10 minutes; the settings are loaded once at start.
 
 ## What the re-check looked at
 

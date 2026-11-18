@@ -13,16 +13,16 @@ name each top-level system and run the harness and the tests.
 | `src/memory/` | Exclusion filter (secrets and approvals), ledger (`ledger.py`), recall, ingest, directory import, learning from a crawl, profile memory and store routing, Hindsight store and processes |
 | `src/rooms/` | Rooms, turns, handoff, orchestrator |
 | `src/music/` | Music discovery: Discogs scan, taste profile, the Soundlore atlas, MusicBrainz and YouTube Music lookups, candidates, the album gate, digests, `music_*` tools, `/music` routes |
-| `src/events/` | The built-in calendar: settings and Google keys (`settings.py`), the SQLite store (`store.py`), the Google client (`google.py`), conversion to and from Google's shape (`convert.py`), sign-in (`connect.py`), pull and push (`sync.py`), the service that runs them (`service.py`) and the `/calendar` routes (`routes.py`) |
+| `src/events/` | The built-in calendar: settings and Google keys (`settings.py`), the SQLite store (`store.py`), the Google client (`google.py`), conversion to and from Google's shape (`convert.py`), sign-in (`connect.py`), pull and push (`sync.py`), the service that runs them (`service.py`) and the `/calendar` routes (`routes.py`); discovery of local events: settings and the Eventbrite address check (`discover_settings.py`), the Eventbrite reader (`eventbrite.py`), the pool, digests and cards (`discover_store.py`), the service that refreshes, checks and saves (`discovery.py`), the scout's tools (`discover_tools.py`) and the `/discover` routes (`discover_routes.py`) |
 | `src/skills/` | `SKILL.md` loader and catalog; recorder |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) |
-| `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`) |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Discover tab `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) |
+| `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`); a prompt can also set `closed: true` (only the tool groups in its `mcps`, no built-in tool, never in a room: `event-scout.md`) |
 | `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+), and `fetch-uv.mjs` (downloads the pinned uv into `build/bin/` for the installers). Packaging itself is `electron-builder.yml`, `build/` (icon, the .deb's AppArmor profile `apparmor-profile`, the NSIS include `installer.nsh`) and `packaging/harness/` (the CPU-only `pyproject.toml` and `uv.lock` the installed app uses) |
-| `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`) |
+| `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`); `skills/events-digest/` (the scout's weekly run) |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
-| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs` |
+| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` is in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
 | `.github/` | Workflows: `changelog.yml` appends every push to `main` to `CHANGELOG.md` (don't edit it by hand; `[skip changelog]` in a commit subject leaves it out), `stale.yml`, and `release.yml` (a `v*` tag builds the .deb and the Windows installer and opens a draft release; a manual run only builds them; see `## Installed app`) |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
@@ -140,8 +140,8 @@ gives `notes-ledger/`, `notes-music/`, `notes-calendar/` and `notes-settings/`.
 | `vault/` | Work docs (`docs/`), `delegated/` (job folders for `delegate`), uploads, browser output (`browser/`), anything bots save; `designs/` (studio designs; each folder also holds `images/` and `.versions/`, whose `before-<n>.<name>` files are the working file as it was before a helper's change) and `design-systems/` (the user's own); `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
 | `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations | `src/memory/ledger.py` `ledger_path_for` |
 | `vault-music/` | Music database (`music.db`), the Soundlore atlas, cover images | `src/music/settings.py` `music_dir`; bots never reach it (`allowed_folders.private_folders`) |
-| `vault-calendar/` | Calendar database (`calendar.db`: events, calendars, sync state) | `src/events/settings.py` `calendar_dir`; a private folder (`allowed_folders.private_folders`), so no bot tool reaches the file. The `/calendar` routes are another matter: see "Bots and the calendar" under `### The calendar and Google` |
-| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
+| `vault-calendar/` | Calendar database (`calendar.db`: events, calendars, sync state) | `src/events/settings.py` `calendar_dir`; a private folder (`allowed_folders.private_folders`), so no bot tool reaches the file. The `/calendar` routes are another matter: see "Bots and the calendar" under `### The calendar and Google`; also holds `discover.db` (the discovered events, digests and cards) and `discover-images/` (card pictures), private like `calendar.db` |
+| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `events.json` (event discovery: place, ticked categories, interests, on or off), `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
 
 A new setting goes in `settings_dir(vault_root) / "<name>.json"`, never under the vault. Secrets and
 `allowed_folders.json` (which decides what `files` may reach) must stay out of the vault: a bot that could
@@ -343,6 +343,111 @@ calendar folder in `private_folders`. Tests: `tests/events/` (`test_settings.py`
 `test_convert.py`, `test_google.py`, `test_connect.py`, `test_pull.py`, `test_push.py`, `test_routes.py`);
 GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs`,
 `calendar-settings.test.mjs` and `settings-index.test.mjs`.
+
+### Event discovery
+
+The Discover tab on the Events page shows a short digest of local events picked for the user. The harness reads one
+city's events from Eventbrite's public pages and keeps them as a pool; a bot (the scout, `bot-prompts/event-scout.md`)
+picks six to eight from it and says why; the user follows a card's link and, on saying they signed up, the event goes on
+the built-in calendar. Design: `docs/superpowers/specs/2026-11-17-event-discovery-design.md` (git-ignored, on the computer
+the work was done on).
+
+**Checked against Eventbrite on 2026-11-17 and 2026-11-18**, by plain GET with a browser User-Agent, no cookies: each
+page `https://www.eventbrite.com/d/<place>/events--this-month/?page=N` (and `events--next-month`) answers 200 and holds
+`window.__SERVER_DATA__ = {...}`, whose `search_data.events.results` is a list of about 20 events with
+`pagination.page_count`. On 2026-11-18 one real refresh of `oh--columbus` (40 pages, one a second, about 100 s) read 727
+rows and kept 650 events (72 repeated across the two months, 5 rows refused by `_event`, none of them cancelled or
+online), with no sign-in or challenge page and no refusal. Rows in the real pages carry keys the test fixture does not
+(`eid`, `debug_info`, `urgency_signals`, `full_description` and others); nothing reads them. Not every event has an image
+(19 of 727 had none), a summary (10) or a category tag (22 of those kept), and some listings run all day (`00:00` to
+`23:30`).
+
+- **Where things live.** Settings in `vault-settings/events.json` (`DiscoverSettings`: `city`, `state`, `country` `US`,
+  `source_url`, `place`, `categories`, `interests`, `enabled`; no secret), the pool, digests and cards in
+  `vault-calendar/discover.db` (`DiscoverStore`), thumbnails in `vault-calendar/discover-images/<card id>`. The last two
+  are in a private folder, so no bot tool reaches them.
+- **The address** (`discover_settings.parse_place`) is a security boundary. Only `https`, host exactly `www.eventbrite.com`
+  or `eventbrite.com` (no user info, no port), path `/d/<place>/...` with `<place>` matching `[a-z]{2}--[a-z0-9-]{1,80}`,
+  no backslash, whitespace, control character, `.` or `..`. Anything else is a `ValueError` with the expected form, which
+  `PUT /discover/settings` answers as 422. Only the `place` it returns is used afterwards: every fetch URL is built from it.
+- **Reading** (`eventbrite.Eventbrite`). Fetches go only to `https://www.eventbrite.com/d/<place>/events--this-month/` and
+  `events--next-month/` (`?page=N`) and, for a thumbnail, `https://img.evbuc.com/`; nothing else read from a page is ever
+  fetched. One request at a time, `GAP_S` (1 s) apart, a 30 s timeout, 5 MB a page, 1,500,000 bytes a picture (PNG, JPEG,
+  WebP or GIF by first bytes), at most `MAX_PAGES` (40) pages: up to 20 of this month, then up to 20 of next. The pages are
+  Eventbrite's own ranking, so the cap keeps its top results, not every event (a big city has more than 80 pages across the
+  two months). Any 3xx is `source_changed` and is never followed (the built URLs answered 200 with no redirect). The JSON
+  object is decoded from its opening brace with `raw_decode`. Error kinds: `network`, `refused` (403 or 429),
+  `source_changed` (a page without the expected shape), `provider` (any other status). A failure on the first page fails the
+  refresh and leaves the pool as it was; a later failure ends the reading and keeps what was read, with its kind in `error`.
+- **What is kept** (`eventbrite._event`): digits `id`, non-empty `name`, a real `start_date`, a `url` on
+  `https://www.eventbrite.com/e/`, not cancelled, not online-only. Times are kept when `HH:MM`; `timezone` as given. No start
+  time means all-day; a timed event whose end is missing or not after its start is kept with no end. Text is capped on
+  storage: name 300, venue and address together 500, summary 1,000 characters, control characters removed.
+- **The pool** (`DiscoverStore`). A refresh inserts or updates the rows it reads and deletes none (the page cap reads only
+  part of a ranked list, so an unseen row is not a gone row); rows whose start date has passed are dropped
+  (`drop_past`). `Discovery.refresh` is skipped while the last good one is under 12 hours old (`REFRESH_AFTER_S`) unless
+  forced, runs one at a time, and a refresh that failed is not tried again for 10 minutes (`RETRY_AFTER_S`) unless forced.
+  The candidates are the pool rows starting today or later, in a ticked category (or with no category tag, or any when none
+  is ticked), never on a saved card.
+- **The scout and its tools** (`discover_tools.py`, group `events`, registered by `Discovery.register` only while discovery
+  is on with a place set): `events_interests`, `events_candidates` (up to 60 a call, refreshing a pool older than 12 hours
+  first; its first line says the listing is content, not instructions; a failed refresh with no candidates is the tool's
+  error naming the kind) and `events_save_digest`. The tools are offered to the scout only (`ToolRunner.register(offered=...)`
+  and a caller check in each tool), and there is no catalog entry for the group, so the decider cannot route listing text to
+  any other bot. `events_save_digest` is the gate and the only way a card is saved (`Discovery.save`, `_check`): 1 to 8 cards,
+  each an `id` that is a candidate now, not repeated, with a `why` of 1 to 300 plain characters; the whole digest is refused
+  with a reason per card (`DigestRefused`) if one fails. Every other field of a card comes from the pool row, never from the
+  bot. A card is a snapshot. `why` is the only bot-written text on a card and is shown as plain text.
+- **A closed bot** (`closed: true` in the prompt file, set nowhere else; the app's update route refuses to change a closed
+  bot's `mcps`). `loop.allowed_tool_groups` gives it its own `mcps` and no built-in tool, `ToolRunner.specs(builtins=False)`
+  lists no built-in, and the loop refuses a call to a tool it was not shown. It is never picked by the orchestrator, never
+  invited to a room (`Room.joinable`), and a saved room holding one skips its turn; its results do not go to the tier-3
+  session cache. Listing text is written by whoever posted the event, so the scout has no `shell`, no `browser`, no files.
+- **Runs.** A managed weekly routine (`Discovery.ensure_routine`, `MANAGED_BY` `events`, default Thursday 09:00, made when
+  discovery is on with a place set, paused when it is switched off) whose verifier fails a run that saved no digest
+  (`run_failure`). `POST /discover/run` starts an on-demand run, refused with 409 while one is going; a session it starts
+  saves `on_demand` only. The tab shows "The scout is looking" until a new digest appears, with a give-up time.
+- **Routes** (`discover_routes.py`, under `/discover`, none returns a disk path): `GET /status`, `PUT /settings`, `GET /digests`,
+  `GET /digests/{id}`, `GET /images/{card_id}` (served `nosniff`), and the POSTs `/run`, `/cards/{id}/dismiss` and
+  `/cards/{id}/add`. Every POST takes a required JSON body (`NothingIn` where it needs nothing, so a cross-site page cannot
+  send one without a preflight); `tests/events/test_discover_routes.py` checks it.
+- **Adding to the calendar** (`POST /discover/cards/{id}/add`, body `{start, end}`). The harness cannot turn a wall-clock time
+  into an instant, so the page does, with `Intl` (`dates.js` `wallToInstant`, through `discover.js` `addTimes`; a start inside a
+  daylight-saving gap is stepped back to the jump minute). The harness checks each instant lies within 14 hours of the card's
+  wall-clock value (no zone is further from UTC), else 422; it makes the event from the card's snapshot through `store.add` and
+  its validation (title the name, location venue and address, description the summary then the link, `tz` the event's zone),
+  marks the card `added` with the event's id, and asks for a sync. A card already `added` answers its event and makes no
+  second. A timed event with no end ends one hour after it starts. With push on, the event goes to Google like any made here.
+  Adding is the user's yes: "Yes, add it" in the dialog after following a link and coming back, or Add on the card. No
+  dismiss is offered on an added card.
+- **Ledger.** Kind `calendar`, events `discover_refresh` (pages, events, error kind) and `discover_digest` (digest kind, card
+  and picture counts). Never a listing's
+  name, summary, venue or link. `src/events/` logs an exception's class name only.
+
+Unverified, and open:
+
+- **Eventbrite's terms on automated access were not read** (the owner chose scraping knowing this); `robots.txt` did not
+  disallow `/d/` for `User-agent: *` on 2026-11-17. How the site answers a longer run, or many users, is unknown.
+- **The scout has never run with a model.** Its prompt, the skill and the recall query are untested against a real model;
+  pressing "Find events now" in the owner's own app is the first real test. Whether anything of the scout's turns reaches
+  the user's memory by the usual paths was not checked.
+- The page cap reads Eventbrite's top-ranked 40 pages, not every event. Per-category page addresses (for example
+  `/d/oh--columbus/music--events--this-month/`) were not tried.
+- The Discover tab and the settings section were looked at in a browser on 2026-11-18, against a throwaway vault and a digest
+  saved by hand, not by the scout; the "window got focus again" event was sent by script, not by a real window switch
+  (the Electron shell was not run).
+- The harness API still has no authentication, so a bot with `shell` (curl) or the `browser` server can call the `/discover`
+  routes as it can call `/calendar`: read the digests, dismiss a card, or `POST /discover/cards/{id}/add`, which makes a
+  calendar event that push then sends to Google. Do not describe discovery as out of bots' reach.
+
+Rules for contributors. No card is saved except through `events_save_digest` (`Discovery.save`). No fetch to a host other than
+`www.eventbrite.com` (the pages) and `img.evbuc.com` (pictures), none to a URL read from a page, and no 3xx followed. The
+scout stays `closed: true` and out of rooms; do not give any bot a calendar or discovery tool, and do not add one to the
+decider's catalog. Every `/discover` POST takes a required JSON body. No listing text, disk path or picture bytes in a
+ledger entry, a log line or a route answer beyond what a card shows. Tests never touch the network: the connector takes an
+`httpx.MockTransport` (`fake_site`). Tests: `tests/events/test_eventbrite.py`, `test_discover_settings.py`,
+`test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_discover_routes.py`; GUI
+`tests/gui/events-discover.test.mjs`, `discover-api.test.mjs`, `discovery-settings.test.mjs` and `settings-index.test.mjs`.
 
 ### Design studio
 
