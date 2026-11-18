@@ -47,3 +47,29 @@ export function pushFailure(err) {
   if (err && err.status === 409) return { kind: 'allow' };
   return { kind: 'show', text: (err && err.message) || 'Something went wrong.' };
 }
+
+// Look at the harness's status every `interval` ms until `changed(next)` or `limit` ms have passed. Everything it
+// uses is passed in, so a test drives it with a fake timer. It returns cancel(): after that, no callback runs and
+// no further request is made, even for a request already in flight (each await re-checks the cancel flag).
+// onChange(next) is awaited first (it may be async), then onDone(next); onTimeout() runs at the limit.
+export function watchStatus({ fetchStatus, changed, onChange, onDone, onTimeout, setTimer, clearTimer, now, interval = POLL_MS, limit = POLL_LIMIT_MS }) {
+  let cancelled = false, timer = null;
+  const until = now() + limit;
+  const tick = async () => {
+    timer = null;
+    let next = null;
+    try { next = await fetchStatus(); } catch { /* the harness may be busy; the next look tries again */ }
+    if (cancelled) return;
+    if (next && changed(next)) {
+      cancelled = true;
+      if (onChange) await onChange(next);
+      if (onDone && !aborted) onDone(next);
+      return;
+    }
+    if (now() >= until) { cancelled = true; if (onTimeout) onTimeout(); return; }
+    timer = setTimer(tick, interval);
+  };
+  let aborted = false;
+  timer = setTimer(tick, interval);
+  return function cancel() { cancelled = true; aborted = true; if (timer !== null) clearTimer(timer); timer = null; };
+}

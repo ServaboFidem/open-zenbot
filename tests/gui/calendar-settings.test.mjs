@@ -44,3 +44,68 @@ test('a 409 on switching push on asks for write access; anything else shows the 
   assert.deepEqual(pushFailure(new Error('')), { kind: 'show', text: 'Something went wrong.' });
   assert.deepEqual(pushFailure(null), { kind: 'show', text: 'Something went wrong.' });
 });
+
+import { watchStatus } from '../../src/gui/calendar-settings.js';
+
+// A fake clock and timers; each status request is a promise the test settles itself.
+function rig() {
+  const r = { t: 0, timers: [], requests: [], calls: [], timeouts: 0 };
+  r.setTimer = (fn, ms) => { const x = { fn, at: r.t + ms, live: true }; r.timers.push(x); return x; };
+  r.clearTimer = x => { x.live = false; };
+  r.fetchStatus = () => new Promise((res, rej) => r.requests.push({ res, rej }));
+  r.now = () => r.t;
+  // advance the clock to the next live timer and run it
+  r.fire = async () => { const x = r.timers.find(x => x.live); if (!x) return false; x.live = false; r.t = x.at; x.fn(); await Promise.resolve(); return true; };
+  r.start = (changed, tag = 'a') => watchStatus({
+    fetchStatus: r.fetchStatus, changed, now: r.now, setTimer: r.setTimer, clearTimer: r.clearTimer,
+    onChange: async n => { r.calls.push(`${tag}:change:${n}`); }, onDone: n => r.calls.push(`${tag}:done:${n}`), onTimeout: () => { r.timeouts++; r.calls.push(`${tag}:timeout`); },
+  });
+  r.settle = async (i, v) => { r.requests[i].res(v); for (let k = 0; k < 5; k++) await Promise.resolve(); };
+  return r;
+}
+const isOne = n => n === 1;
+
+test('a change calls onChange then onDone and stops asking', async () => {
+  const r = rig(); r.start(isOne);
+  await r.fire(); await r.settle(0, 0);
+  assert.equal(r.requests.length, 1); assert.deepEqual(r.calls, []);
+  await r.fire(); await r.settle(1, 1);
+  assert.deepEqual(r.calls, ['a:change:1', 'a:done:1']);
+  assert.equal(await r.fire(), false);
+});
+test('the limit ends it with onTimeout after 10 minutes', async () => {
+  const r = rig(); r.start(isOne);
+  let n = 0;
+  while (r.timeouts === 0 && n < 400) { if (!(await r.fire())) break; await r.settle(r.requests.length - 1, 0); n++; }
+  assert.equal(r.timeouts, 1); assert.ok(r.t >= 600000 && r.t < 604000, String(r.t));
+  assert.equal(await r.fire(), false);
+});
+test('cancel while a request is in flight: no callback, no more requests, no timeout', async () => {
+  const r = rig(); const cancel = r.start(isOne);
+  await r.fire(); cancel();
+  await r.settle(0, 1);
+  assert.deepEqual(r.calls, []);
+  assert.equal(await r.fire(), false); assert.equal(r.requests.length, 1); assert.equal(r.timeouts, 0);
+});
+test('cancel with a stale unchanged answer does not reschedule or time out', async () => {
+  const r = rig(); const cancel = r.start(isOne);
+  await r.fire(); cancel(); await r.settle(0, 0);
+  assert.equal(await r.fire(), false); assert.equal(r.timeouts, 0);
+});
+test('a second watch started while the first is in flight: only the second can call back', async () => {
+  const r = rig(); const first = r.start(isOne, 'first');
+  await r.fire();            // first's request is in flight
+  first();                   // what the component does before it starts the next watch
+  r.start(isOne, 'second');
+  await r.settle(0, 1);      // the old answer arrives, changed
+  assert.deepEqual(r.calls, []);
+  await r.fire(); await r.settle(1, 1);
+  assert.deepEqual(r.calls, ['second:change:1', 'second:done:1']);
+});
+test('cancel during onChange keeps onDone from running', async () => {
+  const r = rig(); let cancel;
+  cancel = watchStatus({ fetchStatus: r.fetchStatus, changed: isOne, now: r.now, setTimer: r.setTimer, clearTimer: r.clearTimer,
+    onChange: async () => { cancel(); await Promise.resolve(); }, onDone: () => r.calls.push('done'), onTimeout: () => {} });
+  await r.fire(); await r.settle(0, 1);
+  assert.deepEqual(r.calls, []);
+});

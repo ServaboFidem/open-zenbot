@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Field, Input, Option, Spinner, Switch } from '@fluentui/react-components';
 import { Copy24Regular } from '@fluentui/react-icons';
 import { anchorId } from './settings-index';
-import { APP_STEPS, POLL_LIMIT_MS, POLL_MS, bringInList, defaultDestination, destinations, pushFailure, pushSentence, shownSections, signInChanged } from './calendar-settings';
+import { APP_STEPS, POLL_LIMIT_MS, POLL_MS, bringInList, defaultDestination, destinations, pushFailure, pushSentence, watchStatus, shownSections, signInChanged } from './calendar-settings';
 import './calendar-settings.css';
 
 // Settings > Calendar: the user's own Google app (client ID and secret, saved in the harness, never sent back), the
@@ -30,7 +30,7 @@ export function CalendarSettings({ api, online, notify }) {
   const statusRef = useRef(null);
   statusRef.current = status;
 
-  const stopPolling = () => { clearTimeout(poll.current); poll.current = null; };
+  const stopPolling = () => { if (poll.current) poll.current(); poll.current = null; };
   useEffect(() => { alive.current = true; return () => { alive.current = false; stopPolling(); }; }, []);
 
   async function take(next) {
@@ -49,18 +49,16 @@ export function CalendarSettings({ api, online, notify }) {
   useEffect(() => { setDestination(d => destinations(calendars).some(c => c.id === d) ? d : defaultDestination(calendars, status?.push?.destination)); }, [calendars, status?.push?.destination]);
 
   // Look again every 2 seconds, for at most 10 minutes, until the state or the write permission changes.
+  // A new watch, Cancel and unmount all cancel the one before, for good (watchStatus).
   function watch(before, then) {
     stopPolling(); setWaiting(true);
-    const until = Date.now() + POLL_LIMIT_MS;
-    const tick = async () => {
-      let next = null;
-      try { next = await cal.status(); } catch { /* the harness may be busy; the next look tries again */ }
-      if (!alive.current) return;
-      if (next && signInChanged(before, next)) { stopPolling(); setWaiting(false); await take(next); if (alive.current && then) then(next); return; }
-      if (Date.now() >= until) { setWaiting(false); setError({ at: 'google', text: 'The sign-in did not finish. Try again.' }); return; }
-      poll.current = setTimeout(tick, POLL_MS);
-    };
-    poll.current = setTimeout(tick, POLL_MS);
+    poll.current = watchStatus({
+      fetchStatus: () => cal.status(), changed: next => signInChanged(before, next), now: Date.now,
+      setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: clearTimeout,
+      onChange: async next => { if (alive.current) { setWaiting(false); await take(next); } },
+      onDone: next => { if (alive.current && then) then(next); },
+      onTimeout: () => { if (alive.current) { setWaiting(false); setError({ at: 'google', text: 'The sign-in did not finish. Try again.' }); } },
+    });
   }
   async function signIn(write, then) {
     setError({ at: '', text: '' }); setBusy('connect');
