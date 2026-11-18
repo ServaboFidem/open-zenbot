@@ -3,7 +3,7 @@ import { Button, ProgressBar } from '@fluentui/react-components';
 import { ArrowLeft24Regular, ArrowRight24Regular, CalendarLtr24Regular } from '@fluentui/react-icons';
 import EventCard from './EventCard.jsx';
 import SignupDialog from './SignupDialog.jsx';
-import { LOOK_LIMIT_MS, addTimes, canAdd, refreshNotice, shownCards, signupStep, viewState } from './discover.js';
+import { addTimes, askable, canAdd, canRun, firstLoadDone, lookStep, refreshNotice, shownCards, signupStep, viewState } from './discover.js';
 
 const POLL_MS = 4000;
 const PAGE = 20;   // the harness's default page of digests
@@ -22,10 +22,15 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
   const [looking, setLooking] = useState(null);   // { known: ids of the digests there were, since }
   const [history, setHistory] = useState(false);
   const [hasMore, setHasMore] = useState(false);
-  const [adding, setAdding] = useState('');   // the card being added
+  const [adding, setAdding] = useState(() => new Set());   // ids of cards being added
   const [asking, setAsking] = useState(null);   // the card id the dialog is about
   const pending = useRef(null);   // the card whose link was followed (signupStep)
-  const cardsRef = useRef([]);
+  const onScreen = useRef([]);   // the cards drawn now
+  const mounted = useRef(true);
+  const loading = useRef(false);
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const load = useCallback(async () => {
     try {
@@ -40,36 +45,41 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
 
   useEffect(() => { if (online) load(); }, [load, online]);
 
-  // waiting for a run this page started: until a new digest appears, the scout stops, or time is up
+  // look again while a run goes: the one this page started (until a new digest, the scout stops or time is up),
+  // or one the harness started on its own (the weekly one; until time is up)
+  const running = !!status?.running;
+  const watching = !!looking || running;
   useEffect(() => {
-    if (!looking) return undefined;
+    if (!watching) return undefined;
+    const mine = looking;
+    const since = mine ? mine.since : Date.now();
+    const known = mine ? mine.known : [];
+    let seenRunning = false;
+    let cancelled = false;
     const t = setInterval(async () => {
-      const got = await load();
-      if (!got) return;
-      if (got.digests.some(d => !looking.known.includes(d.id))) { setLooking(null); notify('New events are in.'); }
-      else if (!got.status.running) { setLooking(null); notify('The scout finished without new events.'); }
-      else if (Date.now() - looking.since > LOOK_LIMIT_MS) { setLooking(null); notify('The scout has not finished. Check back later.'); }
+      if (loading.current) return;   // the last look has not answered
+      loading.current = true;
+      let got;
+      try { got = await load(); } finally { loading.current = false; }
+      if (cancelled || !mounted.current) return;
+      const step = lookStep({ since, now: Date.now(), known, digests: got ? got.digests : null, running: got ? got.status.running : false, seenRunning });
+      seenRunning = step.seenRunning;
+      if (!step.done) return;
+      clearInterval(t);
+      if (mine) { setLooking(null); notifyRef.current(step.notice); }
     }, POLL_MS);
-    return () => clearInterval(t);
-  }, [looking, load, notify]);
-  // a run the harness started on its own (the weekly one): look again until it ends
-  const running = !!status?.running && !looking;
-  useEffect(() => {
-    if (!running) return undefined;
-    const t = setInterval(load, POLL_MS);
-    return () => clearInterval(t);
-  }, [running, load]);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [watching, looking, load]);
 
   const current = digests[0] || null;
-  cardsRef.current = digests.flatMap(d => d.cards);
 
   // "Did you sign up?": the window gets focus again after a link was followed
   useEffect(() => {
     const back = () => {
       const step = signupStep(pending.current, { type: 'focus' });
       pending.current = step.pending;
-      const card = step.ask && cardsRef.current.find(c => c.id === step.ask);
-      if (card && card.state === 'new') setAsking(card.id);
+      const card = askable(step.ask, onScreen.current);
+      if (card) setAsking(card.id);
     };
     const visible = () => { if (document.visibilityState === 'visible') back(); };
     window.addEventListener('focus', back);
@@ -77,7 +87,7 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
     return () => { window.removeEventListener('focus', back); document.removeEventListener('visibilitychange', visible); };
   }, []);
 
-  const guard = async fn => { try { return await fn(); } catch (err) { notify(err.message || 'Something went wrong.'); return undefined; } };
+  const guard = async fn => { try { return await fn(); } catch (err) { if (mounted.current) notify(err.message || 'Something went wrong.'); return undefined; } };
   const answered = () => { pending.current = signupStep(pending.current, { type: 'answered' }).pending; setAsking(null); };
 
   const run = () => guard(async () => {
@@ -88,32 +98,34 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
   const add = card => guard(async () => {
     const times = canAdd(card) ? addTimes(card) : null;
     if (!times) { notify('This listing has no usable date.'); return false; }
-    setAdding(card.id);
+    setAdding(a => new Set(a).add(card.id));
     try {
       const r = await discover.add(card.id, times);
       setDigests(ds => swap(ds, r.card));
       notify('Added to your calendar.');
       return true;
-    } finally { setAdding(''); }
+    } finally { setAdding(a => { const n = new Set(a); n.delete(card.id); return n; }); }
   });
   const dismiss = card => guard(async () => {
     const next = await discover.dismiss(card.id);
     setDigests(ds => swap(ds, next));
   });
   const opened = card => { pending.current = signupStep(pending.current, { type: 'opened', cardId: card.id }).pending; };
-  const yes = async card => { await add(card); answered(); };
+  const yes = async card => { if (await add(card)) answered(); };
   const never = async card => { answered(); await dismiss(card); };
+  const showHistory = on => { pending.current = null; setAsking(null); setHistory(on); };
   const more = () => guard(async () => {
     const last = digests[digests.length - 1];
     const list = await discover.digests(last?.created_at);
     setDigests(ds => [...ds, ...list]); setHasMore(list.length >= PAGE);
   });
 
-  const view = viewState(status, current, { online, loaded: loaded && !(!status && loadError), looking: !!looking });
+  const view = viewState(status, current, { online, loaded: firstLoadDone({ loaded, status, loadError }), looking: !!looking });
   const notice = refreshNotice(status);
   const src = card => discover.imageSrc(api.baseUrl, card);
-  const grid = digest => <div className="discover-grid">{shownCards(digest).map(card => <EventCard key={card.id} card={card} src={src(card)} adding={adding === card.id} onOpen={opened} onAdd={add}/>)}</div>;
-  const dialogCard = asking && cardsRef.current.find(c => c.id === asking && c.state === 'new');
+  const grid = digest => <div className="discover-grid">{shownCards(digest).map(card => <EventCard key={card.id} card={card} src={src(card)} adding={adding.has(card.id)} onOpen={opened} onAdd={add}/>)}</div>;
+  onScreen.current = view.kind !== 'digest' || (loadError && !status) ? [] : history ? digests.flatMap(shownCards) : shownCards(current);
+  const dialogCard = askable(asking, onScreen.current);
 
   let body;
   if (loadError && !status) {
@@ -129,7 +141,7 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
     </div>;
   } else if (history) {
     body = <>
-      <div className="discover-bar"><Button appearance="subtle" icon={<ArrowLeft24Regular className="od-icon"/>} onClick={() => setHistory(false)}>Back to this week</Button></div>
+      <div className="discover-bar"><Button appearance="subtle" icon={<ArrowLeft24Regular className="od-icon"/>} onClick={() => showHistory(false)}>Back to this week</Button></div>
       {digests.map(d => <section key={d.id} className="discover-digest">
         <h3>{dayText(d.created_at) || 'Earlier digest'}</h3>
         {shownCards(d).length ? grid(d) : <p className="events-muted">Nothing left in this digest.</p>}
@@ -140,18 +152,17 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
     body = <>
       {view.text && <p className="events-muted">{view.text}</p>}
       {grid(current)}
-      <div className="discover-bar"><Button appearance="subtle" icon={<ArrowRight24Regular className="od-icon"/>} iconPosition="after" onClick={() => setHistory(true)}>Older digests</Button></div>
+      <div className="discover-bar"><Button appearance="subtle" icon={<ArrowRight24Regular className="od-icon"/>} iconPosition="after" onClick={() => showHistory(true)}>Older digests</Button></div>
     </>;
   }
 
-  const canRun = online && view.kind !== 'not_set_up' && view.kind !== 'looking' && view.kind !== 'loading' && view.kind !== 'offline' && !(loadError && !status);
   return <section className="events-discover">
     <div className="discover-head">
       <div><h2>Discover</h2>{current && !history && <p className="events-muted">Picked {dayText(current.created_at)}</p>}</div>
-      {canRun && view.kind !== 'empty' && <Button onClick={run}>Find events now</Button>}
+      {canRun(status, { online, looking: !!looking }) && view.kind !== 'empty' && <Button onClick={run}>Find events now</Button>}
     </div>
     {notice && <p className="events-error" role="status">{notice}</p>}
     {body}
-    {dialogCard && <SignupDialog card={dialogCard} busy={adding === dialogCard.id} onYes={yes} onNotYet={answered} onNever={never}/>}
+    {dialogCard && <SignupDialog card={dialogCard} busy={adding.has(dialogCard.id)} onYes={yes} onNotYet={answered} onNever={never}/>}
   </section>;
 }

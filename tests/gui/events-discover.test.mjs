@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  LOOK_LIMIT_MS, addTimes, canAdd, refreshNotice, shownCards, signupStep, viewState, whenLabel, whereLabel,
+  LOOK_LIMIT_MS, RUN_APPEAR_MS, addTimes, askable, canAdd, canRun, firstLoadDone, lookStep, refreshNotice, shownCards, signupStep, viewState, whenLabel, whereLabel,
 } from '../../src/gui/events/discover.js';
 import { wallToInstant, localZone } from '../../src/gui/events/dates.js';
 import { OFFLINE } from '../../src/gui/events/page-state.js';
@@ -181,4 +181,56 @@ test('nothing throws for fields that are strings, empty, null, undefined or numb
   assert.doesNotThrow(() => { addTimes(undefined); whenLabel(undefined); whereLabel(undefined); });
   assert.equal(whereLabel(card({ venue: 5, city: 'Grove City' })), 'Grove City');
   assert.deepEqual(shownCards({ cards: 'nope' }), []);
+});
+
+const look = (over = {}) => ({ since: 0, now: 5000, known: ['d1'], digests: [{ id: 'd1' }], running: true, seenRunning: false, ...over });
+
+test('lookStep: a digest not in known ends the wait', () => {
+  const r = lookStep(look({ digests: [{ id: 'd2' }, { id: 'd1' }] }));
+  assert.deepEqual([r.done, r.notice], [true, 'New events are in.']);
+});
+test('lookStep: time up ends it, with a load that failed too', () => {
+  const late = LOOK_LIMIT_MS + 1;
+  assert.deepEqual(lookStep(look({ now: late })).notice, 'The scout has not finished. Check back later.');
+  const r = lookStep(look({ now: late, digests: null, running: false }));
+  assert.deepEqual([r.done, r.notice], [true, 'The scout has not finished. Check back later.']);
+});
+test('lookStep: a failed load never says the scout stopped', () => {
+  assert.equal(lookStep(look({ digests: null, running: false, now: RUN_APPEAR_MS + 1 })).done, false);
+});
+test('lookStep: stopped without a digest counts only after it was seen running or 20 s passed', () => {
+  assert.equal(lookStep(look({ running: false, now: 4000 })).done, false);
+  const seen = lookStep(look({ running: true }));
+  assert.equal(seen.seenRunning, true);
+  const r = lookStep(look({ running: false, seenRunning: true, now: 8000 }));
+  assert.deepEqual([r.done, r.notice], [true, 'The scout finished without a digest.']);
+  assert.equal(lookStep(look({ running: false, now: RUN_APPEAR_MS })).done, true);
+});
+test('lookStep: still running with nothing new is not done', () => {
+  assert.deepEqual(lookStep(look()), { done: false, notice: '', seenRunning: true });
+});
+
+test('askable: a new card on screen, else null', () => {
+  const shown = [card({ id: 'a' }), card({ id: 'b', state: 'added' })];
+  assert.equal(askable('a', shown).id, 'a');
+  assert.equal(askable('b', shown), null);
+  assert.equal(askable('zzz', shown), null);
+  assert.equal(askable(null, shown), null);
+  assert.equal(askable('a', []), null);
+});
+
+test('canRun: set up, known, idle and online only', () => {
+  assert.equal(canRun(st()), true);
+  assert.equal(canRun(null), false);
+  assert.equal(canRun(st({ set_up: false })), false);
+  assert.equal(canRun(st({ running: true })), false);
+  assert.equal(canRun(st(), { looking: true }), false);
+  assert.equal(canRun(st(), { online: false }), false);
+});
+
+test('firstLoadDone: a load that failed before any status is not "loaded"', () => {
+  assert.equal(firstLoadDone({ loaded: true, status: st(), loadError: '' }), true);
+  assert.equal(firstLoadDone({ loaded: true, status: null, loadError: 'x' }), false);
+  assert.equal(firstLoadDone({ loaded: true, status: st(), loadError: 'x' }), true);
+  assert.equal(firstLoadDone({ loaded: false, status: st() }), false);
 });

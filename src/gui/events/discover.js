@@ -153,3 +153,34 @@ export function signupStep(pending, event) {
     default: return { pending: pending ?? null, ask: null };
   }
 }
+
+// How long a run can go unseen as running before "the scout stopped" is believed: the harness may not show
+// `running` the instant run() returns.
+export const RUN_APPEAR_MS = 20000;
+
+// One look at a run this page is waiting for. in: since and now (ms), known (digest ids from before the run),
+// digests (the list just loaded, or null when the load failed), running (the status's flag), seenRunning (a
+// look has already seen it running). Returns { done, notice, seenRunning }; notice is '' when not done.
+// A load that failed gives digests null: it can still run out of time, but never decides the scout stopped.
+export function lookStep({ since, now, known = [], digests = null, running = false, seenRunning = false }) {
+  const loaded = Array.isArray(digests);
+  if (loaded && digests.some(d => !known.includes(d.id))) return { done: true, notice: 'New events are in.', seenRunning };
+  if (now - since > LOOK_LIMIT_MS) return { done: true, notice: 'The scout has not finished. Check back later.', seenRunning };
+  const seen = seenRunning || (loaded && !!running);
+  if (loaded && !running && (seen || now - since >= RUN_APPEAR_MS)) return { done: true, notice: 'The scout finished without a digest.', seenRunning: seen };
+  return { done: false, notice: '', seenRunning: seen };
+}
+
+// The card the "Did you sign up?" dialog is about: only one on screen now (`shown`, the cards drawn) that is
+// still new. null otherwise.
+export function askable(cardId, shown) {
+  if (!cardId || !Array.isArray(shown)) return null;
+  const card = shown.find(c => c && c.id === cardId);
+  return card && card.state === 'new' ? card : null;
+}
+
+// Whether "Find events now" is offered at the top: set up, nothing running, and the status known.
+export const canRun = (status, { online = true, looking = false } = {}) => !!(online && status && status.set_up && !looking && !status.running);
+
+// Whether the first load has settled for viewState: a load that failed before any status is the error view's.
+export const firstLoadDone = ({ loaded = false, status = null, loadError = '' } = {}) => !!loaded && !(!status && !!loadError);
