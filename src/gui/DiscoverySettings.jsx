@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Checkbox, Field, Input, Spinner, Switch, Textarea } from '@fluentui/react-components';
+import { Button, Checkbox, Field, Input, Label, Spinner, Switch, Textarea } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
 import { MAX_INTERESTS, URL_HINT, bodyFrom, canSave, changed, draftFrom, nextRunLine, toggleCategory } from './discovery-settings';
 
@@ -59,12 +59,15 @@ export function DiscoverySettings({ api, online, notify }) {
     <Field label="Your city’s Eventbrite page" hint={URL_HINT} validationState={error.at === 'url' ? 'error' : 'none'} validationMessage={error.at === 'url' ? error.text : undefined}>
       <Input value={draft.source_url} spellCheck={false} placeholder="https://www.eventbrite.com/d/oh--columbus/events/" disabled={busy} onChange={(e, d) => set({ source_url: d.value })}/>
     </Field>
-    <Field label="Kinds of events" hint="Tick none to see them all.">
+    {/* not a Field: a Field gives every checkbox inside it one id, so any label would tick the first box */}
+    <div role="group" aria-labelledby="discovery-kinds" className="cal-group">
+      <Label id="discovery-kinds">Kinds of events</Label>
       <div className="cal-list">{status.categories.map(c => <div className="cal-item" key={c.tag}>
         <Checkbox label={c.name} checked={draft.categories.includes(c.tag)} disabled={busy}
           onChange={(e, d) => set({ categories: toggleCategory(draft.categories, c.tag, !!d.checked) })}/>
       </div>)}</div>
-    </Field>
+      <p className="field-hint">Tick none to see them all.</p>
+    </div>
     <Field label="Your interests" hint={`In your own words, up to ${MAX_INTERESTS.toLocaleString('en-US')} characters. ${draft.interests.length.toLocaleString('en-US')} used.`}
       validationState={draft.interests.length > MAX_INTERESTS ? 'error' : 'none'}>
       <Textarea resize="vertical" rows={4} value={draft.interests} disabled={busy} onChange={(e, d) => set({ interests: d.value })}/>
