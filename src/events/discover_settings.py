@@ -8,21 +8,46 @@ are built from it alone (https://www.eventbrite.com/d/<place>/...)."""
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from src.harness.mcp_keys import hint
+from src.memory.exclusion import exclusion
 from src.vault_settings import settings_dir
 
 SETTINGS_FILE = "events.json"
+KEYS_FILE = "events_keys.json"
 BAD_URL = "Paste the address of your city's Eventbrite page, like https://www.eventbrite.com/d/oh--columbus/events/"
 
 HOSTS = ("www.eventbrite.com", "eventbrite.com")
 PLACE = re.compile(r"[a-z]{2}--[a-z0-9-]{1,80}")
+ZONE = re.compile(r"[A-Za-z0-9_+\-/]{1,64}")
 MAX_NAME = 100
 MAX_INTERESTS = 2000
+
+# The cities FindLocal covers (its own slugs).
+FINDLOCAL_CITIES: tuple[str, ...] = (
+    "albuquerque", "ann-arbor", "asheville", "atlanta", "austin", "baltimore", "bangor", "birmingham",
+    "bloomington", "boise", "boston", "brattleboro", "buffalo", "burlington", "cape-cod", "charleston", "charlotte",
+    "chicago", "cincinnati", "cleveland", "columbia-mo", "columbus", "dallas", "denver", "des-moines", "detroit",
+    "duluth", "fort-collins", "grand-rapids", "green-bay", "hanover", "harrisburg", "hartford", "hilton-head",
+    "houston", "hudson-valley", "indianapolis", "iowa-city", "jersey-shore", "kansas-city", "lansing", "las-vegas",
+    "lincoln", "london", "los-angeles", "louisville", "madison", "manchester", "memphis", "miami", "milwaukee",
+    "minneapolis", "nashville", "new-haven", "new-orleans", "new-york", "northampton", "oklahoma-city", "orlando",
+    "philadelphia", "phoenix", "pittsburgh", "pittsfield", "portland", "portland-me", "portsmouth", "providence",
+    "raleigh", "richmond", "rochester", "rockland", "rutland", "sacramento", "salt-lake-city", "san-antonio",
+    "san-diego", "san-francisco", "santa-barbara", "seattle", "sonoma", "spokane", "st-louis", "stamford", "tampa",
+    "traverse-city", "tucson", "washington", "wenatchee", "wilmington-nc", "worcester", "berlin", "munich",
+    "augsburg", "stuttgart", "nuremberg", "regensburg", "kempten", "frankfurt", "mannheim", "cologne", "ruhr",
+    "hamburg", "hannover", "leipzig", "jena", "ulm", "freiburg", "konstanz", "rostock", "paris", "lyon",
+    "marseille", "bordeaux", "montpellier", "nantes", "lille", "grenoble", "agen", "brussels", "amsterdam",
+    "rotterdam", "lisbon", "porto", "barcelona", "madrid", "valencia", "mallorca", "vienna", "bern", "zurich",
+    "warsaw", "brighton", "karlsruhe", "bristol",
+)
 
 # Eventbrite category tags seen on real pages (a later task completes the list from a real page).
 CATEGORIES: dict[str, str] = {
@@ -89,12 +114,17 @@ class DiscoverSettings:
     place: str = ""
     categories: list[str] = field(default_factory=list)
     interests: str = ""
+    findlocal_city: str = ""
+    timezone: str = ""
 
     @classmethod
     def load(cls, vault_root: Path) -> "DiscoverSettings":
         raw = _read(settings_dir(vault_root) / SETTINGS_FILE)
         cats = raw.get("categories")
         place = _text(raw, "place")
+        fl_city, zone = _text(raw, "findlocal_city"), _text(raw, "timezone")
+        if fl_city not in FINDLOCAL_CITIES or not ZONE.fullmatch(zone):
+            fl_city, zone = "", ""
         return cls(
             enabled=raw["enabled"] if isinstance(raw.get("enabled"), bool) else False,
             city=_text(raw, "city"), state=_text(raw, "state"),
@@ -103,17 +133,18 @@ class DiscoverSettings:
             place=place if PLACE.fullmatch(place) else "",
             categories=[c for c in cats if isinstance(c, str) and c in CATEGORIES] if isinstance(cats, list) else [],
             interests=_text(raw, "interests")[:MAX_INTERESTS],
+            findlocal_city=fl_city, timezone=zone,
         )
 
     @classmethod
-    def validated(cls, raw: dict[str, Any]) -> "DiscoverSettings":
-        """Settings from a request body, or ValueError with a sentence."""
+    def validated(cls, raw: dict[str, Any], saved: "DiscoverSettings | None" = None) -> "DiscoverSettings":
+        """Settings from a request body, or ValueError with a sentence. `saved` keeps a city's zone while it stays."""
         if not isinstance(raw, dict):
             raise ValueError("The settings must be an object.")
         enabled = raw.get("enabled", False)
         if not isinstance(enabled, bool):
             raise ValueError("Discovery must be on or off.")
-        for key in ("city", "state", "source_url", "country", "interests"):
+        for key in ("city", "state", "source_url", "country", "interests", "findlocal_city", "timezone"):
             if raw.get(key) is not None and not isinstance(raw.get(key), str):
                 raise ValueError(f"The {key.replace('_', ' ')} must be text.")
         city, state = _text(raw, "city"), _text(raw, "state")
@@ -132,6 +163,16 @@ class DiscoverSettings:
             raise ValueError("The categories must be a list.")
         if any(c not in CATEGORIES for c in cats):
             raise ValueError("One of the categories is not one Eventbrite lists.")
+        fl_city, zone = _text(raw, "findlocal_city"), ""
+        if fl_city:
+            if fl_city not in FINDLOCAL_CITIES:
+                raise ValueError("Pick a FindLocal city from the list.")
+            if saved is not None and saved.findlocal_city == fl_city and saved.timezone:
+                zone = saved.timezone
+            else:
+                zone = _text(raw, "timezone")
+            if not ZONE.fullmatch(zone):
+                raise ValueError("The time zone is missing. Pick the FindLocal city again.")
         source_url = _text(raw, "source_url")
         if source_url:
             place = parse_place(source_url)
@@ -140,7 +181,8 @@ class DiscoverSettings:
         else:
             place = ""
         return cls(enabled=enabled, city=city, state=state, country=country, source_url=source_url,
-                   place=place, categories=list(dict.fromkeys(cats)), interests=interests)
+                   place=place, categories=list(dict.fromkeys(cats)), interests=interests,
+                   findlocal_city=fl_city, timezone=zone)
 
     def save(self, vault_root: Path) -> None:
         path = settings_dir(vault_root) / SETTINGS_FILE
@@ -152,4 +194,45 @@ class DiscoverSettings:
     def public(self) -> dict[str, Any]:
         return {"enabled": self.enabled, "city": self.city, "state": self.state, "country": self.country,
                 "source_url": self.source_url, "place": self.place, "categories": list(self.categories),
-                "interests": self.interests}
+                "interests": self.interests, "findlocal_city": self.findlocal_city, "timezone": self.timezone}
+
+
+BAD_KEY = "A FindLocal key is plain text with no spaces, at most 200 characters."
+
+
+def check_key(value: object) -> str:
+    """The key trimmed, or ValueError(BAD_KEY)."""
+    if not isinstance(value, str):
+        raise ValueError(BAD_KEY)
+    key = value.strip()
+    if not key or len(key) > 200 or not key.isascii() or not key.isprintable() or any(c.isspace() for c in key):
+        raise ValueError(BAD_KEY)
+    return key
+
+
+@dataclass
+class DiscoverKeys:
+    """The FindLocal key, in <vault>-settings/events_keys.json (owner only)."""
+
+    findlocal: str = ""
+
+    def __post_init__(self) -> None:
+        exclusion.register_secret_value(self.findlocal)  # the ledger masks it if it reaches a tool output
+
+    @classmethod
+    def load(cls, vault_root: Path) -> "DiscoverKeys":
+        return cls(findlocal=_text(_read(settings_dir(vault_root) / KEYS_FILE), "findlocal"))
+
+    def save(self, vault_root: Path) -> None:
+        path = settings_dir(vault_root) / KEYS_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # owner only: it holds a secret
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"findlocal": self.findlocal}, f, indent=2)
+        os.chmod(tmp, 0o600)
+        tmp.replace(path)
+
+    def public(self) -> dict[str, Any]:
+        """Safe for the GUI: whether a key is set and its last four characters, never the key."""
+        return {"key_set": bool(self.findlocal), "key_hint": hint(self.findlocal)}

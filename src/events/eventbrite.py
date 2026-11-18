@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from src.events.discover_settings import PLACE
+from src.events.discover_settings import PLACE, ZONE as _ZONE
 
 MAX_PAGES = 40
 PER_MONTH = 20
@@ -55,7 +55,6 @@ _ASSIGN = re.compile(r"window\.__SERVER_DATA__\s*=\s*\{")
 _ID = re.compile(r"[0-9]{1,30}")
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _TIME = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
-_ZONE = re.compile(r"[A-Za-z0-9_+\-/]{1,64}")
 _CATEGORY_TAG = re.compile(r"EventbriteCategory/[0-9]{1,6}")
 _SPACES = {"\t", "\n", "\r", " ", " "}
 
