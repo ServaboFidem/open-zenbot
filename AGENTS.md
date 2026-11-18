@@ -140,7 +140,7 @@ gives `notes-ledger/`, `notes-music/`, `notes-calendar/` and `notes-settings/`.
 | `vault/` | Work docs (`docs/`), `delegated/` (job folders for `delegate`), uploads, browser output (`browser/`), anything bots save; `designs/` (studio designs; each folder also holds `images/` and `.versions/`, whose `before-<n>.<name>` files are the working file as it was before a helper's change) and `design-systems/` (the user's own); `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
 | `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations | `src/memory/ledger.py` `ledger_path_for` |
 | `vault-music/` | Music database (`music.db`), the Soundlore atlas, cover images | `src/music/settings.py` `music_dir`; bots never reach it (`allowed_folders.private_folders`) |
-| `vault-calendar/` | Calendar database (`calendar.db`: events, calendars, sync state) | `src/events/settings.py` `calendar_dir`; bots never reach it (`allowed_folders.private_folders`) |
+| `vault-calendar/` | Calendar database (`calendar.db`: events, calendars, sync state) | `src/events/settings.py` `calendar_dir`; a private folder (`allowed_folders.private_folders`), so no bot tool reaches the file. The `/calendar` routes are another matter: see "Bots and the calendar" under `### The calendar and Google` |
 | `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
 
 A new setting goes in `settings_dir(vault_root) / "<name>.json"`, never under the vault. Secrets and
@@ -172,7 +172,41 @@ the primary calendar's id), brought in by pull and, when the user switches it on
 **Unverified (2026-11-17): the whole Google exchange has only run against the test fake (`tests/events/conftest.py`
 `FakeGoogle`), never against Google itself.** That includes whether Google accepts a loopback redirect with a path
 (`/calendar/google/callback`) on the harness's port. If it does not, the fix is confined to
-`Connection.redirect_uri` and the callback route.
+`Connection.redirect_uri` and the callback route. Assumptions about Google to check by hand before a release:
+
+- Believed right, confirm once:
+  - An event id of 32 hex characters plus `g` plus digits is accepted (base32hex, 5 to 1,024 characters).
+  - Inserting a reused id answers 409, including when the earlier event was deleted.
+  - GET of a deleted event answers 200 with `status: "cancelled"`; DELETE of an already-deleted one answers 410.
+  - A PATCH merges `start` and `end` key by key, and a null removes a key (why `to_google(patch=True)` nulls the
+    other form; the fake now behaves this way).
+  - The token answer to a code exchange carries `scope`, and with `include_granted_scopes=true` it lists the
+    combined grant.
+  - `prompt=consent` with `access_type=offline` always returns a refresh token.
+  - `calendar.calendarlist.readonly` and `calendar.events.readonly` are enough for `calendarList.list` and
+    `events.list` on shared and holiday calendars.
+  - The `primary` flag is on exactly one calendar-list entry (a list without one is now refused as `provider`).
+  - `htmlLink` is on `*.google.com` (otherwise `isGoogleLink` hides the link).
+- Not sure:
+  - PATCH of a cancelled event: 404, 410 and a 200 that is still cancelled are handled; a 403 or 400 would
+    retry on every run.
+  - Whether a "Desktop app" client accepts the loopback redirect with a path on a fixed port.
+  - Sync tokens with `singleEvents=true`: whether a first read with `timeMin`/`timeMax`, `singleEvents` and
+    `showDeleted` returns `nextSyncToken`, and whether the next read takes `singleEvents` and `showDeleted`
+    beside `syncToken`.
+  - What a sync-token read delivers for repeating events as time passes (the weekly full read does not depend
+    on it).
+  - Whether repeating `syncToken` beside `pageToken` on later pages is right (the code does).
+  - Whether a rate limit arrives as 403 with `rateLimitExceeded` / `userRateLimitExceeded`, or as 429 (both
+    are read as `rate`).
+  - 404 on PATCH after losing access to a shared calendar: read as "the copy is gone", so a made-here event
+    is made again at the destination, which would be a second copy.
+  - An unticked write box on the upgrade consent: that `scope` then simply lacks `calendar.events` rather than
+    the exchange failing.
+  - How long a deleted event stays visible to `showDeleted` and GET; once purged, a reused id may insert
+    afresh (fine) or still answer 409 with GET 404 (handled by the next generation).
+  - Whether revoking the refresh token of a refused sign-in also ends an existing connection's grant (it would
+    then show as needing a reconnect).
 
 - **Where things live.** Settings in `vault-settings/calendar.json` (`push`, `destination`, `account`, the granted
   `scopes`; no secret), the Google client id, client secret and refresh token in
@@ -189,48 +223,85 @@ the primary calendar's id), brought in by pull and, when the user switches it on
   for the read scopes first (`calendar.calendarlist.readonly`, `calendar.events.readonly`); write access
   (`calendar.events`) is a separate, later request (`POST /calendar/google/connect` with `{"write": true}`), and
   what Google granted is read from the token answer, never assumed (an answer with no `scope` is a failed sign-in).
+  Google lets the user untick each permission: a grant without both read permissions (`connect.missing_read`;
+  `calendar.events` counts as reading events) is refused with a sentence naming the missing one, since every pull
+  would otherwise answer 403.
   `state` is random, kept in memory only (at most 5 pending), valid `STATE_LIFETIME` (600 s) and spent by the first
   lookup. It is the callback's only credential. The callback answers a fixed sentence in a page with
-  `Content-Security-Policy: default-src 'none'`, `nosniff` and `no-store`; it reflects nothing it was sent, and no
-  code, token, secret or `state` value goes to the ledger, an exception message or that page. A sign-in that gets
-  no refresh token (and has none saved), no primary calendar, or lists a different account than the connected
-  one is refused with the new token revoked (a different account when not connected clears the made-here events'
-  links to the old one, `CalendarStore.clear_links`). The token and client secret never leave the harness: no route
-  returns one (a key is shown as `mcp_keys.hint` of the client id only), and `GET /calendar/status` says only
-  whether they are set.
+  `Content-Security-Policy: default-src 'none'`, `nosniff` and `no-store`, whatever fails (the route catches every
+  exception); it reflects nothing it was sent, and no code, token, secret or `state` value goes to the ledger, an
+  exception message or that page. A sign-in that gets no refresh token (and has none saved), no primary calendar,
+  a missing read permission, or lists a different account than the connected one is refused with the new token
+  revoked (a different account when not connected clears the made-here events' links to the old one,
+  `CalendarStore.clear_links`). A newly connected account starts with its primary calendar selected; a later
+  sign-in (a reconnect, the write upgrade) leaves the user's choice alone. The token and client secret never
+  leave the harness: no route returns one (a key is shown as `mcp_keys.hint` of the client id only), and
+  `GET /calendar/status` says only whether they are set.
+- **Secrets, logs and traces.** A traceback through the Google client holds the client secret and the tokens in
+  its frames, and GlitchTip would be sent them. So `src/events/` logs an exception's class name only (never
+  `log.exception` or `exc_info`), a bad `expires_in` counts as already expired instead of raising, the callback
+  logs a warning (an error record is sent on with the request's query string), and the trace sampler gives 0.0 for
+  `/calendar/google/callback` (`telemetry.UNTRACED_PATHS`), whose query carries the code and `state`.
 - **Pull** (`Sync.pull`). Reads each selected Google calendar (`singleEvents`, so a repeating event arrives as its
   occurrences) from 31 days back to 366 days ahead, first in full and then by sync token; the token is kept per
-  calendar. The built-in copy wins: a pulled event with an unsent edit (`dirty`) or a local delete (a tombstone) is
-  never overwritten or removed by pull. An event deleted on Google that was edited here is made again by push when
-  it was made here, and is lost, and counted in `lost_edits`, when it was pulled. A `gone` answer (the sync token
-  expired) drops only the clean pulled events of that calendar (`clear_clean_pulled`) and reads it in full once;
-  unselecting a calendar drops all its pulled events (`clear_pulled`). A pulled event outside the window is not kept.
-  Pull writes nothing to Google.
+  calendar. A token only reports changes inside the window its first read fixed, so each calendar is read in full
+  again once its last full read (`full_read_at`) is 7 days old (`Sync.FULL_READ_EVERY`), which moves the window
+  on: the rows stay until that read has answered, then the clean pulled events Google no longer lists there are
+  dropped (`CalendarStore.keep_pulled`). The built-in copy wins: a pulled event with an unsent edit (`dirty`) or a
+  local delete (a tombstone) is never overwritten or removed by pull, a full read included. A `gone` answer (the
+  sync token expired) drops only the clean pulled events of that calendar (`clear_clean_pulled`) and reads it in
+  full once; unselecting a calendar drops all its pulled events (`clear_pulled`). A pulled event outside the
+  window is not kept, and one with a malformed date is skipped. Pulled text is kept whole, however long
+  (`convert.to_local` never shortens it, so nothing can be sent back to Google cut off); an edit here that would
+  save a title, location or description over the limits is refused by `store.validate` with its sentence. A
+  Google event with no summary shows as "(No title)" here and goes back with an empty summary. A calendar list
+  with no primary calendar is a `provider` error and changes nothing (`Sync.refresh_calendars`): stored, it would
+  drop every calendar and pulled event it leaves out. A copy on Google whose id has the shape of
+  `store.google_event_id` and matches a made-here event with no link yet (an insert that landed while its answer
+  was lost) is tied to that event (`Sync._link_made_here`), never added as a second one; `mark_pushed` also drops
+  a pulled row holding the same Google event. Pull writes nothing to Google.
+- **Lost edits.** An event deleted on Google that was edited here is made again by push when it was made here,
+  and is lost when it was pulled: counted in the meta counter `lost_edits`, which only grows, in whichever run it
+  happens (a background one too). `GET /calendar/status` carries the count in `sync.lost_edits`; the Events page
+  shows a notice for any status it loads with a count above zero and then acknowledges that count
+  (`POST /calendar/lost-edits/ack` with `{"count": n}`, which subtracts with a floor of 0 and answers the status;
+  `page-state.js` `lostEditStep`), so a loss counted between the read and the acknowledgement is shown next time.
+  Don't reset the counter anywhere else.
 - **Push** (`Sync.push`) is off by default and runs only when `Sync.can_push` says so: connected, the write scope
   granted, push on and a destination chosen. The destination is a writable Google calendar (`PUT /calendar/push`);
   `GET /calendar/push/preview` counts what a switch-on would send, with no network. An event made here goes to the
   destination under an id the harness makes (`store.google_event_id`: the event's own id plus a generation), so an
   insert whose answer was lost and is retried meets a 409 instead of making a second copy; on a 409 a live copy at
   that id is adopted and patched, a cancelled one takes the next generation, and after 3 tries the event shows the
-  error. Once pushed an event stays on the calendar it went to, and one pulled from Google goes back to its own
-  calendar, if that calendar is writable; both calendars stay selected while push is on (`locked`). Deletes made here
-  are sent to the calendar the event is on. The body is `convert.to_google` only (no guests, no reminders, no
-  `If-Match`: the local copy wins). While push is off, edits and deletes of made-here events wait in the store
+  error. The calendar an insert is sent to is saved on the row first (`set_target`), so a retry goes to the same
+  calendar even after the destination changed (unless that calendar is no longer writable). Once pushed an event
+  stays on the calendar it went to, and one pulled from Google goes back to its own calendar, if that calendar is
+  writable. While push is on, the destination and every calendar holding an event pushed from here are `locked`
+  (`CalendarService.locked`): switching push on selects all of them that Google still lists, and unselecting one
+  answers 409, checked again under the run lock (`CalendarService.unselect`), because an unselected calendar's
+  deletes on Google would never be seen. Deletes made here are sent to the calendar the event is on. The body is
+  `convert.to_google` only (no guests, no reminders, no `If-Match`: the local copy wins); a PATCH body nulls the
+  other date form (`patch=True`), since Google merges `start` and `end` and refuses an event holding both `date`
+  and `dateTime`, and an insert carries no nulls. `can_push` is read again before each event, so switching push
+  off stops a run that is under way after the event in flight. While push is off, edits and deletes of made-here events wait in the store
   (`dirty`, tombstones) and go out when it is switched on; a pulled event cannot be edited then (`editable` in
   `routes.py`), and a repeating event's occurrence never can. An edit that lands while its push is in flight keeps
   the row pending (`rev`); an event deleted here while it was being sent has its Google copy deleted
   (`orphaned` in the ledger entry when that fails). A per-event failure is kept on the event (`push_error`, shown as
-  "Not yet on Google") and does not stop the run; an `auth` failure does and marks the connection `needs_reconnect`.
+  "Not yet on Google") and does not stop the run; an `auth` failure does and marks the connection `needs_reconnect`
+  (a single 401 is first retried once with a new access token, `Google._call`). The status line words a failed run
+  by its kind (`page-state.js` `SYNC_ERRORS`): only `network` says Google could not be reached.
 - **One run at a time** (`CalendarService`). Every run (`Sync.run`: refresh the calendar list, pull, push) holds one
   lock, as do a sign-in, a disconnect and unselecting a calendar, so none overlaps a run. A change made here asks
   for a run (`kick`, only while push can run); a second request while one runs queues one more run after it, never
   more. Runs also happen when Google is connected at start and every 15 minutes after (`SYNC_EVERY_S`), when a
   sign-in finishes, when a calendar is selected or unselected, when push is switched on, and on
-  `POST /calendar/sync`, which joins the run in flight. Nothing reaches Google before it is connected.
+  `POST /calendar/sync`, which joins the run in flight. The periodic loop outlives any exception. Nothing reaches
+  Google before it is connected.
 - **Disconnect** (`Connection.disconnect`): revokes the refresh token (best effort), forgets the keys' token and the
-  granted scopes, switches push off and removes every Google calendar and pulled event from the store. It keeps the
-  user's Google app (client id and secret), the events made here and their pending changes. A pushed event stays on
-  Google.
+  granted scopes, switches push off, removes every Google calendar and pulled event from the store and clears the
+  last sync time and error. It keeps the user's Google app (client id and secret), the events made here and their
+  pending changes, and the `lost_edits` count. A pushed event stays on Google.
 - **Times** (`store.validate`, `convert.py`). A timed event stores `start` and `end` as UTC instants
   `YYYY-MM-DDTHH:MM:SSZ` plus `tz`, an IANA name; an all-day event stores dates with the end exclusive. The harness
   never turns a wall-clock time into an instant: the page does, with `Intl` (`dates.js` `wallToInstant`,
@@ -239,18 +310,31 @@ the primary calendar's id), brought in by pull and, when the user switches it on
   keys (`start`, `end` as `YYYY-MM-DD`, at most 400 days apart); the page asks a day wider than its grid on each
   side so no zone loses an event at the edge.
 - **Routes and the ledger.** Every route is under `/calendar` (`src/events/routes.py`) and none returns a secret
-  or token. An event id or calendar id in a URL is quoted by the Google client (`google._quote`) and by
-  `calendar-api.js`. Ledger entries of kind `calendar` (`connect`, `connect_refused`, `disconnect`, `sync`) carry
-  ids, counts and error kinds only, never a title, description or location, and a failed background task is a
-  kind `error` entry with the exception's class name. There is no calendar tool for bots: nothing in the calendar
-  is registered with the tool runner, and `vault-calendar/` is out of reach of the `files` server, `shell` and
-  `magick`.
+  or token. Every POST takes a required JSON body, an empty one (`NothingIn`) where it needs nothing: a request
+  another site's page can send without a preflight has no body, a form or `text/plain`, and FastAPI answers 422
+  to each for a JSON body, so no page can disconnect Google, start a sync or add an event cross-site. A new POST
+  route must take a body too; `tests/events/test_routes.py` walks every POST on the router. The callback is a GET
+  guarded by its `state`. An event id or calendar id in a URL is quoted by the Google client (`google._quote`) and
+  by `calendar-api.js`. Ledger entries of kind `calendar` (`connect`, `connect_refused`, `disconnect`, `sync`)
+  carry ids, counts and error kinds only, never a title, description or location, and a failed background task is
+  a kind `error` entry with the exception's class name.
+- **Bots and the calendar (a known residual risk).** There is no calendar tool for bots: nothing in the calendar
+  is registered with the tool runner, and `vault-calendar/` is a private folder: the `files` server and `magick`
+  cannot reach it, and a `shell` command that names it opens an approval. But the harness API has no authentication, so a bot with `shell` (curl)
+  or the `browser` server (a real Chrome) can call the `/calendar` routes on `127.0.0.1`: read events
+  (`GET /calendar/events`), or create one (`POST /calendar/events` with a JSON body), which push then sends to
+  Google with no review. The same holds for every other route of the harness; the calendar is the first feature
+  whose safety argument ("only the user makes events here") leans on it. Closing it needs authentication across
+  the whole harness API (for example a per-launch token the GUI holds), which is not built. Until then, do not
+  describe the calendar as out of bots' reach.
 - **Not built.** Anything beyond this: finding local events, and the other pieces of the design. Don't count them
   as there.
 
 Don't add a calendar tool for bots without revisiting automatic push: it sends whatever is in the calendar to
-Google with no review. Don't write a Google call outside `Sync.push` (every write goes through it), serve the
-callback without the closed headers or reflect its query, put a secret, a code, a token or a `state` value in a
+Google with no review. Don't write an event write to Google outside `Sync.push` (every insert, patch and delete of
+an event goes through it; the only other request that changes anything at Google is the token revoke in
+`connect.py`), add a POST route without a required JSON body, serve the callback without the closed headers or
+reflect its query, log a traceback from `src/events/`, put a secret, a code, a token or a `state` value in a
 response, a log line or a ledger entry, or put a title, description or location in a ledger entry. Keep the
 calendar folder in `private_folders`. Tests: `tests/events/` (`test_settings.py`, `test_store.py`,
 `test_convert.py`, `test_google.py`, `test_connect.py`, `test_pull.py`, `test_push.py`, `test_routes.py`);
