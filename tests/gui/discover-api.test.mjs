@@ -49,3 +49,14 @@ test('imageSrc joins the harness origin and the card path, and is empty without 
   assert.equal(api.imageSrc('http://127.0.0.1:8765/', { image: '/discover/images/c1' }), 'http://127.0.0.1:8765/discover/images/c1');
   assert.equal(api.imageSrc('http://127.0.0.1:8765', { image: null }), '');
 });
+
+test('the FindLocal key routes carry the key in the body only', async () => {
+  const { api, seen } = rec();
+  await api.saveFindLocalKey('abc123');
+  await api.forgetFindLocalKey();
+  assert.deepEqual(seen.map(s => [s.method, s.path, s.body, s.params]), [
+    ['PUT', '/discover/findlocal/key', { key: 'abc123' }, undefined],
+    ['DELETE', '/discover/findlocal/key', undefined, undefined],
+  ]);
+  assert.ok(!seen.some(s => s.path.includes('abc123')));
+});

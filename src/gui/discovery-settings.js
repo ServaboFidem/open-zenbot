@@ -3,8 +3,18 @@
 
 export const URL_HINT = 'Open eventbrite.com, search your city, and copy the address of the results page.';
 export const MAX_INTERESTS = 2000;
+export const KEY_HINT = 'Make a free account at findlocal.community, then copy a key from Dashboard > Keys.';
+export const FINDLOCAL_FAILED = 'The last FindLocal read did not finish.';
+const PROVIDER_SENTENCE = 'FindLocal sent an answer OpenZenBot could not use.';
+export const FINDLOCAL_ERRORS = {
+  key: 'FindLocal did not accept the key. Check it here.',
+  refused: 'FindLocal is turning requests away for now. The free plan allows 100 requests a month.',
+  network: 'Could not reach FindLocal.',
+  source_changed: PROVIDER_SENTENCE,
+  provider: PROVIDER_SENTENCE,
+};
 
-const FIELDS = ['enabled', 'city', 'state', 'source_url', 'interests'];
+const FIELDS = ['enabled', 'city', 'state', 'source_url', 'interests', 'findlocal_city'];
 
 // What the form edits, from GET /discover/status. `country` is always US and `place` is the harness's, so neither is here.
 export function draftFrom(status) {
@@ -12,6 +22,7 @@ export function draftFrom(status) {
   return {
     enabled: !!s.enabled, city: s.city || '', state: s.state || '', source_url: s.source_url || '',
     categories: Array.isArray(s.categories) ? [...s.categories] : [], interests: s.interests || '',
+    findlocal_city: status?.findlocal?.city || '',
   };
 }
 
@@ -34,7 +45,8 @@ export function toggleCategory(tags, tag, on) {
 }
 
 // The body of PUT /discover/settings. The harness reads the place from the address.
-export const bodyFrom = draft => ({ ...draft, country: 'US', city: draft.city.trim(), state: draft.state.trim(), source_url: draft.source_url.trim() });
+// `zone` is the browser's own time zone (the page reads it); it is an argument so this module needs no browser.
+export const bodyFrom = (draft, zone) => ({ ...draft, country: 'US', city: draft.city.trim(), state: draft.state.trim(), source_url: draft.source_url.trim(), timezone: zone });
 
 // The weekly run's next time, read-only here: its day and time are changed on the Routines page.
 export function nextRunLine(routine) {
@@ -42,4 +54,27 @@ export function nextRunLine(routine) {
   const at = new Date(routine.next_run);
   if (Number.isNaN(at.getTime())) return '';
   return `Next weekly run: ${at.toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`;
+}
+
+// "columbia-mo" -> "Columbia Mo"
+export const cityName = slug => String(slug).split('-').filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+
+export function cityOptions(status) {
+  const slugs = Array.isArray(status?.findlocal?.cities) ? status.findlocal.cities : [];
+  return slugs.map(slug => ({ slug, name: cityName(slug) })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function zoneLine(status) {
+  const z = status?.findlocal?.timezone;
+  return z ? `Event times are read as ${z}.` : '';
+}
+
+// The last FindLocal read, or why it failed. Nothing until a city and a key are both set.
+export function findLocalLine(status) {
+  const f = status?.findlocal;
+  if (!f || !f.city || !f.key_set) return '';
+  if (f.last_error) return FINDLOCAL_ERRORS[f.last_error] || FINDLOCAL_FAILED;
+  const at = f.last_refresh ? new Date(f.last_refresh) : null;
+  if (!at || Number.isNaN(at.getTime())) return 'Not read yet. The weekly run reads it.';
+  return `Last read: ${at.toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`;
 }

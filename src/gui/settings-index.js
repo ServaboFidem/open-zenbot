@@ -76,6 +76,7 @@ export const SECTIONS = [
   section('calendar', 'Event discovery', [
     'Finds events near you on Eventbrite, once a week, and offers the best ones on the Discover tab. Nothing is added to your calendar until you say so.',
     'Look for events near me', 'City', 'State', 'Your city’s Eventbrite page', 'Kinds of events', 'Your interests', 'Eventbrite', 'Discover',
+    'FindLocal', 'FindLocal key', 'FindLocal city',
   ]),
   section('tracing', 'Tracing', ['Where the harness sends errors and traces. Saved here, a setting wins over .env and is kept in vault-settings/tracing.json.']),
   section('tracing', 'Sentry (GlitchTip)', [

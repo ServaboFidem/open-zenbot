@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Checkbox, Field, Input, Label, Spinner, Switch, Textarea } from '@fluentui/react-components';
+import { Button, Checkbox, Dropdown, Field, Input, Label, Option, Spinner, Switch, Textarea } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
-import { MAX_INTERESTS, URL_HINT, bodyFrom, canSave, changed, draftFrom, nextRunLine, toggleCategory } from './discovery-settings';
+import { KEY_HINT, MAX_INTERESTS, URL_HINT, bodyFrom, canSave, changed, cityName, cityOptions, draftFrom, findLocalLine, nextRunLine, toggleCategory, zoneLine } from './discovery-settings';
 
 // Settings > Calendar > Event discovery: where the user lives, their city's Eventbrite page, which kinds of events,
 // their interests, and the on/off switch. The harness checks the address and answers 422 with the sentence to show.
@@ -15,6 +15,10 @@ export function DiscoverySettings({ api, online, notify }) {
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState({ at: '', text: '' });
+  // the key lives here only, is never pre-filled and is cleared after a save
+  const [key, setKey] = useState('');
+  const [keyBusy, setKeyBusy] = useState(false);
+  const [keyError, setKeyError] = useState('');
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
@@ -35,12 +39,29 @@ export function DiscoverySettings({ api, online, notify }) {
   const dirty = changed(draft, status);
   const next = nextRunLine(status.routine);
 
+  const fl = status.findlocal || {};
+  const cities = cityOptions(status);
+  const flLine = findLocalLine(status);
+  const zone = zoneLine(status);
+
+  async function keyCall(run, done) {
+    setKeyBusy(true); setKeyError('');
+    try {
+      const fresh = await run();
+      if (alive.current) { setStatus(fresh); setKey(''); }
+      notify(done);
+    } catch (err) { if (alive.current) setKeyError(message(err)); }
+    finally { if (alive.current) setKeyBusy(false); }
+  }
+  const saveKey = () => keyCall(() => api.discover.saveFindLocalKey(key.trim()), 'FindLocal key saved');
+  const forgetKey = () => keyCall(() => api.discover.forgetFindLocalKey(), 'FindLocal key removed');
+
   async function save(e) {
     e.preventDefault();
     if (!check.ok) return;
     setBusy(true); setError({ at: '', text: '' });
     try {
-      const fresh = await api.discover.saveSettings(bodyFrom(draft));
+      const fresh = await api.discover.saveSettings(bodyFrom(draft, Intl.DateTimeFormat().resolvedOptions().timeZone));
       if (alive.current) { setStatus(fresh); setDraft(draftFrom(fresh)); }
       notify('Event discovery saved');
     } catch (err) { if (alive.current) setError({ at: 'url', text: message(err) }); }
@@ -72,6 +93,27 @@ export function DiscoverySettings({ api, online, notify }) {
       validationState={draft.interests.length > MAX_INTERESTS ? 'error' : 'none'}>
       <Textarea resize="vertical" rows={4} value={draft.interests} disabled={busy} onChange={(e, d) => set({ interests: d.value })}/>
     </Field>
+    <h4>FindLocal (optional)</h4>
+    <p className="field-hint">A second source of events, read once a week. It needs a free key.</p>
+    <Field label="FindLocal key" hint={KEY_HINT} validationState={keyError ? 'error' : 'none'} validationMessage={keyError || undefined}>
+      <Input type="password" autoComplete="off" spellCheck={false} value={key} disabled={keyBusy} onChange={(e, d) => { setKey(d.value); setKeyError(''); }}/>
+    </Field>
+    <div className="cal-actions">
+      <Button appearance="outline" disabled={keyBusy || !key.trim()} onClick={saveKey}>{keyBusy ? 'Saving…' : 'Save key'}</Button>
+      {fl.key_set && <>
+        <span className="cal-wrap">{fl.key_hint ? `Saved, ending in ${fl.key_hint}` : 'Saved'}</span>
+        <Button appearance="outline" disabled={keyBusy} onClick={forgetKey}>Forget</Button>
+      </>}
+    </div>
+    <Field label="FindLocal city">
+      <Dropdown aria-label="FindLocal city" disabled={busy} value={draft.findlocal_city ? cityName(draft.findlocal_city) : 'None'}
+        selectedOptions={[draft.findlocal_city]} onOptionSelect={(e, d) => set({ findlocal_city: d.optionValue })}>
+        <Option key="" value="" text="None">None</Option>
+        {cities.map(c => <Option key={c.slug} value={c.slug} text={c.name}>{c.name}</Option>)}
+      </Dropdown>
+    </Field>
+    {zone && <p className="field-hint">{zone}</p>}
+    {flLine && <p className="field-hint cal-wrap">{flLine}</p>}
     {!check.ok && dirty && <p className="form-error cal-wrap" role="alert">{check.why}</p>}
     <div className="cal-actions">
       <Button appearance="primary" type="submit" disabled={busy || !dirty || !check.ok}>{busy ? 'Saving…' : 'Save'}</Button>

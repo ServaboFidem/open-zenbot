@@ -108,3 +108,9 @@ test('update finds the About panel\'s Version and updates section', () => {
   const m = searchSettings('update').find(x => x.panel === 'about');
   assert.ok(m); assert.equal(m.section, 'Version and updates'); assert.equal(m.anchor, 'settings-about-version-and-updates');
 });
+
+test('FindLocal is found under the calendar panel\'s Event discovery section', () => {
+  for (const q of ['findlocal', 'findlocal key', 'findlocal city']) {
+    assert.ok(searchSettings(q).some(m => m.panel === 'calendar' && m.section === 'Event discovery'), q);
+  }
+});

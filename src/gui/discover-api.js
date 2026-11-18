@@ -6,6 +6,9 @@ export function createDiscoverApi(call) {
   return {
     status: () => call('GET', '/discover/status', undefined, undefined),
     saveSettings: settings => call('PUT', '/discover/settings', settings),
+    // the key goes in the body only, never the address
+    saveFindLocalKey: key => call('PUT', '/discover/findlocal/key', { key }),
+    forgetFindLocalKey: () => call('DELETE', '/discover/findlocal/key'),
     // before: a digest id or time to page back from (the harness lists newest first); omit for the newest
     digests: before => call('GET', '/discover/digests', undefined, before ? { before } : undefined),
     digest: id => call('GET', `/discover/digests/${enc(id)}`),
