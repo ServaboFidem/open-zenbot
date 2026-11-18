@@ -1,7 +1,7 @@
 ---
 name: Events digest
 slug: events-digest
-use: Pick this week's local events for the user from the events found on Eventbrite.
+use: Pick this week's local events for the user from the events found near them.
 access:
   - events_interests
   - events_candidates
