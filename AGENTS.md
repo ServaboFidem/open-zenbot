@@ -13,7 +13,7 @@ name each top-level system and run the harness and the tests.
 | `src/memory/` | Exclusion filter (secrets and approvals), ledger (`ledger.py`), recall, ingest, directory import, learning from a crawl, profile memory and store routing, Hindsight store and processes |
 | `src/rooms/` | Rooms, turns, handoff, orchestrator |
 | `src/music/` | Music discovery: Discogs scan, taste profile, the Soundlore atlas, MusicBrainz and YouTube Music lookups, candidates, the album gate, digests, `music_*` tools, `/music` routes |
-| `src/events/` | The built-in calendar: settings and Google keys (`settings.py`), the SQLite store (`store.py`), the Google client (`google.py`), conversion to and from Google's shape (`convert.py`), sign-in (`connect.py`), pull and push (`sync.py`), the service that runs them (`service.py`) and the `/calendar` routes (`routes.py`); discovery of local events: settings and the Eventbrite address check (`discover_settings.py`), the Eventbrite reader (`eventbrite.py`), the pool, digests and cards (`discover_store.py`), the service that refreshes, checks and saves (`discovery.py`), the scout's tools (`discover_tools.py`) and the `/discover` routes (`discover_routes.py`) |
+| `src/events/` | The built-in calendar: settings and Google keys (`settings.py`), the SQLite store (`store.py`), the Google client (`google.py`), conversion to and from Google's shape (`convert.py`), sign-in (`connect.py`), pull and push (`sync.py`), the service that runs them (`service.py`) and the `/calendar` routes (`routes.py`); discovery of local events: settings and the Eventbrite address check (`discover_settings.py`), the Eventbrite reader (`eventbrite.py`), the FindLocal reader (`findlocal.py`), the pool, digests and cards (`discover_store.py`), the service that refreshes, checks and saves (`discovery.py`), the scout's tools (`discover_tools.py`) and the `/discover` routes (`discover_routes.py`) |
 | `src/skills/` | `SKILL.md` loader and catalog; recorder |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
 | `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Discover tab `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) |
@@ -22,7 +22,7 @@ name each top-level system and run the harness and the tests.
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+), and `fetch-uv.mjs` (downloads the pinned uv into `build/bin/` for the installers). Packaging itself is `electron-builder.yml`, `build/` (icon, the .deb's AppArmor profile `apparmor-profile`, the NSIS include `installer.nsh`) and `packaging/harness/` (the CPU-only `pyproject.toml` and `uv.lock` the installed app uses) |
 | `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`); `skills/events-digest/` (the scout's weekly run) |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
-| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` is in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs` |
+| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_findlocal.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` and the FindLocal stand-in `FakeFindLocal` are in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
 | `.github/` | Workflows: `changelog.yml` appends every push to `main` to `CHANGELOG.md` (don't edit it by hand; `[skip changelog]` in a commit subject leaves it out), `stale.yml`, and `release.yml` (a `v*` tag builds the .deb and the Windows installer and opens a draft release; a manual run only builds them; see `## Installed app`) |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
@@ -141,7 +141,7 @@ gives `notes-ledger/`, `notes-music/`, `notes-calendar/` and `notes-settings/`.
 | `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations | `src/memory/ledger.py` `ledger_path_for` |
 | `vault-music/` | Music database (`music.db`), the Soundlore atlas, cover images | `src/music/settings.py` `music_dir`; bots never reach it (`allowed_folders.private_folders`) |
 | `vault-calendar/` | Calendar database (`calendar.db`: events, calendars, sync state) | `src/events/settings.py` `calendar_dir`; a private folder (`allowed_folders.private_folders`), so no bot tool reaches the file. The `/calendar` routes are another matter: see "Bots and the calendar" under `### The calendar and Google`; also holds `discover.db` (the discovered events, digests and cards) and `discover-images/` (card pictures), private like `calendar.db` |
-| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `events.json` (event discovery: place, ticked categories, interests, on or off), `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
+| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `events.json` (event discovery: place, ticked categories, interests, on or off, the FindLocal city and its time zone), `events_keys.json` (the FindLocal key, owner-only), `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
 
 A new setting goes in `settings_dir(vault_root) / "<name>.json"`, never under the vault. Secrets and
 `allowed_folders.json` (which decides what `files` may reach) must stay out of the vault: a bot that could
@@ -347,12 +347,12 @@ GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-sta
 ### Event discovery
 
 The Discover tab on the Events page shows a short digest of local events picked for the user. The harness reads one
-city's events from Eventbrite's public pages and keeps them as a pool; a bot (the scout, `bot-prompts/event-scout.md`)
+city's events from Eventbrite's public pages and, when the user sets it up, from FindLocal's keyed API, and keeps them as one pool; a bot (the scout, `bot-prompts/event-scout.md`)
 picks six to eight from it and says why; the user follows a card's link and, on saying they signed up, the event goes on
 the built-in calendar. Design: `docs/superpowers/specs/2026-11-17-event-discovery-design.md` (git-ignored, on the computer
 the work was done on).
 
-**Checked against Eventbrite on 2026-11-17 and 2026-11-18**, by plain GET with a browser User-Agent, no cookies: each
+**Eventbrite: checked against it on 2026-11-17 and 2026-11-18**, by plain GET with a browser User-Agent, no cookies: each
 page `https://www.eventbrite.com/d/<place>/events--this-month/?page=N` (and `events--next-month`) answers 200 and holds
 `window.__SERVER_DATA__ = {...}`, whose `search_data.events.results` is a list of about 20 events with
 `pagination.page_count`. On 2026-11-18 one real refresh of `oh--columbus` (40 pages, one a second, about 100 s) read 727
@@ -370,7 +370,7 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   or `eventbrite.com` (no user info, no port), path `/d/<place>/...` with `<place>` matching `[a-z]{2}--[a-z0-9-]{1,80}`,
   no backslash, whitespace, control character, `.` or `..`. Anything else is a `ValueError` with the expected form, which
   `PUT /discover/settings` answers as 422. Only the `place` it returns is used afterwards: every fetch URL is built from it.
-- **Reading** (`eventbrite.Eventbrite`). Fetches go only to `https://www.eventbrite.com/d/<place>/events--this-month/` and
+- **Reading Eventbrite** (`eventbrite.Eventbrite`). Fetches go only to `https://www.eventbrite.com/d/<place>/events--this-month/` and
   `events--next-month/` (`?page=N`) and, for a thumbnail, `https://img.evbuc.com/`; nothing else read from a page is ever
   fetched. One request at a time, `GAP_S` (1 s) apart, a 30 s timeout, 5 MB a page, 1,500,000 bytes a picture (PNG, JPEG,
   WebP or GIF by first bytes), at most `MAX_PAGES` (40) pages: up to 20 of this month, then up to 20 of next. The pages are
@@ -380,18 +380,69 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   `source_changed` (a page without the expected shape, or one that has rows of which none has the shape `_event` needs;
   a page whose rows are all cancelled or online-only is not an error), `provider` (any other status). A failure on the first page fails the
   refresh and leaves the pool as it was; a later failure ends the reading and keeps what was read, with its kind in `error`.
-- **What is kept** (`eventbrite._event`): digits `id`, non-empty `name`, a real `start_date`, a `url` on
+- **What is kept from Eventbrite** (`eventbrite._event`): digits `id`, non-empty `name`, a real `start_date`, a `url` on
   `https://www.eventbrite.com/e/`, not cancelled, not online-only. Times are kept when `HH:MM`; `timezone` as given. No start
   time means all-day; a timed event whose end is missing or not after its start is kept with no end. Text is capped on
   storage: name 300, venue and address together 500, summary 1,000 characters, control characters removed.
-- **The pool** (`DiscoverStore`). A refresh inserts or updates the rows it reads and deletes none (the page cap reads only
-  part of a ranked list, so an unseen row is not a gone row); rows whose start date has passed are dropped
-  (`drop_past`). `Discovery.refresh` is skipped while the last good one is under 12 hours old (`REFRESH_AFTER_S`) unless
-  forced, runs one at a time, and a refresh that failed is not tried again for 10 minutes (`RETRY_AFTER_S`) unless forced.
+- **The pool** (`DiscoverStore`). A refresh inserts or updates the rows it reads and deletes none of Eventbrite's (the page
+  cap reads only part of a ranked list, so an unseen row is not a gone row); rows whose start date has passed are dropped
+  (`drop_past`). Each row has a `source`, `eventbrite` or `findlocal` (a row from before FindLocal counts as `eventbrite`).
+  `Discovery.refresh` reads Eventbrite and then FindLocal under one lock. Eventbrite is skipped while its last good refresh
+  is under 12 hours old (`REFRESH_AFTER_S`) unless forced, and a refresh that failed is not tried again for 10 minutes
+  (`RETRY_AFTER_S`) unless forced.
   The candidates are the pool rows starting today or later, in a ticked category (or with no category tag, or any when none
   is ticked), never on a saved card. The pool has no place column: when the settings are saved with a different `place`,
-  `Discovery.apply` deletes every pool row (`DiscoverStore.clear_pool`) and clears the last refresh time, error and failure
-  time, so the next refresh reads the new city at once; saved cards are snapshots and stay.
+  `Discovery.apply` deletes every Eventbrite pool row (`DiscoverStore.clear_pool("eventbrite")`) and clears Eventbrite's last
+  refresh time, error and failure time, so the next refresh reads the new city at once; saved cards are snapshots and stay.
+  A different `findlocal_city` does the same for the FindLocal rows and FindLocal's own three meta values.
+- **FindLocal** (`findlocal.FindLocal`, a second source, optional: nothing is read without a key, a city and a time zone,
+  `Discovery.findlocal_ready`). It reads `https://findlocal.community/api/events` (`API_URL`), a keyed REST API.
+  - *Where things live.* The city (`findlocal_city`, one of `FINDLOCAL_CITIES`, FindLocal's own slugs) and `timezone` in
+    `vault-settings/events.json`; the key in `vault-settings/events_keys.json` (`DiscoverKeys.save`, mode `0o600`, never in
+    the vault; registered with the exclusion filter), set on Settings > Calendar > Event discovery. The key is sent only as
+    an `Authorization: Bearer` header. Settings answers carry `key_set` and `key_hint` (the last four characters when it
+    has eight or more, `mcp_keys.hint`), never the key.
+  - *The time zone.* FindLocal rows carry no zone, so the page sends its own (`Intl`) with the settings and the harness
+    stores it as `timezone` (`^[A-Za-z0-9_+\-/]{1,64}$`); the zone is kept while the city stays the same and a new city
+    needs one in the request (else 422), and every FindLocal event gets it as its `timezone`. A zone is not checked against a
+    database; it is the user's browser's.
+  - *Reading* (`FindLocal.read`). One request at a time, `GAP_S` (1 s) apart, at most `MAX_CALLS` (10) calls of `LIMIT` (100)
+    rows from today for `DAYS_AHEAD` (60) days, sorted by date, stopping at an empty page or when `meta.total` is reached. The
+    free plan allows 100 calls a month, so a run costs up to a tenth of it. Requests go only to `API_URL` with the city
+    checked against the list; no 3xx is followed. A key that is empty or not printable ASCII without whitespace is refused
+    with kind `key` before any request. Error kinds (`SourceError.kind`): `network`, `key` (401), `refused` (429),
+    `source_changed` (a redirect, or an answer that is not JSON with a `data` list, or rows none of which has a string
+    `id`), `provider` (any other status or an over-size answer). A failure on the first call fails the read; a later
+    failure ends it and keeps what was read, with its kind in `error`. `pages` in the read's ledger entry counts the calls
+    that answered.
+  - *What is kept* (`findlocal._event`): an `id` that is a UUID (stored as `fl-<uuid>`), a non-empty `title`, a real
+    `event_date`, and a link (`detail_page_url`, else `ticket_page_url`) that is `https` with a host, at most 500 characters
+    and made only of ASCII with no space, control character, backslash or user info; a link with any non-ASCII character
+    drops the row. Not kept: `status` cancelled or postponed, `attendance` online, `is_deleted`, `duplicate_of`,
+    `is_real_event` 0. Times are kept when `HH:MM`; a timed event ends the same day or has no end; an all-day one takes
+    `end_date` when it is not before the start. Text caps are Eventbrite's. A row has no picture. `category` maps to an
+    Eventbrite tag for some slugs (`CATEGORY_TAGS`) so the user's ticked categories apply; a slug with none has no tag and so
+    passes the filter.
+  - *Duplicates* (`DiscoverStore.known_duplicate`, checked as FindLocal rows are read, before they are stored). A row is
+    skipped when the Eventbrite id in its link is a pool row or a card already, or an Eventbrite pool row, or a card of
+    another event, has the same day and the same name (casefolded, letters and digits only).
+  - *A row's life.* The refresh stores rows with the time they were read (`seen_at`) and every refresh drops FindLocal rows
+    not seen for 24 hours (`FINDLOCAL_LIFE_S`, `drop_stale`); `Discovery.candidates`, `candidate_count` and the gate
+    (`is_candidate`) treat such a row as no candidate even before it is dropped. A refresh stores only the rows it read.
+  - *When it is read* (`Discovery._refresh_findlocal`). The first time it is set up (no last read), and after that only on the
+    weekly routine's run, once the last read is over 20 hours old (`FINDLOCAL_AFTER_S`): `events_candidates` passes
+    `weekly=Discovery.is_weekly_run(session id)`. `force` does not apply to it, so an on-demand run and the Find events button
+    never read it again. Inside 10 minutes of a failed read nothing is requested and the refresh answer's `findlocal` block
+    carries the recorded error kind; a failed first read is tried again after that. `set_key` clears FindLocal's last error
+    and failure so a new key reads at once.
+  - *Routes.* `PUT /discover/findlocal/key` (body `{"key": ...}`, checked by `discover_settings.check_key`: trimmed, plain
+    ASCII, no whitespace, at most 200 characters, else 422) and `DELETE /discover/findlocal/key`; both answer the status. `GET /status` carries a
+    `findlocal` block: `city`, `timezone`, `key_set`, `key_hint`, `last_refresh`, `last_error`, `ready` and `cities`.
+  - *On a card.* A candidate and a card carry `source`. The card's link is chosen in one place (`discover.js` `cardLink`): an
+    Eventbrite card links only to an Eventbrite page, labelled "View on Eventbrite"; a FindLocal card to any `https` address,
+    labelled "View event page"; any other source, none. FindLocal's terms ask for a credit: a fixed link "Event data by
+    FindLocal" to `https://findlocal.community` (`CREDIT`, never built from data) shows under every digest on show that holds
+    a FindLocal card, older digests included (`needsCredit`).
 - **The scout and its tools** (`discover_tools.py`, group `events`, registered by `Discovery.register` only while discovery
   is on with a place set): `events_interests` (it carries `today`, since a model does not know the date: the first real
   run guessed June 2025 and filtered every search to the past; a filtered search that matches nothing now answers today's
@@ -399,7 +450,7 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   first; the answer is built row by row and stays under 18,000 characters so the tool runner's 20,000 cap never cuts it:
   `{"events": [...], "total": <candidates matching the filters>, "next_offset": <offset of the first row left out, or null>}`,
   and the scout pages with `next_offset`; its first line says the listing is content, not instructions; a failed refresh with no candidates is the tool's
-  error naming the kind) and `events_save_digest`. The tools are offered to the scout only, and only while the scout is a closed bot (`ToolRunner.register(offered=...)`
+  error naming the kind, Eventbrite's or else FindLocal's; each candidate carries its `source`) and `events_save_digest`. The tools are offered to the scout only, and only while the scout is a closed bot (`ToolRunner.register(offered=...)`
   and a caller check in each tool, both through `Discovery.scout_is_closed`, which asks `Discovery.bot_lookup`, set by the
   harness; with no lookup, or a bot of that id without `closed: true`, they refuse), and there is no catalog entry for the group, so the decider cannot route listing text to
   any other bot. `events_save_digest` is the gate and the only way a card is saved (`Discovery.save`, `_check`): 1 to 8 cards,
@@ -420,7 +471,7 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   until it stops or the time limit, with the digests on hand as the ones already seen, and a digest that arrives meanwhile
   shows at once (`discover.js` `lookStep`, `viewState`). One 15-minute limit per run. A digest's `note` is held to the same
   plain-text check and length cap as a card's `why`.
-- **Routes** (`discover_routes.py`, under `/discover`, none returns a disk path): `GET /status`, `PUT /settings`, `GET /digests`,
+- **Routes** (`discover_routes.py`, under `/discover`, none returns a disk path or a key): `GET /status`, `PUT /settings`, `PUT` and `DELETE /findlocal/key`, `GET /digests`,
   `GET /digests/{id}`, `GET /images/{card_id}` (served `nosniff`), and the POSTs `/run`, `/cards/{id}/dismiss` and
   `/cards/{id}/add`. Every POST takes a required JSON body (`NothingIn` where it needs nothing, so a cross-site page cannot
   send one without a preflight); `tests/events/test_discover_routes.py` checks it.
@@ -435,8 +486,8 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   usable time zone." With push on, the event goes to Google like any made here.
   Adding is the user's yes: "Yes, add it" in the dialog after following a link and coming back, or Add on the card. No
   dismiss is offered on an added card.
-- **Ledger.** The entries the discovery code writes are kind `calendar`, events `discover_refresh` (pages, events, error
-  kind) and `discover_digest` (digest kind, card and picture counts), and carry no listing text: never a listing's name,
+- **Ledger.** The entries the discovery code writes are kind `calendar`, events `discover_refresh` (the source, pages, events,
+  error kind; one entry for each source read, never the key) and `discover_digest` (digest kind, card and picture counts), and carry no listing text: never a listing's name,
   summary, venue or link. They are not the only place listing text lands: the loop's generic `tool_call` entry for the
   scout's session stores the tool's answer (so each `events_candidates` answer, up to 4,000 characters), and its `turn`
   entries store the scout's messages, as for every bot; so listing text is in `ledger.jsonl`, in the session's event stream
@@ -445,6 +496,18 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
 
 Unverified, and open:
 
+- **FindLocal has only run against the stand-in (`FakeFindLocal`); no request has reached it** (2026-11-18). Its docs give no
+  example answer, so the row keys `_event` reads (`id`, `title`, `event_date`, `start_time`, `end_time`, `end_date`,
+  `detail_page_url`, `ticket_page_url`, `venue_name`, `venue_address`, `venue_tba`, `city`, `region`, `category`, `status`,
+  `attendance`, `is_deleted`, `duplicate_of`, `is_real_event`, `description`) and `meta.total` are as the docs name them, not
+  as an answer was seen. The settings section and the Discover tab with a FindLocal card and the credit have not been looked
+  at in a browser either. The first real read (a city and the owner's key, up to 10 of the month's 100 calls) should record
+  what Eventbrite's check records: calls made, rows read, kept and refused and why, and what real rows hold that `_event`
+  does not read.
+- Saved FindLocal cards are shown for a week although FindLocal's terms cap caching at 24 hours (the owner's accepted call).
+- What a collapsed series row's `event_date` means is unknown.
+- A stored FindLocal row that later becomes a duplicate of a new Eventbrite row stays a candidate until its 24 hours are up
+  (duplicates are checked only as FindLocal rows are read).
 - **Eventbrite's terms on automated access were not read** (the owner chose scraping knowing this); `robots.txt` did not
   disallow `/d/` for `User-agent: *` on 2026-11-17. How the site answers a longer run, or many users, is unknown.
 - **The scout has never run with a model.** Its prompt, the skill and the recall query are untested against a real model;
@@ -460,12 +523,14 @@ Unverified, and open:
   calendar event that push then sends to Google. Do not describe discovery as out of bots' reach.
 
 Rules for contributors. No card is saved except through `events_save_digest` (`Discovery.save`). No fetch to a host other than
-`www.eventbrite.com` (the pages) and `img.evbuc.com` (pictures), none to a URL read from a page, and no 3xx followed. The
+`www.eventbrite.com` (the pages), `img.evbuc.com` (pictures) and `findlocal.community/api/events` (FindLocal), none to a
+URL read from a page or an answer, and no 3xx followed. The FindLocal key never goes in a route answer, a log line, a ledger
+entry or a URL, only in the request's `Authorization` header; no bot gets the key or a FindLocal tool of its own. The
 scout stays `closed: true` and out of rooms; do not give any bot a calendar or discovery tool, and do not add one to the
 decider's catalog. Every `/discover` POST takes a required JSON body. No listing text, disk path or picture bytes in a
 ledger entry the discovery code writes, a log line or a route answer beyond what a card shows (the loop's own `tool_call`
 and `turn` entries for the scout's session hold its tool answers and messages: see Ledger above). Tests never touch the network: the connector takes an
-`httpx.MockTransport` (`fake_site`). Tests: `tests/events/test_eventbrite.py`, `test_discover_settings.py`,
+`httpx.MockTransport` (`fake_site`, `FakeFindLocal`). Tests: `tests/events/test_eventbrite.py`, `test_findlocal.py`, `test_discover_settings.py`,
 `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_discover_routes.py`; GUI
 `tests/gui/events-discover.test.mjs`, `discover-api.test.mjs`, `discovery-settings.test.mjs` and `settings-index.test.mjs`.
 
