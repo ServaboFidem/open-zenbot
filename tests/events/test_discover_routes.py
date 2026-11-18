@@ -63,7 +63,7 @@ async def client(harness):
 def make_card(harness, id, **over) -> dict:
     harness.discover.store.save_digest([(listing(id, **over), "why")], kind="weekly", note="", session_id=f"s{id}",
                                        created_at="2026-11-17T00:00:00Z")
-    return harness.discover.store.digests(None, 50)[0]["cards"][0] if False else next(
+    return next(
         c for d in harness.discover.store.digests(None, 50) for c in d["cards"] if c["event_id"] == id)
 
 

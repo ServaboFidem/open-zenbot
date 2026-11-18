@@ -7,7 +7,7 @@ import pytest
 
 from src.events.discover_settings import DiscoverSettings
 from src.events.discover_store import LAST_ERROR
-from src.events.discover_tools import GROUP, SPECS, USE, DiscoverTools
+from src.events.discover_tools import GROUP, SPECS, DiscoverTools
 from src.events.discovery import (BOT_ID, MANAGED_BY, REFRESH_AFTER_S, RETRY_AFTER_S, ROUTINE_NAME, ROUTINE_SKILL,
                                   DigestRefused)
 from src.harness.bot_prompts import parse
@@ -84,7 +84,7 @@ def test_tools_exist_only_while_discovery_is_on_with_a_place(discovery, tools, c
     assert discovery.active
     assert DiscoverTools(discovery).register(tools, catalog) is True
     assert set(tools.tools) == NAMES and {g for _, g, _ in tools.tools.values()} == {GROUP}
-    assert set(SPECS) == NAMES and USE
+    assert set(SPECS) == NAMES
     assert catalog.mcps() == []  # no catalog entry: the decider never scores the group for another bot
     assert all(offered(BOT_ID, "s") and not offered("generalist", "s") for offered in tools.offered.values())
     DiscoverTools(discovery).register(tools, catalog)
