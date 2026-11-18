@@ -2588,6 +2588,8 @@ def create_app(h: Harness) -> FastAPI:
     @app.patch("/bots/{bot_id}")
     async def patch_bot(bot_id: str, body: BotPatch) -> dict[str, Any]:
         bot = _bot(h, bot_id)
+        if bot.closed and body.mcps is not None and list(body.mcps) != list(bot.mcps):
+            raise HTTPException(422, "This bot's tools are fixed in its file.")
         if body.name is not None:
             bot.name = body.name
         if body.role is not None:
