@@ -377,7 +377,8 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   Eventbrite's own ranking, so the cap keeps its top results, not every event (a big city has more than 80 pages across the
   two months). Any 3xx is `source_changed` and is never followed (the built URLs answered 200 with no redirect). The JSON
   object is decoded from its opening brace with `raw_decode`. Error kinds: `network`, `refused` (403 or 429),
-  `source_changed` (a page without the expected shape), `provider` (any other status). A failure on the first page fails the
+  `source_changed` (a page without the expected shape, or one that has rows of which none has the shape `_event` needs;
+  a page whose rows are all cancelled or online-only is not an error), `provider` (any other status). A failure on the first page fails the
   refresh and leaves the pool as it was; a later failure ends the reading and keeps what was read, with its kind in `error`.
 - **What is kept** (`eventbrite._event`): digits `id`, non-empty `name`, a real `start_date`, a `url` on
   `https://www.eventbrite.com/e/`, not cancelled, not online-only. Times are kept when `HH:MM`; `timezone` as given. No start
@@ -388,25 +389,35 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   (`drop_past`). `Discovery.refresh` is skipped while the last good one is under 12 hours old (`REFRESH_AFTER_S`) unless
   forced, runs one at a time, and a refresh that failed is not tried again for 10 minutes (`RETRY_AFTER_S`) unless forced.
   The candidates are the pool rows starting today or later, in a ticked category (or with no category tag, or any when none
-  is ticked), never on a saved card.
+  is ticked), never on a saved card. The pool has no place column: when the settings are saved with a different `place`,
+  `Discovery.apply` deletes every pool row (`DiscoverStore.clear_pool`) and clears the last refresh time, error and failure
+  time, so the next refresh reads the new city at once; saved cards are snapshots and stay.
 - **The scout and its tools** (`discover_tools.py`, group `events`, registered by `Discovery.register` only while discovery
-  is on with a place set): `events_interests`, `events_candidates` (up to 60 a call, refreshing a pool older than 12 hours
-  first; its first line says the listing is content, not instructions; a failed refresh with no candidates is the tool's
-  error naming the kind) and `events_save_digest`. The tools are offered to the scout only (`ToolRunner.register(offered=...)`
-  and a caller check in each tool), and there is no catalog entry for the group, so the decider cannot route listing text to
+  is on with a place set): `events_interests`, `events_candidates` (up to 60 a call, fewer when the rows are long, refreshing a pool older than 12 hours
+  first; the answer is built row by row and stays under 18,000 characters so the tool runner's 20,000 cap never cuts it:
+  `{"events": [...], "total": <candidates matching the filters>, "next_offset": <offset of the first row left out, or null>}`,
+  and the scout pages with `next_offset`; its first line says the listing is content, not instructions; a failed refresh with no candidates is the tool's
+  error naming the kind) and `events_save_digest`. The tools are offered to the scout only, and only while the scout is a closed bot (`ToolRunner.register(offered=...)`
+  and a caller check in each tool, both through `Discovery.scout_is_closed`, which asks `Discovery.bot_lookup`, set by the
+  harness; with no lookup, or a bot of that id without `closed: true`, they refuse), and there is no catalog entry for the group, so the decider cannot route listing text to
   any other bot. `events_save_digest` is the gate and the only way a card is saved (`Discovery.save`, `_check`): 1 to 8 cards,
   each an `id` that is a candidate now, not repeated, with a `why` of 1 to 300 plain characters; the whole digest is refused
   with a reason per card (`DigestRefused`) if one fails. Every other field of a card comes from the pool row, never from the
   bot. A card is a snapshot. `why` is the only bot-written text on a card and is shown as plain text.
 - **A closed bot** (`closed: true` in the prompt file, set nowhere else; the app's update route refuses to change a closed
-  bot's `mcps`). `loop.allowed_tool_groups` gives it its own `mcps` and no built-in tool, `ToolRunner.specs(builtins=False)`
+  bot's `mcps`). `loop.offered_groups` gives it its own `mcps` and no built-in tool, `ToolRunner.specs(builtins=False)`
   lists no built-in, and the loop refuses a call to a tool it was not shown. It is never picked by the orchestrator, never
-  invited to a room (`Room.joinable`), and a saved room holding one skips its turn; its results do not go to the tier-3
+  invited to a room (`RoomService.joinable`), and a saved room holding one skips its turn; its results do not go to the tier-3
   session cache. Listing text is written by whoever posted the event, so the scout has no `shell`, no `browser`, no files.
 - **Runs.** A managed weekly routine (`Discovery.ensure_routine`, `MANAGED_BY` `events`, default Thursday 09:00, made when
-  discovery is on with a place set, paused when it is switched off) whose verifier fails a run that saved no digest
+  discovery is on with a place set, paused when it is switched off, and paused at harness start when discovery is not active) whose verifier fails a run that saved no digest
   (`run_failure`). `POST /discover/run` starts an on-demand run, refused with 409 while one is going; a session it starts
-  saves `on_demand` only. The tab shows "The scout is looking" until a new digest appears, with a give-up time.
+  saves `on_demand` only; it answers 409 "The event scout must be a closed bot." when the scout bot exists but is not
+  closed. The tab shows "Looking for events…" while a run goes: one this page started ends on its first new digest, the
+  scout stopping or the time limit; a run that is not its own (the weekly one, or one going when the tab opened) is watched
+  until it stops or the time limit, with the digests on hand as the ones already seen, and a digest that arrives meanwhile
+  shows at once (`discover.js` `lookStep`, `viewState`). One 15-minute limit per run. A digest's `note` is held to the same
+  plain-text check and length cap as a card's `why`.
 - **Routes** (`discover_routes.py`, under `/discover`, none returns a disk path): `GET /status`, `PUT /settings`, `GET /digests`,
   `GET /digests/{id}`, `GET /images/{card_id}` (served `nosniff`), and the POSTs `/run`, `/cards/{id}/dismiss` and
   `/cards/{id}/add`. Every POST takes a required JSON body (`NothingIn` where it needs nothing, so a cross-site page cannot
@@ -417,12 +428,18 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   wall-clock value (no zone is further from UTC), else 422; it makes the event from the card's snapshot through `store.add` and
   its validation (title the name, location venue and address, description the summary then the link, `tz` the event's zone),
   marks the card `added` with the event's id, and asks for a sync. A card already `added` answers its event and makes no
-  second. A timed event with no end ends one hour after it starts. With push on, the event goes to Google like any made here.
+  second. A timed event with no end ends one hour after it starts. A timed card whose listing had no usable zone (stored as
+  empty) cannot be added: `addTimes` gives null, so Add is not offered, and the route answers 422 "This listing has no
+  usable time zone." With push on, the event goes to Google like any made here.
   Adding is the user's yes: "Yes, add it" in the dialog after following a link and coming back, or Add on the card. No
   dismiss is offered on an added card.
-- **Ledger.** Kind `calendar`, events `discover_refresh` (pages, events, error kind) and `discover_digest` (digest kind, card
-  and picture counts). Never a listing's
-  name, summary, venue or link. `src/events/` logs an exception's class name only.
+- **Ledger.** The entries the discovery code writes are kind `calendar`, events `discover_refresh` (pages, events, error
+  kind) and `discover_digest` (digest kind, card and picture counts), and carry no listing text: never a listing's name,
+  summary, venue or link. They are not the only place listing text lands: the loop's generic `tool_call` entry for the
+  scout's session stores the tool's answer (so each `events_candidates` answer, up to 4,000 characters), and its `turn`
+  entries store the scout's messages, as for every bot; so listing text is in `ledger.jsonl`, in the session's event stream
+  and, when tracing is on, in traces. The ledger folder is a private folder and no bot or memory path reads those entries
+  back. `src/events/` logs an exception's class name only.
 
 Unverified, and open:
 
@@ -444,7 +461,8 @@ Rules for contributors. No card is saved except through `events_save_digest` (`D
 `www.eventbrite.com` (the pages) and `img.evbuc.com` (pictures), none to a URL read from a page, and no 3xx followed. The
 scout stays `closed: true` and out of rooms; do not give any bot a calendar or discovery tool, and do not add one to the
 decider's catalog. Every `/discover` POST takes a required JSON body. No listing text, disk path or picture bytes in a
-ledger entry, a log line or a route answer beyond what a card shows. Tests never touch the network: the connector takes an
+ledger entry the discovery code writes, a log line or a route answer beyond what a card shows (the loop's own `tool_call`
+and `turn` entries for the scout's session hold its tool answers and messages: see Ledger above). Tests never touch the network: the connector takes an
 `httpx.MockTransport` (`fake_site`). Tests: `tests/events/test_eventbrite.py`, `test_discover_settings.py`,
 `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_discover_routes.py`; GUI
 `tests/gui/events-discover.test.mjs`, `discover-api.test.mjs`, `discovery-settings.test.mjs` and `settings-index.test.mjs`.

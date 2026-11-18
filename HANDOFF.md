@@ -68,6 +68,14 @@ Tasks 9 and 10. There has been no whole-branch review of piece 2 yet (the final 
 - The harness API has no authentication, so a bot with `shell` can call the `/discover` routes, as it can `/calendar`
   (`POST /discover/cards/{id}/add` makes a calendar event that push then sends to Google).
 - Settings > Calendar's tile and page description still speak of Google only, though the page now holds Event discovery too.
+- A cancelled event stays a candidate until its date passes: a row seen as cancelled on a later refresh is skipped, not
+  removed from the pool.
+- Google may render markup in a calendar description; the description is the listing's summary. Not verified.
+- The weekly run's day and time are shown read-only in the settings section, with a pointer to the Routines page; the
+  design asked for them there.
+- `discover-images/` is never pruned.
+- The generalist bot holds the `events-digest` skill text (it gets every shipped skill); it cannot get the tools, but asked
+  for events it may try to browse Eventbrite itself.
 
 ## Minor findings left for the final review
 
@@ -79,10 +87,9 @@ Tasks 9 and 10. There has been no whole-branch review of piece 2 yet (the final 
   inclusive in the pool (the page converts).
 - The store does not itself stop a repeated event in one digest (the gate does).
 - Scout skill says "what you remember"; the generalist bot holds the events-digest skill text but not the tools.
-- Adding: a garbage `timezone` is stored as given (the page falls back); no test at 14 hours and one second.
+- Adding: no test at 14 hours and one second.
 - Page: a far-future date (9999-12-31) gives an extended-year instant the harness would refuse; `parseInt` and `Number` are
   used inconsistently.
-- Polling: a scout stuck on `running: true` is polled in repeated 15-minute windows after a user-started look times out.
 - Settings section: every save failure shows under the address field; the "Tick none to see them all" wording is unconfirmed.
 - A failed refresh has no back-off beyond 10 minutes; the settings are loaded once at start.
 
