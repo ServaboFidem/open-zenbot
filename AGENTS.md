@@ -13,15 +13,16 @@ name each top-level system and run the harness and the tests.
 | `src/memory/` | Exclusion filter (secrets and approvals), ledger (`ledger.py`), recall, ingest, directory import, learning from a crawl, profile memory and store routing, Hindsight store and processes |
 | `src/rooms/` | Rooms, turns, handoff, orchestrator |
 | `src/music/` | Music discovery: Discogs scan, taste profile, the Soundlore atlas, MusicBrainz and YouTube Music lookups, candidates, the album gate, digests, `music_*` tools, `/music` routes |
+| `src/events/` | The built-in calendar: settings and Google keys (`settings.py`), the SQLite store (`store.py`), the Google client (`google.py`), conversion to and from Google's shape (`convert.py`), sign-in (`connect.py`), pull and push (`sync.py`), the service that runs them (`service.py`) and the `/calendar` routes (`routes.py`) |
 | `src/skills/` | `SKILL.md` loader and catalog; recorder |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, program paths `program-paths.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) |
 | `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`) |
 | `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+), and `fetch-uv.mjs` (downloads the pinned uv into `build/bin/` for the installers). Packaging itself is `electron-builder.yml`, `build/` (icon, the .deb's AppArmor profile `apparmor-profile`, the NSIS include `installer.nsh`) and `packaging/harness/` (the CPU-only `pyproject.toml` and `uv.lock` the installed app uses) |
 | `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`) |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
-| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs` |
+| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
 | `.github/` | Workflows: `changelog.yml` appends every push to `main` to `CHANGELOG.md` (don't edit it by hand; `[skip changelog]` in a commit subject leaves it out), `stale.yml`, and `release.yml` (a `v*` tag builds the .deb and the Windows installer and opens a draft release; a manual run only builds them; see `## Installed app`) |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
@@ -123,7 +124,7 @@ Read-Only one, a Read-Only folder holding a Full Access one, or a folder inside 
 (Full Access inside the vault or `ZEN_FS_ROOT` too) is refused with the reason. Going the other way, a
 new parent with the same access as folders already inside it replaces them, since it covers them. Don't
 write user folders into `mcp.json`. Broad folders (a drive root, the home folder or above it, system
-folders) are refused by `allowed_folders.check`, and so are the harness's settings, ledger and music
+folders) are refused by `allowed_folders.check`, and so are the harness's settings, ledger, music and calendar
 folders, anything inside them, and anything holding them (`private_folders`); keep both rules when adding
 other ways in (`allowed_folders.reachable` gives the same readable, writable and private lists).
 
@@ -132,14 +133,15 @@ other ways in (`allowed_folders.reachable` gives the same readable, writable and
 The `files` server is rooted at the vault, so a bot can read **and write** anything inside it. Keep
 nothing there a bot must not see or change. The harness's own folders sit beside the vault instead. The
 vault is `ZEN_VAULT` (default `~/.zen-agents/vault`), and the others take its name: `ZEN_VAULT=~/x/notes`
-gives `notes-ledger/`, `notes-music/` and `notes-settings/`.
+gives `notes-ledger/`, `notes-music/`, `notes-calendar/` and `notes-settings/`.
 
 | Folder (default under `~/.zen-agents/`) | Holds | Owned by |
 | --- | --- | --- |
 | `vault/` | Work docs (`docs/`), `delegated/` (job folders for `delegate`), uploads, browser output (`browser/`), anything bots save; `designs/` (studio designs; each folder also holds `images/` and `.versions/`, whose `before-<n>.<name>` files are the working file as it was before a helper's change) and `design-systems/` (the user's own); `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
 | `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations | `src/memory/ledger.py` `ledger_path_for` |
 | `vault-music/` | Music database (`music.db`), the Soundlore atlas, cover images | `src/music/settings.py` `music_dir`; bots never reach it (`allowed_folders.private_folders`) |
-| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
+| `vault-calendar/` | Calendar database (`calendar.db`: events, calendars, sync state) | `src/events/settings.py` `calendar_dir`; bots never reach it (`allowed_folders.private_folders`) |
+| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
 
 A new setting goes in `settings_dir(vault_root) / "<name>.json"`, never under the vault. Secrets and
 `allowed_folders.json` (which decides what `files` may reach) must stay out of the vault: a bot that could
@@ -159,6 +161,101 @@ refuses duplicates in the batch and cards without exactly two standout tracks fr
 tracklist; a digest saves whole or not at all (`src/music/digest.py`). The `music_*` tools exist only
 when music is on and the Discogs token is set. Don't add a path that saves a card without the gate. The Discogs token lives in `vault-settings/music_keys.json`; `vault-music/` is as private
 as the settings and ledger folders, so keep it out of anything a bot can read or write.
+
+### The calendar and Google
+
+The Events page shows a built-in calendar, kept by the harness in `<vault>-calendar/calendar.db`
+(`src/events/store.py`). That calendar is the master: the page reads and writes only the `/calendar` routes
+(`src/gui/calendar-api.js`) and never talks to Google. Google is one account at a time (`Settings.account`,
+the primary calendar's id), brought in by pull and, when the user switches it on, sent back by push.
+
+**Unverified (2026-11-17): the whole Google exchange has only run against the test fake (`tests/events/conftest.py`
+`FakeGoogle`), never against Google itself.** That includes whether Google accepts a loopback redirect with a path
+(`/calendar/google/callback`) on the harness's port. If it does not, the fix is confined to
+`Connection.redirect_uri` and the callback route.
+
+- **Where things live.** Settings in `vault-settings/calendar.json` (`push`, `destination`, `account`, the granted
+  `scopes`; no secret), the Google client id, client secret and refresh token in
+  `vault-settings/calendar_keys.json` (`CalendarKeys.save`, mode `0o600`), the data in `vault-calendar/`
+  (`settings.calendar_dir`, a private folder). `CalendarKeys` registers the secret and the refresh token with the
+  exclusion filter. No new package: Google is reached with `httpx` through the one client the service holds
+  (`CalendarService.http`), which tests replace with a `MockTransport`.
+- **Each user brings their own Google app.** Nothing is shipped: the user makes a project, enables the Calendar API
+  and an OAuth client of type "Desktop app" in their own Google account, and pastes its id and secret on Settings >
+  Calendar (`PUT /calendar/google/credentials`; the steps are `APP_STEPS` in `calendar-settings.js`). They cannot be
+  changed or cleared while connected.
+- **Sign-in** (`Connection.begin`, `finish`; `google.auth_url`, `pkce`). Authorization code with PKCE (S256) and
+  `access_type=offline`. The redirect is `http://127.0.0.1:<harness port>/calendar/google/callback`. The page asks
+  for the read scopes first (`calendar.calendarlist.readonly`, `calendar.events.readonly`); write access
+  (`calendar.events`) is a separate, later request (`POST /calendar/google/connect` with `{"write": true}`), and
+  what Google granted is read from the token answer, never assumed (an answer with no `scope` is a failed sign-in).
+  `state` is random, kept in memory only (at most 5 pending), valid `STATE_LIFETIME` (600 s) and spent by the first
+  lookup. It is the callback's only credential. The callback answers a fixed sentence in a page with
+  `Content-Security-Policy: default-src 'none'`, `nosniff` and `no-store`; it reflects nothing it was sent, and no
+  code, token, secret or `state` value goes to the ledger, an exception message or that page. A sign-in that gets
+  no refresh token (and has none saved), no primary calendar, or lists a different account than the connected
+  one is refused with the new token revoked (a different account when not connected clears the made-here events'
+  links to the old one, `CalendarStore.clear_links`). The token and client secret never leave the harness: no route
+  returns one (a key is shown as `mcp_keys.hint` of the client id only), and `GET /calendar/status` says only
+  whether they are set.
+- **Pull** (`Sync.pull`). Reads each selected Google calendar (`singleEvents`, so a repeating event arrives as its
+  occurrences) from 31 days back to 366 days ahead, first in full and then by sync token; the token is kept per
+  calendar. The built-in copy wins: a pulled event with an unsent edit (`dirty`) or a local delete (a tombstone) is
+  never overwritten or removed by pull. An event deleted on Google that was edited here is made again by push when
+  it was made here, and is lost, and counted in `lost_edits`, when it was pulled. A `gone` answer (the sync token
+  expired) drops only the clean pulled events of that calendar (`clear_clean_pulled`) and reads it in full once;
+  unselecting a calendar drops all its pulled events (`clear_pulled`). A pulled event outside the window is not kept.
+  Pull writes nothing to Google.
+- **Push** (`Sync.push`) is off by default and runs only when `Sync.can_push` says so: connected, the write scope
+  granted, push on and a destination chosen. The destination is a writable Google calendar (`PUT /calendar/push`);
+  `GET /calendar/push/preview` counts what a switch-on would send, with no network. An event made here goes to the
+  destination under an id the harness makes (`store.google_event_id`: the event's own id plus a generation), so an
+  insert whose answer was lost and is retried meets a 409 instead of making a second copy; on a 409 a live copy at
+  that id is adopted and patched, a cancelled one takes the next generation, and after 3 tries the event shows the
+  error. Once pushed an event stays on the calendar it went to, and one pulled from Google goes back to its own
+  calendar, if that calendar is writable; both calendars stay selected while push is on (`locked`). Deletes made here
+  are sent to the calendar the event is on. The body is `convert.to_google` only (no guests, no reminders, no
+  `If-Match`: the local copy wins). While push is off, edits and deletes of made-here events wait in the store
+  (`dirty`, tombstones) and go out when it is switched on; a pulled event cannot be edited then (`editable` in
+  `routes.py`), and a repeating event's occurrence never can. An edit that lands while its push is in flight keeps
+  the row pending (`rev`); an event deleted here while it was being sent has its Google copy deleted
+  (`orphaned` in the ledger entry when that fails). A per-event failure is kept on the event (`push_error`, shown as
+  "Not yet on Google") and does not stop the run; an `auth` failure does and marks the connection `needs_reconnect`.
+- **One run at a time** (`CalendarService`). Every run (`Sync.run`: refresh the calendar list, pull, push) holds one
+  lock, as do a sign-in, a disconnect and unselecting a calendar, so none overlaps a run. A change made here asks
+  for a run (`kick`, only while push can run); a second request while one runs queues one more run after it, never
+  more. Runs also happen when Google is connected at start and every 15 minutes after (`SYNC_EVERY_S`), when a
+  sign-in finishes, when a calendar is selected or unselected, when push is switched on, and on
+  `POST /calendar/sync`, which joins the run in flight. Nothing reaches Google before it is connected.
+- **Disconnect** (`Connection.disconnect`): revokes the refresh token (best effort), forgets the keys' token and the
+  granted scopes, switches push off and removes every Google calendar and pulled event from the store. It keeps the
+  user's Google app (client id and secret), the events made here and their pending changes. A pushed event stays on
+  Google.
+- **Times** (`store.validate`, `convert.py`). A timed event stores `start` and `end` as UTC instants
+  `YYYY-MM-DDTHH:MM:SSZ` plus `tz`, an IANA name; an all-day event stores dates with the end exclusive. The harness
+  never turns a wall-clock time into an instant: the page does, with `Intl` (`dates.js` `wallToInstant`,
+  `instantToParts`), which is why the harness needs no zone database. An edit keeps the event's own `tz`. Title 300
+  characters, location 500, description 8,000; the end must be after the start. `GET /calendar/events` takes day
+  keys (`start`, `end` as `YYYY-MM-DD`, at most 400 days apart); the page asks a day wider than its grid on each
+  side so no zone loses an event at the edge.
+- **Routes and the ledger.** Every route is under `/calendar` (`src/events/routes.py`) and none returns a secret
+  or token. An event id or calendar id in a URL is quoted by the Google client (`google._quote`) and by
+  `calendar-api.js`. Ledger entries of kind `calendar` (`connect`, `connect_refused`, `disconnect`, `sync`) carry
+  ids, counts and error kinds only, never a title, description or location, and a failed background task is a
+  kind `error` entry with the exception's class name. There is no calendar tool for bots: nothing in the calendar
+  is registered with the tool runner, and `vault-calendar/` is out of reach of the `files` server, `shell` and
+  `magick`.
+- **Not built.** Anything beyond this: finding local events, and the other pieces of the design. Don't count them
+  as there.
+
+Don't add a calendar tool for bots without revisiting automatic push: it sends whatever is in the calendar to
+Google with no review. Don't write a Google call outside `Sync.push` (every write goes through it), serve the
+callback without the closed headers or reflect its query, put a secret, a code, a token or a `state` value in a
+response, a log line or a ledger entry, or put a title, description or location in a ledger entry. Keep the
+calendar folder in `private_folders`. Tests: `tests/events/` (`test_settings.py`, `test_store.py`,
+`test_convert.py`, `test_google.py`, `test_connect.py`, `test_pull.py`, `test_push.py`, `test_routes.py`);
+GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs`,
+`calendar-settings.test.mjs` and `settings-index.test.mjs`.
 
 ### Design studio
 
@@ -339,10 +436,10 @@ The `shell` tool runs any command line as the user's account, so it gets three g
   `ZEN_SHELL_CWD` overrides), with a scrubbed environment (the same one stdio MCP servers get), and
   generated images land in its `generated-images/`. `attach_file` takes a file in the
   workspace or anywhere a bot may read (`Harness.attachable`: the vault, `ZEN_FS_ROOT`, Allowed Folders of
-  either access, never the settings, ledger or music folders), and serving an attachment checks the same
+  either access, never the settings, ledger, music or calendar folders), and serving an attachment checks the same
   again. So a bot never needs to copy a file somewhere else to show it. It works only in a conversation
   or a room turn, not in a routine.
-- **Protected folders.** The settings, ledger and music folders (`allowed_folders.private_folders`) hold
+- **Protected folders.** The settings, ledger, music and calendar folders (`allowed_folders.private_folders`) hold
   keys and private data, and `files` never reaches them, but `shell` could. Before a `shell` call that no
   skill approval rule already caught, a command whose text names one of them (full path or folder name,
   any case or slash) opens an approval at once, without the decider (rule `shell:reaches-protected-folders`).
@@ -374,7 +471,7 @@ and every call goes through `src/harness/magick_guard.py` first (`McpRegistry.ca
 Layer 1, the gate, is fixed rules and only refuses:
 
 - Paths: inputs inside the vault, `ZEN_FS_ROOT` or an allowed folder (either access); outputs inside a
-  Full Access one, not a Read-Only one; never the settings, ledger or music folders. The same folders the
+  Full Access one, not a Read-Only one; never the settings, ledger, music or calendar folders. The same folders the
   `files` server gets, read on every call (`guard_folders` in `api.py`); unlike the shell check this does
   not add the shell workspace, so a `ZEN_SHELL_CWD` outside those folders is out of magick's reach.
   Symlinks are resolved; `..`, `~`, quotes and shell characters are refused. Relative paths need a
