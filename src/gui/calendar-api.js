@@ -5,7 +5,7 @@ const enc = encodeURIComponent;
 export function createCalendarApi(call) {
   return {
     status: () => call('GET', '/calendar/status', undefined, undefined),
-    // start and end are day keys (YYYY-MM-DD) or UTC instants, as the harness reads them
+    // start and end are day keys (YYYY-MM-DD), end exclusive; the harness takes nothing else
     events: (start, end) => call('GET', '/calendar/events', undefined, { start, end }),
     create: body => call('POST', '/calendar/events', body),
     update: (id, body) => call('PUT', `/calendar/events/${enc(id)}`, body),
