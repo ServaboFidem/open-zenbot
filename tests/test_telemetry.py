@@ -31,6 +31,11 @@ def test_sampler_drops_event_streams_and_keeps_the_rest():
     assert telemetry.traces_sampler({}) == 1.0  # a background transaction has no request
 
 
+def test_sampler_drops_the_google_callback_whose_query_carries_the_code():
+    assert telemetry.traces_sampler({"asgi_scope": {"path": "/calendar/google/callback"}}) == 0.0
+    assert telemetry.traces_sampler({"asgi_scope": {"path": "/calendar/status"}}) == 1.0
+
+
 def test_helpers_are_no_ops_without_a_dsn():
     sentry_sdk.init(dsn="")  # no dsn (and not SENTRY_DSN from the environment): a client that sends nothing
     with telemetry.background_transaction("session.run", "task", bot_id="b") as tx:

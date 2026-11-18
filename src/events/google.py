@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import math
 import secrets
 import time
 import urllib.parse
@@ -74,6 +75,16 @@ def _json(resp: httpx.Response) -> dict[str, Any]:
     return body if isinstance(body, dict) else {}
 
 
+def _lifetime(value: Any) -> float:
+    """``expires_in`` as seconds; anything that is not a finite, positive number counts as already expired.
+    It never raises: the caller's frame holds the client secret and the tokens."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return seconds if math.isfinite(seconds) and seconds > 0 else 0.0
+
+
 def _failure(resp: httpx.Response) -> GoogleError:
     status = resp.status_code
     body = _json(resp)
@@ -113,7 +124,7 @@ class Google:
         if not out.get("access_token"):
             raise GoogleError("provider", "Google sent no access token", resp.status_code)
         self._access = str(out["access_token"])
-        self._expires_at = self._clock() + float(out.get("expires_in") or 0)
+        self._expires_at = self._clock() + _lifetime(out.get("expires_in"))
         return out
 
     async def exchange(self, code: str, verifier: str, redirect_uri: str) -> dict[str, Any]:
@@ -141,11 +152,17 @@ class Google:
 
     async def _call(self, method: str, path: str, *, params: dict[str, str] | None = None,
                     body: dict | None = None, ok_gone: bool = False, access: str | None = None) -> dict[str, Any]:
-        access = access or await self.token()
-        resp = await self._send(method, f"{API}{path}", params=params, json=body,
-                                headers={"Authorization": f"Bearer {access}"})
-        if resp.status_code == 401:
+        """``access``: use exactly this access token. Without one, a 401 (the cached token was revoked or
+        expired early) is retried once with a newly issued token before it counts as ``auth``."""
+        for last in (False, True):
+            bearer = access or await self.token()
+            resp = await self._send(method, f"{API}{path}", params=params, json=body,
+                                    headers={"Authorization": f"Bearer {bearer}"})
+            if resp.status_code != 401:
+                break
             self.forget()
+            if access or last:
+                break
         if resp.status_code == 410 and ok_gone:
             return {}
         if resp.status_code >= 300:

@@ -14,11 +14,13 @@ import sentry_sdk
 DSN_ENV = "ZEN_GLITCHTIP_DSN"
 # server-sent event streams stay open while what they watch runs: their duration is not latency
 STREAM_SUFFIXES = ("/events",)
+# never traced: the query string carries Google's authorization code and the sign-in's state
+UNTRACED_PATHS = ("/calendar/google/callback",)
 
 
 def traces_sampler(ctx: dict[str, Any]) -> float:
     path = (ctx.get("asgi_scope") or {}).get("path") or ""
-    if path.endswith(STREAM_SUFFIXES):
+    if path.endswith(STREAM_SUFFIXES) or path in UNTRACED_PATHS:
         return 0.0
     return 1.0
 

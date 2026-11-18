@@ -127,7 +127,7 @@ async def test_the_calendar_works_with_no_google(client, fake):
     e = (await client.post("/calendar/events", json=EV)).json()
     assert e["editable"] is True and e["calendar_name"] == "OpenZenBot" and "etag" not in e
     assert [x["id"] for x in (await client.get("/calendar/events", params={"start": "2026-11-01", "end": "2026-12-01"})).json()] == [e["id"]]
-    assert (await client.post("/calendar/sync")).status_code == 200
+    assert (await client.post("/calendar/sync", json={})).status_code == 200
     assert fake.requests == []  # nothing reaches Google until it is connected
 
 
@@ -275,7 +275,7 @@ async def test_no_secret_in_any_response(client, service, fake):
     await client.post("/calendar/events", json=EV)
     texts = [(await client.get(p)).text for p in ("/calendar/status", "/calendar/calendars")]
     texts.append((await client.get("/calendar/events", params={"start": "2026-01-01", "end": "2027-01-01"})).text)
-    texts.append((await client.post("/calendar/sync")).text)
+    texts.append((await client.post("/calendar/sync", json={})).text)
     texts.append((await client.put("/calendar/push", json={"on": True, "destination": ME})).text)
     issued = [f"access-{n}" for n in range(1, fake.access_tokens + 1)]
     assert fake.access_tokens >= 1 and len(json.loads(texts[2])) == 2
@@ -301,7 +301,7 @@ async def test_disconnect_keeps_events_made_here(client, service, fake):
     await connect(client, service, fake)
     await select(client, service)
     assert len(await events(client)) == 2
-    body = (await client.post("/calendar/google/disconnect")).json()
+    body = (await client.post("/calendar/google/disconnect", json={})).json()
     assert body["google"]["state"] == "ready" and body["google"]["account"] == ME  # who was last connected
     assert body["push"]["on"] is False
     assert [e["id"] for e in await events(client)] == [mine["id"]]
@@ -449,8 +449,8 @@ async def test_two_sync_requests_share_one_run(client, service, fake):
     await connect(client, service, fake)
     before = calendar_list_requests(fake)
     fake.gate = asyncio.Event()
-    first = asyncio.ensure_future(client.post("/calendar/sync"))
-    second = asyncio.ensure_future(client.post("/calendar/sync"))
+    first = asyncio.ensure_future(client.post("/calendar/sync", json={}))
+    second = asyncio.ensure_future(client.post("/calendar/sync", json={}))
     for _ in range(20):
         await asyncio.sleep(0)
     assert (await client.get("/calendar/status")).json()["sync"]["running"] is True
@@ -465,7 +465,7 @@ async def test_a_kick_during_a_run_queues_one_more_run(client, service, fake):
     await push_on(client, service, fake)
     before = calendar_list_requests(fake)
     fake.gate = asyncio.Event()
-    running = asyncio.ensure_future(client.post("/calendar/sync"))
+    running = asyncio.ensure_future(client.post("/calendar/sync", json={}))
     for _ in range(20):
         await asyncio.sleep(0)
     for _ in range(3):  # three changes made while the run waits on Google
@@ -485,11 +485,11 @@ async def test_a_failed_sync_keeps_events_and_last_sync(client, service, fake):
     last = (await client.get("/calendar/status")).json()["sync"]["last"]
     assert last and len(await events(client)) == 1
     fake.fail["calendarList"] = 500
-    body = (await client.post("/calendar/sync")).json()
+    body = (await client.post("/calendar/sync", json={})).json()
     assert body["sync"]["error"] == "provider" and body["sync"]["last"] == last and body["sync"]["running"] is False
     assert len(await events(client)) == 1
     del fake.fail["calendarList"]
-    body = (await client.post("/calendar/sync")).json()
+    body = (await client.post("/calendar/sync", json={})).json()
     assert body["sync"]["error"] == "" and body["google"]["state"] == "connected"
 
 
@@ -497,7 +497,7 @@ async def test_a_refused_sign_in_shows_needs_reconnect(client, service, fake):
     await connect(client, service, fake)
     service.google.forget()
     fake.refresh_ok = False
-    body = (await client.post("/calendar/sync")).json()
+    body = (await client.post("/calendar/sync", json={})).json()
     assert body["sync"]["error"] == "auth" and body["google"]["state"] == "needs_reconnect"
 
 
@@ -511,10 +511,10 @@ async def test_disconnect_waits_for_the_run_in_flight(client, service, fake):
     await connect(client, service, fake)
     await select(client, service)
     fake.gate = asyncio.Event()
-    running = asyncio.ensure_future(client.post("/calendar/sync"))
+    running = asyncio.ensure_future(client.post("/calendar/sync", json={}))
     for _ in range(20):
         await asyncio.sleep(0)
-    leaving = asyncio.ensure_future(client.post("/calendar/google/disconnect"))
+    leaving = asyncio.ensure_future(client.post("/calendar/google/disconnect", json={}))
     for _ in range(20):
         await asyncio.sleep(0)
     assert not leaving.done()
@@ -570,3 +570,205 @@ async def test_the_harness_builds_and_serves_the_calendar(cfg):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as c:
         assert (await c.get("/calendar/status")).json()["google"]["state"] == "not_set_up"
     await h.calendar.close()
+
+
+# the final review's findings ----------------------------------------------------
+
+
+def calendar_posts(service) -> list[str]:
+    """Every POST route under /calendar, read from the router so a route added later is covered."""
+    from src.events.routes import calendar_router
+
+    return sorted(r.path for r in calendar_router(service).routes if "POST" in (getattr(r, "methods", None) or ()))
+
+
+async def test_no_calendar_post_can_be_sent_as_a_simple_cross_site_request(client, service, fake):
+    """A page on another site can POST without a preflight only with no body or a form or text/plain body.
+    Every /calendar POST therefore needs a JSON body, and FastAPI refuses one without the JSON content type."""
+    await connect(client, service, fake)
+    paths = calendar_posts(service)
+    assert all(p.startswith("/calendar/") for p in paths)
+    assert {"/calendar/events", "/calendar/google/connect", "/calendar/google/disconnect", "/calendar/sync",
+            "/calendar/lost-edits/ack"} <= set(paths)
+    before = len(fake.requests)
+    foreign = {"Origin": "https://evil.example"}
+    full = json.dumps({**EV, "write": False, "count": 1}).encode()
+    for path in paths:
+        assert "{" not in path, f"{path}: give this test a value for the path parameter"
+        for body in (b"", b"{}", full):
+            for headers in (foreign, {**foreign, "Content-Type": "text/plain"},
+                            {**foreign, "Content-Type": "application/x-www-form-urlencoded"}):
+                r = await client.post(path, content=body, headers=headers)
+                assert r.status_code == 422, (path, body, headers, r.status_code)
+    await service.settle()
+    assert len(fake.requests) == before and await events(client) == []
+    assert (await client.get("/calendar/status")).json()["google"]["state"] == "connected"
+    assert (await client.post("/calendar/sync", json={})).status_code == 200  # the page's own way still works
+    assert (await client.post("/calendar/google/disconnect", json={})).json()["google"]["state"] == "ready"
+
+
+async def test_lost_edits_are_acknowledged_by_count(client, service):
+    service.store.set_meta("lost_edits", "3")
+    r = await client.post("/calendar/lost-edits/ack", json={"count": 2})
+    assert r.status_code == 200 and r.json()["sync"]["lost_edits"] == 1
+    assert set(r.json()) == {"google", "push", "sync", "counts"}
+    r = await client.post("/calendar/lost-edits/ack", json={"count": 5})  # never below zero
+    assert r.json()["sync"]["lost_edits"] == 0 and service.store.meta("lost_edits") == "0"
+    for bad in ({}, {"count": -1}, {"count": "many"}, {"count": None}):
+        assert (await client.post("/calendar/lost-edits/ack", json=bad)).status_code == 422
+
+
+async def test_a_background_run_does_not_clear_lost_edits(client, service, fake):
+    await connect(client, service, fake)
+    service.store.set_meta("lost_edits", "1")
+    assert (await client.post("/calendar/sync", json={})).json()["sync"]["lost_edits"] == 1
+
+
+async def test_push_on_selects_every_calendar_holding_a_pushed_event(client, service, fake):
+    cals = [{"id": ME, "summary": "Me", "accessRole": "owner", "primary": True},
+            {"id": "other", "summary": "Other", "accessRole": "writer"}]
+    await connect(client, service, fake, write=True, calendars=cals)
+    await client.put("/calendar/push", json={"on": True, "destination": "other"})
+    await service.settle()
+    e = (await client.post("/calendar/events", json=EV)).json()
+    await service.settle()
+    assert service.store.pushed_calendars() == {"other"}
+    await client.post("/calendar/google/disconnect", json={})
+    await connect(client, service, fake, write=True, calendars=cals)  # the calendars come back unselected
+    assert {c["id"]: c["selected"] for c in service.store.calendars()}["other"] is False
+    gone = service.store.add(EV)
+    service.store.mark_pushed(gone["id"], google_calendar="no-longer-listed", google_id="x", etag="", link="")
+    r = await client.put("/calendar/push", json={"on": True, "destination": ME})
+    assert r.status_code == 200
+    await service.settle()
+    listed = {c["id"]: c for c in (await client.get("/calendar/calendars")).json()}
+    assert listed["other"]["selected"] is True and listed["other"]["locked"] is True
+    assert "no-longer-listed" not in listed
+    # so a delete made on Google there is seen
+    gid = service.store.event(e["id"])["google_id"]
+    fake.put("other", {**fake.events["other"][gid], "status": "cancelled"})
+    await client.post("/calendar/sync", json={})
+    assert service.store.event(e["id"]) is None
+
+
+async def test_unselect_checks_the_lock_again_once_it_holds_the_run_lock(client, service, fake):
+    """Push switched on while the unselect waited for a run: the calendar is locked by then."""
+    from src.events.service import CalendarLocked
+
+    await connect(client, service, fake, write=True)
+    await select(client, service)
+    fake.put(ME, item("g1"))
+    await client.post("/calendar/sync", json={})
+    fake.gate = asyncio.Event()
+    running = asyncio.ensure_future(client.post("/calendar/sync", json={}))
+    for _ in range(20):
+        await asyncio.sleep(0)
+    leaving = asyncio.ensure_future(client.put("/calendar/calendars/" + quote(ME, safe=""), json={"selected": False}))
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert not leaving.done()
+    r = await client.put("/calendar/push", json={"on": True, "destination": ME})
+    assert r.status_code == 200
+    fake.gate.set()
+    await running
+    r = await leaving
+    assert r.status_code == 409 and r.json()["detail"] == LOCKED
+    await service.settle()
+    assert len(await events(client)) == 1 and service.locked(ME) is True
+    with pytest.raises(CalendarLocked):
+        await service.unselect(ME)
+
+
+async def test_the_callback_answers_its_fixed_page_whatever_goes_wrong(client, service, fake, monkeypatch, caplog):
+    await client.put("/calendar/google/credentials", json={"client_id": "cid-123456789", "client_secret": SECRET})
+    url = (await client.post("/calendar/google/connect", json={})).json()["url"]
+
+    async def boom(*a, **k):
+        raise RuntimeError(f"tokens: refresh-1 {SECRET}")
+
+    monkeypatch.setattr(service.conn, "finish", boom)
+    with caplog.at_level("DEBUG"):
+        r = await client.get("/calendar/google/callback", params={"state": state_of(url), "code": "the-code"})
+    assert r.status_code == 400
+    assert r.text == ('<!doctype html><meta charset="utf-8"><title>OpenZenBot</title>'
+                      "<p>Google could not complete the sign-in. Try again.</p>")
+    assert r.headers["content-security-policy"] == "default-src 'none'"
+    assert r.headers["x-content-type-options"] == "nosniff" and r.headers["cache-control"] == "no-store"
+    ours = [rec for rec in caplog.records if rec.name.startswith("src.")]  # not the test client's own request log
+    text = "\n".join(rec.getMessage() for rec in ours)
+    assert "RuntimeError" in text
+    for secret in (SECRET, "refresh-1", "the-code", state_of(url)):
+        assert secret not in text
+    assert not any(rec.exc_info for rec in ours)
+    assert all(rec.levelname != "ERROR" for rec in ours)  # an error record is sent on with the request's query
+
+
+async def test_a_failed_run_logs_the_error_type_and_no_traceback(client, service, fake, monkeypatch, caplog):
+    await connect(client, service, fake)
+
+    async def boom():
+        raise ValueError(f"client_secret={SECRET} refresh-1")
+
+    monkeypatch.setattr(service.syncer, "run", boom)
+    with caplog.at_level("DEBUG"):
+        r = await client.post("/calendar/sync", json={})
+    assert r.status_code == 200
+    assert "ValueError" in caplog.text and SECRET not in caplog.text and "refresh-1" not in caplog.text
+    assert not any(rec.exc_info for rec in caplog.records)
+
+
+async def test_a_failed_background_task_logs_the_error_type_and_no_traceback(service, caplog):
+    async def boom():
+        raise ValueError(f"client_secret={SECRET}")
+
+    with caplog.at_level("DEBUG"):
+        task = service.spawn(boom())
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0)
+    assert "ValueError" in caplog.text and SECRET not in caplog.text
+    assert not any(rec.exc_info for rec in caplog.records)
+
+
+async def test_a_bad_expires_in_at_sign_in_is_not_an_error(client, service, fake):
+    fake.expires_in = "soon"
+    await connect(client, service, fake)
+    assert (await client.get("/calendar/status")).json()["google"]["state"] == "connected"
+
+
+async def test_the_loop_outlives_an_error(service, fake, client, monkeypatch, caplog):
+    await connect(client, service, fake)
+    calls = []
+    real = service.sync
+
+    async def flaky():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError(f"boom {SECRET}")
+        return await real()
+
+    monkeypatch.setattr(service, "sync", flaky)
+    service.every = 0.01
+    with caplog.at_level("DEBUG"):
+        loop = service.spawn(service.start())
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if len(calls) >= 3:
+                break
+    assert len(calls) >= 3 and not loop.done()
+    assert "RuntimeError" in caplog.text and SECRET not in caplog.text
+    loop.cancel()
+
+
+async def test_connecting_selects_the_primary_calendar_and_pulls_it(client, service, fake):
+    fake.put(ME, item("g1"))
+    await connect(client, service, fake)
+    cals = {c["id"]: c for c in (await client.get("/calendar/calendars")).json()}
+    assert cals[ME]["selected"] is True and cals["home"]["selected"] is False
+    assert [e["title"] for e in await events(client)] == ["Standup"]
+
+
+async def test_status_after_a_disconnect_shows_no_old_sync(client, service, fake):
+    await connect(client, service, fake)
+    assert (await client.get("/calendar/status")).json()["sync"]["last"]
+    body = (await client.post("/calendar/google/disconnect", json={})).json()
+    assert body["sync"]["last"] == "" and body["sync"]["error"] == ""

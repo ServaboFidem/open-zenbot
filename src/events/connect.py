@@ -13,7 +13,7 @@ from pathlib import Path
 from src.events.convert import calendar_row
 from src.events.google import READ_SCOPES, WRITE_SCOPE, Google, GoogleError, auth_url, pkce
 from src.events.settings import CalendarKeys, CalendarSettings
-from src.events.store import CalendarStore
+from src.events.store import LAST_ERROR, LAST_SYNC, CalendarStore
 from src.memory.exclusion import exclusion
 from src.memory.ledger import Kind, Ledger
 
@@ -26,6 +26,23 @@ CANCELLED = "Google sign-in was cancelled. Nothing changed."
 DIFFERENT = "That is a different Google account. Disconnect first."
 FAILED = "Google could not complete the sign-in. Try again."
 DONE = "Connected. You can close this tab."
+
+_ALL = "https://www.googleapis.com/auth/calendar"
+# what each read permission is called on the consent screen, and the granted scopes that give it
+_READS = (
+    ("your list of calendars", {READ_SCOPES[0], _ALL + ".readonly", _ALL}),
+    ("your events", {READ_SCOPES[1], WRITE_SCOPE, _ALL + ".readonly", _ALL}),
+)
+
+
+def missing_read(granted: list[str]) -> str:
+    """A sentence naming the read permission the grant lacks (Google lets the user untick each one), or ""."""
+    lacking = [name for name, scopes in _READS if not scopes & set(granted)]
+    if not lacking:
+        return ""
+    boxes = "that box" if len(lacking) == 1 else "those boxes"
+    return (f"Google did not give OpenZenBot permission to see {' and '.join(lacking)}. "
+            f"Sign in again and leave {boxes} ticked.")
 
 
 class Connection:
@@ -111,12 +128,16 @@ class Connection:
             self._log("connect_refused", reason="google_error", error_kind=e.kind)
             return False, FAILED
         new_refresh = str(tokens.get("refresh_token") or "")
+        refused = ""
         try:
             if not new_refresh and not self.keys.refresh_token:
                 raise GoogleError("provider", "Google sent no refresh token")
             granted = str(tokens.get("scope") or "").split()
             if not granted:
                 raise GoogleError("provider", "Google sent no scope")
+            refused = missing_read(granted)
+            if refused:  # connected like this, every pull would answer 403
+                raise GoogleError("forbidden", "Google did not grant read access")
             # the account check uses the token just issued, never a cached or refreshed one (which could be
             # the already connected account's)
             listed = await self.google.calendar_list(access=str(tokens["access_token"]))
@@ -128,8 +149,8 @@ class Connection:
             self.google.forget()
             if new_refresh:
                 await self.google.revoke(new_refresh)
-            self._log("connect_refused", reason="google_error", error_kind=e.kind)
-            return False, FAILED
+            self._log("connect_refused", reason="missing_scope" if refused else "google_error", error_kind=e.kind)
+            return False, refused or FAILED
         was_linked = self._linked()
         if self.settings.account and self.settings.account != account:
             if was_linked:
@@ -148,6 +169,10 @@ class Connection:
         self.settings.save(self.vault_root)
         self.store.set_meta(NEEDS_RECONNECT, "")
         self.store.upsert_google(rows)
+        if not was_linked:
+            # a newly connected account starts with its primary calendar brought in; a later sign-in (a
+            # reconnect, a write upgrade) leaves the user's choice alone
+            self.store.set_calendar(account, selected=True)
         self._log("connect", calendars=len(rows), write=self.can_write())
         return True, DONE
 
@@ -167,4 +192,6 @@ class Connection:
         self.google.forget()
         self.store.drop_google()
         self.store.set_meta(NEEDS_RECONNECT, "")
+        self.store.set_meta(LAST_SYNC, "")  # they describe the connection that is gone
+        self.store.set_meta(LAST_ERROR, "")
         self._log("disconnect")

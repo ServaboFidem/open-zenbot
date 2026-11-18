@@ -36,7 +36,8 @@ class FakeGoogle:
       when absent). Every write gives the item a new ``etag``. Seed items with ``put`` so sync sees them.
     - ``requests``: every request, in order. ``fail``: path fragment -> status, answered before anything else
       (``fail_reason`` is the error reason inside the body, e.g. ``rateLimitExceeded``).
-    - ``access_tokens``: how many access tokens it issued.
+      ``fail_once``: the same, for the next matching request only.
+    - ``access_tokens``: how many access tokens it issued. ``expires_in``: what a token answer carries.
     - ``on_request``: a callable run with each request before it is answered (e.g. a local edit made while a
       push waits on Google).
     """
@@ -46,7 +47,9 @@ class FakeGoogle:
         self.events: dict[str, dict[str, dict]] = {}
         self.requests: list[httpx.Request] = []
         self.fail: dict[str, int] = {}
+        self.fail_once: dict[str, int] = {}
         self.fail_reason = ""
+        self.expires_in: object = 3600
         self.refresh_ok = True
         self.scope = ""
         self.page_size = 250
@@ -78,6 +81,9 @@ class FakeGoogle:
         for fragment, status in self.fail.items():
             if fragment in url:
                 return self._error(status, self.fail_reason)
+        for fragment in list(self.fail_once):
+            if fragment in url:
+                return self._error(self.fail_once.pop(fragment), self.fail_reason)
         if url.split("?")[0] == TOKEN_URL:
             return self._token(request)
         if "/revoke" in url:
@@ -100,7 +106,7 @@ class FakeGoogle:
         if form.get("grant_type") == "refresh_token" and not self.refresh_ok:
             return httpx.Response(400, json={"error": "invalid_grant"})
         self.access_tokens += 1
-        body = {"access_token": f"access-{self.access_tokens}", "expires_in": 3600, "scope": self.scope,
+        body = {"access_token": f"access-{self.access_tokens}", "expires_in": self.expires_in, "scope": self.scope,
                 "token_type": "Bearer"}
         if form.get("grant_type") == "authorization_code":
             body["refresh_token"] = "refresh-1"

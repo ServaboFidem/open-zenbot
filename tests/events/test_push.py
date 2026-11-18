@@ -164,7 +164,8 @@ async def test_auth_stops_the_push_and_is_raised(sync, store, fake, push_on):
     with pytest.raises(GoogleError) as caught:
         await sync.push()
     assert caught.value.kind == "auth"
-    assert len([r for r in fake.requests if r.method == "POST" and "/events" in str(r.url)]) == 1
+    # the first event twice (a 401 is retried once with a new access token), the second never
+    assert len([r for r in fake.requests if r.method == "POST" and "/events" in str(r.url)]) == 2
     assert store.event(a["id"])["dirty"] is True and store.event(b["id"])["dirty"] is True
 
 

@@ -36,6 +36,10 @@ class _Client:
         return getattr(self._service.http(), name)
 
 
+class CalendarLocked(Exception):
+    """The calendar must stay selected: push is on and it is the destination or holds an event pushed from here."""
+
+
 class CalendarService:
     def __init__(self, config, ledger, *, client: httpx.AsyncClient | None = None):
         self.config = config
@@ -79,6 +83,19 @@ class CalendarService:
             "counts": store.counts(),
         }
 
+    def locked(self, calendar_id: str) -> bool:
+        """True while push is on for the destination and for every calendar holding an event pushed from
+        here: unselected, a change or delete made on Google there would never be seen."""
+        settings = self.conn.settings
+        return bool(settings.push and (calendar_id == settings.destination
+                                       or calendar_id in self.store.pushed_calendars()))
+
+    def ack_lost_edits(self, count: int) -> None:
+        """The page has shown ``count`` lost edits: take them off the counter, never below zero. One counted
+        since the page read the status stays for its next look."""
+        held = self.store.meta(LOST_EDITS)
+        self.store.set_meta(LOST_EDITS, str(max(0, (int(held) if held.isdigit() else 0) - max(0, count))))
+
     # runs ---------------------------------------------------------------------
 
     def _job(self) -> asyncio.Task:
@@ -95,8 +112,10 @@ class CalendarService:
                     await self.syncer.run()
                 except GoogleError:
                     pass  # recorded by the run: last_error, needs_reconnect and its ledger entry
-                except Exception:
-                    log.exception("calendar sync failed")  # recorded by the run as last_error "internal"
+                except Exception as e:
+                    # recorded by the run as last_error "internal". The type name only, here and below: a
+                    # traceback's frames hold the client secret and the tokens, and an error record is sent on
+                    log.error("calendar sync failed: %s", type(e).__name__)
             if not self._again:
                 return
 
@@ -131,7 +150,11 @@ class CalendarService:
             await self.conn.disconnect()
 
     async def unselect(self, calendar_id: str) -> dict | None:
+        """Raises ``CalendarLocked`` when the calendar is locked once the run in flight has ended (push may
+        have been switched on, or an event pushed there, while this waited)."""
         async with self._lock:
+            if self.locked(calendar_id):
+                raise CalendarLocked(calendar_id)
             cal = self.store.set_calendar(calendar_id, selected=False)
             if cal is not None:
                 self.store.clear_pulled(calendar_id)
@@ -150,14 +173,17 @@ class CalendarService:
         if task.cancelled() or task.exception() is None:
             return
         err = task.exception()
-        log.error("calendar background task failed", exc_info=err)
+        log.error("calendar background task failed: %s", type(err).__name__)
         self.ledger.append(Kind.error, "", "", error=f"calendar background task: {type(err).__name__}")
 
     async def start(self) -> None:
         """The periodic sync: now, then every ``every`` seconds, while Google is connected."""
         while True:
-            if self.conn.state() == "connected":
-                await self.sync()
+            try:
+                if self.conn.state() == "connected":
+                    await self.sync()
+            except Exception as e:  # one bad round must not end the loop: the page would go on saying "Synced"
+                log.error("calendar periodic sync failed: %s", type(e).__name__)
             await asyncio.sleep(self.every)
 
     async def settle(self) -> None:

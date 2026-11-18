@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import html
+import logging
 import re
 from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from src.events.connect import FAILED
+from src.events.service import CalendarLocked
 from src.events.store import EventError
+
+log = logging.getLogger(__name__)
 
 MAX_RANGE_DAYS = 400
 READ_ONLY = "This event is read-only here."
@@ -54,6 +59,16 @@ class PushIn(BaseModel):
     destination: str | None = None
 
 
+class NothingIn(BaseModel):
+    """The body of a POST that needs no value. It is still required, on every POST here: a request another
+    site's page can send without a preflight has no body, a form or ``text/plain``, and none of those passes
+    for a JSON body, so such a request is refused (422) before the route runs. Keep it on a new POST route."""
+
+
+class AckIn(BaseModel):
+    count: int = Field(ge=0)
+
+
 def _day(value: str) -> date:
     if not _DAY.fullmatch(value):
         raise HTTPException(422, "start and end are dates as YYYY-MM-DD.")
@@ -84,7 +99,7 @@ def calendar_router(service) -> APIRouter:
 
     def calendar_view(cal: dict, pushed: set[str]) -> dict:
         s = conn.settings
-        out = {k: v for k, v in cal.items() if k != "sync_token"}
+        out = {k: v for k, v in cal.items() if k not in ("sync_token", "full_read_at")}
         out["locked"] = bool(s.push and (cal["id"] == s.destination or cal["id"] in pushed))
         return out
 
@@ -161,7 +176,11 @@ def calendar_router(service) -> APIRouter:
         if body.visible is not None:
             cal = store.set_calendar(calendar_id, visible=body.visible)
         if body.selected is not None and body.selected != cal["selected"]:
-            cal = store.set_calendar(calendar_id, selected=True) if body.selected else await service.unselect(calendar_id)
+            try:
+                cal = (store.set_calendar(calendar_id, selected=True) if body.selected
+                       else await service.unselect(calendar_id))
+            except CalendarLocked:  # it became locked while the unselect waited for the run in flight
+                raise HTTPException(409, LOCKED) from None
             if cal is None:
                 raise HTTPException(404, "No such calendar.")
             service.request()
@@ -194,12 +213,18 @@ def calendar_router(service) -> APIRouter:
 
     @r.get("/google/callback")
     async def callback(state: str | None = None, code: str | None = None, error: str | None = None) -> HTMLResponse:
-        ok, message = await service.finish(state, code, error)
+        try:
+            ok, message = await service.finish(state, code, error)
+        except Exception as e:
+            # Never an unhandled error here: its traceback would hold the code, the tokens and the client secret.
+            # A warning, not an error: an error record is sent on with this request's query string.
+            log.warning("calendar sign-in failed: %s", type(e).__name__)
+            ok, message = False, FAILED
         return HTMLResponse(CALLBACK_PAGE.format(message=html.escape(message)), status_code=200 if ok else 400,
                             headers=CALLBACK_HEADERS)
 
     @r.post("/google/disconnect")
-    async def disconnect() -> dict[str, Any]:
+    async def disconnect(body: NothingIn) -> dict[str, Any]:
         await service.disconnect()
         return service.status()
 
@@ -222,7 +247,10 @@ def calendar_router(service) -> APIRouter:
                 raise HTTPException(422, NO_DESTINATION)
             s.push, s.destination = True, destination
             s.save(service.vault)
-            store.set_calendar(destination, selected=True)
+            # the destination and every calendar already holding an event pushed from here are pulled, so a
+            # change or delete made on Google there is seen (set_calendar skips one no longer listed)
+            for calendar_id in {destination, *store.pushed_calendars()}:
+                store.set_calendar(calendar_id, selected=True)
             service.request()
         else:
             s.push = False
@@ -230,7 +258,12 @@ def calendar_router(service) -> APIRouter:
         return service.status()
 
     @r.post("/sync")
-    async def sync() -> dict[str, Any]:
+    async def sync(body: NothingIn) -> dict[str, Any]:
         return await service.sync()
+
+    @r.post("/lost-edits/ack")
+    async def ack_lost_edits(body: AckIn) -> dict[str, Any]:
+        service.ack_lost_edits(body.count)
+        return service.status()
 
     return r

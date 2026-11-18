@@ -170,3 +170,33 @@ def test_auth_url_and_pkce():
         "code_challenge_method": "S256", "access_type": "offline", "prompt": "consent",
         "include_granted_scopes": "true",
     }
+
+
+@pytest.mark.parametrize("bad", ["soon", None, [], {"a": 1}, "nan", "inf", -5])
+async def test_a_bad_expires_in_counts_as_already_expired(fake, google, bad):
+    """It must not raise: the traceback of that frame would hold the client secret and both tokens."""
+    fake.expires_in = bad
+    assert await google.token() == "access-1"
+    assert await google.token() == "access-2"  # nothing to trust: asked for again
+
+
+async def test_one_401_is_retried_once_with_a_new_access_token(fake, google):
+    await google.calendar_list()
+    fake.fail_once = {"calendarList": 401}
+    assert await google.calendar_list() == []
+    assert fake.access_tokens == 2 and fake.requests[-1].headers["authorization"] == "Bearer access-2"
+
+
+async def test_a_second_401_is_auth(fake, google):
+    fake.fail = {"calendarList": 401}
+    with pytest.raises(GoogleError) as e:
+        await google.calendar_list()
+    assert e.value.kind == "auth"
+    assert len([r for r in fake.requests if "calendarList" in str(r.url)]) == 2
+
+
+async def test_a_401_for_an_access_token_handed_in_is_not_retried(fake, google):
+    fake.fail = {"calendarList": 401}
+    with pytest.raises(GoogleError):
+        await google.calendar_list(access="given")
+    assert len(fake.requests) == 1

@@ -124,7 +124,7 @@ async def test_same_account_after_disconnect_keeps_links(conn, fake, store):
 
 
 async def test_disconnect_removes_pulled_events_and_keeps_made_here(conn, fake, store):
-    await connect(conn, fake, "a@x.org", write=True, scope=f"{WRITE_SCOPE}")
+    await connect(conn, fake, "a@x.org", write=True, scope=f"{READ_SCOPES[0]} {WRITE_SCOPE}")
     conn.settings.push = True
     conn.settings.destination = "a@x.org"
     local = store.add({"title": "mine", "start": "2026-11-20T10:00:00Z", "end": "2026-11-20T11:00:00Z", "tz": "UTC"})
@@ -257,3 +257,61 @@ async def test_a_failed_calendar_list_revokes_the_new_token(conn, fake):
     assert (await conn.finish(state_of(conn.begin(write=False)), "code", None))[0] is False
     assert conn.state() == "ready"
     assert any("/revoke" in str(r.url) for r in fake.requests)
+
+
+# the final review's findings ----------------------------------------------------
+
+LIST, EVENTS = READ_SCOPES
+NO_EVENTS = ("Google did not give OpenZenBot permission to see your events. Sign in again and leave that box "
+             "ticked.")
+NO_LIST = ("Google did not give OpenZenBot permission to see your list of calendars. Sign in again and leave "
+           "that box ticked.")
+NEITHER = ("Google did not give OpenZenBot permission to see your list of calendars and your events. Sign in "
+           "again and leave those boxes ticked.")
+
+
+@pytest.mark.parametrize("scope, sentence", [(LIST, NO_EVENTS), (EVENTS, NO_LIST), (WRITE_SCOPE, NO_LIST),
+                                             ("openid email", NEITHER)])
+async def test_a_sign_in_without_a_read_permission_is_refused_and_says_which(conn, fake, store, scope, sentence):
+    assert await connect(conn, fake, scope=scope) == (False, sentence)
+    assert conn.state() == "ready" and conn.keys.refresh_token == "" and conn.settings.scopes == []
+    assert not [c for c in store.calendars() if c["source"] == "google"]
+    revoked = [r for r in fake.requests if "/revoke" in str(r.url)]
+    assert len(revoked) == 1 and b"refresh-1" in revoked[0].content
+    assert not any("calendarList" in str(r.url) for r in fake.requests)
+    assert '"missing_scope"' in conn.ledger.file.read_text()
+
+
+@pytest.mark.parametrize("scope", [f"{LIST} {WRITE_SCOPE}", "https://www.googleapis.com/auth/calendar",
+                                   "https://www.googleapis.com/auth/calendar.readonly"])
+async def test_a_wider_permission_covers_the_read_ones(conn, fake, scope):
+    assert (await connect(conn, fake, scope=scope))[0] is True
+
+
+async def test_the_primary_calendar_is_selected_when_an_account_is_first_connected(conn, fake, store):
+    await connect(conn, fake)
+    cals = {c["id"]: c for c in store.calendars()}
+    assert cals["a@x.org"]["selected"] is True and cals["team@group.calendar.google.com"]["selected"] is False
+
+
+async def test_a_later_sign_in_leaves_the_users_choice_of_calendars_alone(conn, fake, store):
+    await connect(conn, fake)
+    store.set_calendar("a@x.org", selected=False)
+    await connect(conn, fake, write=True, scope=" ".join(READ_SCOPES + [WRITE_SCOPE]))
+    assert {c["id"]: c for c in store.calendars()}["a@x.org"]["selected"] is False
+    conn.mark_needs_reconnect()
+    await connect(conn, fake)
+    assert {c["id"]: c for c in store.calendars()}["a@x.org"]["selected"] is False
+    await conn.disconnect()
+    await connect(conn, fake)  # connected afresh: the calendars are new rows
+    assert {c["id"]: c for c in store.calendars()}["a@x.org"]["selected"] is True
+
+
+async def test_disconnect_forgets_the_last_sync_and_its_error(conn, fake, store):
+    await connect(conn, fake)
+    store.set_meta("last_sync", "2026-11-17T12:00:00Z")
+    store.set_meta("last_error", "network")
+    store.set_meta("lost_edits", "1")
+    await conn.disconnect()
+    assert store.meta("last_sync") == "" and store.meta("last_error") == ""
+    assert store.meta("lost_edits") == "1"  # still to be shown
