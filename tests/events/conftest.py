@@ -263,3 +263,89 @@ def push_on(sync, store, fake, conn):
 
 def state_of(url: str) -> str:
     return urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["state"][0]
+
+
+# ---- Eventbrite (src/events/eventbrite.py) --------------------------------------------------------------
+
+_row_ids = iter(range(5_000_000_000_000, 6_000_000_000_000))
+
+
+def row(**over) -> dict:
+    """One listing row as Eventbrite's page carries it, valid until a keyword changes it. ``image`` is the
+    picture's link; anything else replaces the field of that name."""
+    event_id = str(next(_row_ids))
+    image = over.pop("image", "https://img.evbuc.com/https%3A%2F%2Fcdn.evbuc.com%2Fimages%2F1%2Foriginal.jpg?s=1")
+    made = {"id": event_id, "name": "Made-up Event", "summary": "A made-up summary.", "start_date": "2026-12-05",
+            "start_time": "18:00", "end_date": "2026-12-05", "end_time": "20:00", "timezone": "America/New_York",
+            "url": f"https://www.eventbrite.com/e/made-up-event-tickets-{event_id}", "is_cancelled": None,
+            "is_online_event": False,
+            "primary_venue": {"name": "Example Hall",
+                              "address": {"city": "Exampleton", "region": "OH",
+                                          "localized_address_display": "1 Example Street, Exampleton, OH"}},
+            "image": {"original": {"url": image}},
+            "tags": [{"prefix": "EventbriteCategory", "tag": "EventbriteCategory/103", "display_name": "Music"},
+                     {"prefix": "EventbriteFormat", "tag": "EventbriteFormat/6",
+                      "display_name": "Concert or Performance"}]}
+    made.update(over)
+    return made
+
+
+def page_with(rows: list, pages: int = 1) -> str:
+    data = {"search_data": {"events": {"results": rows, "pagination": {"page_count": pages}}}}
+    return f"<html><script>_ = {{}};\nwindow.__SERVER_DATA__ = {json.dumps(data)};\n</script></html>"
+
+
+class FakeSite:
+    """A model of Eventbrite's listing pages for tests. ``this_pages`` and ``next_pages`` are the page counts
+    each month offers; every page holds two events of its own and one (``SHARED_ID``) that is on every page.
+    ``fail`` maps ``(month, page)`` ("this" or "next") to a status number, an ``httpx.Response`` or an
+    exception to raise. ``images`` maps a picture link to the response for it (404 when absent).
+    ``requests`` is every request in order and ``sleeps`` every wait the connector asked for.
+    ``eventbrite()`` builds the connector over it."""
+
+    SHARED_ID = "7000000000001"
+
+    def __init__(self):
+        self.this_pages = 3
+        self.next_pages = 2
+        self.fail: dict = {}
+        self.images: dict[str, httpx.Response] = {}
+        self.requests: list[httpx.Request] = []
+        self.sleeps: list[float] = []
+        self.client = httpx.AsyncClient(transport=httpx.MockTransport(self.handler))
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+
+    def eventbrite(self):
+        from src.events.eventbrite import Eventbrite
+
+        return Eventbrite(lambda: self.client, sleep=self.sleep)
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if request.url.host == "img.evbuc.com":
+            outcome = self.images.get(str(request.url), httpx.Response(404))
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+        month = "next" if "events--next-month" in request.url.path else "this"
+        page = int(request.url.params.get("page", "1"))
+        if (month, page) in self.fail:
+            outcome = self.fail[(month, page)]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome if isinstance(outcome, httpx.Response) else httpx.Response(outcome, text="no")
+        total = self.next_pages if month == "next" else self.this_pages
+        if page > total:
+            return httpx.Response(404)
+        base = (2 if month == "next" else 1) * 1_000_000_000_000 + page * 10
+        rows = [row(id=str(base + 1)), row(id=str(base + 2)), row(id=self.SHARED_ID)]
+        return httpx.Response(200, text=page_with(rows, total))
+
+
+@pytest.fixture
+async def fake_site():
+    site = FakeSite()
+    yield site
+    await site.client.aclose()
