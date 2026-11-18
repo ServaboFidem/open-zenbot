@@ -85,7 +85,23 @@ def test_parse_page_drops_and_caps_hostile_rows():
                                   {"start_date": "2026-02-30"}, {"is_cancelled": True}, {"is_online_event": True},
                                   {"id": 12}, {"name": "\x00\x1b"}])
 def test_parse_page_drops_one_bad_row(over):
-    assert parse_page(page_with([row(**over)]))[0] == []
+    good = row()
+    events = parse_page(page_with([row(**over), good]))[0]
+    assert [e["id"] for e in events] == [good["id"]]
+
+
+def test_parse_page_where_no_row_has_the_shape_is_source_changed():
+    rows = [{k: v for k, v in row().items() if k != "start_date"} for _ in range(20)]     # a renamed field
+    with pytest.raises(SourceError) as e:
+        parse_page(page_with(rows, pages=3))
+    assert e.value.kind == "source_changed"
+    with pytest.raises(SourceError):
+        parse_page(page_with([row(is_cancelled=True), row(name="")]))                    # one is a shape failure
+
+
+def test_parse_page_of_only_cancelled_or_online_rows_is_not_an_error():
+    assert parse_page(page_with([row(is_cancelled=True), row(is_online_event=True)], pages=2)) == ([], 2)
+    assert parse_page(page_with([], pages=1)) == ([], 1)
 
 
 def test_parse_page_keeps_text_clean_and_inside_its_caps():

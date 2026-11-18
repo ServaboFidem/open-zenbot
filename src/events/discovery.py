@@ -185,8 +185,8 @@ class Discovery:
             raise ValueError(f"A digest holds 1 to {MAX_CARDS} cards.")
         if kind not in KINDS:
             raise ValueError("A digest is weekly or on_demand.")
-        if not isinstance(note, str) or len(note.strip()) > MAX_NOTE:
-            raise ValueError(f"The note can be at most {MAX_NOTE} characters.")
+        if not isinstance(note, str) or len(note.strip()) > MAX_NOTE or not _plain(note.strip()):
+            raise ValueError(f"The note must be plain text of at most {MAX_NOTE} characters.")
         if kind == "weekly" and session_id and session_id in self.on_demand_sessions:
             raise ValueError("this is an on-demand run; save with kind on_demand")
         # No await between the candidate check and the store write: two saves at once for one event cannot both
@@ -290,6 +290,12 @@ class Discovery:
         before = self.settings
         self.settings = settings
         settings.save(self.vault)
+        if settings.place != before.place:
+            # the pool has no place column: the old city's events must not be offered for the new one
+            async with self._lock:   # wait for a refresh under way, so it cannot refill the pool afterwards
+                self.store.clear_pool()
+                for key in (LAST_REFRESH, LAST_ERROR, LAST_FAILURE):
+                    self.store.set_meta(key, "")
         if self.active and not (before.enabled and before.place):
             self.ensure_routine()
         elif not self.active:
@@ -305,10 +311,13 @@ class Discovery:
                 "running": self.running_run(sessions)}
 
     async def start(self) -> None:
-        """At harness start: the tools, and the routine when discovery is on and it is missing."""
+        """At harness start: the tools, the routine when discovery is on and it is missing, and the routine paused
+        when discovery is not active."""
         self.register()
         if self.active and self.managed_routine() is None:
             self.ensure_routine()
+        elif not self.active:
+            self._pause_routine()   # a routine left on from before (events.json gone) must not fire
 
     async def close(self) -> None:
         self.store.close()

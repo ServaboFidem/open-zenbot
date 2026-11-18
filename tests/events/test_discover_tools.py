@@ -385,3 +385,15 @@ async def test_a_direct_call_by_another_bot_is_refused_and_touches_nothing(runne
         assert (await runner.run(ToolCall("c", "events_candidates", {}))).output.startswith(LISTING_NOTICE)
     finally:
         current_call.reset(token)
+
+
+def test_start_pauses_a_stale_routine_when_discovery_is_not_active(discovery, routines, tools, catalog):
+    discovery.routines, discovery.tools, discovery.catalog = routines, tools, catalog
+    discovery.ensure_routine()
+    assert discovery.managed_routine().enabled
+    discovery.settings = DiscoverSettings()      # events.json gone: nothing is switched on
+    asyncio.run(discovery.start())
+    assert not discovery.managed_routine().enabled and tools.tools == {}
+    discovery.settings = DiscoverSettings(enabled=True, place="oh--exampleton")
+    asyncio.run(discovery.start())               # active again: the routine is left as the user has it
+    assert not discovery.managed_routine().enabled

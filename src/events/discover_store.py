@@ -115,6 +115,11 @@ class DiscoverStore:
         with self._lock, self._db:
             return self._db.execute("DELETE FROM pool WHERE start_date < ?", (today,)).rowcount
 
+    def clear_pool(self) -> int:
+        """Delete every pool row (the place changed). Saved cards are snapshots and stay. Returns how many went."""
+        with self._lock, self._db:
+            return self._db.execute("DELETE FROM pool").rowcount
+
     def pool_size(self) -> int:
         with self._lock:
             return self._db.execute("SELECT COUNT(*) FROM pool").fetchone()[0]

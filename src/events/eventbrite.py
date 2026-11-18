@@ -223,7 +223,13 @@ def parse_page(html: str) -> tuple[list[dict], int]:
         raise SourceError("source_changed") from None
     if not isinstance(results, list) or not isinstance(count, int) or isinstance(count, bool):
         raise SourceError("source_changed")
-    kept = [e for e in map(_event, results[:MAX_ROWS]) if e is not None]
+    rows = results[:MAX_ROWS]
+    kept = [e for e in map(_event, rows) if e is not None]
+    # rows but none with the shape: the page was reshaped. A row dropped only for being cancelled or online is
+    # not a shape failure.
+    if rows and not kept and not all(isinstance(r, dict) and (r.get("is_cancelled") or r.get("is_online_event"))
+                                     for r in rows):
+        raise SourceError("source_changed")
     return kept, max(1, min(count, MAX_PAGE_COUNT))
 
 

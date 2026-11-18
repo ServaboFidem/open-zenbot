@@ -5,6 +5,7 @@ import pytest
 
 from src.events.discover_store import LAST_ERROR, LAST_REFRESH
 from src.events.discovery import (MAX_CARDS, MAX_NOTE, MAX_WHY, REFRESH_AFTER_S, DigestRefused, Discovery)
+from tests.events.conftest import page_with, row
 
 A, B, C, EARLIER, PAST = "9000000000001", "9000000000002", "9000000000003", "9000000000004", "9000000000005"
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 40
@@ -62,6 +63,18 @@ async def test_refresh_is_skipped_inside_twelve_hours_unless_forced(discovery, f
     clock.now += REFRESH_AFTER_S + 60
     await discovery.refresh()
     assert len(page_requests(fake_site)) == 3 * first
+
+
+async def test_a_page_with_unusable_rows_keeps_the_pool_and_records_source_changed(discovery, fake_site):
+    await discovery.refresh()
+    pool = discovery.store.candidates("2000-01-01", [], limit=60)
+    broken = [{k: v for k, v in row().items() if k != "start_date"} for _ in range(5)]
+    fake_site.fail[("this", 1)] = httpx.Response(200, text=page_with(broken, pages=3))
+    out = await discovery.refresh(force=True)
+    assert out == {"pages": 0, "events": 0, "error": "source_changed"}
+    assert discovery.store.candidates("2000-01-01", [], limit=60) == pool
+    assert discovery.store.meta(LAST_ERROR) == "source_changed"
+    assert discovery.store.meta(LAST_REFRESH) == "2026-11-18T09:00:00Z"
 
 
 async def test_a_failed_first_page_keeps_the_pool_and_records_the_kind(discovery, fake_site):
@@ -192,3 +205,36 @@ async def test_the_ledger_has_counts_only(seeded, fake_site):
     text = json.dumps(entry)
     assert "Secret reason" not in text and "private note" not in text and POOL[A]["name"] not in text
     assert str(seeded.images_dir.parent) not in text
+
+
+async def test_a_place_change_clears_the_pool_and_the_refresh_state_but_keeps_saved_cards(seeded, fake_site):
+    from src.events.discover_settings import DiscoverSettings
+    from src.events.discovery import LAST_FAILURE
+
+    await seeded.refresh()
+    seeded.store.set_meta(LAST_ERROR, "network")
+    seeded.store.set_meta(LAST_FAILURE, "2026-11-18T09:00:00Z")
+    before = len(page_requests(fake_site))
+    await seeded.apply(DiscoverSettings(enabled=True, place="oh--elsewhere"))
+    assert seeded.store.pool_size() == 0
+    assert seeded.candidates() == []
+    assert (seeded.store.meta(LAST_REFRESH), seeded.store.meta(LAST_ERROR), seeded.store.meta(LAST_FAILURE)) == ("", "", "")
+    assert len(seeded.store.digests(None, 10)) == 1      # the saved card's digest stays
+    out = await seeded.refresh()                 # fetches at once: nothing is fresh, nothing recently failed
+    assert out["pages"] > 0 and len(page_requests(fake_site)) > before
+    assert "oh--elsewhere" in str(page_requests(fake_site)[-1].url)
+
+
+async def test_saving_the_same_place_keeps_the_pool(seeded):
+    from src.events.discover_settings import DiscoverSettings
+
+    size = seeded.store.pool_size()
+    await seeded.apply(DiscoverSettings(enabled=True, place="oh--exampleton", interests="jazz"))
+    assert seeded.store.pool_size() == size
+
+
+async def test_a_note_with_a_control_character_is_refused(seeded):
+    for bad in ("two" + chr(10) + "lines", "tab" + chr(9) + "here", "bell" + chr(7), "sep" + chr(0x2028) + "x"):
+        with pytest.raises(ValueError):
+            await seeded.save([{"id": A, "why": "w"}], kind="weekly", note=bad, session_id="s")
+    assert [d["session_id"] for d in seeded.store.digests(None, 10)] == ["old"]
