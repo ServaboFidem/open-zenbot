@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS cards(
 CREATE INDEX IF NOT EXISTS cards_digest ON cards(digest_id, position);
 CREATE INDEX IF NOT EXISTS cards_event ON cards(event_id);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS added(event_id TEXT PRIMARY KEY, calendar_event_id TEXT, added_at TEXT);
 """
 
 
@@ -161,7 +162,8 @@ class DiscoverStore:
     def _matching(self, today: str, categories: list[str], category: str, text: str, start: str,
                   end: str) -> list[dict]:
         sql = ("SELECT * FROM pool WHERE start_date >= ?"
-               " AND id NOT IN (SELECT event_id FROM cards)")
+               " AND id NOT IN (SELECT event_id FROM cards)"
+               " AND id NOT IN (SELECT event_id FROM added)")
         args: list = [today]
         if start:
             sql += " AND start_date >= ?"
@@ -202,7 +204,55 @@ class DiscoverStore:
         if row is None or row["start_date"] < today or not self._wanted(row, set(categories)):
             return False
         with self._lock:
-            return self._db.execute("SELECT 1 FROM cards WHERE event_id=?", (id,)).fetchone() is None
+            return (self._db.execute("SELECT 1 FROM cards WHERE event_id=?", (id,)).fetchone() is None
+                    and self._db.execute("SELECT 1 FROM added WHERE event_id=?", (id,)).fetchone() is None)
+
+    def pool_ids(self, source: str = "eventbrite") -> set[str]:
+        with self._lock:
+            return {r[0] for r in self._db.execute(
+                "SELECT id FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?", (source,))}
+
+    def listing(self, today: str, limit: int = 5000) -> list[dict]:
+        """Every pool row starting ``today`` or later, in date order, each with ``recommended`` (a card that is not
+        dismissed exists) and ``calendar_ids`` (the calendar events made from it: the ``added`` row's and every
+        added card's). Two queries however many rows."""
+        with self._lock:
+            rows = [_pool(r) for r in self._db.execute(
+                "SELECT * FROM pool WHERE start_date >= ? ORDER BY start_date, start_time, id LIMIT ?",
+                (today, max(0, int(limit))))]
+            marks = self._db.execute(
+                "SELECT event_id, MAX(state != 'dismissed') AS rec FROM cards GROUP BY event_id").fetchall()
+            cal = self._db.execute(
+                "SELECT event_id, calendar_event_id FROM added WHERE calendar_event_id != ''"
+                " UNION SELECT event_id, calendar_event_id FROM cards"
+                " WHERE state='added' AND calendar_event_id != '' ORDER BY 1, 2").fetchall()
+        recommended = {r["event_id"] for r in marks if r["rec"]}
+        ids: dict[str, list[str]] = {}
+        for r in cal:
+            ids.setdefault(r["event_id"], []).append(r["calendar_event_id"])
+        for r in rows:
+            r["recommended"] = r["id"] in recommended
+            r["calendar_ids"] = ids.get(r["id"], [])
+        return rows  # type: ignore[return-value]
+
+    def card_for_event(self, event_id: str) -> dict | None:
+        """The newest card of an event (by its digest's time) that is not dismissed."""
+        with self._lock:
+            return _card(self._db.execute(
+                "SELECT c.* FROM cards c JOIN digests d ON d.id=c.digest_id"
+                " WHERE c.event_id=? AND c.state != 'dismissed' ORDER BY d.created_at DESC, d.rowid DESC LIMIT 1",
+                (event_id,)).fetchone())
+
+    def mark_event_added(self, event_id: str, calendar_event_id: str, added_at: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("INSERT OR REPLACE INTO added(event_id, calendar_event_id, added_at) VALUES(?,?,?)",
+                             (event_id, calendar_event_id, added_at))
+
+    def added_event(self, event_id: str) -> str:
+        """The calendar event id recorded for an event added from the pool, else an empty string."""
+        with self._lock:
+            row = self._db.execute("SELECT calendar_event_id FROM added WHERE event_id=?", (event_id,)).fetchone()
+        return (row[0] or "") if row else ""
 
     def known_duplicate(self, event: dict) -> bool:
         """Whether an event is already here under another id: its Eventbrite id is a pool row or a card, or an

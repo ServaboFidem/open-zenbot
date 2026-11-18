@@ -208,7 +208,8 @@ class Discovery:
 
     async def set_key(self, value: str | None) -> None:
         """Keep a new FindLocal key (checked; None forgets it) and clear FindLocal's last error and failure, so the
-        next refresh may read at once. The file is written first: a save that fails leaves the old key in use."""
+        next refresh may read at once. Forgetting the key (None) also removes the FindLocal rows and the last read
+        time. The file is written first: a save that fails leaves the old key in use."""
         keys = DiscoverKeys(findlocal=check_key(value) if value is not None else "")
         keys.save(self.vault)
         self.keys = keys

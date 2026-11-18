@@ -123,6 +123,12 @@ async def test_refresh_drops_past_events_and_does_nothing_when_not_active(discov
     assert out["pages"] == 0 and len(fake_site.requests) == before
 
 
+async def test_save_refuses_an_event_the_user_added(seeded):
+    seeded.store.mark_event_added(A, "cal1", "2026-11-18T09:00:00Z")
+    with pytest.raises(DigestRefused):
+        await seeded.save([{"id": A, "why": "x"}], kind="weekly", note="", session_id="s1")
+
+
 async def test_save_takes_only_ids_and_whys(seeded):
     saved = await seeded.save([{"id": A, "why": "You like jazz.", "name": "Injected", "url": "https://evil.example"}],
                               kind="weekly", note="", session_id="s1")
@@ -387,7 +393,7 @@ async def test_a_complete_findlocal_read_drops_rows_it_did_not_see(discovery, fa
     await discovery.refresh()
     assert sorted(fl_ids(discovery)) == [FL1, FL2]
     fake_findlocal.rows = [fl(2)]
-    clock.now += 7 * 24 * HOUR
+    clock.now += 21 * HOUR
     out = await discovery.refresh(weekly=True)
     assert out["findlocal"]["error"] == ""
     assert fl_ids(discovery) == [FL2]

@@ -293,3 +293,104 @@ def test_known_duplicate_ignores_findlocal_rows_and_the_same_events_card(store):
 def test_known_duplicate_needs_a_name_with_letters_or_digits(store):
     store.upsert_pool([ev("1", name="!!!")], "t")
     assert not store.known_duplicate({"id": "fl-1", "name": "???", "start_date": "2026-11-20"})
+
+
+def test_an_old_database_file_gains_the_added_table(tmp_path):
+    import sqlite3
+
+    from src.events import discover_store
+
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    old = discover_store.SCHEMA.split("CREATE TABLE IF NOT EXISTS added")[0]  # the old text
+    db.executescript(old)
+    db.commit()
+    db.close()
+    s = DiscoverStore(path)
+    try:
+        s.mark_event_added("e1", "cal1", "2026-11-18T10:00:00Z")
+        assert s.added_event("e1") == "cal1"
+    finally:
+        s.close()
+
+
+def test_mark_event_added_twice_keeps_one_row_with_the_later_id(store):
+    store.mark_event_added("e", "cal1", "t1")
+    store.mark_event_added("e", "cal2", "t2")
+    assert store.added_event("e") == "cal2"
+    assert store._db.execute("SELECT COUNT(*) FROM added").fetchone()[0] == 1
+    assert store.added_event("nothing") == ""
+
+
+def test_listing_order_and_today_cut_off(store):
+    store.upsert_pool([ev("c", start_date="2026-11-21", start_time="09:00"),
+                       ev("b", start_date="2026-11-20", start_time="20:00"),
+                       ev("a", start_date="2026-11-20", start_time="19:00"),
+                       ev("a2", start_date="2026-11-20", start_time="19:00"),
+                       ev("old", start_date="2026-11-17")], "t")
+    got = store.listing("2026-11-18")
+    assert ids(got) == ["a", "a2", "b", "c"]
+    assert got[0]["name"] == "Event a" and got[0]["categories"] == []
+    assert ids(store.listing("2026-11-21")) == ["c"]
+    assert ids(store.listing("2026-11-18", limit=2)) == ["a", "a2"]
+
+
+def test_listing_marks_recommended_and_calendar_ids(store):
+    store.upsert_pool([ev("a"), ev("b"), ev("c"), ev("d"), ev("e")], "t")
+    d = store.save_digest([(store.pool_row(x), "w") for x in "abc"], kind="weekly", note="", session_id="s",
+                          created_at="2026-11-18T10:00:00Z")
+    store.set_state(d["cards"][1]["id"], "dismissed")
+    store.mark_added(d["cards"][2]["id"], "calC")
+    store.mark_event_added("d", "calD", "t")
+    store.mark_event_added("e", "", "t")
+    by = {r["id"]: r for r in store.listing("2026-11-18")}
+    assert by["a"]["recommended"] is True and by["a"]["calendar_ids"] == []
+    assert by["b"]["recommended"] is False
+    assert by["c"]["recommended"] is True and by["c"]["calendar_ids"] == ["calC"]
+    assert by["d"]["recommended"] is False and by["d"]["calendar_ids"] == ["calD"]
+    assert by["e"]["calendar_ids"] == []
+
+
+def test_listing_calendar_ids_have_no_repeat(store):
+    store.upsert_pool([ev("a")], "t")
+    d = store.save_digest([(store.pool_row("a"), "w")], kind="weekly", note="", session_id="s",
+                          created_at="2026-11-18T10:00:00Z")
+    store.mark_added(d["cards"][0]["id"], "cal1")
+    store.mark_event_added("a", "cal1", "t")
+    assert store.listing("2026-11-18")[0]["calendar_ids"] == ["cal1"]
+
+
+def test_listing_runs_a_fixed_number_of_queries(store):
+    store.upsert_pool([ev(str(i)) for i in range(20)], "t")
+    seen = []
+    store._db.set_trace_callback(seen.append)
+    store.listing("2026-11-18")
+    assert len(seen) <= 3
+
+
+def test_card_for_event_skips_dismissed_and_picks_newest(store):
+    store.upsert_pool([ev("a")], "t")
+    row = store.pool_row("a")
+    old = store.save_digest([(row, "old")], kind="weekly", note="", session_id="s1", created_at="2026-11-10T00:00:00Z")
+    new = store.save_digest([(row, "new")], kind="weekly", note="", session_id="s2", created_at="2026-11-12T00:00:00Z")
+    assert store.card_for_event("a")["why"] == "new"
+    store.set_state(new["cards"][0]["id"], "dismissed")
+    assert store.card_for_event("a")["id"] == old["cards"][0]["id"]
+    store.set_state(old["cards"][0]["id"], "dismissed")
+    assert store.card_for_event("a") is None
+
+
+def test_pool_ids_by_source(store):
+    store.upsert_pool([ev("a"), ev("b", source="findlocal"), ev("c", source="")], "t")
+    assert store.pool_ids() == {"a", "c"}
+    assert store.pool_ids("findlocal") == {"b"}
+
+
+def test_an_added_event_is_no_candidate(store):
+    store.upsert_pool([ev("a"), ev("b")], "t")
+    assert store.candidate_count("2026-11-18", []) == 2
+    store.mark_event_added("a", "cal1", "t")
+    assert ids(store.candidates("2026-11-18", [])) == ["b"]
+    assert store.candidate_count("2026-11-18", []) == 1
+    assert not store.is_candidate("a", "2026-11-18", [])
+    assert store.is_candidate("b", "2026-11-18", [])
