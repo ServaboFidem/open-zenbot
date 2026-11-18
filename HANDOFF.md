@@ -63,7 +63,8 @@ Tasks 9 and 10. There has been no whole-branch review of piece 2 yet (the final 
 ## Open items for discovery
 
 - Eventbrite's terms on automated access were not read.
-- The scout has never run with a model. Whether its turns reach the user's memory by the usual paths was not checked.
+- The scout has never run with a model. Its turns were checked, by reading the code, not to reach memory: the one
+  automatic path (the session cache) skips closed bots.
 - The page cap reads Eventbrite's top-ranked 40 pages, not everything. Per-category page addresses were not tried.
 - The harness API has no authentication, so a bot with `shell` can call the `/discover` routes, as it can `/calendar`
   (`POST /discover/cards/{id}/add` makes a calendar event that push then sends to Google).
@@ -76,6 +77,16 @@ Tasks 9 and 10. There has been no whole-branch review of piece 2 yet (the final 
 - `discover-images/` is never pruned.
 - The generalist bot holds the `events-digest` skill text (it gets every shipped skill); it cannot get the tools, but asked
   for events it may try to browse Eventbrite itself.
+- A timed listing whose only fault is its time zone shows "This listing has no usable date."; it has a date, so the
+  wording misleads.
+- A run the page did not start that is still marked running after 15 minutes: the tab stops polling and stays on
+  "Looking for events…" with no notice until the tab is opened again.
+- The add route refuses an empty time zone but not a made-up one of the right shape (the harness has no zone list); only
+  the page, through `Intl`, refuses that.
+- Saving a new city waits for a refresh already under way, up to about 100 seconds.
+
+The whole-feature review (2026-11-18) found no critical problem and six important ones; all were fixed in
+`f9e1e9c..0352ec8` and that fix pass was re-reviewed clean.
 
 ## Minor findings left for the final review
 
