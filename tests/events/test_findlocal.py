@@ -69,7 +69,9 @@ KEEP = "0b1c2d3e-0000-4000-8000-000000000001"
     {"duplicate_of": "abc"}, {"is_real_event": 0}, {"id": "not-a-uuid"}, {"title": ""},
     {"event_date": "2026-13-40"}, {"detail_page_url": None}, {"detail_page_url": "http://venue.example/a"},
     {"detail_page_url": "javascript:alert(1)"}, {"detail_page_url": "https://user@venue.example/"},
-    {"detail_page_url": "https://venue.example/a b"}, {"detail_page_url": "https://venue.example/" + "a" * 480},
+    {"detail_page_url": "https://venue.example/a b"}, {"detail_page_url": "https://venue.example/a\u0085b"},
+    {"detail_page_url": "https://venue.example/a\u00a0b"}, {"detail_page_url": "https://venue.example/a\u2028b"},
+    {"detail_page_url": "https://venue.example/a\u202eb"}, {"detail_page_url": "https://venue.example/" + "a" * 480},
 ])
 def test_a_row_that_is_not_kept_is_dropped(over):
     assert _event(fl_row(**over), ZONE) is None
@@ -198,3 +200,11 @@ async def test_an_error_never_holds_the_key(fake_findlocal, outcome):
     with pytest.raises(SourceError) as info:
         await read(fake_findlocal, key="SECRET-KEY-123")
     assert "SECRET-KEY-123" not in str(info.value) and "SECRET-KEY-123" not in repr(info.value.args)
+
+
+@pytest.mark.parametrize("key", ["caf\u00e9", "ab\ncd", "", "a b"])
+async def test_a_key_that_cannot_go_in_a_header_is_refused_before_any_request(fake_findlocal, key):
+    with pytest.raises(SourceError) as info:
+        await read(fake_findlocal, key=key)
+    assert info.value.kind == "key" and fake_findlocal.requests == []
+    assert not key or key not in str(info.value)

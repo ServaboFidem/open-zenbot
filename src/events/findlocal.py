@@ -64,7 +64,7 @@ def _link(value: object) -> str:
     """`value` when it is an https link with a host, no user info, no space or control character, short enough."""
     if not isinstance(value, str) or not value.startswith("https://") or len(value) > LINK_MAX:
         return ""
-    if any(ord(c) <= 32 or ord(c) == 127 or c == "\\" for c in value):
+    if any(ord(c) <= 32 or ord(c) == 127 or c == "\\" or not c.isascii() for c in value):
         return ""
     try:
         parts = urlsplit(value)
@@ -181,6 +181,8 @@ class FindLocal:
         and is named in `error`."""
         if city not in FINDLOCAL_CITIES:
             raise ValueError("not a FindLocal city")
+        if not isinstance(key, str) or not key or not all(c.isascii() and c.isprintable() and c != " " for c in key):
+            raise SourceError("key")  # a key that cannot go in a header is refused before any request
         start = date.fromisoformat(today)
         base = {"city": city, "date_from": start.isoformat(), "date_to": (start + timedelta(days=DAYS_AHEAD)).isoformat(),
                 "sort": "date", "limit": str(LIMIT)}
