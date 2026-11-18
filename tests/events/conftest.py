@@ -349,3 +349,39 @@ async def fake_site():
     site = FakeSite()
     yield site
     await site.client.aclose()
+
+
+# ---- Discovery (src/events/discovery.py) ---------------------------------------------------------------
+
+class RecordingLedger:
+    """Keeps what Discovery appends, as dicts of the entry's data (``event`` and the counts)."""
+
+    def __init__(self):
+        self.entries: list[dict] = []
+
+    def append(self, kind, bot_id, session_id, **data):
+        self.entries.append({"_kind": str(kind), **data})
+
+
+@pytest.fixture
+def discovery(tmp_path, fake_site, clock):
+    """A Discovery over a fresh vault, switched on for ``eventbrite-city``, reading ``fake_site``. ``today`` is
+    2026-11-18; ``now`` is 09:00:00Z that day plus whatever the ``clock`` fixture has advanced."""
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from src.events.discover_settings import DiscoverSettings
+    from src.events.discovery import Discovery
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    DiscoverSettings(enabled=True, place="oh--exampleton").save(vault)
+    base = datetime(2026, 11, 18, 9, 0, 0, tzinfo=timezone.utc)
+    start = clock.now
+    calendar = SimpleNamespace(http=lambda: fake_site.client)
+    d = Discovery(SimpleNamespace(vault_root=vault), RecordingLedger(), calendar,
+                  today=lambda: "2026-11-18",
+                  now=lambda: (base + timedelta(seconds=clock.now - start)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    d.source = fake_site.eventbrite()
+    yield d
+    d.store.close()
