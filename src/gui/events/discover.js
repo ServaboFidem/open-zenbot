@@ -3,6 +3,7 @@
 // check them.
 import { addDays, instantToParts, dayTitle, localZone, wallToInstant } from './dates.js';
 import { OFFLINE } from './page-state.js';
+import { FINDLOCAL_ERRORS, FINDLOCAL_FAILED } from '../discovery-settings.js';
 
 // How long the page waits for the scout before giving up: the same 15 minutes as DIG_LIMIT_MS in
 // src/gui/music/MusicArea.jsx (which a node test cannot import).
@@ -120,6 +121,23 @@ export const whereLabel = card => [card?.venue, card?.city].filter(v => typeof v
 
 export const shownCards = digest => (Array.isArray(digest?.cards) ? digest.cards : []).filter(c => c && c.state !== 'dismissed');
 
+// FindLocal's required credit: a fixed link, never built from data.
+export const CREDIT = { text: 'Event data by FindLocal', href: 'https://findlocal.community' };
+export const needsCredit = digest => shownCards(digest).some(c => c.source === 'findlocal');
+
+// The one place that decides a card's outside link (its text comes from a public listing). An Eventbrite
+// card (source missing or 'eventbrite') links only to an Eventbrite page; a FindLocal card to any https
+// address; any other source, or anything that is not such a string, gets no link.
+export function cardLink(card) {
+  const none = { href: '', label: '' };
+  const url = card?.url;
+  if (typeof url !== 'string') return none;
+  const source = card.source ?? 'eventbrite';
+  if (source === 'eventbrite') return url.startsWith('https://www.eventbrite.com/') ? { href: url, label: 'View on Eventbrite' } : none;
+  if (source === 'findlocal') return url.startsWith('https://') ? { href: url, label: 'View event page' } : none;
+  return none;
+}
+
 // What the Discover tab shows. opts: online (the app's harness check), loaded (the first status and
 // digest have answered), looking (a run this page started), arrived (a digest came in while the run went). action: '' | 'retry' | 'settings' | 'run'.
 export function viewState(status, digest, { online = true, loaded = true, looking = false, arrived = false } = {}) {
@@ -145,9 +163,12 @@ const REFRESH_FAILED = 'The last refresh did not finish.';   // a kind this page
 // What a failed refresh says, '' when the last one was clean. With events kept from an earlier read it says so.
 export function refreshNotice(status) {
   const error = status?.refresh?.error;
-  if (!error) return '';
-  const why = Object.hasOwn(REFRESH_ERRORS, error) ? REFRESH_ERRORS[error] : REFRESH_FAILED;
-  return status.refresh.pool > 0 ? `${why} Showing what was read.` : why;
+  const flError = status?.findlocal?.last_error;
+  if (!error && !flError) return '';
+  const why = error
+    ? (Object.hasOwn(REFRESH_ERRORS, error) ? REFRESH_ERRORS[error] : REFRESH_FAILED)
+    : (Object.hasOwn(FINDLOCAL_ERRORS, flError) ? FINDLOCAL_ERRORS[flError] : FINDLOCAL_FAILED);
+  return status.refresh?.pool > 0 ? `${why} Showing what was read.` : why;
 }
 
 // "Did you sign up?": the card whose Eventbrite link was followed is remembered (pending); the next focus

@@ -3,10 +3,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  LOOK_LIMIT_MS, RUN_APPEAR_MS, addTimes, askable, canAdd, canRun, firstLoadDone, lookStep, refreshNotice, shownCards, signupStep, viewState, whenLabel, whereLabel,
+  CREDIT, LOOK_LIMIT_MS, RUN_APPEAR_MS, addTimes, askable, canAdd, canRun, cardLink, firstLoadDone, lookStep, needsCredit, refreshNotice, shownCards, signupStep, viewState, whenLabel, whereLabel,
 } from '../../src/gui/events/discover.js';
 import { wallToInstant, localZone } from '../../src/gui/events/dates.js';
 import { OFFLINE } from '../../src/gui/events/page-state.js';
+import { FINDLOCAL_ERRORS, FINDLOCAL_FAILED } from '../../src/gui/discovery-settings.js';
 
 const card = (over = {}) => ({
   id: 'c1', digest_id: 'd1', event_id: 'e1', why: 'Because.', state: 'new', calendar_event_id: '', image: null,
@@ -267,4 +268,42 @@ test('lookStep: scenarios B and C, a run that is not ours with an older digest o
   assert.equal(lookStep(look({ ...base, digests: null, running: false, now: 16000 })).done, false);
   const late = lookStep(look({ ...base, now: LOOK_LIMIT_MS + 1 }));
   assert.deepEqual([late.done, late.notice], [true, 'The scout has not finished. Check back later.']);
+});
+
+test('cardLink: an Eventbrite card keeps the Eventbrite rule, with or without a source', () => {
+  const want = { href: 'https://www.eventbrite.com/e/1', label: 'View on Eventbrite' };
+  assert.deepEqual(cardLink(card({ source: 'eventbrite' })), want);
+  assert.deepEqual(cardLink(card()), want);
+  const none = { href: '', label: '' };
+  assert.deepEqual(cardLink(card({ source: 'eventbrite', url: 'https://example.com/e/1' })), none);
+  assert.deepEqual(cardLink(card({ url: 'http://www.eventbrite.com/e/1' })), none);
+});
+test('cardLink: a FindLocal card links to any https page, nothing else', () => {
+  const fl = over => card({ source: 'findlocal', ...over });
+  assert.deepEqual(cardLink(fl({ url: 'https://example.org/market' })), { href: 'https://example.org/market', label: 'View event page' });
+  const none = { href: '', label: '' };
+  for (const url of ['http://example.org/x', 'javascript:alert(1)', 'HTTPS://example.org', ' https://example.org', '', null, undefined, 5, {}]) {
+    assert.deepEqual(cardLink(fl({ url })), none, String(url));
+  }
+  assert.deepEqual(cardLink(card({ source: 'other', url: 'https://example.org/x' })), none);
+  assert.deepEqual(cardLink(null), none);
+});
+
+test('needsCredit: a shown FindLocal card, not a dismissed one or a null digest', () => {
+  const fl = over => card({ source: 'findlocal', ...over });
+  assert.equal(needsCredit({ cards: [card(), fl({ id: 'f' })] }), true);
+  assert.equal(needsCredit({ cards: [card(), fl({ id: 'f', state: 'dismissed' })] }), false);
+  assert.equal(needsCredit({ cards: [card()] }), false);
+  assert.equal(needsCredit(null), false);
+  assert.deepEqual(CREDIT, { text: 'Event data by FindLocal', href: 'https://findlocal.community' });
+});
+
+test('refreshNotice: a FindLocal error shows when Eventbrite is clean; Eventbrite wins when both failed', () => {
+  const both = (flError, ebError = '', pool = 0) => st({ refresh: { last: '', error: ebError, pool }, findlocal: { last_error: flError } });
+  assert.equal(refreshNotice(both('key')), FINDLOCAL_ERRORS.key);
+  assert.equal(refreshNotice(both('weird')), FINDLOCAL_FAILED);
+  assert.equal(refreshNotice(both('network', '', 4)), `${FINDLOCAL_ERRORS.network} Showing what was read.`);
+  assert.equal(refreshNotice(both('key', 'network')), 'Could not reach Eventbrite.');
+  assert.equal(refreshNotice(both('')), '');
+  assert.equal(refreshNotice(st({ findlocal: null })), '');
 });

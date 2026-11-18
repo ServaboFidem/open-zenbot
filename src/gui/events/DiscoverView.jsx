@@ -3,7 +3,7 @@ import { Button, ProgressBar } from '@fluentui/react-components';
 import { ArrowLeft24Regular, ArrowRight24Regular, CalendarLtr24Regular } from '@fluentui/react-icons';
 import EventCard from './EventCard.jsx';
 import SignupDialog from './SignupDialog.jsx';
-import { addTimes, askable, canAdd, canRun, firstLoadDone, lookStep, refreshNotice, shownCards, signupStep, viewState } from './discover.js';
+import { addTimes, askable, canAdd, canRun, CREDIT, firstLoadDone, lookStep, needsCredit, refreshNotice, shownCards, signupStep, viewState } from './discover.js';
 
 const POLL_MS = 4000;
 const PAGE = 20;   // the harness's default page of digests
@@ -132,6 +132,7 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
   const notice = refreshNotice(status);
   const src = card => discover.imageSrc(api.baseUrl, card);
   const grid = digest => <div className="discover-grid">{shownCards(digest).map(card => <EventCard key={card.id} card={card} src={src(card)} adding={adding.has(card.id)} onOpen={opened} onAdd={add}/>)}</div>;
+  const credit = <p className="events-muted"><a href={CREDIT.href} target="_blank" rel="noopener noreferrer">{CREDIT.text}</a></p>;
   onScreen.current = view.kind !== 'digest' || (loadError && !status) ? [] : history ? digests.flatMap(shownCards) : shownCards(current);
   const dialogCard = askable(asking, onScreen.current);
 
@@ -153,6 +154,7 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
       {digests.map(d => <section key={d.id} className="discover-digest">
         <h3>{dayText(d.created_at) || 'Earlier digest'}</h3>
         {shownCards(d).length ? grid(d) : <p className="events-muted">Nothing left in this digest.</p>}
+        {needsCredit(d) && credit}
       </section>)}
       {hasMore && <Button onClick={more}>Show older digests</Button>}
     </>;
@@ -160,6 +162,7 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
     body = <>
       {view.text && <p className="events-muted">{view.text}</p>}
       {grid(current)}
+      {needsCredit(current) && credit}
       <div className="discover-bar"><Button appearance="subtle" icon={<ArrowRight24Regular className="od-icon"/>} iconPosition="after" onClick={() => showHistory(true)}>Older digests</Button></div>
     </>;
   }
