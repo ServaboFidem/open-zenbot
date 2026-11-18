@@ -1,7 +1,7 @@
 // Pure date helpers for the Events page. A day is a key "YYYY-MM-DD"; keys move by integer
 // arithmetic on UTC date parts, never by parsing a bare date string (which JS reads as UTC and
 // shifts west of it). A zone is an IANA name; Intl does every conversion.
-const localZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+export const localZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 const pad = (n, w = 2) => String(n).padStart(w, '0');
 const DAY_MS = 86400000;
 
