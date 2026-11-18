@@ -3,8 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   COLUMNS, DEFAULT_SORT, EMPTY_FILTERS, MARKS, NO_EVENTS, NO_MATCH, PAGE, READING, SOURCE_NAMES,
-  canRefresh, categoryOptions, cells, countLabel, filterEvents, gridCredit, gridState, nearEnd, nextSort,
-  panelCredit, readLabel, rowKeyStep, showSourceFilter, sortEvents, sourcesPresent, visibleCount, withState,
+  canRefresh, categoryOptions, cells, countLabel, filterEvents, gridCredit, gridState, isBusy, keepFilters, nearEnd,
+  nextSort, panelCredit, readLabel, rowKeyStep, showSourceFilter, sortEvents, sourcesPresent, visibleCount, withState,
 } from '../../src/gui/events/all-events.js';
 
 const ev = (over = {}) => ({
@@ -244,4 +244,27 @@ test('the panel opens its link in a new window without an opener, and only by ca
   const src = gui('EventPanel.jsx');
   assert.ok(src.includes('cardLink('));
   assert.ok(src.includes('target="_blank" rel="noopener noreferrer"'));
+});
+
+test('isBusy: reading or the harness refreshing, until the poll limit has run out', () => {
+  assert.equal(isBusy({ reading: false, timedOut: false, status: null }), false);
+  assert.equal(isBusy({ reading: true, timedOut: false, status: { refreshing: false } }), true);
+  assert.equal(isBusy({ reading: false, timedOut: false, status: { refreshing: true } }), true);
+  // after the limit the reading line goes, although the stored status still says refreshing
+  assert.equal(isBusy({ reading: false, timedOut: true, status: { refreshing: true } }), false);
+  assert.equal(isBusy({ reading: true, timedOut: true, status: { refreshing: true } }), false);
+  assert.equal(isBusy({}), false);
+  assert.equal(isBusy(), false);
+});
+
+test('keepFilters clears a category or source no longer in the list, and keeps the rest', () => {
+  const list = [ev({ id: 'a', category_names: ['Music'] }), ev({ id: 'b', category_names: ['Food'], source: 'findlocal' })];
+  const set = { ...EMPTY_FILTERS, text: 'jazz', category: 'Music', source: 'findlocal', from: '2026-11-20', to: '2026-11-30' };
+  assert.equal(keepFilters(set, list), set);                       // all still present: the same object
+  const onlyFood = [ev({ id: 'b', category_names: ['Food'], source: 'eventbrite' })];
+  assert.deepEqual(keepFilters(set, onlyFood), { ...set, category: '', source: '' });
+  assert.deepEqual(keepFilters({ ...set, category: 'Food' }, onlyFood), { ...set, category: 'Food', source: '' });
+  assert.equal(keepFilters(EMPTY_FILTERS, []), EMPTY_FILTERS);
+  assert.deepEqual(keepFilters({ ...EMPTY_FILTERS, category: 'Music' }, []), EMPTY_FILTERS);
+  assert.deepEqual(keepFilters(undefined, list), EMPTY_FILTERS);
 });

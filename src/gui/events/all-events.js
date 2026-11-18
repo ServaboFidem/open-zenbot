@@ -79,6 +79,16 @@ export const categoryOptions = events => [...new Set(list(events).flatMap(names)
 export const sourcesPresent = events => [...new Set(list(events).map(e => e.source).filter(s => typeof s === 'string' && s))].sort();
 export const showSourceFilter = events => sourcesPresent(events).length === 2;
 
+// The filters after the list was loaded again: a category or source no longer among the rows is cleared, so nothing
+// filters by a choice the select can no longer show. The same object when nothing changed.
+export function keepFilters(filters, events) {
+  const f = { ...EMPTY_FILTERS, ...(filters || {}) };
+  const category = f.category && !categoryOptions(events).includes(f.category);
+  const source = f.source && !sourcesPresent(events).includes(f.source);
+  if (filters && !category && !source) return filters;
+  return { ...f, ...(category ? { category: '' } : {}), ...(source ? { source: '' } : {}) };
+}
+
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const CLOCK = /^([01]\d|2[0-3]):([0-5]\d)$/;
 // "2026-11-21" as "Sat 21 Nov" (dayName, as the cards and the panel write it): the listing's own day, formatted at
@@ -142,6 +152,11 @@ export function canRefresh(status, now, { online = true } = {}) {
   const at = Date.parse(last);
   return Number.isNaN(at) || now - at >= REFRESH_AFTER_MS;
 }
+
+// Whether the tab shows the reading line: a refresh is watched here, or the harness says one is going, until the
+// poll limit has run out (then the line goes, though the stored status may still say refreshing).
+export const isBusy = ({ reading = false, timedOut = false, status = null } = {}) =>
+  !timedOut && (!!reading || !!status?.refreshing);
 
 // What the tab shows. loaded: the list has answered; shown: the rows left after the filters.
 export function gridState({ online = true, loaded = false, error = '', status = null, events = [], shown = [] } = {}) {

@@ -5,8 +5,8 @@ import EventPanel from './EventPanel.jsx';
 import { CREDIT, refreshNotice, viewState } from './discover.js';
 import {
   canRefresh, categoryOptions, cells, COLUMNS, countLabel, DEFAULT_SORT, EMPTY_FILTERS, filterEvents, gridCredit,
-  gridState, MARKS, nearEnd, nextSort, NO_EVENTS, NO_MATCH, PAGE, READING, readLabel, rowKeyStep, showSourceFilter,
-  SOURCE_NAMES, sortEvents, visibleCount, withState,
+  gridState, isBusy, keepFilters, MARKS, nearEnd, nextSort, NO_EVENTS, NO_MATCH, PAGE, READING, readLabel, rowKeyStep,
+  showSourceFilter, SOURCE_NAMES, sortEvents, visibleCount, withState,
 } from './all-events.js';
 
 const POLL_MS = 3000;
@@ -80,6 +80,7 @@ export default function AllEventsView({ api, online, notify, openSettings }) {
   const [focus, setFocusIndex] = useState(0);
   const [opened, setOpened] = useState(null);   // the slim row the panel is about
   const [reading, setReading] = useState(false);   // a refresh is being watched
+  const [timedOut, setTimedOut] = useState(false);   // the last watch ran out of time with the refresh still going
   const [now, setNow] = useState(() => Date.now());
   const rowRefs = useRef(new Map());
   const wantFocus = useRef(false);
@@ -94,7 +95,9 @@ export default function AllEventsView({ api, online, notify, openSettings }) {
     try {
       const [s, list] = await Promise.all([discover.status(), discover.events()]);
       if (!mounted.current) return;
-      setStatus(s); setEvents(Array.isArray(list?.events) ? list.events : []); setReadAt(list?.read_at || ''); setError('');
+      const rows = Array.isArray(list?.events) ? list.events : [];
+      setStatus(s); setEvents(rows); setReadAt(list?.read_at || ''); setError('');
+      setFilters(f => keepFilters(f, rows));   // a category or source no longer listed stops filtering
       if (s?.refreshing) setReading(true);
     } catch (err) {
       if (mounted.current) setError(err?.message || 'Events could not be loaded.');
@@ -105,6 +108,7 @@ export default function AllEventsView({ api, online, notify, openSettings }) {
   // while a refresh goes: look at the status every 3 s until it is done, then load the list again
   useEffect(() => {
     if (!reading) return undefined;
+    setTimedOut(false);
     const since = Date.now();
     let cancelled = false, busy = false;
     const t = setInterval(async () => {
@@ -115,7 +119,7 @@ export default function AllEventsView({ api, online, notify, openSettings }) {
       if (cancelled) return;
       if (s) setStatus(s);
       if (s && !s.refreshing) { clearInterval(t); setReading(false); load(); return; }
-      if (Date.now() - since > POLL_LIMIT_MS) { clearInterval(t); setReading(false); notifyRef.current(STILL_READING); }
+      if (Date.now() - since > POLL_LIMIT_MS) { clearInterval(t); setReading(false); setTimedOut(true); notifyRef.current(STILL_READING); }
     }, POLL_MS);
     return () => { cancelled = true; clearInterval(t); };
   }, [reading, discover, load]);
@@ -156,7 +160,7 @@ export default function AllEventsView({ api, online, notify, openSettings }) {
   const state = gridState({ online, loaded, error: status ? '' : error, status, events, shown });
   const notice = refreshNotice(status);
   const refreshable = canRefresh(status, now, { online }) && !reading;
-  const busy = reading || !!status?.refreshing;
+  const busy = isBusy({ reading, timedOut, status });
   const refreshButton = refreshable && <Button onClick={refresh}>Refresh</Button>;
 
   let body;
