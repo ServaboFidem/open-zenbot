@@ -395,7 +395,7 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   `Discovery.apply` deletes every Eventbrite pool row (`DiscoverStore.clear_pool("eventbrite")`) and clears Eventbrite's last
   refresh time, error and failure time, so the next refresh reads the new city at once; saved cards are snapshots and stay.
   A different `findlocal_city` does the same for the FindLocal rows and FindLocal's own three meta values.
-- **FindLocal** (`findlocal.FindLocal`, a second source, optional: nothing is read without a key, a city and a time zone,
+- **FindLocal** (`findlocal.FindLocal`, a second source, optional: nothing is read without discovery on with an Eventbrite `place` set, and a key, a city and a time zone,
   `Discovery.findlocal_ready`). It reads `https://findlocal.community/api/events` (`API_URL`), a keyed REST API.
   - *Where things live.* The city (`findlocal_city`, one of `FINDLOCAL_CITIES`, FindLocal's own slugs) and `timezone` in
     `vault-settings/events.json`; the key in `vault-settings/events_keys.json` (`DiscoverKeys.save`, mode `0o600`, never in
@@ -406,19 +406,19 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     stores it as `timezone` (`^[A-Za-z0-9_+\-/]{1,64}$`); the zone is kept while the city stays the same and a new city
     needs one in the request (else 422), and every FindLocal event gets it as its `timezone`. A zone is not checked against a
     database; it is the user's browser's.
-  - *Reading* (`FindLocal.read`). One request at a time, `GAP_S` (1 s) apart, at most `MAX_CALLS` (10) calls of `LIMIT` (100)
+  - *Reading* (`FindLocal.read`). One request at a time, `GAP_S` (1 s) apart, each with a `TIMEOUT_S` (30 s) timeout and an answer limit of `PAGE_LIMIT` (5,000,000 bytes), at most `MAX_CALLS` (10) calls of `LIMIT` (100)
     rows from today for `DAYS_AHEAD` (60) days, sorted by date, stopping at an empty page or when `meta.total` is reached. The
     free plan allows 100 calls a month, so a run costs up to a tenth of it. Requests go only to `API_URL` with the city
     checked against the list; no 3xx is followed. A key that is empty or not printable ASCII without whitespace is refused
     with kind `key` before any request. Error kinds (`SourceError.kind`): `network`, `key` (401), `refused` (429),
     `source_changed` (a redirect, or an answer that is not JSON with a `data` list, or rows none of which has a string
-    `id`), `provider` (any other status or an over-size answer). A failure on the first call fails the read; a later
+    `id`), `provider` (any other status or an answer over the 5,000,000-byte limit). A failure on the first call fails the read; a later
     failure ends it and keeps what was read, with its kind in `error`. `pages` in the read's ledger entry counts the calls
     that answered.
   - *What is kept* (`findlocal._event`): an `id` that is a UUID (stored as `fl-<uuid>`), a non-empty `title`, a real
     `event_date`, and a link (`detail_page_url`, else `ticket_page_url`) that is `https` with a host, at most 500 characters
-    and made only of ASCII with no space, control character, backslash or user info; a link with any non-ASCII character
-    drops the row. Not kept: `status` cancelled or postponed, `attendance` online, `is_deleted`, `duplicate_of`,
+    and made only of ASCII with no space, control character, backslash or user info; a link that fails these checks (a
+    non-ASCII character included) is skipped, and the row is dropped when neither link passes. Not kept: `status` cancelled or postponed, `attendance` online, `is_deleted`, `duplicate_of`,
     `is_real_event` 0. Times are kept when `HH:MM`; a timed event ends the same day or has no end; an all-day one takes
     `end_date` when it is not before the start. Text caps are Eventbrite's. A row has no picture. `category` maps to an
     Eventbrite tag for some slugs (`CATEGORY_TAGS`) so the user's ticked categories apply; a slug with none has no tag and so
@@ -434,7 +434,9 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     `weekly=Discovery.is_weekly_run(session id)`. `force` does not apply to it, so an on-demand run and the Find events button
     never read it again. Inside 10 minutes of a failed read nothing is requested and the refresh answer's `findlocal` block
     carries the recorded error kind; a failed first read is tried again after that. `set_key` clears FindLocal's last error
-    and failure so a new key reads at once.
+    and failure so a new key may read at once: it does when FindLocal
+    has never been read, or its last attempt failed with no successful read; otherwise the weekly run reads it once the last
+    read is over 20 hours old.
   - *Routes.* `PUT /discover/findlocal/key` (body `{"key": ...}`, checked by `discover_settings.check_key`: trimmed, plain
     ASCII, no whitespace, at most 200 characters, else 422) and `DELETE /discover/findlocal/key`; both answer the status. `GET /status` carries a
     `findlocal` block: `city`, `timezone`, `key_set`, `key_hint`, `last_refresh`, `last_error`, `ready` and `cities`.
@@ -524,7 +526,7 @@ Unverified, and open:
 
 Rules for contributors. No card is saved except through `events_save_digest` (`Discovery.save`). No fetch to a host other than
 `www.eventbrite.com` (the pages), `img.evbuc.com` (pictures) and `findlocal.community/api/events` (FindLocal), none to a
-URL read from a page or an answer, and no 3xx followed. The FindLocal key never goes in a route answer, a log line, a ledger
+URL read from a page or an answer, and no 3xx followed. The FindLocal key never goes in a route answer, a log line, an exception message, a ledger
 entry or a URL, only in the request's `Authorization` header; no bot gets the key or a FindLocal tool of its own. The
 scout stays `closed: true` and out of rooms; do not give any bot a calendar or discovery tool, and do not add one to the
 decider's catalog. Every `/discover` POST takes a required JSON body. No listing text, disk path or picture bytes in a
