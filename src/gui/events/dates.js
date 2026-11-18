@@ -85,18 +85,27 @@ export function wallToInstant(key, time, zone = localZone()) {
   return toIso(fits.length ? Math.min(...fits) : wall - before);
 }
 
+const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+// The most days one event is filed under (ten years): the loop below always ends, whatever the event holds.
+export const MAX_EVENT_DAYS = 3660;
+
+// The day keys an event falls on in `zone`. An event whose start is not a date or an instant gives none;
+// one whose end is not gives its first day.
 export function eventDays(event, zone = localZone()) {
   let first, last;
   if (event.all_day) {
-    first = event.start; last = addDays(event.end, -1);
-    if (last < first) last = first;
+    first = event.start;
+    if (!DAY_KEY.test(first)) return [];
+    last = DAY_KEY.test(event.end) ? addDays(event.end, -1) : first;
   } else {
+    const start = Date.parse(event.start), end = Date.parse(event.end);
+    if (Number.isNaN(start)) return [];
     first = instantToParts(event.start, zone).key;
-    const end = Date.parse(event.end);
-    last = end > Date.parse(event.start) ? instantToParts(toIso(end - 1000), zone).key : first;
+    last = end > start ? instantToParts(toIso(end - 1000), zone).key : first;
   }
+  if (!DAY_KEY.test(last) || last < first) last = first;
   const days = [];
-  for (let k = first; k <= last; k = addDays(k, 1)) days.push(k);
+  for (let k = first; k <= last && days.length < MAX_EVENT_DAYS; k = addDays(k, 1)) days.push(k);
   return days;
 }
 

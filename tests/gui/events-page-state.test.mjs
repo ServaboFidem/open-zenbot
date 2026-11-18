@@ -1,7 +1,7 @@
 // The Events page's pure decisions: which links it opens, and the status line under the month.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { OFFLINE, isGoogleLink, statusLine } from '../../src/gui/events/page-state.js';
+import { OFFLINE, isGoogleLink, lostEditNotice, lostEditStep, statusLine } from '../../src/gui/events/page-state.js';
 
 const NY = 'America/New_York';
 const NOW = new Date('2026-11-17T20:00:00Z');   // 15:00 in New York
@@ -62,4 +62,44 @@ test('needs_reconnect: sign-in expired, Reconnect in Settings', () => {
 test('an unknown state says nothing and offers no Refresh', () => {
   const l = line(status('something_new', { error: 'x' }));
   assert.deepEqual([l.text, l.action, l.refresh, l.spinner, l.ready], ['', '', false, false, true]);
+});
+
+test('a sync error is worded by its kind: only network says Google could not be reached', () => {
+  const said = kind => line(status('connected', { last: '2026-11-17T19:02:00Z', error: kind })).text;
+  const wording = {
+    network: 'Could not reach Google.',
+    auth: 'Google did not accept the sign-in.',
+    forbidden: 'Google refused access to a calendar.',
+    rate: 'Google is limiting requests for now.',
+    provider: 'Google sent an answer OpenZenBot could not use.',
+    internal: 'The sync stopped on an error in OpenZenBot.',
+    something_new: 'The sync did not finish.',
+  };
+  for (const [kind, sentence] of Object.entries(wording)) {
+    assert.equal(said(kind), `${sentence} Showing what was here at 14:02.`, kind);
+    const l = line(status('connected', { error: kind }));
+    assert.equal(l.text, `${sentence} Showing what was here.`, kind);
+    assert.deepEqual([l.action, l.actionLabel, l.refresh], ['retry', 'Retry', true]);
+  }
+  assert.equal(new Set(Object.values(wording)).size, 7);
+});
+
+test('lostEditNotice counts the edits', () => {
+  assert.equal(lostEditNotice(1), 'An event you edited was deleted on Google, so your edit was lost.');
+  assert.equal(lostEditNotice(3), '3 events you edited were deleted on Google, so your edits were lost.');
+});
+
+test('lostEditStep: any loaded status with lost edits is shown once and then acknowledged by that count', () => {
+  const s = n => status('connected', { lost_edits: n });
+  assert.equal(lostEditStep(null), null);
+  assert.equal(lostEditStep(s(0)), null);
+  assert.equal(lostEditStep({ google: {} }), null);
+  assert.equal(lostEditStep(s('2')), null);   // not a count
+  assert.deepEqual(lostEditStep(s(2)), { notice: lostEditNotice(2), ack: 2 });
+  assert.equal(lostEditStep(s(2), { acking: true }), null);   // one acknowledgement at a time
+  // shown already but the acknowledgement failed: ask again without saying it twice
+  assert.deepEqual(lostEditStep(s(2), { shown: 2 }), { notice: '', ack: 2 });
+  assert.deepEqual(lostEditStep(s(3), { shown: 2 }), { notice: lostEditNotice(1), ack: 3 });
+  // it does not matter who ran the sync or which state Google is in
+  assert.deepEqual(lostEditStep(status('needs_reconnect', { lost_edits: 1 })), { notice: lostEditNotice(1), ack: 1 });
 });

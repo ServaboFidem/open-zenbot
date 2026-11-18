@@ -113,3 +113,15 @@ test('dayTitle writes a day key out without a zone moving it', () => {
   assert.equal(dayTitle('2026-11-17'), 'Tuesday 17 November');
   assert.equal(dayTitle('2026-11-01', { month: 'long', year: 'numeric' }), 'November 2026');
 });
+
+test('eventDays always ends: a malformed or endless range gives no days or a capped run', () => {
+  assert.deepEqual(eventDays({ all_day: true, start: 'garbage', end: '2026-11-18' }), []);
+  assert.deepEqual(eventDays({ all_day: true, start: '2026-11-17', end: 'garbage' }), ['2026-11-17']);
+  assert.deepEqual(eventDays({ all_day: true, start: '2026-11-17', end: undefined }), ['2026-11-17']);
+  assert.deepEqual(eventDays({ all_day: true, start: undefined, end: undefined }), []);
+  assert.deepEqual(eventDays({ all_day: false, start: 'never', end: 'ever' }, NY), []);
+  const long = eventDays({ all_day: true, start: '2026-11-17', end: '9999-12-31' });
+  assert.equal(long.length, 3660);
+  assert.equal(long[0], '2026-11-17');
+  assert.deepEqual(eventsByDay([{ all_day: true, start: 'x', end: 'y' }], NY).size, 0);
+});

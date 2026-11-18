@@ -4,9 +4,8 @@ import { Add24Regular, ArrowSync24Regular, ChevronLeft24Regular, ChevronRight24R
 import CalendarGrid from './CalendarGrid.jsx';
 import EventDialog from './EventDialog.jsx';
 import { dayTitle, eventsByDay, fetchRange, monthGrid, timeLabel, todayKey } from './dates.js';
-import { statusLine } from './page-state.js';
+import { lostEditStep, statusLine } from './page-state.js';
 
-const LOST_EDIT = 'An event you edited was deleted on Google, so your edit was lost.';
 const HEX = /^#[0-9a-f]{6}$/i;
 const monthOf = key => { const [year, month] = key.split('-').map(Number); return { year, month }; };
 const firstOf = ym => `${String(ym.year).padStart(4, '0')}-${String(ym.month).padStart(2, '0')}-01`;
@@ -42,6 +41,7 @@ export default function CalendarView({ api, online, notify, openSettings }) {
   const [dialog, setDialog] = useState(null);   // { event } or { event: null } for a new one
   const loads = useRef(0);
   const syncedOnMount = useRef(false);
+  const lost = useRef({ shown: 0, acking: false, handled: null });   // lost edits: see the effect below
 
   const grid = useMemo(() => monthGrid(ym.year, ym.month), [ym.year, ym.month]);
   const { start, end } = fetchRange(grid);
@@ -64,7 +64,6 @@ export default function CalendarView({ api, online, notify, openSettings }) {
     try {
       const s = await cal.sync();
       setStatus(s);
-      if (s?.sync?.lost_edits > 0) notify(LOST_EDIT);
     } catch (err) { notify(err.message || 'The calendar could not be synced.'); }
     finally { setSyncing(false); }
     await loadRef.current();
@@ -76,6 +75,19 @@ export default function CalendarView({ api, online, notify, openSettings }) {
     syncedOnMount.current = true;
     sync();
   }, [status, sync]);
+  // An edit lost in any run, the harness's own included, is in every status until this page has shown it: show it,
+  // then take that count off the harness's counter (one counted meanwhile stays for the next status).
+  useEffect(() => {
+    if (lost.current.handled === status) return;   // this very status again (the effect re-ran for another reason)
+    const step = lostEditStep(status, lost.current);
+    if (!step) return;
+    if (step.notice) notify(step.notice);
+    lost.current = { shown: step.ack, acking: true, handled: status };
+    cal.ackLostEdits(step.ack).then(
+      () => { lost.current = { shown: 0, acking: false, handled: status }; loadRef.current(); },
+      () => { lost.current = { shown: step.ack, acking: false, handled: status }; },
+    );
+  }, [status, cal, notify]);
   // a run the harness started on its own: look again until it ends, a failed look included
   useEffect(() => {
     if (!status?.sync?.running || syncing) return undefined;

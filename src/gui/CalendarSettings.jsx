@@ -188,7 +188,7 @@ export function CalendarSettings({ api, online, notify }) {
       <p className="field-hint">Choose which of your Google calendars show their events here.</p>
       {here('calendars')}
       <div className="cal-list">{bringInList(calendars).map(c => <div className="cal-item" key={c.id}>
-        <Checkbox checked={c.locked || c.selected} disabled={c.locked || busy === `cal:${c.id}`} title={c.name}
+        <Checkbox checked={c.selected} disabled={c.locked || busy === `cal:${c.id}`} title={c.name}
           label={<span className="cal-wrap"><span className="cal-swatch" style={{ background: c.color || 'var(--border)' }}/>{c.name}</span>}
           onChange={(e, d) => d.checked ? tick(c, true) : untick(c)}/>
         {!c.writable && <span className="field-hint">view only</span>}

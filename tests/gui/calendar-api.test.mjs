@@ -24,6 +24,7 @@ test('each function hits its route with the right method, path, body and params'
   await api.pushPreview('primary');
   await api.setPush(true, 'primary');
   await api.sync();
+  await api.ackLostEdits(2);
   const got = seen.map(s => [s.method, s.path, s.body, s.params]);
   assert.deepEqual(got, [
     ['GET', '/calendar/status', undefined, undefined],
@@ -39,7 +40,10 @@ test('each function hits its route with the right method, path, body and params'
     ['GET', '/calendar/push/preview', undefined, { destination: 'primary' }],
     ['PUT', '/calendar/push', { on: true, destination: 'primary' }, undefined],
     ['POST', '/calendar/sync', {}, undefined],
+    ['POST', '/calendar/lost-edits/ack', { count: 2 }, undefined],
   ]);
+  // every POST carries a JSON body: the harness refuses one without (a request another site could send)
+  for (const s of seen.filter(x => x.method === 'POST')) assert.equal(typeof s.body, 'object', s.path);
 });
 
 test('connect sends write false unless asked', async () => {

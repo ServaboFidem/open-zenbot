@@ -358,7 +358,7 @@ function App() {
   }, [recorder?.state]);
 
   function navigate(next) { setPage(next); setQuery(''); setMobileNav(false); if (next === 'Settings') { openSettings(''); setSettingsQuery(''); } }
-  // the Calendar panel (Settings home until that panel exists)
+  // Settings > Calendar, from the Events page
   function openCalendarSettings() { navigate('Settings'); openSettings('calendar'); }
   function openBot(id) { setSelected(id); setMode('bot'); setComposer(''); navigate('Conversation'); }
   // Conversations page: open that bot with that conversation made its current one

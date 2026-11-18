@@ -1,5 +1,6 @@
 // The /calendar routes, one function per route. Built on createApi's `call(method, path, body, params)`.
 // The Google client secret passes through saveCredentials once; the harness never sends it back.
+// Every POST carries a JSON body, an empty one where the route needs nothing: the harness refuses a POST without.
 const enc = encodeURIComponent;
 
 export function createCalendarApi(call) {
@@ -20,5 +21,7 @@ export function createCalendarApi(call) {
     pushPreview: destination => call('GET', '/calendar/push/preview', undefined, { destination }),
     setPush: (on, destination) => call('PUT', '/calendar/push', { on, destination }),
     sync: () => call('POST', '/calendar/sync', {}),
+    // the page has shown `count` lost edits (status.sync.lost_edits); answers the status
+    ackLostEdits: count => call('POST', '/calendar/lost-edits/ack', { count }),
   };
 }
