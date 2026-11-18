@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { APP_STEPS, bringInList, defaultDestination, destinations, pushSentence, shownSections, signInChanged } from '../../src/gui/calendar-settings.js';
+import { APP_STEPS, bringInList, defaultDestination, destinations, pushFailure, pushSentence, shownSections, signInChanged } from '../../src/gui/calendar-settings.js';
 
 const st = (state, can_write = false) => ({ google: { state, can_write } });
 const cal = (id, o = {}) => ({ id, name: id, source: 'google', writable: true, primary: false, ...o });
@@ -37,4 +37,10 @@ test('the push sentence names only the non-zero counts', () => {
   assert.equal(pushSentence({ add: 12, update: 3, remove: 1 }, 'Work'), '12 added, 3 updated, 1 removed on Google');
   assert.equal(pushSentence({ add: 2, update: 0, remove: 0 }, 'Work'), '2 added on Google');
   assert.equal(pushSentence({ add: 0, update: 0, remove: 0 }, 'Work'), 'Nothing to send yet. Events you make from now on will be added to Work.');
+});
+test('a 409 on switching push on asks for write access; anything else shows the sentence', () => {
+  assert.deepEqual(pushFailure({ status: 409, message: 'Allow OpenZenBot to add events to Google first.' }), { kind: 'allow' });
+  assert.deepEqual(pushFailure({ status: 422, message: 'Pick a Google calendar.' }), { kind: 'show', text: 'Pick a Google calendar.' });
+  assert.deepEqual(pushFailure(new Error('')), { kind: 'show', text: 'Something went wrong.' });
+  assert.deepEqual(pushFailure(null), { kind: 'show', text: 'Something went wrong.' });
 });

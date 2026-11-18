@@ -40,3 +40,10 @@ export function pushSentence(counts, calendarName) {
   if (!parts.length) return `Nothing to send yet. Events you make from now on will be added to ${calendarName}.`;
   return `${parts.join(', ')} on Google`;
 }
+
+// What a failed PUT /calendar/push (turning push on) does: a 409 means the write permission is missing, so ask for
+// it; anything else shows the harness's sentence as plain text.
+export function pushFailure(err) {
+  if (err && err.status === 409) return { kind: 'allow' };
+  return { kind: 'show', text: (err && err.message) || 'Something went wrong.' };
+}

@@ -2,19 +2,21 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Dropdown, Field, Input, Option, Spinner, Switch } from '@fluentui/react-components';
 import { Copy24Regular } from '@fluentui/react-icons';
 import { anchorId } from './settings-index';
-import { APP_STEPS, POLL_LIMIT_MS, POLL_MS, bringInList, defaultDestination, destinations, pushSentence, shownSections, signInChanged } from './calendar-settings';
+import { APP_STEPS, POLL_LIMIT_MS, POLL_MS, bringInList, defaultDestination, destinations, pushFailure, pushSentence, shownSections, signInChanged } from './calendar-settings';
 import './calendar-settings.css';
 
 // Settings > Calendar: the user's own Google app (client ID and secret, saved in the harness, never sent back), the
 // Google sign-in, which calendars to bring in, and sending events made here to Google. The sign-in finishes in the
 // browser, so after opening Google's address the page asks the harness for its status every 2 seconds.
 // Props: { api, online, notify }
+const SAVED_HINT = 'Saved. Paste a new one to replace it.';
 const message = e => e?.message || 'Something went wrong.';
 
 export function CalendarSettings({ api, online, notify }) {
   const cal = api.calendar;
   const [status, setStatus] = useState(null);
   const [calendars, setCalendars] = useState([]);
+  const [listed, setListed] = useState(false);   // the calendar list loaded
   const [failed, setFailed] = useState(false);
   const [form, setForm] = useState({ id: '', secret: '' });
   const [busy, setBusy] = useState('');
@@ -34,8 +36,8 @@ export function CalendarSettings({ api, online, notify }) {
   async function take(next) {
     setStatus(next);
     if (next.google.state === 'connected') {
-      try { const list = await cal.calendars(); if (alive.current) setCalendars(list); } catch (e) { if (alive.current) setError({ at: 'calendars', text: message(e) }); }
-    } else setCalendars([]);
+      try { const list = await cal.calendars(); if (alive.current) { setCalendars(list); setListed(true); } } catch (e) { if (alive.current) setError({ at: 'calendars', text: message(e) }); }
+    } else { setCalendars([]); setListed(false); }
     return next;
   }
   const load = async () => {
@@ -104,17 +106,22 @@ export function CalendarSettings({ api, online, notify }) {
   const destName = () => calendars.find(c => c.id === destination)?.name || 'that calendar';
   const askWrite = () => setAsk({
     title: 'Allow sending to Google', body: 'Google will ask to let OpenZenBot add and change events.', label: 'Allow sending to Google',
-    run: () => signIn(true, next => { if (next.google.can_write) startPush(); }),
+    run: () => signIn(true, next => { if (next.google.can_write) startPush(next); }),
   });
-  async function startPush() {
-    if (!statusRef.current?.google.can_write) return askWrite();
+  async function startPush(fresh) {
+    if (!(fresh || statusRef.current)?.google.can_write) return askWrite();
     setError({ at: '', text: '' }); setOffNote(false);
     let counts;
     try { counts = await cal.pushPreview(destination); }
-    catch (e) { return e?.status === 409 ? askWrite() : setError({ at: 'push', text: message(e) }); }
+    catch (e) { return setError({ at: 'push', text: message(e) }); }
     setAsk({
       title: `Send events to ${destName()}?`, body: pushSentence(counts, destName()), label: 'Send events to Google',
-      run: async () => { const next = await run('push', 'push', () => cal.setPush(true, destination), 'Sending events to Google'); if (next && next !== true) await take(next); },
+      run: async () => {
+        setBusy('push'); setError({ at: '', text: '' });
+        try { await take(await cal.setPush(true, destination)); notify('Sending events to Google'); }
+        catch (e) { const f = pushFailure(e); if (f.kind === 'allow') askWrite(); else setError({ at: 'push', text: f.text }); }
+        finally { if (alive.current) setBusy(''); }
+      },
     });
   }
   async function stopPush() {
@@ -143,9 +150,9 @@ export function CalendarSettings({ api, online, notify }) {
         <Button size="small" appearance="outline" icon={<Copy24Regular/>} onClick={copyUri}>Copy</Button></div>}
       <div className="cal-fields">
         <Field label="Client ID"><Input type="password" autoComplete="off" spellCheck={false} value={form.id} disabled={busy === 'save' || linked}
-          placeholder={g.credentials ? '••••••••' : 'Paste the client ID'} onChange={(e, d) => setForm(f => ({ ...f, id: d.value }))}/></Field>
+          placeholder={g.credentials ? SAVED_HINT : undefined} onChange={(e, d) => setForm(f => ({ ...f, id: d.value }))}/></Field>
         <Field label="Client secret"><Input type="password" autoComplete="off" spellCheck={false} value={form.secret} disabled={busy === 'save' || linked}
-          placeholder={g.credentials ? '••••••••' : 'Paste the client secret'} onChange={(e, d) => setForm(f => ({ ...f, secret: d.value }))}/></Field>
+          placeholder={g.credentials ? SAVED_HINT : undefined} onChange={(e, d) => setForm(f => ({ ...f, secret: d.value }))}/></Field>
       </div>
       <p className="field-hint">Saved in vault-settings, readable by you only. Never sent back to this app.</p>
       {here('app')}
@@ -168,13 +175,13 @@ export function CalendarSettings({ api, online, notify }) {
       </>}
       {g.state === 'connected' && <p className="cal-wrap" title={g.account}>Connected{g.account ? ` as ${g.account}` : ''}</p>}
       {g.state === 'needs_reconnect' && <p>Google sign-in has expired.</p>}
-      {waiting && <p className="field-hint" role="status"><Spinner size="tiny" label="Finish signing in in your browser."/></p>}
+      {waiting && <div className="cal-actions" role="status"><Spinner size="tiny" labelPosition="after" label="Finish signing in in your browser."/><Button size="small" appearance="subtle" onClick={() => { stopPolling(); setWaiting(false); }}>Cancel</Button></div>}
       {here('google')}
       <div className="cal-actions">
-        {g.state === 'ready' && <Button appearance="primary" disabled={!!busy || waiting} onClick={() => signIn(false)}>Connect Google Calendar</Button>}
-        {g.state === 'needs_reconnect' && <Button appearance="primary" disabled={!!busy || waiting} onClick={() => signIn(g.can_write)}>Reconnect</Button>}
+        {g.state === 'ready' && <Button appearance="primary" disabled={!!busy} onClick={() => signIn(false)}>Connect Google Calendar</Button>}
+        {g.state === 'needs_reconnect' && <Button appearance="primary" disabled={!!busy} onClick={() => signIn(g.can_write)}>Reconnect</Button>}
         {linked && <Button appearance="outline" disabled={!!busy} onClick={() => setAsk({
-          title: 'Disconnect Google?', body: 'Events from Google will be removed from this computer. Events you make here stay, and so do their copies on Google.', label: 'Disconnect', run: disconnect })}>Disconnect</Button>}
+          title: 'Disconnect Google?', body: 'Events from Google will be removed from this computer. Events you made here stay, and so do their copies on Google.', label: 'Disconnect', run: disconnect })}>Disconnect</Button>}
       </div>
     </div>
 
@@ -195,8 +202,8 @@ export function CalendarSettings({ api, online, notify }) {
       <h3 id={anchorId('calendar', 'Send events to Google')}>Send events to Google</h3>
       <Switch checked={pushOn} disabled={!!busy || waiting || (!pushOn && !options.length)} label="Send events made here to Google"
         onChange={(e, d) => d.checked ? startPush() : stopPush()}/>
-      <Field label="Destination calendar" hint={options.length ? 'New events made here go to this calendar.' : 'None of your Google calendars lets OpenZenBot add events.'}>
-        <Dropdown aria-label="Destination calendar" disabled={!!busy || pushOn || !options.length} value={options.find(c => c.id === destination)?.name || ''}
+      <Field label="Destination calendar" hint={options.length ? 'New events made here go to this calendar.' : listed ? 'None of your Google calendars lets OpenZenBot add events.' : undefined}>
+        <Dropdown aria-label="Destination calendar" disabled={!!busy || waiting || pushOn || !options.length} value={options.find(c => c.id === destination)?.name || ''}
           selectedOptions={destination ? [destination] : []} onOptionSelect={(e, d) => setDestination(d.optionValue)}>
           {options.map(c => <Option key={c.id} value={c.id} text={c.name}>{c.name}</Option>)}
         </Dropdown>

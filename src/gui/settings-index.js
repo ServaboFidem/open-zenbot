@@ -3,6 +3,8 @@
 // puts id={anchorId(panel, title)} on its element; a section headed by data (a provider, a tool, an agent card)
 // has no entry and reaches the search as `extra` instead.
 
+import { APP_STEPS } from './calendar-settings.js';
+
 export const PANELS = [
   { id: 'harness', name: 'Harness settings', description: 'The models your bots, summaries and the decider run on.' },
   { id: 'providers', name: 'Model providers', description: 'Where models come from: providers, their API keys and which models are enabled.' },
@@ -66,9 +68,7 @@ export const SECTIONS = [
   section('folders', 'Allowed Folders', ['Folders your bots can reach through the files tool, besides the vault. With Full Access a bot can read, change, or delete anything inside the folder; with Read-Only it can only read, list, and search.', 'A Read-Only folder can sit inside a Full Access one to protect that corner of it. Changes reconnect the files tool right away.', 'Remove a folder']),
   section('folders', 'Add a folder', ['Access for the new folder', 'Folder path: the full path, like D:\\Projects\\site or /home/you/notes.']),
   section('calendar', 'Your Google app', [
-    'Open console.cloud.google.com and create a project.', 'Enable the Google Calendar API for it.',
-    'Set up the consent screen as External and add yourself as a test user, or publish it. An app left in "Testing" signs you out about every 7 days.',
-    'Create an OAuth client of type "Desktop app" and paste its client ID and client secret here.', 'Redirect address', 'Client ID', 'Client secret',
+    ...APP_STEPS, 'Redirect address', 'Client ID', 'Client secret',
   ]),
   section('calendar', 'Google Calendar', ['Connect Google Calendar', 'Reconnect', 'Disconnect', 'OpenZenBot asks to see your calendars and their events. It does not ask to change anything yet.', 'Google sign-in has expired.']),
   section('calendar', 'Calendars to bring in', ['Choose which of your Google calendars show their events here.', 'view only']),
