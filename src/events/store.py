@@ -16,12 +16,14 @@ from datetime import date, datetime
 from pathlib import Path
 
 LOCAL = "local"
+# meta keys: edits lost to a delete on Google and not yet acknowledged, the last good run, the last run's error kind
+LOST_EDITS, LAST_SYNC, LAST_ERROR = "lost_edits", "last_sync", "last_error"
 MAX_TITLE, MAX_LOCATION, MAX_DESCRIPTION = 300, 500, 8000
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS calendars(
   id TEXT PRIMARY KEY, name TEXT, source TEXT, color TEXT, tz TEXT, writable INTEGER,
-  selected INTEGER DEFAULT 0, visible INTEGER DEFAULT 1, sync_token TEXT);
+  selected INTEGER DEFAULT 0, visible INTEGER DEFAULT 1, sync_token TEXT, full_read_at TEXT);
 CREATE TABLE IF NOT EXISTS events(
   id TEXT PRIMARY KEY, calendar_id TEXT, origin TEXT, title TEXT, location TEXT, description TEXT,
   all_day INTEGER, start TEXT, end TEXT, tz TEXT, google_calendar TEXT DEFAULT '',
@@ -37,6 +39,7 @@ _CAL_BOOLS = ("writable", "selected", "visible")
 _EVENT_BOOLS = ("all_day", "dirty", "deleted")
 _INSTANT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 _DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+_PUSHED_ID = re.compile(r"([0-9a-f]{32})g([0-9]{1,9})")
 
 
 class EventError(ValueError):
@@ -113,6 +116,12 @@ def google_event_id(event: dict) -> str:
     return event["id"].replace("-", "") + "g" + str(event["generation"])
 
 
+def made_here_id(google_id: str) -> tuple[str, int] | None:
+    """The event id and generation behind an id of ``google_event_id``'s shape, or None for any other id."""
+    m = _PUSHED_ID.fullmatch(google_id)
+    return (str(uuid.UUID(m.group(1))), int(m.group(2))) if m else None
+
+
 def _row(row: sqlite3.Row | None, bools: tuple[str, ...]) -> dict | None:
     if row is None:
         return None
@@ -135,6 +144,9 @@ class CalendarStore:
             columns = {r["name"] for r in self._db.execute("PRAGMA table_info(events)")}
             if "rev" not in columns:  # a calendar.db from before ``rev``
                 self._db.execute("ALTER TABLE events ADD COLUMN rev INTEGER DEFAULT 0")
+            columns = {r["name"] for r in self._db.execute("PRAGMA table_info(calendars)")}
+            if "full_read_at" not in columns:  # a calendar.db from before ``full_read_at``
+                self._db.execute("ALTER TABLE calendars ADD COLUMN full_read_at TEXT")
             self._db.execute(
                 "INSERT OR IGNORE INTO calendars(id, name, source, color, tz, writable, selected, visible)"
                 " VALUES(?, 'OpenZenBot', 'local', '', '', 1, 0, 1)", (LOCAL,))
@@ -186,9 +198,23 @@ class CalendarStore:
                 self._db.execute("UPDATE calendars SET selected=? WHERE id=?", (int(selected), id))
             return self._calendar(id)
 
-    def set_sync_token(self, id: str, token: str | None) -> None:
+    def set_sync_token(self, id: str, token: str | None, *, full_read_at: str | None = None) -> None:
+        """``full_read_at``: when this token came from a read of the whole window, the instant of that read."""
         with self._lock, self._db:
             self._db.execute("UPDATE calendars SET sync_token=? WHERE id=?", (token, id))
+            if full_read_at is not None:
+                self._db.execute("UPDATE calendars SET full_read_at=? WHERE id=?", (full_read_at, id))
+
+    def keep_pulled(self, calendar_id: str, google_ids: set[str]) -> int:
+        """After a read of the whole window: drop the calendar's pulled events Google no longer lists there,
+        but never one with a pending local edit (``dirty``) or a local delete (a tombstone). Answers how many."""
+        with self._lock, self._db:
+            rows = self._db.execute(
+                "SELECT id, google_id FROM events WHERE origin='google' AND calendar_id=? AND dirty=0"
+                " AND deleted=0", (calendar_id,)).fetchall()
+            gone = [r["id"] for r in rows if r["google_id"] not in google_ids]
+            self._db.executemany("DELETE FROM events WHERE id=?", [(id,) for id in gone])
+        return len(gone)
 
     def clear_pulled(self, calendar_id: str) -> None:
         with self._lock, self._db:
@@ -299,6 +325,18 @@ class CalendarStore:
             self._db.execute("DELETE FROM events WHERE google_calendar=? AND google_id=?",
                              (calendar_id, google_id))
 
+    def link(self, id: str, google_calendar: str, google_id: str) -> None:
+        """Tie a made-here event to the copy an earlier insert left on Google; it stays pending."""
+        with self._lock, self._db:
+            self._db.execute("UPDATE events SET google_calendar=?, google_id=? WHERE id=? AND origin='local'",
+                             (google_calendar, google_id, id))
+
+    def set_target(self, id: str, google_calendar: str) -> None:
+        """Before an insert: remember the calendar it is sent to, so a retry goes to the same one."""
+        with self._lock, self._db:
+            self._db.execute("UPDATE events SET google_calendar=? WHERE id=? AND google_id=''",
+                             (google_calendar, id))
+
     def pending(self) -> list[dict]:
         with self._lock:
             rows = self._db.execute("SELECT * FROM events WHERE dirty=1 ORDER BY rowid").fetchall()
@@ -308,8 +346,13 @@ class CalendarStore:
                     link: str, rev: int | None = None) -> bool:
         """Save the Google link. ``rev`` is the revision that was sent: the row is marked clean only when it is
         still that revision (or ``rev`` is None), so an edit made while the request ran stays pending. False
-        when there is no such row (the event was deleted here while it was being sent)."""
+        when there is no such row (the event was deleted here while it was being sent). A pulled row holding
+        the same Google event (the copy came in by pull before its insert was known to have landed) is dropped:
+        one event on Google is one event here."""
         with self._lock, self._db:
+            if self.event(id) is not None:
+                self._db.execute("DELETE FROM events WHERE origin='google' AND google_calendar=? AND google_id=?"
+                                 " AND id != ?", (google_calendar, google_id, id))
             cur = self._db.execute(
                 "UPDATE events SET google_calendar=?, google_id=?, etag=?, link=? WHERE id=?",
                 (google_calendar, google_id, etag, link, id))

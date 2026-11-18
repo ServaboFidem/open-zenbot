@@ -5,16 +5,23 @@ Nothing here converts a wall-clock time: Google sends instants with an offset, a
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from src.events.store import MAX_DESCRIPTION, MAX_LOCATION, MAX_TITLE
+NO_TITLE = "(No title)"  # shown here for a Google event with no summary; never sent to Google
+_DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
-NO_TITLE = "(No title)"
+
+def _text(value: Any) -> str:
+    return value if isinstance(value, str) else ""
 
 
-def _text(value: Any, limit: int) -> str:
-    return value[:limit] if isinstance(value, str) else ""
+def _day(value: Any) -> str:
+    """``value`` when it is a real date as YYYY-MM-DD; ``ValueError`` otherwise."""
+    if not isinstance(value, str) or not _DAY.fullmatch(value):
+        raise ValueError("not a date")
+    return date.fromisoformat(value).isoformat()
 
 
 def _instant(value: str) -> datetime:
@@ -26,6 +33,9 @@ def _z(moment: datetime) -> str:
 
 
 def to_local(item: dict) -> dict | None:
+    """The local fields of a Google event, or None for one this calendar cannot show (cancelled, no start, a
+    malformed date or time). Text is kept whole, however long: an edit here is checked by the store, so
+    nothing is ever sent back to Google shortened."""
     start = item.get("start")
     if item.get("status") == "cancelled" or not isinstance(start, dict):
         return None
@@ -33,9 +43,10 @@ def to_local(item: dict) -> dict | None:
     unspecified = bool(item.get("endTimeUnspecified"))
     try:
         if start.get("date"):
-            first = str(start["date"])
-            last = str(end.get("date") or "") if not unspecified else ""
-            if not last:
+            first = _day(start["date"])
+            if end.get("date") and not unspecified:
+                last = _day(end["date"])
+            else:
                 last = (date.fromisoformat(first) + timedelta(days=1)).isoformat()
             all_day, tz = True, ""
         else:
@@ -47,20 +58,27 @@ def to_local(item: dict) -> dict | None:
     except (KeyError, ValueError):
         return None
     return {
-        "title": _text(item.get("summary"), MAX_TITLE) or NO_TITLE,
-        "location": _text(item.get("location"), MAX_LOCATION),
-        "description": _text(item.get("description"), MAX_DESCRIPTION),
+        "title": _text(item.get("summary")) or NO_TITLE,
+        "location": _text(item.get("location")),
+        "description": _text(item.get("description")),
         "all_day": all_day, "start": first, "end": last, "tz": tz,
     }
 
 
-def to_google(event: dict) -> dict:
+def to_google(event: dict, *, patch: bool = False) -> dict:
+    """The body sent to Google. ``patch``: for a PATCH, which merges ``start`` and ``end`` into what Google
+    holds, so the other form (date against dateTime) is nulled; an insert carries no nulls. A pulled event
+    still showing the no-title placeholder goes back with an empty summary."""
     def when(value: str) -> dict:
         if event["all_day"]:
-            return {"date": value}
-        return {"dateTime": value, **({"timeZone": event["tz"]} if event.get("tz") else {})}
+            return {"date": value, **({"dateTime": None, "timeZone": None} if patch else {})}
+        return {"dateTime": value, **({"timeZone": event["tz"]} if event.get("tz") else {}),
+                **({"date": None} if patch else {})}
 
-    return {"summary": event["title"], "location": event.get("location", ""),
+    title = event["title"]
+    if event.get("origin") == "google" and title == NO_TITLE:
+        title = ""
+    return {"summary": title, "location": event.get("location", ""),
             "description": event.get("description", ""), "start": when(event["start"]), "end": when(event["end"])}
 
 

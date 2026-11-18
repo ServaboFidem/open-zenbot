@@ -319,3 +319,105 @@ async def test_unselecting_removes_that_calendars_pulled_events(store):
     store.clear_pulled("work")
     assert store.by_google("work", "a") is None and store.event(mine["id"]) is not None
     assert {c["id"]: c for c in store.calendars()}["work"]["sync_token"] is None
+
+
+# the weekly full read -----------------------------------------------------------
+
+
+def at(day):
+    from datetime import datetime, timezone
+
+    return datetime.strptime(day, "%Y-%m-%d").replace(hour=12, tzinfo=timezone.utc)
+
+
+def full_reads(fake, cal="work"):
+    return [r for r in event_requests(fake, cal) if "syncToken" not in r.url.params]
+
+
+async def test_a_calendar_is_read_in_full_again_after_seven_days(sync, store, fake):
+    fake.put("work", timed("a", "Soon"))
+    await sync.pull()
+    await sync.pull()
+    assert len(full_reads(fake)) == 1  # by sync token since
+    sync._now = lambda: at("2026-11-23")  # six days later: still by token
+    await sync.pull()
+    assert len(full_reads(fake)) == 1
+    # an occurrence that has come inside the window since, which a sync token never reports as changed
+    fake.events["work"]["far"] = timed("far", "Far ahead", start="2027-11-23T09:00:00Z", end="2027-11-23T10:00:00Z")
+    sync._now = lambda: at("2026-11-24")  # seven days after the full read
+    out = await sync.pull()
+    assert len(full_reads(fake)) == 2
+    assert full_reads(fake)[-1].url.params["timeMax"] == "2027-11-25T12:00:00Z"
+    assert titles(store) == ["Far ahead", "Soon"] and out["calendars"] == 1
+    await sync.pull()
+    assert len(full_reads(fake)) == 2  # and by token again
+
+
+async def test_the_weekly_full_read_keeps_rows_until_it_has_answered(sync, store, fake):
+    fake.put("work", timed("a", "Pulled"))
+    await sync.pull()
+    sync._now = lambda: at("2026-11-30")
+    fake.fail = {"/calendars/work/events": 500}
+    with pytest.raises(GoogleError):
+        await sync.pull()
+    assert titles(store) == ["Pulled"]
+
+
+async def test_the_weekly_full_read_never_touches_a_pending_change(sync, store, fake):
+    for gid in ("edited", "deleted", "clean", "left"):
+        fake.put("work", timed(gid, f"G {gid}"))
+    await sync.pull()
+    store.update(store.by_google("work", "edited")["id"], local(title="Edited here"))
+    store.mark_pushed(store.by_google("work", "deleted")["id"], google_calendar="work", google_id="deleted",
+                      etag="", link="")
+    store.delete(store.by_google("work", "deleted")["id"])
+    mine = pushed(store, gid="m1")
+    for gid in ("edited", "deleted", "clean"):
+        fake.put("work", timed(gid, f"Changed on Google {gid}"))
+    del fake.events["work"]["left"]  # no longer in what Google lists (purged, or out of the window)
+    sync._now = lambda: at("2026-11-30")
+    await sync.pull()
+    assert len(full_reads(fake)) == 2
+    assert titles(store) == ["Changed on Google clean", "Edited here", "Made here"]
+    assert store.by_google("work", "edited")["dirty"] is True
+    assert store.by_google("work", "deleted")["deleted"] is True
+    assert store.by_google("work", "left") is None and store.event(mine["id"]) is not None
+
+
+def test_an_old_database_without_full_read_at_still_opens(tmp_path):
+    import sqlite3
+
+    from src.events.store import CalendarStore
+
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.executescript("""
+CREATE TABLE calendars(
+  id TEXT PRIMARY KEY, name TEXT, source TEXT, color TEXT, tz TEXT, writable INTEGER,
+  selected INTEGER DEFAULT 0, visible INTEGER DEFAULT 1, sync_token TEXT);
+INSERT INTO calendars(id, name, source, color, tz, writable, selected, sync_token)
+  VALUES('work', 'Work', 'google', '', '', 1, 1, 'sync-9');
+""")
+    db.commit()
+    db.close()
+    for _ in range(2):  # opening it twice does not add the column twice
+        s = CalendarStore(path)
+        work = {c["id"]: c for c in s.calendars()}["work"]
+        assert work["sync_token"] == "sync-9" and not work["full_read_at"]
+        s.close()
+
+
+async def test_a_token_with_no_recorded_full_read_is_read_in_full_once(sync, store, fake):
+    fake.put("work", timed("a", "Pulled"))
+    store.set_sync_token("work", "sync-0")  # as left by a calendar.db from before full_read_at
+    fake._issued.add("sync-0")
+    await sync.pull()
+    assert len(full_reads(fake)) == 1 and titles(store) == ["Pulled"]
+
+
+async def test_a_malformed_all_day_event_is_skipped(sync, store, fake):
+    fake.put("work", all_day("bad", "2026-11-20", "not-a-date"))
+    fake.put("work", all_day("worse", "2026-1-2", "2026-11-21"))
+    fake.put("work", all_day("ok", "2026-11-20", "2026-11-21", title="Fine"))
+    await sync.pull()
+    assert titles(store) == ["Fine"]

@@ -29,8 +29,10 @@ class FakeGoogle:
       items. List pages by ``page_size`` (default 250) with ``pageToken``, supports ``syncToken`` (only items
       changed since that token; 410 for a token it never issued) and answers ``nextSyncToken`` on the last page.
       ``timeMin``/``timeMax`` are recorded but not applied. Insert answers 409 when the id exists (a cancelled
-      one too); patch 404 when absent or cancelled (``patch_cancelled = True`` instead patches a cancelled item
-      and answers it, still cancelled); delete marks ``status: "cancelled"`` (410 when already cancelled; 404
+      one too) and 400 for a ``start`` or ``end`` holding a null; patch 404 when absent or cancelled
+      (``patch_cancelled = True`` instead patches a cancelled item and answers it, still cancelled). A patch
+      merges ``start`` and ``end`` key by key as Google does (a null removes the key) and answers 400 when the
+      result holds both ``date`` and ``dateTime``; delete marks ``status: "cancelled"`` (410 when already cancelled; 404
       when absent). Every write gives the item a new ``etag``. Seed items with ``put`` so sync sees them.
     - ``requests``: every request, in order. ``fail``: path fragment -> status, answered before anything else
       (``fail_reason`` is the error reason inside the body, e.g. ``rateLimitExceeded``).
@@ -114,6 +116,8 @@ class FakeGoogle:
                 return self._list(request, cal)
             if method == "POST":
                 body = json.loads(request.content)
+                if any(v is None for k in ("start", "end") for v in (body.get(k) or {}).values()):
+                    return self._error(400)
                 if body.get("id") in items:
                     return self._error(409)
                 return httpx.Response(200, json=self.put(cal, {"status": "confirmed", **body}))
@@ -125,7 +129,13 @@ class FakeGoogle:
         if method == "PATCH":
             if items[event_id].get("status") == "cancelled" and not self.patch_cancelled:
                 return self._error(404)
-            return httpx.Response(200, json=self.put(cal, {**items[event_id], **json.loads(request.content)}))
+            merged = {**items[event_id], **json.loads(request.content)}
+            for key in ("start", "end"):
+                both = {**(items[event_id].get(key) or {}), **(merged.get(key) or {})}
+                merged[key] = {k: v for k, v in both.items() if v is not None}
+                if "date" in merged[key] and "dateTime" in merged[key]:
+                    return self._error(400)
+            return httpx.Response(200, json=self.put(cal, merged))
         if method == "DELETE":
             if items[event_id].get("status") == "cancelled":
                 return self._error(410)

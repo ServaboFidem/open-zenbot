@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from src.events.convert import to_google
 from src.events.google import GoogleError
 from src.events.store import google_event_id
 from tests.events.conftest import SYNC_NOW
@@ -470,7 +471,8 @@ async def test_a_failed_remake_inserts_next_time_without_patching_again(sync, st
     fake.fail["/calendars/dest/events"] = 500
     assert await sync.push() == {**ZERO, "failed": 1}
     row = store.event(e["id"])
-    assert row["google_id"] == "" and row["google_calendar"] == "" and row["dirty"] is True
+    # no link, and the calendar the failed insert was sent to is kept for the retry
+    assert row["google_id"] == "" and row["google_calendar"] == "dest" and row["dirty"] is True
     assert row["generation"] == 1 and row["push_error"] == "provider"
     fake.fail.clear()
     fake.requests.clear()
@@ -525,10 +527,15 @@ async def test_run_sets_last_sync_only_on_success(sync, store, fake, push_on):
     assert "Dentist" not in ledger_text(sync)
 
 
-async def test_run_resets_lost_edits_to_this_runs_count(sync, store, fake, push_on):
+async def test_a_run_never_resets_lost_edits(sync, store, fake, push_on):
+    """The counter only grows: the page acknowledges what it has shown (POST /calendar/lost-edits/ack)."""
     store.set_meta("lost_edits", "4")
     await sync.run()
-    assert store.meta("lost_edits") == "0"
+    assert store.meta("lost_edits") == "4"
+    store.apply_remote("work", "w1", ev(title="Pulled"), etag='"1"', link="", series_id="")
+    store.update(store.by_google("work", "w1")["id"], ev(title="Edited"))
+    out = await sync.run()  # work holds no w1: the patch finds it gone
+    assert store.meta("lost_edits") == "5" and out["pull"]["lost_edits"] == 0
 
 
 async def test_run_does_nothing_unless_connected(sync, store, fake, conn, push_on):
@@ -552,3 +559,155 @@ async def test_invalid_grant_during_run_marks_needs_reconnect_and_keeps_events(s
     assert store.event(e["id"])["dirty"] is True and store.by_google("work", "w1") is not None
     assert store.meta("last_error") == "auth" and store.meta("last_sync") == ""
     assert '"error": "auth"' in ledger_text(sync)
+
+
+# the final review's findings ----------------------------------------------------
+
+
+async def test_an_insert_whose_answer_was_lost_is_linked_by_the_next_pull_not_added_twice(
+        push_on, sync, store, fake):
+    row = store.add(ev())
+    gid = google_event_id(row)
+    # the insert reached Google, its answer never came back: Google holds the copy, the row has no link
+    fake.put("dest", {"id": gid, "status": "confirmed", **to_google(row)})
+    await sync.run()
+    rows = store.events("2026-11-01", "2026-12-01")
+    assert [(r["id"], r["origin"], r["calendar_id"], r["google_calendar"], r["google_id"], r["dirty"])
+            for r in rows] == [(row["id"], "local", "local", "dest", gid, False)]
+    assert [r.method for r in writes(fake)] == ["PATCH"] and len(fake.events["dest"]) == 1
+
+
+async def test_a_pulled_id_of_our_shape_links_only_the_same_generation_without_a_link(push_on, sync, store, fake):
+    row = store.add(ev())
+    store.bump_generation(row["id"])
+    old = google_event_id({**row, "generation": 0})
+    fake.put("dest", {"id": old, "status": "confirmed", **to_google(row)})
+    await sync.pull()
+    assert store.event(row["id"])["google_id"] == ""  # another generation: not this row's copy
+    assert store.by_google("dest", old)["origin"] == "google"
+    fake.put("dest", {"id": "f" * 32 + "g0", "status": "confirmed", **to_google(row)})  # nobody's id here
+    await sync.pull()
+    assert store.by_google("dest", "f" * 32 + "g0")["origin"] == "google"
+
+
+def test_mark_pushed_drops_a_pulled_row_holding_the_same_google_event(store):
+    store.upsert_google([{"id": "dest", "name": "Dest", "writable": True}])
+    e = store.add(ev())
+    store.apply_remote("dest", "gid-1", ev(title="Pulled twin"), etag='"1"', link="", series_id="")
+    store.apply_remote("dest", "gid-2", ev(title="Another"), etag='"1"', link="", series_id="")
+    assert store.mark_pushed(e["id"], google_calendar="dest", google_id="gid-1", etag="", link="") is True
+    rows = store.events("2026-11-01", "2026-12-01")
+    assert sorted(r["title"] for r in rows) == ["Another", "Dentist"]
+    assert store.by_google("dest", "gid-1")["id"] == e["id"]
+
+
+async def test_push_stops_when_it_is_switched_off_mid_run(push_on, sync, store, fake):
+    for i in range(3):
+        store.add(ev(title=f"e{i}"))
+    seen = []
+
+    def hook(request):
+        if request.method == "POST" and "/events" in str(request.url):
+            seen.append(1)
+            push_on.settings.push = False  # the user switches push off while the first insert is in flight
+
+    fake.on_request = hook
+    out = await sync.run()
+    assert len(seen) == 1 and out["push"] == {**ZERO, "added": 1}
+    assert len(store.pending()) == 2
+
+
+async def test_all_day_to_timed_and_back_patches_without_leaving_both_forms(sync, store, fake, push_on):
+    e = store.add(ev())
+    gid = google_event_id(e)
+    await sync.push()
+    assert "date" not in body(writes(fake)[-1])["start"]  # an insert carries no nulls
+    assert fake.events["dest"][gid]["start"] == {"dateTime": "2026-11-20T09:00:00Z", "timeZone": "Europe/London"}
+    store.update(e["id"], ev(all_day=True, start="2026-11-20", end="2026-11-21", tz=""))
+    assert await sync.push() == {**ZERO, "updated": 1}
+    assert fake.events["dest"][gid]["start"] == {"date": "2026-11-20"}
+    assert fake.events["dest"][gid]["end"] == {"date": "2026-11-21"}
+    store.update(e["id"], ev())
+    assert await sync.push() == {**ZERO, "updated": 1}
+    assert fake.events["dest"][gid]["end"] == {"dateTime": "2026-11-20T10:00:00Z", "timeZone": "Europe/London"}
+
+
+async def test_an_adopted_copy_of_the_other_form_is_patched_cleanly(sync, store, fake, push_on):
+    e = store.add(ev())
+    gid = google_event_id(e)
+    fake.put("dest", {"id": gid, "status": "confirmed", "summary": "old", "start": {"date": "2026-11-20"},
+                      "end": {"date": "2026-11-21"}})
+    assert (await sync.push())["added"] == 1
+    assert fake.events["dest"][gid]["start"] == {"dateTime": "2026-11-20T09:00:00Z", "timeZone": "Europe/London"}
+
+
+async def test_a_retried_insert_goes_to_the_calendar_it_was_first_sent_to(sync, store, fake, push_on):
+    fake.calendars.append({"id": "other", "summary": "Other", "accessRole": "owner"})
+    await sync.refresh_calendars()
+    e = store.add(ev())
+    gid = google_event_id(e)
+    fake.fail = {"/calendars/dest/events": 500}
+    assert await sync.push() == {**ZERO, "failed": 1}
+    assert store.event(e["id"])["google_calendar"] == "dest" and store.event(e["id"])["google_id"] == ""
+    fake.fail = {}
+    fake.put("dest", {"id": gid, "status": "confirmed", **to_google(e)})  # that insert had landed after all
+    push_on.settings.destination = "other"
+    assert await sync.push() == {**ZERO, "added": 1}
+    assert store.event(e["id"])["google_calendar"] == "dest" and not fake.events.get("other")
+    later = store.add(ev(title="Later"))
+    await sync.push()
+    assert store.event(later["id"])["google_calendar"] == "other"  # a new event takes the new destination
+
+
+async def test_a_saved_target_that_is_no_longer_writable_gives_way_to_the_destination(sync, store, fake, push_on):
+    fake.calendars.append({"id": "other", "summary": "Other", "accessRole": "owner"})
+    await sync.refresh_calendars()
+    e = store.add(ev())
+    fake.fail = {"/calendars/dest/events": 500}
+    await sync.push()
+    fake.fail = {}
+    fake.calendars[:] = [c for c in fake.calendars if c["id"] != "dest"]
+    await sync.refresh_calendars()
+    push_on.settings.destination = "other"
+    assert await sync.push() == {**ZERO, "added": 1}
+    assert store.event(e["id"])["google_calendar"] == "other"
+
+
+async def test_a_pulled_event_with_no_title_goes_back_with_an_empty_summary(sync, store, fake, push_on):
+    fake.put("work", {"id": "w1", "status": "confirmed", "start": {"date": "2026-11-20"},
+                      "end": {"date": "2026-11-21"}})
+    await sync.pull()
+    row = store.by_google("work", "w1")
+    assert row["title"] == "(No title)"
+    store.update(row["id"], {**row, "location": "Here"})
+    assert await sync.push() == {**ZERO, "updated": 1}
+    assert fake.events["work"]["w1"]["summary"] == "" and fake.events["work"]["w1"]["location"] == "Here"
+    mine = store.add(ev(title="(No title)"))
+    await sync.push()
+    assert fake.events["dest"][google_event_id(mine)]["summary"] == "(No title)"  # the user's own words
+
+
+async def test_a_long_pulled_title_is_kept_whole_and_an_edit_of_it_is_refused(sync, store, fake, push_on):
+    from src.events.store import EventError
+
+    fake.put("work", timed("w1", "t" * 1000, location="l" * 900, description="d" * 9000))
+    await sync.pull()
+    row = store.by_google("work", "w1")
+    assert (len(row["title"]), len(row["location"]), len(row["description"])) == (1000, 900, 9000)
+    with pytest.raises(EventError, match="The title is longer than 300 characters."):
+        store.update(row["id"], {**row, "location": ""})
+    assert store.by_google("work", "w1")["dirty"] is False and writes(fake) == []
+    store.update(row["id"], {**row, "title": "Short", "location": "", "description": ""})
+    await sync.push()
+    assert fake.events["work"]["w1"]["summary"] == "Short"
+
+
+async def test_a_calendar_list_with_no_primary_is_a_provider_error_and_drops_nothing(sync, store, fake):
+    store.apply_remote("work", "w1", ev(title="Pulled"), etag='"1"', link="", series_id="")
+    for listed in ([], [{"id": "home", "summary": "Home", "accessRole": "reader"}]):
+        fake.calendars = listed
+        with pytest.raises(GoogleError) as caught:
+            await sync.run()
+        assert caught.value.kind == "provider"
+        assert {c["id"] for c in store.calendars()} == {"local", "work", "home"}
+        assert store.by_google("work", "w1") is not None and store.meta("last_error") == "provider"

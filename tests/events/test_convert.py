@@ -22,10 +22,35 @@ def test_to_local_all_day_and_defaults():
     assert to_local({"summary": "S", "start": {"dateTime": "2026-11-17T09:00:00Z"}})["end"] == "2026-11-17T10:00:00Z"
 
 
-def test_to_local_cuts_long_text():
+def test_to_local_keeps_long_text_whole():
     t = to_local({"summary": "t" * 400, "location": "l" * 600, "description": "d" * 9000,
                   "start": {"date": "2026-11-17"}, "end": {"date": "2026-11-18"}})
-    assert (len(t["title"]), len(t["location"]), len(t["description"])) == (MAX_TITLE, MAX_LOCATION, MAX_DESCRIPTION)
+    assert (len(t["title"]), len(t["location"]), len(t["description"])) == (400, 600, 9000)
+    assert MAX_TITLE < 400 and MAX_LOCATION < 600 and MAX_DESCRIPTION < 9000
+
+
+def test_to_local_skips_a_malformed_all_day_date():
+    for start, end in (("2026-11-17", "tomorrow"), ("17/11/2026", "2026-11-18"), ("2026-11-17", "20261118"),
+                       ("2026-02-30", "2026-03-01")):
+        assert to_local({"summary": "S", "start": {"date": start}, "end": {"date": end}}) is None
+
+
+def test_to_google_patch_nulls_the_other_form():
+    ev = {"title": "S", "location": "", "description": "", "all_day": False,
+          "start": "2026-11-17T14:00:00Z", "end": "2026-11-17T15:00:00Z", "tz": "America/New_York"}
+    timed = to_google(ev, patch=True)
+    assert timed["start"] == {"dateTime": "2026-11-17T14:00:00Z", "timeZone": "America/New_York", "date": None}
+    assert to_google({**ev, "tz": ""}, patch=True)["end"] == {"dateTime": "2026-11-17T15:00:00Z", "date": None}
+    day = to_google({**ev, "all_day": True, "start": "2026-11-17", "end": "2026-11-18"}, patch=True)
+    assert day["start"] == {"date": "2026-11-17", "dateTime": None, "timeZone": None}
+
+
+def test_to_google_sends_a_pulled_placeholder_title_back_empty():
+    ev = {"title": "(No title)", "location": "", "description": "", "all_day": True, "start": "2026-11-17",
+          "end": "2026-11-18", "tz": ""}
+    assert to_google({**ev, "origin": "google"})["summary"] == ""
+    assert to_google({**ev, "origin": "local"})["summary"] == "(No title)"
+    assert to_google({**ev, "origin": "google", "title": "Lunch"})["summary"] == "Lunch"
 
 
 def test_to_google_timed_and_all_day():
