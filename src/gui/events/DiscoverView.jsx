@@ -11,7 +11,7 @@ const PAGE = 20;   // the harness's default page of digests
 const dayText = iso => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); };
 const swap = (list, card) => list.map(d => ({ ...d, cards: d.cards.map(c => (c.id === card.id ? card : c)) }));
 
-// The Discover tab: the newest digest of events, "Find events now", and older digests.
+// The Your Recommendations tab: the newest digest of events, "Find events now", and older digests.
 // props: api (createApi), online, notify(text), openSettings()
 export default function DiscoverView({ api, online, notify, openSettings }) {
   const discover = api.discover;
@@ -169,7 +169,7 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
 
   return <section className="events-discover">
     <div className="discover-head">
-      <div><h2>Discover</h2>{current && !history && <p className="events-muted">Picked {dayText(current.created_at)}</p>}</div>
+      <div><h2>Your Recommendations</h2>{current && !history && <p className="events-muted">Picked {dayText(current.created_at)}</p>}</div>
       {canRun(status, { online, looking: !!looking }) && view.kind !== 'empty' && <Button onClick={run}>Find events now</Button>}
     </div>
     {notice && <p className="events-error" role="status">{notice}</p>}

@@ -1,6 +1,7 @@
 // Pure decisions for the All Events grid: filtering, sorting, how a row reads, when Refresh is offered, and
 // what the tab shows. No DOM and no fetch here, so tests/gui can check them. `now` is milliseconds since the
 // epoch (Date.now()), as in lookStep.
+import { dayName } from './discover.js';
 
 export const EMPTY_FILTERS = { text: '', category: '', source: '', from: '', to: '' };
 
@@ -80,14 +81,15 @@ export const showSourceFilter = events => sourcesPresent(events).length === 2;
 
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const CLOCK = /^([01]\d|2[0-3]):([0-5]\d)$/;
-// "2026-11-21" as "Sat, Nov 21": the listing's own day, formatted at UTC so no zone moves it.
+// "2026-11-21" as "Sat 21 Nov" (dayName, as the cards and the panel write it): the listing's own day, formatted at
+// UTC so no zone moves it. Not a real calendar day gives ''.
 function dayText(key) {
   const m = DAY.exec(str(key));
   if (!m) return '';
   const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
   const at = new Date(Date.UTC(y, mo - 1, d));
   if (at.getUTCFullYear() !== y || at.getUTCMonth() !== mo - 1 || at.getUTCDate() !== d) return '';
-  return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(at);
+  return dayName(key);
 }
 function clockText(t) {
   const m = CLOCK.exec(str(t));
@@ -96,8 +98,8 @@ function clockText(t) {
   return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
 }
 
-// A row's cells as strings. Times are the listing's own wall clock, so `zone` changes nothing (kept so the
-// page can pass one). The venue gets the city after it unless the city is empty or already in the venue.
+// A row's cells as strings. `zone` is unused: dates and times are the listing's own wall clock, which no zone
+// moves; the parameter stays so a caller passing the computer's zone keeps working. The venue gets the city after it unless the city is empty or already in the venue.
 export function cells(event, zone) {
   const e = event || {};
   const venue = str(e.venue), city = str(e.city);

@@ -5,8 +5,8 @@ import { canAdd, cardLink, whenLabel, whereLabel } from './discover.js';
 
 export const NO_DATE = 'This listing has no usable date.';
 
-// The picture, or a plain tile when the card has none or the file would not load.
-function Picture({ card, src }) {
+// The picture, or a plain tile when there is none or the file would not load (also the All Events panel's).
+export function Picture({ src }) {
   const [failed, setFailed] = useState(false);
   if (src && !failed) return <img className="discover-picture" src={src} alt="" loading="lazy" onError={() => setFailed(true)}/>;
   return <div className="discover-picture-fallback" role="img" aria-label="No picture for this event"><CalendarLtr24Regular className="od-icon" aria-hidden="true"/></div>;
@@ -20,7 +20,7 @@ export default function EventCard({ card, src, adding, onOpen, onAdd }) {
   const addable = canAdd(card);
   const where = whereLabel(card);
   return <article className="discover-card" aria-labelledby={`event-${card.id}`}>
-    <Picture card={card} src={src}/>
+    <Picture src={src}/>
     <h3 className="discover-name" id={`event-${card.id}`}>{card.name}</h3>
     <p className="discover-when">{whenLabel(card)}</p>
     {where && <p className="discover-where">{where}</p>}

@@ -70,7 +70,7 @@ export function DiscoverySettings({ api, online, notify }) {
 
   return <form className="resource-row editor-form" onSubmit={save}>
     {heading}
-    <p className="field-hint">Finds events near you on Eventbrite, once a week, and offers the best ones on the Discover tab. Nothing is added to your calendar until you say so.</p>
+    <p className="field-hint">Finds events near you on Eventbrite, once a week, and offers the best ones under Your Recommendations. Nothing is added to your calendar until you say so.</p>
     <Switch checked={draft.enabled} disabled={busy} label="Look for events near me" onChange={(e, d) => set({ enabled: d.checked })}/>
     {next && <p className="field-hint">{next} Change the day and time on the Routines page.</p>}
     <div className="cal-fields">

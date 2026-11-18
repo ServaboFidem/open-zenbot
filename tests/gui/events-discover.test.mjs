@@ -309,3 +309,18 @@ test('refreshNotice: a FindLocal error shows when Eventbrite is clean; Eventbrit
   assert.equal(refreshNotice(both('')), '');
   assert.equal(refreshNotice(st({ findlocal: null })), '');
 });
+
+import { readFileSync as readSrc, readdirSync as listDir } from 'node:fs';
+test('the Events page has three tabs: My Calendar, Your Recommendations, All Events', () => {
+  const src = readSrc(new URL('../../src/gui/events/EventsArea.jsx', import.meta.url), 'utf8');
+  for (const label of ['>My Calendar<', '>Your Recommendations<', '>All Events<']) assert.ok(src.includes(label), label);
+  assert.ok(!src.includes('>Discover<'));
+});
+test('no page of the GUI tells the user about a "Discover tab"', () => {
+  const walk = dir => listDir(dir, { withFileTypes: true }).flatMap(d => (d.isDirectory() ? walk(new URL(`${d.name}/`, dir)) : /\.(jsx?|mjs|cjs|html)$/.test(d.name) ? [new URL(d.name, dir)] : []));
+  for (const f of walk(new URL('../../src/gui/', import.meta.url))) assert.ok(!/Discover tab/.test(readSrc(f, 'utf8')), f.pathname);
+});
+test('the Event discovery hint names Your Recommendations, in Settings and its search copy alike', () => {
+  const hint = 'Finds events near you on Eventbrite, once a week, and offers the best ones under Your Recommendations. Nothing is added to your calendar until you say so.';
+  for (const f of ['DiscoverySettings.jsx', 'settings-index.js']) assert.ok(readSrc(new URL(`../../src/gui/${f}`, import.meta.url), 'utf8').includes(hint), f);
+});

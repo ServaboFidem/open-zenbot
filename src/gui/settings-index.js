@@ -74,8 +74,8 @@ export const SECTIONS = [
   section('calendar', 'Calendars to bring in', ['Choose which of your Google calendars show their events here.', 'view only']),
   section('calendar', 'Send events to Google', ['Send events made here to Google', 'Destination calendar', 'Allow sending to Google']),
   section('calendar', 'Event discovery', [
-    'Finds events near you on Eventbrite, once a week, and offers the best ones on the Discover tab. Nothing is added to your calendar until you say so.',
-    'Look for events near me', 'City', 'State', 'Your city’s Eventbrite page', 'Kinds of events', 'Your interests', 'Eventbrite', 'Discover',
+    'Finds events near you on Eventbrite, once a week, and offers the best ones under Your Recommendations. Nothing is added to your calendar until you say so.',
+    'Look for events near me', 'City', 'State', 'Your city’s Eventbrite page', 'Kinds of events', 'Your interests', 'Eventbrite', 'Discover', 'Your Recommendations', 'All Events',
     'FindLocal', 'FindLocal key', 'FindLocal city',
   ]),
   section('tracing', 'Tracing', ['Where the harness sends errors and traces. Saved here, a setting wins over .env and is kept in vault-settings/tracing.json.']),

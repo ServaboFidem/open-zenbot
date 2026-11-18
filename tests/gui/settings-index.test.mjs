@@ -114,3 +114,9 @@ test('FindLocal is found under the calendar panel\'s Event discovery section', (
     assert.ok(searchSettings(q).some(m => m.panel === 'calendar' && m.section === 'Event discovery'), q);
   }
 });
+
+test('Event discovery is found by Discover, Your Recommendations and All Events', () => {
+  const s = SECTIONS.find(x => x.panel === 'calendar' && x.title === 'Event discovery');
+  for (const w of ['Discover', 'Your Recommendations', 'All Events']) assert.ok(s.words.includes(w), w);
+  for (const q of ['your recommendations', 'all events']) assert.ok(searchSettings(q).some(m => m.section === 'Event discovery'), q);
+});

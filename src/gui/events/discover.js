@@ -85,7 +85,8 @@ export function addTimes(card) {
 
 export const canAdd = card => addTimes(card) !== null;
 
-const dayName = key => dayTitle(key, { weekday: 'short', day: 'numeric', month: 'short' });
+// A day key as the cards, the event panel and the All Events grid write it: "Sat 21 Nov".
+export const dayName = key => dayTitle(key, { weekday: 'short', day: 'numeric', month: 'short' });
 
 function zoneName(card, zone) {
   try {
@@ -138,7 +139,7 @@ export function cardLink(card) {
   return none;
 }
 
-// What the Discover tab shows. opts: online (the app's harness check), loaded (the first status and
+// What the Your Recommendations tab (DiscoverView) shows. opts: online (the app's harness check), loaded (the first status and
 // digest have answered), looking (a run this page started), arrived (a digest came in while the run went). action: '' | 'retry' | 'settings' | 'run'.
 export function viewState(status, digest, { online = true, loaded = true, looking = false, arrived = false } = {}) {
   if (!online) return { kind: 'offline', text: OFFLINE, action: 'retry' };

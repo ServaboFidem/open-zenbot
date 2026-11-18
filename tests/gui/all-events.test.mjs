@@ -103,7 +103,7 @@ test('categoryOptions, sourcesPresent, showSourceFilter', () => {
 
 test('cells: date, time, name, venue, category, source as strings', () => {
   const c = cells(ev());
-  assert.deepEqual(c, { date: 'Sat, Nov 21', time: '7:00 PM', name: 'Jazz', venue: 'Lincoln Theatre, Dublin', category: 'Music', source: 'Eventbrite' });
+  assert.deepEqual(c, { date: 'Sat 21 Nov', time: '7:00 PM', name: 'Jazz', venue: 'Lincoln Theatre, Dublin', category: 'Music', source: 'Eventbrite' });
 });
 test('cells: all day, noon and midnight, city already in the venue', () => {
   assert.equal(cells(ev({ start_time: '' })).time, 'All day');
@@ -115,12 +115,12 @@ test('cells: all day, noon and midnight, city already in the venue', () => {
 });
 test('cells: a bare row (no venue, category, end, city) does not throw', () => {
   const c = cells({ id: 'x', name: 'Bare', start_date: '2026-11-21', start_time: '' });
-  assert.deepEqual(c, { date: 'Sat, Nov 21', time: 'All day', name: 'Bare', venue: '', category: '', source: '' });
+  assert.deepEqual(c, { date: 'Sat 21 Nov', time: 'All day', name: 'Bare', venue: '', category: '', source: '' });
   assert.deepEqual(cells(null), { date: '', time: '', name: '', venue: '', category: '', source: '' });
   assert.equal(cells(ev({ venue: '', city: 'Dublin' })).venue, 'Dublin');
 });
 test('cells: the date does not move with the zone argument', () => {
-  for (const z of ['Pacific/Kiritimati', 'Pacific/Pago_Pago', 'UTC']) assert.equal(cells(ev(), z).date, 'Sat, Nov 21');
+  for (const z of ['Pacific/Kiritimati', 'Pacific/Pago_Pago', 'UTC']) assert.equal(cells(ev(), z).date, 'Sat 21 Nov');
 });
 test('cells: a bad date or time reads as empty rather than throwing', () => {
   assert.equal(cells(ev({ start_date: 'soon' })).date, '');
@@ -224,4 +224,24 @@ test('credit: FindLocal only', () => {
   assert.equal(gridCredit([ev(), ev({ source: 'findlocal' })]), true);
   assert.equal(gridCredit([ev()]), false);
   assert.equal(gridCredit(null), false);
+});
+
+test('cells: the date reads as the cards and the panel write it (dayName)', () => {
+  assert.equal(cells(ev({ start_date: '2026-11-22' })).date, 'Sun 22 Nov');
+  assert.equal(cells(ev({ start_date: '2026-02-30' })).date, '');
+});
+
+import { readFileSync } from 'node:fs';
+const gui = f => readFileSync(new URL(`../../src/gui/events/${f}`, import.meta.url), 'utf8');
+test('the All Events tab and its panel draw listings as text and fetch nothing themselves', () => {
+  for (const f of ['AllEventsView.jsx', 'EventPanel.jsx']) {
+    const src = gui(f);
+    assert.ok(!src.includes('dangerouslySetInnerHTML'), f);
+    assert.ok(!src.includes('fetch('), f);
+  }
+});
+test('the panel opens its link in a new window without an opener, and only by cardLink', () => {
+  const src = gui('EventPanel.jsx');
+  assert.ok(src.includes('cardLink('));
+  assert.ok(src.includes('target="_blank" rel="noopener noreferrer"'));
 });

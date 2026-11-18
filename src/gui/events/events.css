@@ -99,3 +99,25 @@
 .events-dialog .events-confirm{align-self:center;font-size:var(--small);margin-right:auto}
 
 .events-dialog .fui-DialogActions .fui-Button{white-space:nowrap}
+
+/* All Events: the filter bar, the count line, and a table that scrolls inside the tab under a fixed header */
+.events-area .all-events-bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--s2) var(--s3)}
+.events-area .all-events-bar .fui-Field{min-width:0}
+.events-area .all-events-meta{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2) var(--s4);margin:var(--s3) 0;font-size:var(--small);color:var(--muted)}
+.events-area .all-events-scroll{max-height:min(70vh,720px);overflow:auto;border:1px solid var(--border);border-radius:var(--small-radius);scroll-padding-top:40px}
+.events-area .all-events-table{width:100%;border-collapse:separate;border-spacing:0;font-size:var(--small)}
+.events-area .all-events-table th{position:sticky;top:0;z-index:1;padding:0;background:var(--canvas);border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+.events-area .all-events-table th button{width:100%;padding:var(--s2) var(--s3);border:0;background:none;color:var(--ink);font:inherit;font-weight:600;text-align:left;cursor:pointer}
+.events-area .all-events-table th button:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.events-area .all-events-table td{padding:var(--s2) var(--s3);border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+.events-area .all-events-table .col-date,.events-area .all-events-table .col-time{white-space:nowrap}
+.events-area .all-events-table tbody tr{cursor:pointer}
+@media(hover:hover){.events-area .all-events-table tbody tr:hover{background:#eef4fa}}
+.events-area .all-events-table tbody tr:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.events-area .all-events-mark{color:var(--brand);font-weight:700}
+/* narrow: the name, when and where stay; category and source are in the panel */
+@container (width < 640px){.events-area .all-events-table .col-category,.events-area .all-events-table .col-source{display:none}}
+
+/* the All Events panel's picture (the dialog is in a portal) */
+.events-dialog .discover-picture,.events-dialog .discover-picture-fallback{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:var(--small-radius);border:1px solid var(--line);background:#f0f0f0;margin-bottom:var(--s3)}
+.events-dialog .discover-picture-fallback{display:flex;align-items:center;justify-content:center;color:#616161}
