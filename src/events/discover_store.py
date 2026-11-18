@@ -223,12 +223,13 @@ class DiscoverStore:
             self._db.execute("UPDATE cards SET state=? WHERE id=?", (state, card_id))
         return self.card(card_id)
 
-    def mark_added(self, card_id: str, calendar_event_id: str) -> dict | None:
-        """Mark a card added. The first calendar event id stays if it is called again."""
+    def mark_added(self, card_id: str, calendar_event_id: str, *, replace: bool = False) -> dict | None:
+        """Mark a card added. The first calendar event id stays if it is called again, unless ``replace`` (the
+        event it named was deleted and a new one was made)."""
+        keep = "?" if replace else "CASE WHEN calendar_event_id='' THEN ? ELSE calendar_event_id END"
         with self._lock, self._db:
-            self._db.execute(
-                "UPDATE cards SET state='added', calendar_event_id=CASE WHEN calendar_event_id='' THEN ?"
-                " ELSE calendar_event_id END WHERE id=?", (calendar_event_id, card_id))
+            self._db.execute(f"UPDATE cards SET state='added', calendar_event_id={keep} WHERE id=?",
+                             (calendar_event_id, card_id))
         return self.card(card_id)
 
     def set_image(self, card_id: str, has: bool) -> None:

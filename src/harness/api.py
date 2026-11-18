@@ -81,6 +81,7 @@ from src.context.compaction import Compactor
 from src.context.protected import ProtectedBlock, ScopeGuard
 from src.decider.supervisor import LoopSupervisor
 from src.generation.generator import Generator
+from src.events.discover_routes import discover_router
 from src.events.routes import calendar_router
 from src.events.service import CalendarService
 from src.events.discovery import MANAGED_BY as EVENTS_MANAGED_BY, Discovery
@@ -1427,7 +1428,7 @@ def create_app(h: Harness) -> FastAPI:
     scheduler.verifiers[EVENTS_MANAGED_BY] = h.discover.run_failure  # a scout run that saved no digest failed
     h.music.routines, h.music.scheduler = routines, scheduler
     h.discover.routines, h.discover.scheduler = routines, scheduler
-    app_routers = [music_router(h.music, h), calendar_router(h.calendar)]
+    app_routers = [music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
