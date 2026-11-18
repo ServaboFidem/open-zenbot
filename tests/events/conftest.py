@@ -351,6 +351,62 @@ async def fake_site():
     await site.client.aclose()
 
 
+# ---- FindLocal (src/events/findlocal.py) ---------------------------------------------------------------
+
+def fl_row(**over) -> dict:
+    """A full, valid FindLocal API row."""
+    base = {
+        "id": "0b1c2d3e-0000-4000-8000-000000000001", "title": "Jazz at the Lodge", "description": "An evening of jazz.",
+        "event_date": "2026-11-21", "start_time": "19:00", "end_time": "21:00", "end_date": None, "category": "music",
+        "status": "scheduled", "attendance": "in_person", "detail_page_url": "https://venue.example/shows/1",
+        "ticket_page_url": None, "venue_name": "The Lodge", "venue_address": "1 High St, Columbus, OH", "venue_tba": 0,
+        "city": "Columbus", "region": "Short North", "is_deleted": 0, "duplicate_of": None, "is_real_event": 1,
+    }
+    return {**base, **over}
+
+
+class FakeFindLocal:
+    """A model of FindLocal's events endpoint for tests. ``rows`` is everything it holds; a call returns the page
+    asked for. ``fail`` maps a page number to a status number, an ``httpx.Response`` or an exception to raise;
+    ``total`` replaces ``meta.total`` when not None. ``requests`` and ``sleeps`` are what the reader did."""
+
+    def __init__(self):
+        self.rows: list[dict] = []
+        self.fail: dict = {}
+        self.total: object | None = None
+        self.requests: list[httpx.Request] = []
+        self.sleeps: list[float] = []
+        self.client = httpx.AsyncClient(transport=httpx.MockTransport(self.handler))
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+
+    def reader(self):
+        from src.events.findlocal import FindLocal
+
+        return FindLocal(lambda: self.client, sleep=self.sleep)
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        page = int(request.url.params.get("page", "1"))
+        limit = int(request.url.params.get("limit", "100"))
+        if page in self.fail:
+            outcome = self.fail[page]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome if isinstance(outcome, httpx.Response) else httpx.Response(outcome, text="no")
+        total = len(self.rows) if self.total is None else self.total
+        body = {"data": self.rows[(page - 1) * limit: page * limit], "meta": {"total": total, "page": page}}
+        return httpx.Response(200, json=body)
+
+
+@pytest.fixture
+async def fake_findlocal():
+    site = FakeFindLocal()
+    yield site
+    await site.client.aclose()
+
+
 # ---- Discovery (src/events/discovery.py) ---------------------------------------------------------------
 
 class RecordingLedger:
