@@ -332,3 +332,55 @@ async def test_no_response_carries_a_disk_path(client, harness, card, cfg):
     for body in bodies:
         assert root not in body and root.replace("\\", "/") not in body and root.replace("\\", "\\\\") not in body
         assert "discover-images" not in body and "calendar.db" not in body
+
+
+KEY = "flk_secret_1234567890"
+
+
+async def test_status_lists_the_cities_and_no_key(client):
+    fl = (await client.get("/discover/status")).json()["findlocal"]
+    assert len(fl["cities"]) == 134 and "columbus" in fl["cities"] and fl["key_set"] is False
+    r = await client.put("/discover/findlocal/key", json={"key": KEY})
+    assert r.status_code == 200
+    assert KEY not in r.text and KEY not in (await client.get("/discover/status")).text
+    fl = r.json()["findlocal"]
+    assert fl["key_set"] is True and fl["key_hint"] == KEY[-4:]
+
+
+async def test_put_key_saves_and_delete_forgets(client, harness):
+    await client.put("/discover/findlocal/key", json={"key": f"  {KEY}  "})
+    assert harness.discover.keys.findlocal == KEY
+    r = await client.delete("/discover/findlocal/key")
+    assert r.status_code == 200 and r.json()["findlocal"]["key_set"] is False
+    assert harness.discover.keys.findlocal == ""
+
+
+@pytest.mark.parametrize("kwargs", [{"json": {"key": "has space"}}, {"json": {"key": ""}}, {"json": {}},
+                                    {"json": {"key": 5}}, {}])
+async def test_a_bad_key_is_422(client, harness, kwargs):
+    r = await client.put("/discover/findlocal/key", **kwargs)
+    assert r.status_code == 422
+    assert harness.discover.keys.findlocal == ""
+    if kwargs.get("json", {}).get("key") == "has space":
+        assert r.json()["detail"] == "A FindLocal key is plain text with no spaces, at most 200 characters."
+
+
+async def test_settings_keep_the_saved_zone(client):
+    body = {**SET_UP, "findlocal_city": "columbus", "timezone": "America/New_York"}
+    assert (await client.put("/discover/settings", json=body)).status_code == 200
+    r = await client.put("/discover/settings", json={**body, "timezone": "Europe/Paris"})
+    assert r.status_code == 200 and r.json()["findlocal"]["timezone"] == "America/New_York"
+
+
+async def test_an_unknown_findlocal_city_is_422(client):
+    r = await client.put("/discover/settings", json={**SET_UP, "findlocal_city": "atlantis", "timezone": "UTC"})
+    assert r.status_code == 422 and r.json()["detail"] == "Pick a FindLocal city from the list."
+
+
+async def test_a_findlocal_card_says_its_source(client, harness):
+    harness.discover.store.save_digest([(listing("9000000000009", source="findlocal"), "why"),
+                                        (listing("9000000000010"), "why")], kind="weekly", note="", session_id="s9",
+                                       created_at="2026-11-17T00:00:00Z")
+    cards = (await client.get("/discover/digests")).json()[0]["cards"]
+    assert {c["event_id"]: c["source"] for c in cards} == {"9000000000009": "findlocal",
+                                                          "9000000000010": "eventbrite"}

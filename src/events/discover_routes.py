@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from src.events.discover_settings import CATEGORIES, DiscoverSettings
+from src.events.discover_settings import CATEGORIES, FINDLOCAL_CITIES, DiscoverSettings, check_key
 from src.events.discovery import BOT_ID, ROUTINE_SKILL
 from src.events.routes import NothingIn
 from src.events.store import EventError
@@ -31,6 +31,10 @@ RUN_TASK = ("On-demand picks: find local events for the user. "
 MAX_HOURS = 14
 _INSTANT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 _DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+class KeyIn(BaseModel):
+    key: str
 
 
 class AddIn(BaseModel):
@@ -128,7 +132,8 @@ def discover_router(discovery, harness) -> APIRouter:
                 "set_up": discovery.active,
                 "routine": None if routine is None else {"enabled": routine.enabled, "next_run": nxt},
                 "refresh": {"last": s["last_refresh"], "error": s["last_error"], "pool": store.pool_size()},
-                "running": s["running"]}
+                "running": s["running"],
+                "findlocal": {**s["findlocal"], "cities": list(FINDLOCAL_CITIES)}}
 
     def event_view(row: dict) -> dict:
         return {k: v for k, v in row.items() if k != "etag"}
@@ -144,10 +149,24 @@ def discover_router(discovery, harness) -> APIRouter:
     @r.put("/settings")
     async def put_settings(body: dict[str, Any]) -> dict[str, Any]:
         try:
-            settings = DiscoverSettings.validated(body)
+            settings = DiscoverSettings.validated(body, discovery.settings)
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
         await discovery.apply(settings)
+        return status()
+
+    @r.put("/findlocal/key")
+    async def put_key(body: KeyIn) -> dict[str, Any]:
+        try:
+            key = check_key(body.key)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        await discovery.set_key(key)
+        return status()
+
+    @r.delete("/findlocal/key")
+    async def delete_key() -> dict[str, Any]:
+        await discovery.set_key(None)
         return status()
 
     @r.get("/digests")
