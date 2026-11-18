@@ -6,6 +6,21 @@
 .events-area .events-error{color:#a4262c;font-size:var(--small);margin-bottom:var(--s3)}
 .events-area .events-discover{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--s5)}
 .events-area .events-discover p{margin-top:var(--s2)}
+.events-area .discover-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--s3);margin-bottom:var(--s4)}
+.events-area .discover-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:var(--s4);margin-top:var(--s3)}
+.events-area .discover-card{display:flex;flex-direction:column;gap:var(--s2);min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--s4)}
+.events-area .discover-card p{margin:0}
+.events-area .discover-picture,.events-area .discover-picture-fallback{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:var(--small-radius);border:1px solid var(--line);background:#f0f0f0}
+.events-area .discover-picture-fallback{display:flex;align-items:center;justify-content:center;color:#616161}
+.events-area .discover-name{font-size:var(--h3,1.05rem);line-height:1.3;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.events-area .discover-when{font-size:var(--small);font-weight:600;color:var(--brand)}
+.events-area .discover-where,.events-area .discover-why{font-size:var(--small);color:var(--muted);overflow-wrap:anywhere}
+.events-area .discover-actions{display:flex;flex-wrap:wrap;gap:var(--s2);margin-top:auto;padding-top:var(--s3)}
+.events-area .discover-state{display:flex;flex-direction:column;align-items:center;text-align:center;gap:var(--s3);padding:var(--s6,32px) var(--s4)}
+.events-area .discover-state>.od-icon{--od-icon-size:48px;color:var(--brand)}
+.events-area .discover-progress{width:min(100%,320px)}
+.events-area .discover-bar{margin-top:var(--s4)}
+.events-area .discover-digest{margin-top:var(--s5)}
 
 /* header: month title, previous / Today / next, Refresh and New event; wraps rather than overflows */
 .events-area .events-head{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3) var(--s4);margin-bottom:var(--s4)}

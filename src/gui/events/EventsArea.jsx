@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Tab, TabList } from '@fluentui/react-components';
 import CalendarView from './CalendarView.jsx';
+import DiscoverView from './DiscoverView.jsx';
 import './events.css';
 
 // The Events area: My Calendar (the calendar the harness keeps, with Google when connected) and Discover.
@@ -15,6 +16,6 @@ export default function EventsArea({ api, online, notify, openSettings }) {
     </TabList>
     {tab === 'calendar'
       ? <CalendarView api={api} online={online} notify={notify} openSettings={openSettings}/>
-      : <section className="events-discover"><h2>Discover</h2><p>Finding local events is not set up yet.</p></section>}
+      : <DiscoverView api={api} online={online} notify={notify} openSettings={openSettings}/>}
   </div>;
 }
