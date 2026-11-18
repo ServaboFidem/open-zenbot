@@ -16,6 +16,7 @@ import { TracingSettingsTab } from './TracingSettings';
 import { AllowedFoldersTab } from './AllowedFolders';
 import { ProgramPathSection } from './ProgramPathSettings';
 import { CodingAgentsSection } from './AgentSettings';
+import { CalendarSettings } from './CalendarSettings';
 import { SettingsHome } from './SettingsHome';
 import { PANELS, anchorId, liveSections } from './settings-index';
 import { UpdateNotice, VersionSection } from './UpdateNotice';
@@ -358,7 +359,7 @@ function App() {
 
   function navigate(next) { setPage(next); setQuery(''); setMobileNav(false); if (next === 'Settings') { openSettings(''); setSettingsQuery(''); } }
   // the Calendar panel (Settings home until that panel exists)
-  function openCalendarSettings() { navigate('Settings'); openSettings(PANELS.some(p => p.id === 'calendar') ? 'calendar' : ''); }
+  function openCalendarSettings() { navigate('Settings'); openSettings('calendar'); }
   function openBot(id) { setSelected(id); setMode('bot'); setComposer(''); navigate('Conversation'); }
   // Conversations page: open that bot with that conversation made its current one
   async function openConversation(botId, id) {
@@ -841,6 +842,7 @@ function App() {
           </>}
             {settingsTab === 'agents' && <CodingAgentsSection ctx={settingsCtx}/>}
             {settingsTab === 'folders' && <AllowedFoldersTab ctx={settingsCtx}/>}
+            {settingsTab === 'calendar' && <CalendarSettings api={api} online={online} notify={setNotice}/>}
             {settingsTab === 'tracing' && <TracingSettingsTab ctx={settingsCtx}/>}
             {settingsTab === 'memory' && <>{profile ? <form className="resource-row editor-form" onSubmit={saveOwner}><h3 id={anchorId('memory', 'About you')}>About you</h3><Field label="Your name" required><Input required value={ownerForm.name} onChange={(e, d) => setOwnerForm(f => ({ ...f, name: d.value }))}/></Field><Field label="Also called" hint="Nicknames, separated by commas"><Input value={ownerForm.also} onChange={(e, d) => setOwnerForm(f => ({ ...f, also: d.value }))}/></Field><Button appearance="primary" type="submit">Save name</Button></form> : <div className="resource-row"><h3 id={anchorId('memory', 'About you')}>About you</h3><p>Your name and nicknames are kept in the memory store, which this harness is not running.</p></div>}{profile && <div className="resource-row od-row"><div className="od-field od-fill"><h3 id={anchorId('memory', 'Rebuild memory')}>Rebuild memory</h3><p>Re-learn everything shared under the current knowledge model: people, organizations, and how they relate. Your facts and each bot's private memory stay.</p>{!profile.owner && <p className="field-hint">Add your name above first: the rebuild re-learns your people under it.</p>}</div><Button appearance="outline" disabled={!online || !bound || !profile.owner} onClick={previewRebuild}>Rebuild memory…</Button></div>}</>}
             {settingsTab === 'apps' && <><div className="storage-warning od-row" role="note"><Apps24Regular/><span className="od-fill"><strong>Mockup: connected apps don't work yet.</strong> Connect only marks an app as connected in this window. It signs in to nothing, asks for no credentials, and gives bots no access to your accounts. Real connectors will come through the harness. Until then, bots reach outside services through the MCP servers page.</span></div>
