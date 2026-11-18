@@ -1482,8 +1482,8 @@ def create_app(h: Harness) -> FastAPI:
                 await h.extract_queue.shutdown(extracting)
             await h.mcps.close()
             await h.music.close()
+            await h.discover.close()  # first: its background refresh reads through the calendar's HTTP client
             await h.calendar.close()
-            await h.discover.close()
             await h.learner.drain(timeout=30)  # background learn writes land before memory closes; a hung one does not hold shutdown
             # after the worker: the store stops its server and closes; blocks, so off the loop
             await asyncio.to_thread(h.memory.close)

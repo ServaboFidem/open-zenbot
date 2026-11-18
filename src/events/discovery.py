@@ -158,8 +158,10 @@ class Discovery:
         async with self._lock:
             out = await self._refresh_eventbrite(force)
             findlocal = await self._refresh_findlocal(weekly)
-            await self._sweep()
-            return {**out, "findlocal": findlocal}
+        # after the refresh lock is released: the sweep waits for the picture lock, and picture fetches queued ahead
+        # of it must not hold up a settings or key save, or the scout's candidates, meanwhile
+        await self._sweep()
+        return {**out, "findlocal": findlocal}
 
     @property
     def refreshing(self) -> bool:
@@ -216,7 +218,8 @@ class Discovery:
         try:
             result = await self.findlocal.read(s.findlocal_city, self.keys.findlocal, s.timezone, self.today())
             fresh = [e for e in result.events if not self.store.known_duplicate(e)]
-            self.store.upsert_pool(fresh, self.now())
+            # never before ``began``: a clock set back during the read must not make the rows just read look stale
+            self.store.upsert_pool(fresh, max(began, self.now()))
             if result.error == "":  # a complete read: rows it did not see are gone from FindLocal
                 self.store.drop_stale("findlocal", began)
         except Exception as e:  # any failure waits 10 minutes, so a surprise cannot spend the quota

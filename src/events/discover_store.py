@@ -216,7 +216,7 @@ class DiscoverStore:
     def listing(self, today: str, limit: int = MAX_LISTING) -> list[dict]:
         """Every pool row starting ``today`` or later, in date order, at most ``limit`` (never over MAX_LISTING),
         each with ``recommended`` (a card that is not dismissed exists) and ``calendar_ids`` (the calendar events
-        made from it: the ``added`` row's and every added card's). Three queries however many rows."""
+        made from it: the ``added`` row's and every card's, dismissed ones included). Three queries however many rows."""
         with self._lock:
             rows = [_pool(r) for r in self._db.execute(
                 "SELECT * FROM pool WHERE start_date >= ? ORDER BY start_date, start_time, id LIMIT ?",
@@ -238,10 +238,11 @@ class DiscoverStore:
         rec = self._db.execute(
             f"SELECT event_id, MAX(state != 'dismissed') AS rec FROM cards WHERE 1{one} GROUP BY event_id",
             args).fetchall()
+        # every card's calendar event, whatever its state: a card added and then dismissed still made one
         cal = self._db.execute(
             f"SELECT event_id, calendar_event_id FROM added WHERE calendar_event_id != ''{one}"
             f" UNION SELECT event_id, calendar_event_id FROM cards"
-            f" WHERE state='added' AND calendar_event_id != ''{one} ORDER BY 1, 2", args * 2).fetchall()
+            f" WHERE calendar_event_id != ''{one} ORDER BY 1, 2", args * 2).fetchall()
         out: dict[str, dict] = {}
         for r in rec:
             out.setdefault(r["event_id"], {"recommended": False, "calendar_ids": []})["recommended"] = bool(r["rec"])

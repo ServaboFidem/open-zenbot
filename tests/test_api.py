@@ -2071,3 +2071,24 @@ async def test_a_bot_that_is_not_a_studio_bot_may_start_a_second_task(client, ha
     r = await client.post("/bots/bot1/tasks", json={"task": "more", "conversation_id": conv.id})
     assert r.status_code == 202
     await harness.tasks[r.json()["session_id"]]
+
+
+async def test_shutdown_closes_discovery_before_the_calendar(vault: Path, tmp_path: Path):
+    """Discovery's background refresh reads through the calendar's HTTP client: it is cancelled before that closes."""
+    h = profiled(vault, tmp_path)
+    order: list[str] = []
+    real_calendar, real_discover = h.calendar.close, h.discover.close
+
+    async def calendar_close():
+        order.append("calendar")
+        await real_calendar()
+
+    async def discover_close():
+        order.append("discover")
+        await real_discover()
+
+    h.calendar.close, h.discover.close = calendar_close, discover_close
+    app = create_app(h)
+    async with app.router.lifespan_context(app):
+        pass
+    assert order == ["discover", "calendar"]

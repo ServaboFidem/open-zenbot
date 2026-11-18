@@ -888,3 +888,42 @@ async def test_a_sweep_that_fails_never_fails_a_refresh(discovery, caplog):
     discovery.sweep_pool_images = boom
     out = await discovery.refresh()
     assert out["pages"] == 5 and "OSError" in caplog.text and "/secret/path" not in caplog.text
+
+
+async def test_a_refresh_waiting_for_the_picture_lock_does_not_hold_the_refresh_lock(discovery, fake_site):
+    import asyncio
+    from dataclasses import replace
+
+    folder = discovery.pool_images_dir
+    folder.mkdir(parents=True)
+    (folder / "4242.part").write_bytes(b"half")
+    async with discovery._image_lock:            # picture fetches are queued ahead of the sweep
+        task = asyncio.ensure_future(discovery.refresh())
+        for _ in range(500):
+            await asyncio.sleep(0)
+        assert len(page_requests(fake_site)) == 5 and not task.done()
+        assert not discovery._lock.locked()
+        others = asyncio.ensure_future(asyncio.gather(
+            discovery.set_key("KEY-abcdefgh"), discovery.apply(replace(discovery.settings, interests="jazz"))))
+        for _ in range(50):
+            await asyncio.sleep(0)
+        assert others.done() and others.exception() is None     # a key save and a settings save are not held up
+        assert (folder / "4242.part").exists() and not task.done()
+    out = await task
+    assert out["pages"] == 5 and kept(discovery) == []
+
+
+async def test_a_clock_step_back_during_a_findlocal_read_keeps_the_rows_just_read(discovery, fake_findlocal, clock):
+    fake_findlocal.rows = [fl(1), fl(2)]
+    await set_up_findlocal(discovery)
+    real = discovery.findlocal.read
+
+    async def read_then_step_back(*a, **k):
+        result = await real(*a, **k)
+        clock.now -= HOUR                        # the wall clock is set back an hour while the read runs
+        return result
+
+    discovery.findlocal.read = read_then_step_back
+    out = await discovery.refresh()
+    assert out["findlocal"] == {"calls": 1, "events": 2, "error": ""}
+    assert sorted(fl_ids(discovery)) == [FL1, FL2]

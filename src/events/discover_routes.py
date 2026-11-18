@@ -263,9 +263,11 @@ def discover_router(discovery, harness) -> APIRouter:
             card = store.card(card_id)
             if card is None:
                 raise HTTPException(404, "No such card.")
-            existing = live_event(card)
+            # the card's own event, else one made from the same pool event by either route (a dismissed card
+            # added from the pool, another card): one live calendar event per pool event
+            existing = live_event(card) or pool_live(store.marks(card["event_id"]))
             if existing is not None:
-                card = store.mark_added(card_id, existing["id"]) or card
+                card = store.mark_added(card_id, existing["id"], replace=True) or card
                 return {"card": card_view(card), "event": event_view(existing)}
             row = make_event(card, body)
             card = store.mark_added(card_id, row["id"], replace=True) or card

@@ -645,3 +645,43 @@ async def test_a_picture_answer_carries_no_disk_path(client, harness, active, fa
     r = await client.get(IMG.format("9100000000001"))
     assert "discover-images" not in r.text and str(harness.discover.images_dir) not in r.text
     assert not any("discover-images" in v for v in r.headers.values())
+
+
+# ---- one event through the two add routes ---------------------------------------------------------------
+
+async def test_a_dismissed_card_added_from_the_pool_is_not_added_again_through_the_card(client, harness, active):
+    pool(harness, listing("9100000000001"))
+    card = make_card(harness, "9100000000001")
+    assert (await client.post(f"/discover/cards/{card['id']}/dismiss", json={})).status_code == 200
+    first = (await client.post(EADD.format("9100000000001"), json=TIMES)).json()["calendar_event"]
+    r = await client.post(ADD.format(card["id"]), json=TIMES)
+    assert r.status_code == 200, r.text
+    assert set(r.json()) == {"card", "event"} and r.json()["event"]["id"] == first["id"]
+    assert r.json()["card"]["state"] == "added" and r.json()["card"]["calendar_event_id"] == first["id"]
+    assert [e["id"] for e in await calendar_events(client)] == [first["id"]]
+    # once that calendar event is deleted, an add makes a new one
+    assert (await client.delete(f"/calendar/events/{first['id']}")).status_code == 200
+    again = await client.post(ADD.format(card["id"]), json=TIMES)
+    second = again.json()["event"]
+    assert again.status_code == 200 and second["id"] != first["id"]
+    assert again.json()["card"]["calendar_event_id"] == second["id"]
+    assert [e["id"] for e in await calendar_events(client)] == [second["id"]]
+
+
+async def test_a_card_added_then_dismissed_is_not_added_again_from_the_pool(client, harness, active):
+    pool(harness, listing("9100000000001"))
+    card = make_card(harness, "9100000000001")
+    first = (await client.post(ADD.format(card["id"]), json=TIMES)).json()["event"]
+    assert (await client.post(f"/discover/cards/{card['id']}/dismiss", json={})).status_code == 200
+    r = await client.post(EADD.format("9100000000001"), json=TIMES)
+    assert r.status_code == 200, r.text
+    assert r.json()["calendar_event"]["id"] == first["id"] and r.json()["event"]["state"] == "added"
+    assert [e["id"] for e in await calendar_events(client)] == [first["id"]]
+    assert (await states(client))["9100000000001"] == "added"
+    # once that calendar event is deleted, an add makes a new one
+    assert (await client.delete(f"/calendar/events/{first['id']}")).status_code == 200
+    assert (await states(client))["9100000000001"] == ""
+    again = await client.post(EADD.format("9100000000001"), json=TIMES)
+    second = again.json()["calendar_event"]
+    assert again.status_code == 200 and second["id"] != first["id"]
+    assert [e["id"] for e in await calendar_events(client)] == [second["id"]]

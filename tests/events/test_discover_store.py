@@ -419,3 +419,14 @@ def test_marks_of_one_event_match_the_listing(store):
     for r in store.listing("2026-11-18"):
         assert store.marks(r["id"]) == {"recommended": r["recommended"], "calendar_ids": r["calendar_ids"]}
     assert store.marks("nothing") == {"recommended": False, "calendar_ids": []}
+
+
+def test_a_dismissed_card_still_names_the_calendar_event_made_from_it(store):
+    store.upsert_pool([ev("a")], "t")
+    d = store.save_digest([(store.pool_row("a"), "w")], kind="weekly", note="", session_id="s",
+                          created_at="2026-11-18T10:00:00Z")
+    store.mark_added(d["cards"][0]["id"], "cal1")
+    store.set_state(d["cards"][0]["id"], "dismissed")       # added, then dismissed: the event it made still counts
+    [row] = store.listing("2026-11-18")
+    assert row["recommended"] is False and row["calendar_ids"] == ["cal1"]
+    assert store.marks("a") == {"recommended": False, "calendar_ids": ["cal1"]}
