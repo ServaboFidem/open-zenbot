@@ -24,9 +24,11 @@ NAMES = {"events_interests", "events_candidates", "events_save_digest"}
 class FakeTools:
     def __init__(self):
         self.tools = {}
+        self.offered = {}
 
-    def register(self, name, description, parameters, fn, group=None, room_only=False):
+    def register(self, name, description, parameters, fn, group=None, room_only=False, offered=None):
         self.tools[name] = (fn, group, parameters)
+        self.offered[name] = offered
 
     def unregister(self, name):
         self.tools.pop(name, None)
@@ -65,7 +67,9 @@ def routines(tmp_path):
 
 @pytest.fixture
 def scout_tools(discovery):
-    return DiscoverTools(discovery)
+    token = current_call.set((BOT_ID, "s0"))  # the scout is calling
+    yield DiscoverTools(discovery)
+    current_call.reset(token)
 
 
 def as_session(session_id):
@@ -80,14 +84,15 @@ def test_tools_exist_only_while_discovery_is_on_with_a_place(discovery, tools, c
     assert discovery.active
     assert DiscoverTools(discovery).register(tools, catalog) is True
     assert set(tools.tools) == NAMES and {g for _, g, _ in tools.tools.values()} == {GROUP}
-    assert [e.ref for e in catalog.mcps()] == [GROUP] and catalog.mcps()[0].use == USE
-    assert set(catalog.mcps()[0].inputs) == set(SPECS) == NAMES
-    DiscoverTools(discovery).register(tools, catalog)  # again: no second catalog entry
-    assert len(catalog.mcps()) == 1
+    assert set(SPECS) == NAMES and USE
+    assert catalog.mcps() == []  # no catalog entry: the decider never scores the group for another bot
+    assert all(offered(BOT_ID, "s") and not offered("generalist", "s") for offered in tools.offered.values())
+    DiscoverTools(discovery).register(tools, catalog)
+    assert catalog.mcps() == []
     for off in (DiscoverSettings(enabled=False, place="oh--exampleton"), DiscoverSettings(enabled=True, place="")):
         discovery.settings = off
         assert DiscoverTools(discovery).register(tools, catalog) is False
-        assert tools.tools == {} and catalog.mcps() == []
+        assert tools.tools == {}
         discovery.settings = DiscoverSettings(enabled=True, place="oh--exampleton")
         DiscoverTools(discovery).register(tools, catalog)
 
@@ -207,7 +212,7 @@ def test_the_routine_is_made_when_switched_on_and_paused_when_off(discovery, rou
     assert r.schedule.days == [3] and r.schedule.time == "09:00" and r.enabled
     assert discovery.ensure_routine().id == r.id and len(routines.all()) == 1
     asyncio.run(discovery.apply(DiscoverSettings(enabled=False, place="oh--exampleton")))
-    assert not discovery.managed_routine().enabled and tools.tools == {} and catalog.mcps() == []
+    assert not discovery.managed_routine().enabled and tools.tools == {}
     assert not discovery.settings.enabled  # apply replaced the settings in memory
     assert DiscoverSettings.load(discovery.vault).enabled is False  # and saved them
     asyncio.run(discovery.apply(DiscoverSettings(enabled=True, place="oh--exampleton")))
@@ -320,3 +325,63 @@ async def test_a_failed_thumbnail_rename_leaves_no_part_file(discovery, fake_sit
     out = await discovery.save([{"id": "9400000000001", "why": "x"}], kind="weekly", note="", session_id="s")
     assert out["cards"][0]["has_image"] in (False, 0)
     assert list(discovery.images_dir.glob("*")) == []
+
+
+# the tools reach the scout only ---------------------------------------------------------------------------
+
+def _specs_for(tools_runner, bot_id, groups, builtins):
+    return {s.name for s in tools_runner.specs(groups, caller=(bot_id, "s"), builtins=builtins)}
+
+
+@pytest.fixture
+def runner(discovery, tmp_path):
+    from src.harness.tools import ToolRunner
+
+    r = ToolRunner(cwd=tmp_path)
+    DiscoverTools(discovery).register(r, FakeCatalog())
+    return r
+
+
+def test_an_open_bot_whose_route_names_the_events_group_is_not_offered_the_tools(runner):
+    from src.harness.bot import Bot
+    from src.harness.loop import offered_groups
+
+    generalist = Bot("Generalist", "Does things", id="generalist")
+    for route in ({"mcps": ["events"], "outcome": "act"}, {"pinned": True, "mcps": ["events"]}, {}):
+        groups, builtins = offered_groups(generalist, route)
+        assert not NAMES & _specs_for(runner, "generalist", groups, builtins)
+    scout = Bot("Scout", "Scouts", id=BOT_ID, mcps=["events"], closed=True)
+    groups, builtins = offered_groups(scout, {"mcps": []})
+    assert _specs_for(runner, BOT_ID, groups, builtins) == NAMES
+
+
+async def test_a_pinned_events_digest_skill_on_another_bot_does_not_reach_the_tools(runner):
+    """A bot that has every shipped skill (the generalist) and a routine pinned to events-digest."""
+    from src.harness.bot import Bot
+    from src.harness.loop import offered_groups
+
+    [skill] = [r.skill for r in load_skills(REPO / "skills") if r.ok and r.skill.slug == "events-digest"]
+    groups = {runner.group_of(n) for n in skill.access}
+    assert groups == {"events"}  # the pinned path names the group from the skill's tools...
+    generalist = Bot("Generalist", "Does things", id="generalist")
+    got, builtins = offered_groups(generalist, {"pinned": True, "mcps": sorted(groups)})
+    assert not NAMES & _specs_for(runner, "generalist", got, builtins)  # ...and offered still refuses the caller
+
+
+async def test_a_direct_call_by_another_bot_is_refused_and_touches_nothing(runner, discovery, fake_site):
+    from src.providers.interface import ToolCall
+
+    token = current_call.set(("generalist", "s9"))
+    try:
+        for name, args in (("events_interests", {}), ("events_candidates", {}),
+                           ("events_save_digest", {"cards": [{"id": "1", "why": "x"}]})):
+            out = await runner.run(ToolCall("c", name, args))
+            assert out.ok and out.output.startswith("Refused") and "scout" in out.output
+    finally:
+        current_call.reset(token)
+    assert fake_site.requests == [] and discovery.store.pool_size() == 0 and discovery.store.digests(None, 5) == []
+    token = current_call.set((BOT_ID, "s1"))
+    try:
+        assert (await runner.run(ToolCall("c", "events_candidates", {}))).output.startswith(LISTING_NOTICE)
+    finally:
+        current_call.reset(token)

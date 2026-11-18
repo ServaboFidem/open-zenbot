@@ -130,8 +130,15 @@ def test_tool_specs_filter_by_group(tmp_path: Path):
     assert {s.name for s in tools.specs(groups=set())} == {"shell"}
     assert [s.name for s in tools.specs({"echo"}, builtins=False)] == ["echo.echo"]
     tools.register("scoped", "s", {"type": "object", "properties": {}}, fn, group="echo", offered=lambda b, s: True)
-    # a tool with `offered` is a per-caller built-in: left out too
-    assert [s.name for s in tools.specs({"echo"}, caller=("b", "s"), builtins=False)] == ["echo.echo"]
+    # a grouped tool with `offered` is listed to a closed bot when its group is allowed and `offered` accepts the caller
+    assert [s.name for s in tools.specs({"echo"}, caller=("b", "s"), builtins=False)] == ["echo.echo", "scoped"]
+    assert [s.name for s in tools.specs({"echo"}, builtins=False)] == ["echo.echo"]  # no caller: not offered
+    assert [s.name for s in tools.specs({"other"}, caller=("b", "s"), builtins=False)] == ["other.x"]
+    tools.register("private", "p", {"type": "object", "properties": {}}, fn, offered=lambda b, s: True)
+    assert "private" not in {s.name for s in tools.specs({"echo"}, caller=("b", "s"), builtins=False)}  # no group
+    tools.register("picky", "p", {"type": "object", "properties": {}}, fn, group="echo", offered=lambda b, s: b == "x")
+    assert "picky" not in {s.name for s in tools.specs({"echo"}, caller=("b", "s"), builtins=False)}
+    assert "picky" in {s.name for s in tools.specs({"echo"}, caller=("x", "s"), builtins=False)}
     assert "scoped" in {s.name for s in tools.specs({"echo"}, caller=("b", "s"))}
 
 

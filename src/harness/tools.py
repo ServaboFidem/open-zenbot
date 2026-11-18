@@ -98,10 +98,11 @@ class ToolRunner:
         """Built-in tools always; grouped (MCP) tools only when their group is in `groups` (None means every
         group); room-only tools only when `room` is true; a tool with `offered` only when `caller`
         (bot_id, session_id) is given and `offered` accepts it. With `builtins=False` (a closed bot) a tool with
-        no group is left out, and so is one with `offered`: only grouped tools of `groups` remain."""
+        no group is left out: only grouped tools of `groups` remain (one with `offered` too, when it accepts the
+        caller)."""
         return [t.spec for t in self._tools.values()
                 if (groups is None or t.group is None or t.group in groups) and (room or not t.room_only)
-                and (builtins or (t.group is not None and t.offered is None))
+                and (builtins or t.group is not None)
                 and (t.offered is None or (caller is not None and t.offered(*caller)))]
 
     async def run(self, call: ToolCall) -> ToolResult:
