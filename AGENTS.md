@@ -205,8 +205,8 @@ the primary calendar's id), brought in by pull and, when the user switches it on
     the exchange failing.
   - How long a deleted event stays visible to `showDeleted` and GET; once purged, a reused id may insert
     afresh (fine) or still answer 409 with GET 404 (handled by the next generation).
-  - Whether revoking the refresh token of a refused sign-in also ends an existing connection's grant (it would
-    then show as needing a reconnect).
+  - Whether revoking one refresh token ends the account's whole grant. The code assumes it may: a sign-in
+    refused while an account is linked revokes nothing unless the new token is known to be another account's.
 
 - **Where things live.** Settings in `vault-settings/calendar.json` (`push`, `destination`, `account`, the granted
   `scopes`; no secret), the Google client id, client secret and refresh token in
@@ -231,9 +231,11 @@ the primary calendar's id), brought in by pull and, when the user switches it on
   `Content-Security-Policy: default-src 'none'`, `nosniff` and `no-store`, whatever fails (the route catches every
   exception); it reflects nothing it was sent, and no code, token, secret or `state` value goes to the ledger, an
   exception message or that page. A sign-in that gets no refresh token (and has none saved), no primary calendar,
-  a missing read permission, or lists a different account than the connected one is refused with the new token
-  revoked (a different account when not connected clears the made-here events' links to the old one,
-  `CalendarStore.clear_links`). A newly connected account starts with its primary calendar selected; a later
+  a missing read permission, or lists a different account than the connected one is refused. The new token is
+  revoked when no account is linked, and when it is another account's; a refusal while an account is linked that
+  comes before the account is known (a missing permission, a failed calendar list) revokes nothing, since a
+  revoke may end the linked account's whole grant, and the new token is dropped unsaved. (A different account when
+  not connected clears the made-here events' links to the old one, `CalendarStore.clear_links`.) A newly connected account starts with its primary calendar selected; a later
   sign-in (a reconnect, the write upgrade) leaves the user's choice alone. The token and client secret never
   leave the harness: no route returns one (a key is shown as `mcp_keys.hint` of the client id only), and
   `GET /calendar/status` says only whether they are set.

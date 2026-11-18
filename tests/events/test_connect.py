@@ -282,6 +282,27 @@ async def test_a_sign_in_without_a_read_permission_is_refused_and_says_which(con
     assert '"missing_scope"' in conn.ledger.file.read_text()
 
 
+@pytest.mark.parametrize("linked_state", ["connected", "needs_reconnect"])
+async def test_a_refused_sign_in_while_linked_revokes_nothing(conn, fake, linked_state):
+    """Google may end the whole grant on a revoke, so a refused upgrade must not cost the working connection."""
+    await connect(conn, fake)
+    if linked_state == "needs_reconnect":
+        conn.mark_needs_reconnect()
+    assert (await connect(conn, fake, write=True, scope=LIST))[1] == NO_EVENTS
+    fake.fail["calendarList"] = 500
+    assert (await connect(conn, fake, write=True))[0] is False
+    assert not [r for r in fake.requests if "/revoke" in str(r.url)]
+    assert conn.state() == linked_state and conn.keys.refresh_token == "refresh-1"
+    assert conn.settings.scopes == list(READ_SCOPES)
+
+
+async def test_a_different_account_while_linked_still_has_its_token_revoked(conn, fake):
+    await connect(conn, fake, "a@x.org")
+    assert await connect(conn, fake, "b@x.org") == (False, DIFFERENT)
+    assert len([r for r in fake.requests if "/revoke" in str(r.url)]) == 1
+    assert conn.state() == "connected" and conn.settings.account == "a@x.org"
+
+
 @pytest.mark.parametrize("scope", [f"{LIST} {WRITE_SCOPE}", "https://www.googleapis.com/auth/calendar",
                                    "https://www.googleapis.com/auth/calendar.readonly"])
 async def test_a_wider_permission_covers_the_read_ones(conn, fake, scope):

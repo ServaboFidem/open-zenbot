@@ -19,12 +19,20 @@ calendar, travel-aware location, and music-matched local shows.
 - A final whole-branch review ran at `f340de8`: no critical findings, 11 important, 10 minor.
 - One fix pass followed, in four commits (`020721a`, `6c9fc30`, `b81122b`, `d7ecb29`).
   `uv run pytest -q`: 1925 passed, 15 skipped. `npm test`: 417 passing. `npm run build`: clean.
-- **The fix pass has not been independently reviewed.** Its re-check was stopped before it reported.
-  That re-check is the next step: review `f340de8..d7ecb29`.
+- The fix pass (`f340de8..d7ecb29`) was then re-checked on a second computer, against the eight points
+  below. Two defects were fixed, in the commit that follows `b0f39ec`:
+  - Point 3: a sign-in refused while an account is linked no longer revokes the new token (unless it is
+    another account's), so a failed write upgrade cannot end the working connection.
+  - Point 5: an acknowledgement that reached the harness but whose answer was lost left the page thinking
+    that count was still unacknowledged, so the next lost edit was acknowledged without a notice.
+  The other six points held. One small thing was left as it is: a full read answered 200 with a body that
+  is not a calendar listing counts as an empty listing, so `keep_pulled` drops that calendar's clean pulled
+  events until the next run reads them again.
+- Next: the manual check against real Google (below), then the owner's decisions.
 
-## What the re-check should look at
+## What the re-check looked at
 
-These are new behaviour from the fix pass that nobody but its author has read:
+New behaviour from the fix pass:
 
 1. `CalendarStore.keep_pulled`: after a full read, clean pulled rows Google no longer lists are dropped.
    Confirm it can never drop a dirty or deleted-here row, a made-here row, a row on another calendar, or

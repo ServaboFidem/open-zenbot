@@ -37,10 +37,18 @@ export function lostEditNotice(count) {
 // What the page does about status.sync.lost_edits in a status it has just loaded, whoever ran the sync: null, or
 // { notice (text to show, '' when this count was shown already), ack (the count to acknowledge to the harness) }.
 // seen: shown (a count already shown whose acknowledgement failed), acking (an acknowledgement is on its way).
+// A count below `shown` means that acknowledgement did land (only its answer was lost; nothing else lowers the
+// counter), so every edit in the count is new and is shown.
 export function lostEditStep(status, { shown = 0, acking = false } = {}) {
   const count = status?.sync?.lost_edits;
   if (!Number.isInteger(count) || count <= 0 || acking) return null;
-  return { notice: count > shown ? lostEditNotice(count - shown) : '', ack: count };
+  const fresh = count < shown ? count : count - shown;
+  return { notice: fresh > 0 ? lostEditNotice(fresh) : '', ack: count };
+}
+
+// `shown` after a status was loaded: a counter back at zero leaves nothing shown and unacknowledged.
+export function lostEditShown(status, { shown = 0, acking = false } = {}) {
+  return !acking && status?.sync?.lost_edits === 0 ? 0 : shown;
 }
 
 // The status line from GET /calendar/status (null before the first answer).

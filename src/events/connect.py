@@ -147,7 +147,9 @@ class Connection:
                 raise GoogleError("provider", "Google listed no primary calendar")
         except GoogleError as e:
             self.google.forget()
-            if new_refresh:
+            # Not while an account is linked: the new token is most likely that same account's, and Google may
+            # end the whole grant on a revoke, the working connection with it. It is dropped unsaved instead.
+            if new_refresh and not self._linked():
                 await self.google.revoke(new_refresh)
             self._log("connect_refused", reason="missing_scope" if refused else "google_error", error_kind=e.kind)
             return False, refused or FAILED

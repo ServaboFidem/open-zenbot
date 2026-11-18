@@ -4,7 +4,7 @@ import { Add24Regular, ArrowSync24Regular, ChevronLeft24Regular, ChevronRight24R
 import CalendarGrid from './CalendarGrid.jsx';
 import EventDialog from './EventDialog.jsx';
 import { dayTitle, eventsByDay, fetchRange, monthGrid, timeLabel, todayKey } from './dates.js';
-import { lostEditStep, statusLine } from './page-state.js';
+import { lostEditShown, lostEditStep, statusLine } from './page-state.js';
 
 const HEX = /^#[0-9a-f]{6}$/i;
 const monthOf = key => { const [year, month] = key.split('-').map(Number); return { year, month }; };
@@ -80,7 +80,7 @@ export default function CalendarView({ api, online, notify, openSettings }) {
   useEffect(() => {
     if (lost.current.handled === status) return;   // this very status again (the effect re-ran for another reason)
     const step = lostEditStep(status, lost.current);
-    if (!step) return;
+    if (!step) { lost.current = { ...lost.current, shown: lostEditShown(status, lost.current) }; return; }
     if (step.notice) notify(step.notice);
     lost.current = { shown: step.ack, acking: true, handled: status };
     cal.ackLostEdits(step.ack).then(

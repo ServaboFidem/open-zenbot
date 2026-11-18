@@ -1,7 +1,7 @@
 // The Events page's pure decisions: which links it opens, and the status line under the month.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { OFFLINE, isGoogleLink, lostEditNotice, lostEditStep, statusLine } from '../../src/gui/events/page-state.js';
+import { OFFLINE, isGoogleLink, lostEditNotice, lostEditShown, lostEditStep, statusLine } from '../../src/gui/events/page-state.js';
 
 const NY = 'America/New_York';
 const NOW = new Date('2026-11-17T20:00:00Z');   // 15:00 in New York
@@ -100,6 +100,12 @@ test('lostEditStep: any loaded status with lost edits is shown once and then ack
   // shown already but the acknowledgement failed: ask again without saying it twice
   assert.deepEqual(lostEditStep(s(2), { shown: 2 }), { notice: '', ack: 2 });
   assert.deepEqual(lostEditStep(s(3), { shown: 2 }), { notice: lostEditNotice(1), ack: 3 });
+  // the failed acknowledgement had landed after all (the counter fell): what is counted now is new, so it is shown
+  assert.deepEqual(lostEditStep(s(1), { shown: 2 }), { notice: lostEditNotice(1), ack: 1 });
+  assert.equal(lostEditShown(s(0), { shown: 2 }), 0);
+  assert.equal(lostEditShown(s(0), { shown: 2, acking: true }), 2);
+  assert.equal(lostEditShown(s(2), { shown: 2 }), 2);
+  assert.equal(lostEditShown(null, { shown: 2 }), 2);
   // it does not matter who ran the sync or which state Google is in
   assert.deepEqual(lostEditStep(status('needs_reconnect', { lost_edits: 1 })), { notice: lostEditNotice(1), ack: 1 });
 });
