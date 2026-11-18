@@ -18,5 +18,11 @@ export function createDiscoverApi(call) {
     add: (id, times) => call('POST', `/discover/cards/${enc(id)}/add`, { start: times.start, end: times.end }),
     // the card's picture as an address for <img>: base is the harness origin; '' when the card has none
     imageSrc: (base, card) => (card && card.image ? `${String(base || '').replace(/\/+$/, '')}${card.image}` : ''),
+    // the pool of every event read (All Events tab); times: { start, end } from addTimes(event)
+    events: () => call('GET', '/discover/events'),
+    event: id => call('GET', `/discover/events/${enc(id)}`),
+    addEvent: (id, times) => call('POST', `/discover/events/${enc(id)}/add`, { start: times.start, end: times.end }),
+    refresh: () => call('POST', '/discover/refresh', {}),
+    eventImageSrc: (base, event) => (event && event.image ? `${String(base || '').replace(/\/+$/, '')}${event.image}` : ''),
   };
 }

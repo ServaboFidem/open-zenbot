@@ -60,3 +60,24 @@ test('the FindLocal key routes carry the key in the body only', async () => {
   ]);
   assert.ok(!seen.some(s => s.path.includes('abc123')));
 });
+
+test('the pool routes: list, one event, add, refresh', async () => {
+  const { api, seen } = rec();
+  await api.events();
+  await api.event('a/b c?');
+  await api.addEvent('a/b c?', { start: '2026-11-22', end: '2026-11-23' });
+  await api.refresh();
+  assert.deepEqual(seen.map(s => [s.method, s.path, s.body, s.params]), [
+    ['GET', '/discover/events', undefined, undefined],
+    ['GET', '/discover/events/a%2Fb%20c%3F', undefined, undefined],
+    ['POST', '/discover/events/a%2Fb%20c%3F/add', { start: '2026-11-22', end: '2026-11-23' }, undefined],
+    ['POST', '/discover/refresh', {}, undefined],
+  ]);
+});
+
+test('eventImageSrc joins the origin and the event path, empty without a picture', () => {
+  const { api } = rec();
+  assert.equal(api.eventImageSrc('http://127.0.0.1:8765/', { image: '/discover/events/e1/image' }), 'http://127.0.0.1:8765/discover/events/e1/image');
+  assert.equal(api.eventImageSrc('http://127.0.0.1:8765', { image: null }), '');
+  assert.equal(api.eventImageSrc('http://127.0.0.1:8765', null), '');
+});
