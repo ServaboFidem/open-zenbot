@@ -287,6 +287,20 @@ def discover_router(discovery, harness) -> APIRouter:
             raise HTTPException(404, NO_EVENT)
         return full_view(row)
 
+    @r.get("/events/{event_id}/image")
+    async def event_image(event_id: str) -> FileResponse:
+        """A pool event's picture, fetched from Eventbrite's image host on the first ask and kept. 404 when the row
+        has no picture, is not Eventbrite's, or the fetch failed."""
+        path = await discovery.pool_image(event_id)
+        if path is None:
+            raise HTTPException(404, "No picture.")
+        try:
+            with path.open("rb") as f:
+                kind = _sniff(f.read(12))
+        except OSError:
+            raise HTTPException(404, "No picture.") from None
+        return FileResponse(path, media_type=kind, headers={"X-Content-Type-Options": "nosniff"})
+
     @r.post("/events/{event_id}/add")
     async def add_event(event_id: str, body: AddIn) -> dict[str, Any]:
         """Add a pool event to the calendar, from the pool row (what the list showed), never a card's snapshot. On a

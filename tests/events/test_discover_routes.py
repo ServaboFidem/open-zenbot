@@ -404,6 +404,7 @@ async def active(client, harness, fake_site, fake_findlocal):
     assert (await client.put("/discover/settings", json=SET_UP)).status_code == 200
     harness.discover.source = fake_site.eventbrite()
     harness.discover.findlocal = fake_findlocal.reader()
+    harness.discover.sleep = fake_site.sleep   # the gap between picture fetches is recorded, never slept
     return harness.discover
 
 
@@ -584,3 +585,63 @@ async def test_no_pool_response_carries_a_hidden_field(client, harness, active):
     for body in bodies:
         for word in ("image_url", "seen_at", "format", "img.evbuc.com", "discover-images"):
             assert word not in body
+
+
+# ---- a pool event's picture ----------------------------------------------------------------------------
+
+PIC = "https://img.evbuc.com/x.jpg"
+IMG = EVENTS + "/{}/image"
+
+
+async def test_a_pool_picture_is_fetched_on_the_first_ask_and_kept(client, harness, active, fake_site):
+    pool(harness, listing("9100000000001", image_url=PIC))
+    fake_site.images[PIC] = httpx.Response(200, content=PNG)
+    r = await client.get(IMG.format("9100000000001"))
+    assert r.status_code == 200 and r.content == PNG
+    assert r.headers["x-content-type-options"] == "nosniff" and r.headers["content-type"] == "image/png"
+    assert [str(q.url) for q in fake_site.requests] == [PIC]
+    again = await client.get(IMG.format("9100000000001"))
+    assert again.status_code == 200 and again.content == PNG and len(fake_site.requests) == 1
+
+
+async def test_two_asks_at_once_fetch_the_picture_once(client, harness, active, fake_site):
+    pool(harness, listing("9100000000001", image_url=PIC))
+    fake_site.images[PIC] = httpx.Response(200, content=PNG)
+    a, b = await asyncio.gather(client.get(IMG.format("9100000000001")), client.get(IMG.format("9100000000001")))
+    assert a.status_code == b.status_code == 200 and len(fake_site.requests) == 1
+
+
+@pytest.mark.parametrize("event_id", ["..%2Fx", "..", "fl-0b1c2d3e-0000-4000-8000-000000000001", "12a", "1" * 31,
+                                      "9100000000002", "9100000000003", "9999"])
+async def test_no_picture_is_404_with_no_request_and_no_file(client, harness, active, fake_site, event_id):
+    pool(harness, listing("12a", image_url=PIC), listing("1" * 31, image_url=PIC), listing("9100000000002"),
+         listing("9100000000003", source="findlocal", image_url=PIC),
+         listing("fl-0b1c2d3e-0000-4000-8000-000000000001", source="findlocal", image_url=PIC))
+    fake_site.images[PIC] = httpx.Response(200, content=PNG)
+    r = await client.get(IMG.format(event_id))
+    assert r.status_code == 404
+    if event_id not in ("..%2Fx", ".."):            # those never reach the route
+        assert r.json() == {"detail": "No picture."}
+    assert fake_site.requests == [] and not harness.discover.pool_images_dir.exists()
+
+
+@pytest.mark.parametrize("answer", [httpx.Response(404), httpx.Response(200, content=b"not a picture"),
+                                    httpx.Response(200, content=PNG + b"0" * 2_000_000)])
+async def test_a_failed_fetch_is_404_keeps_nothing_and_is_tried_again(client, harness, active, fake_site, answer):
+    pool(harness, listing("9100000000001", image_url=PIC))
+    fake_site.images[PIC] = answer
+    r = await client.get(IMG.format("9100000000001"))
+    assert r.status_code == 404 and r.json() == {"detail": "No picture."}
+    folder = harness.discover.pool_images_dir
+    assert not folder.exists() or list(folder.iterdir()) == []
+    fake_site.images[PIC] = httpx.Response(200, content=PNG)
+    assert (await client.get(IMG.format("9100000000001"))).content == PNG
+    assert len(fake_site.requests) == 2 and {q.url.host for q in fake_site.requests} == {"img.evbuc.com"}
+
+
+async def test_a_picture_answer_carries_no_disk_path(client, harness, active, fake_site):
+    pool(harness, listing("9100000000001", image_url=PIC))
+    fake_site.images[PIC] = httpx.Response(404)
+    r = await client.get(IMG.format("9100000000001"))
+    assert "discover-images" not in r.text and str(harness.discover.images_dir) not in r.text
+    assert not any("discover-images" in v for v in r.headers.values())

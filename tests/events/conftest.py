@@ -423,7 +423,7 @@ class RecordingLedger:
 def discovery(tmp_path, fake_site, fake_findlocal, clock):
     """A Discovery over a fresh vault, switched on for ``eventbrite-city``, reading ``fake_site`` and
     ``fake_findlocal``. ``today`` is 2026-11-18; ``now`` is 09:00:00Z that day plus whatever the ``clock``
-    fixture has advanced."""
+    fixture has advanced. The picture fetches' clock is ``clock`` and their waits go to ``fake_site.sleeps``."""
     from datetime import datetime, timedelta, timezone
     from types import SimpleNamespace
 
@@ -441,6 +441,8 @@ def discovery(tmp_path, fake_site, fake_findlocal, clock):
                   now=lambda: (base + timedelta(seconds=clock.now - start)).strftime("%Y-%m-%dT%H:%M:%SZ"))
     d.source = fake_site.eventbrite()
     d.findlocal = fake_findlocal.reader()
+    d.sleep = fake_site.sleep   # the wait between picture fetches is recorded, never slept
+    d.monotonic = clock
     d.bot_lookup = lambda bot_id: SimpleNamespace(id=bot_id, closed=True)   # the scout is a closed bot
     yield d
     d.store.close()

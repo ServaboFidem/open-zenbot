@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
+import time
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,7 +22,7 @@ from uuid import uuid4
 
 from src.events.discover_settings import DiscoverKeys, DiscoverSettings, check_key
 from src.events.discover_store import LAST_ERROR, LAST_REFRESH, DiscoverStore
-from src.events.eventbrite import Eventbrite, SourceError
+from src.events.eventbrite import GAP_S, Eventbrite, SourceError
 from src.events.findlocal import FindLocal
 from src.events.settings import calendar_dir
 from src.harness.loop import SessionState
@@ -46,6 +48,7 @@ MAX_NOTE = 500
 KINDS = ("weekly", "on_demand")
 INSTANT = "%Y-%m-%dT%H:%M:%SZ"
 CARD_ID = re.compile(r"[0-9a-f]{32}")
+POOL_ID = re.compile(r"[0-9]{1,30}")  # an Eventbrite pool id: the only thing that names a kept pool picture
 
 
 class DigestRefused(Exception):
@@ -81,12 +84,19 @@ class Discovery:
         self.vault = Path(config.vault_root)
         folder = calendar_dir(self.vault)
         self.images_dir = folder / "discover-images"
+        self.pool_images_dir = self.images_dir / "pool"  # a pool event's picture, fetched when first asked for
         self.settings = DiscoverSettings.load(self.vault)
         self.store = DiscoverStore(folder / "discover.db")
         self.source = Eventbrite(calendar.http)
         self.findlocal = FindLocal(calendar.http)
         self.keys = DiscoverKeys.load(self.vault)
         self._lock = asyncio.Lock()
+        # pool pictures: one fetch at a time, GAP_S apart by `monotonic`; the sweep takes the same lock, so it never
+        # removes a part file a fetch is writing. Tests replace `sleep` and `monotonic`.
+        self._image_lock = asyncio.Lock()
+        self._last_image_fetch: float | None = None
+        self.sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+        self.monotonic: Callable[[], float] = time.monotonic
         self.refresh_task: asyncio.Task | None = None  # a refresh asked for by the page (start_refresh); held here
         # attached by the harness, as MusicService's are: the tool runner and catalog the scout's tools go into, the
         # routine store and the scheduler that holds each routine's last session
@@ -147,7 +157,9 @@ class Discovery:
             return {**none, "findlocal": fl_none}
         async with self._lock:
             out = await self._refresh_eventbrite(force)
-            return {**out, "findlocal": await self._refresh_findlocal(weekly)}
+            findlocal = await self._refresh_findlocal(weekly)
+            await self._sweep()
+            return {**out, "findlocal": findlocal}
 
     @property
     def refreshing(self) -> bool:
@@ -339,6 +351,105 @@ class Discovery:
             return None
         path = self.images_dir / card_id
         return path if path.is_file() and not path.is_symlink() else None
+
+    # a pool event's picture -------------------------------------------------
+
+    def _pool_folder_linked(self) -> bool:
+        """Whether the pictures folder, or the folder holding it, is a link (then nothing is read or written)."""
+        return self.images_dir.is_symlink() or self.pool_images_dir.is_symlink()
+
+    def _kept_pool_image(self, event_id: str) -> Path | None:
+        if self._pool_folder_linked():
+            return None
+        path = self.pool_images_dir / event_id
+        return path if path.is_file() and not path.is_symlink() else None
+
+    async def pool_image(self, event_id: str) -> Path | None:
+        """The picture of an Eventbrite pool event, or None. Kept in ``pool_images_dir`` named by the id; fetched
+        the first time it is asked for, from the row's ``image_url`` and only through ``Eventbrite.image`` (which
+        asks only https://img.evbuc.com/), one fetch at a time and ``GAP_S`` apart. A failed fetch keeps nothing,
+        so a later ask tries again."""
+        if not isinstance(event_id, str) or not POOL_ID.fullmatch(event_id):
+            return None
+        row = self.store.pool_row(event_id)
+        if row is None or row["source"] != "eventbrite" or not row["image_url"]:
+            return None
+        found = self._kept_pool_image(event_id)
+        if found is not None:
+            return found
+        async with self._image_lock:
+            found = self._kept_pool_image(event_id)  # another request may have fetched it meanwhile
+            if found is not None:
+                return found
+            if self._pool_folder_linked():
+                return None
+            if self._last_image_fetch is not None:
+                wait = GAP_S - (self.monotonic() - self._last_image_fetch)
+                if wait > 0:
+                    await self.sleep(wait)
+            try:
+                data = await self.source.image(row["image_url"])
+            except Exception as e:  # a picture never fails anything; the class name only
+                log.warning("pool picture failed: %s", type(e).__name__)
+                data = None
+            finally:
+                self._last_image_fetch = self.monotonic()
+            return self._write_pool_image(event_id, data) if data else None
+
+    def _write_pool_image(self, event_id: str, data: bytes) -> Path | None:
+        """Write ``<id>.part`` (made new, never through a link) and rename it to ``<id>``. None when it fails, with
+        no part file left."""
+        folder = self.pool_images_dir
+        tmp = folder / f"{event_id}.part"
+        final = folder / event_id
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            if self._pool_folder_linked():
+                return None
+            tmp.unlink(missing_ok=True)  # a stray part file, or a link, goes; unlink never follows a link
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+                         | getattr(os, "O_BINARY", 0), 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            os.replace(tmp, final)  # replaces a link at ``final`` itself, never what it points to
+        except OSError as e:
+            log.warning("pool picture not written: %s", type(e).__name__)
+            try:
+                tmp.unlink(missing_ok=True)  # a write or rename that failed leaves no part file behind
+            except OSError:
+                pass
+            return None
+        return final
+
+    def sweep_pool_images(self) -> int:
+        """Delete kept pictures whose event is no longer an Eventbrite pool row, stray part files and links (never
+        followed). A folder inside is left alone; a missing or linked pictures folder is 0. Returns how many went.
+        Run under ``_image_lock`` so it cannot remove a part file a fetch is writing."""
+        folder = self.pool_images_dir
+        if self._pool_folder_linked() or not folder.is_dir():
+            return 0
+        keep = self.store.pool_ids("eventbrite")
+        removed = 0
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    continue
+                if entry.name in keep and POOL_ID.fullmatch(entry.name) and not entry.is_symlink():
+                    continue
+                try:
+                    os.unlink(entry.path)
+                except OSError as e:
+                    log.warning("pool picture not removed: %s", type(e).__name__)
+                    continue
+                removed += 1
+        return removed
+
+    async def _sweep(self) -> None:
+        async with self._image_lock:
+            try:
+                self.sweep_pool_images()
+            except Exception as e:  # a picture never fails a refresh
+                log.warning("pool picture sweep failed: %s", type(e).__name__)
 
     # the scout: tools, routine, status ----------------------------------------
 

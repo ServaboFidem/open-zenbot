@@ -705,3 +705,186 @@ async def test_close_cancels_a_background_refresh(tmp_path, discovery):
     task = discovery.refresh_task
     await discovery.close()
     assert task.cancelled() and discovery.refreshing is False
+
+
+# ---- a pool event's picture (Discovery.pool_image, sweep_pool_images) ----------------------------------
+
+FL_ID = "fl-0b1c2d3e-0000-4000-8000-000000000001"
+
+
+def pic(id) -> str:
+    return f"https://img.evbuc.com/pic-{id}.png"
+
+
+def kept(d) -> list[str]:
+    return sorted(p.name for p in d.pool_images_dir.iterdir()) if d.pool_images_dir.exists() else []
+
+
+@pytest.fixture
+def pictured(discovery, fake_site):
+    """A, B and C in the pool, each with a picture the image host serves."""
+    discovery.store.upsert_pool([ev(i) for i in (A, B, C)], "2026-11-18T08:00:00Z")
+    for i in (A, B, C):
+        fake_site.images[pic(i)] = httpx.Response(200, content=PNG)
+    return discovery
+
+
+async def test_a_pool_picture_is_fetched_once_and_kept(pictured, fake_site):
+    path = await pictured.pool_image(A)
+    assert path == pictured.pool_images_dir / A and path.read_bytes() == PNG
+    assert pictured.pool_images_dir == pictured.images_dir / "pool"
+    assert [str(r.url) for r in image_requests(fake_site)] == [pic(A)]
+    assert await pictured.pool_image(A) == path
+    assert len(fake_site.requests) == 1 and kept(pictured) == [A]          # no second fetch, no part file left
+
+
+@pytest.mark.parametrize("bad", ["../x", FL_ID, "12a", "1" * 31, "", "１２", None, 12])
+async def test_a_pool_picture_needs_an_id_of_digits(discovery, fake_site, bad):
+    rows = [ev("12a"), ev("1" * 31), ev(FL_ID, source="findlocal")]
+    discovery.store.upsert_pool(rows, "2026-11-18T08:00:00Z")
+    for r in rows:
+        fake_site.images[r["image_url"]] = httpx.Response(200, content=PNG)
+    assert await discovery.pool_image(bad) is None
+    assert fake_site.requests == [] and not discovery.images_dir.exists()
+
+
+async def test_no_picture_for_findlocal_a_row_without_one_or_an_unknown_id(discovery, fake_site):
+    discovery.store.upsert_pool([ev(A, source="findlocal"), ev(B, image_url=""),
+                                 ev(C, image_url="https://evil.example/pic.png")], "2026-11-18T08:00:00Z")
+    fake_site.images[pic(A)] = httpx.Response(200, content=PNG)
+    for i in (A, B, C, "9999"):
+        assert await discovery.pool_image(i) is None
+    assert fake_site.requests == [] and kept(discovery) == []
+
+
+@pytest.mark.parametrize("answer", [httpx.Response(404), httpx.Response(200, content=b"<html>not a picture"),
+                                    httpx.Response(200, content=PNG + b"0" * 2_000_000),
+                                    httpx.Response(302, headers={"location": "https://evil.example/x.png"})])
+async def test_a_failed_fetch_keeps_nothing_and_is_tried_again(pictured, fake_site, answer):
+    fake_site.images[pic(A)] = answer
+    assert await pictured.pool_image(A) is None
+    assert kept(pictured) == []
+    fake_site.images[pic(A)] = httpx.Response(200, content=PNG)
+    assert (await pictured.pool_image(A)).read_bytes() == PNG
+    assert {r.url.host for r in fake_site.requests} == {"img.evbuc.com"} and len(fake_site.requests) == 2
+
+
+async def test_a_fetch_that_raises_is_logged_by_class_name_only(pictured, caplog):
+    async def boom(url):
+        raise RuntimeError("secret listing text")
+
+    pictured.source.image = boom
+    assert await pictured.pool_image(A) is None
+    assert "RuntimeError" in caplog.text and "secret listing text" not in caplog.text
+    assert all(r.exc_info is None for r in caplog.records) and kept(pictured) == []
+
+
+async def test_a_write_that_fails_leaves_no_part_file(pictured, caplog):
+    (pictured.pool_images_dir / A).mkdir(parents=True)        # the rename onto it fails
+    assert await pictured.pool_image(A) is None
+    assert kept(pictured) == [A] and (pictured.pool_images_dir / A).is_dir()
+    assert "Error" in caplog.text and str(pictured.images_dir) not in caplog.text
+
+
+async def test_a_linked_picture_folder_is_refused_and_nothing_is_written_through_it(pictured, fake_site, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    pictured.images_dir.mkdir(parents=True)
+    pictured.pool_images_dir.symlink_to(elsewhere, target_is_directory=True)
+    assert await pictured.pool_image(A) is None
+    assert list(elsewhere.iterdir()) == [] and fake_site.requests == []
+
+
+async def test_a_linked_images_folder_is_refused_too(pictured, fake_site, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    pictured.images_dir.parent.mkdir(parents=True, exist_ok=True)
+    pictured.images_dir.symlink_to(elsewhere, target_is_directory=True)
+    assert await pictured.pool_image(A) is None
+    assert list(elsewhere.iterdir()) == [] and fake_site.requests == []
+
+
+async def test_a_kept_link_is_not_answered_and_a_planted_part_link_is_not_written_through(pictured, tmp_path):
+    secret = tmp_path / "secret"
+    secret.write_bytes(b"secret")
+    pictured.pool_images_dir.mkdir(parents=True)
+    (pictured.pool_images_dir / A).symlink_to(secret)
+    (pictured.pool_images_dir / f"{A}.part").symlink_to(secret)
+    path = await pictured.pool_image(A)
+    assert path is not None and not path.is_symlink() and path.read_bytes() == PNG
+    assert secret.read_bytes() == b"secret" and kept(pictured) == [A]
+
+
+async def test_two_requests_for_one_picture_fetch_once(pictured, fake_site):
+    import asyncio
+
+    first, second = await asyncio.gather(pictured.pool_image(A), pictured.pool_image(A))
+    assert first == second == pictured.pool_images_dir / A
+    assert len(fake_site.requests) == 1
+
+
+async def test_picture_fetches_are_a_gap_apart(pictured, fake_site, clock):
+    from src.events.eventbrite import GAP_S
+
+    await pictured.pool_image(A)
+    await pictured.pool_image(B)                    # straight after: waits the whole gap
+    assert fake_site.sleeps == [GAP_S]
+    clock.now += 0.25
+    fake_site.images[pic(C)] = httpx.Response(404)
+    await pictured.pool_image(C)                    # a quarter of the gap passed: waits the rest
+    assert fake_site.sleeps == [GAP_S, GAP_S - 0.25]
+    clock.now += 5
+    fake_site.images[pic(C)] = httpx.Response(200, content=PNG)
+    await pictured.pool_image(C)                    # long after the last (failed) fetch: no wait
+    assert len(fake_site.sleeps) == 2 and len(fake_site.requests) == 4
+
+
+async def test_sweep_removes_pictures_of_events_no_longer_in_the_pool(pictured, tmp_path):
+    assert pictured.sweep_pool_images() == 0                                  # no folder yet
+    await pictured.pool_image(A)
+    folder = pictured.pool_images_dir
+    secret = tmp_path / "secret"
+    secret.write_bytes(b"secret")
+    (folder / "4242").write_bytes(PNG)                                       # its event left the pool
+    (folder / f"{B}.part").write_bytes(b"half")                              # a stray part file
+    (folder / "8888").symlink_to(secret)                                     # a link: removed, never followed
+    (folder / "sub").mkdir()                                                 # a folder is left alone
+    pictured.store.upsert_pool([ev(FL_ID, source="findlocal")], "x")
+    (folder / FL_ID).write_bytes(PNG)                                        # not an Eventbrite pool id
+    assert pictured.sweep_pool_images() == 4
+    assert kept(pictured) == [A, "sub"] and secret.read_bytes() == b"secret"
+
+
+async def test_sweep_never_follows_a_linked_folder(pictured, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "4242").write_bytes(PNG)
+    pictured.images_dir.mkdir(parents=True)
+    pictured.pool_images_dir.symlink_to(elsewhere, target_is_directory=True)
+    assert pictured.sweep_pool_images() == 0 and (elsewhere / "4242").exists()
+
+
+async def test_a_refresh_sweeps_after_reading_and_waits_for_a_fetch_in_flight(discovery, fake_site):
+    import asyncio
+
+    folder = discovery.pool_images_dir
+    folder.mkdir(parents=True)
+    (folder / "4242").write_bytes(PNG)
+    (folder / "4242.part").write_bytes(b"half")
+    async with discovery._image_lock:            # a picture fetch is under way
+        task = asyncio.ensure_future(discovery.refresh())
+        for _ in range(500):
+            await asyncio.sleep(0)
+        assert len(page_requests(fake_site)) == 5 and not task.done()
+        assert (folder / "4242.part").exists()
+    await task
+    assert kept(discovery) == []
+
+
+async def test_a_sweep_that_fails_never_fails_a_refresh(discovery, caplog):
+    def boom():
+        raise OSError("/secret/path")
+
+    discovery.sweep_pool_images = boom
+    out = await discovery.refresh()
+    assert out["pages"] == 5 and "OSError" in caplog.text and "/secret/path" not in caplog.text
