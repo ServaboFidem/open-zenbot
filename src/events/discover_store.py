@@ -19,7 +19,7 @@ STATES = ("new", "dismissed", "added")
 
 # the event fields (Task 4's event dict, minus its id), in column order
 _TEXT = ("name", "summary", "start_date", "start_time", "end_date", "end_time", "timezone", "venue",
-         "address", "city", "region", "image_url", "url", "format")
+         "address", "city", "region", "image_url", "url", "format", "source")
 _LISTS = ("categories", "category_names")
 _FIELDS = _TEXT + _LISTS
 
@@ -43,11 +43,18 @@ CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 """
 
 
+def name_key(name: str) -> str:
+    """A name as a comparison key: casefolded, letters and digits only."""
+    return "".join(ch for ch in str(name or "").casefold() if ch.isalnum())
+
+
 def _event_values(event: dict) -> list:
     out = []
     for c in _TEXT:
         v = event.get(c)
         out.append("" if v is None else str(v))
+        if c == "source" and not out[-1]:
+            out[-1] = "eventbrite"
     for c in _LISTS:
         v = event.get(c)
         out.append(json.dumps([str(x) for x in v] if isinstance(v, (list, tuple)) else []))
@@ -55,6 +62,7 @@ def _event_values(event: dict) -> list:
 
 
 def _unpack(d: dict) -> dict:
+    d["source"] = d.get("source") or "eventbrite"
     for c in _LISTS:
         try:
             v = json.loads(d.get(c) or "[]")
@@ -87,6 +95,10 @@ class DiscoverStore:
         with self._lock:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.executescript(SCHEMA)
+            for table in ("pool", "cards"):
+                if "source" not in [r[1] for r in self._db.execute(f"PRAGMA table_info({table})")]:
+                    self._db.execute(f"ALTER TABLE {table} ADD COLUMN source TEXT DEFAULT ''")
+            self._db.commit()
 
     def close(self) -> None:
         with self._lock:
@@ -115,14 +127,27 @@ class DiscoverStore:
         with self._lock, self._db:
             return self._db.execute("DELETE FROM pool WHERE start_date < ?", (today,)).rowcount
 
-    def clear_pool(self) -> int:
-        """Delete every pool row (the place changed). Saved cards are snapshots and stay. Returns how many went."""
+    def clear_pool(self, source: str | None = None) -> int:
+        """Delete every pool row, or only those of ``source`` (the place changed). Saved cards are snapshots and
+        stay. Returns how many went."""
         with self._lock, self._db:
-            return self._db.execute("DELETE FROM pool").rowcount
+            if source is None:
+                return self._db.execute("DELETE FROM pool").rowcount
+            return self._db.execute("DELETE FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?",
+                                    (source,)).rowcount
 
-    def pool_size(self) -> int:
+    def drop_stale(self, source: str, before: str) -> int:
+        """Delete pool rows of ``source`` last seen before ``before`` (a UTC instant). Returns how many went."""
+        with self._lock, self._db:
+            return self._db.execute("DELETE FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?"
+                                    " AND seen_at < ?", (source, before)).rowcount
+
+    def pool_size(self, source: str | None = None) -> int:
         with self._lock:
-            return self._db.execute("SELECT COUNT(*) FROM pool").fetchone()[0]
+            if source is None:
+                return self._db.execute("SELECT COUNT(*) FROM pool").fetchone()[0]
+            return self._db.execute("SELECT COUNT(*) FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?",
+                                    (source,)).fetchone()[0]
 
     def pool_row(self, id: str) -> dict | None:
         with self._lock:
@@ -133,10 +158,14 @@ class DiscoverStore:
         tags = row["categories"]
         return not ticked or not tags or any(t in ticked for t in tags)
 
-    def _matching(self, today: str, categories: list[str], category: str, text: str, start: str, end: str) -> list[dict]:
+    def _matching(self, today: str, categories: list[str], category: str, text: str, start: str, end: str,
+                  fresh_after: str = "") -> list[dict]:
         sql = ("SELECT * FROM pool WHERE start_date >= ?"
                " AND id NOT IN (SELECT event_id FROM cards)")
         args: list = [today]
+        if fresh_after:
+            sql += " AND NOT (source='findlocal' AND seen_at < ?)"
+            args.append(fresh_after)
         if start:
             sql += " AND start_date >= ?"
             args.append(start)
@@ -160,23 +189,44 @@ class DiscoverStore:
         return out
 
     def candidate_count(self, today: str, categories: list[str], *, category: str = "", text: str = "",
-                        start: str = "", end: str = "") -> int:
+                        start: str = "", end: str = "", fresh_after: str = "") -> int:
         """How many candidates match the filters, whatever the page."""
-        return len(self._matching(today, categories, category, text, start, end))
+        return len(self._matching(today, categories, category, text, start, end, fresh_after))
 
     def candidates(self, today: str, categories: list[str], *, category: str = "", text: str = "",
-                   start: str = "", end: str = "", limit: int = 60, offset: int = 0) -> list[dict]:
-        out = self._matching(today, categories, category, text, start, end)
+                   start: str = "", end: str = "", limit: int = 60, offset: int = 0,
+                   fresh_after: str = "") -> list[dict]:
+        out = self._matching(today, categories, category, text, start, end, fresh_after)
         limit = max(0, min(int(limit), MAX_LIMIT))
         offset = max(0, int(offset))
         return out[offset:offset + limit]
 
-    def is_candidate(self, id: str, today: str, categories: list[str]) -> bool:
+    def is_candidate(self, id: str, today: str, categories: list[str], *, fresh_after: str = "") -> bool:
         row = self.pool_row(id)
         if row is None or row["start_date"] < today or not self._wanted(row, set(categories)):
             return False
+        if fresh_after and row["source"] == "findlocal" and row["seen_at"] < fresh_after:
+            return False
         with self._lock:
             return self._db.execute("SELECT 1 FROM cards WHERE event_id=?", (id,)).fetchone() is None
+
+    def known_duplicate(self, event: dict) -> bool:
+        """Whether an event is already here under another id: its Eventbrite id is a pool row or a card, or an
+        Eventbrite row or another event's card has the same day and name."""
+        ebid = event.get("eventbrite_id")
+        with self._lock:
+            if ebid and (self._db.execute("SELECT 1 FROM pool WHERE id=?", (ebid,)).fetchone()
+                         or self._db.execute("SELECT 1 FROM cards WHERE event_id=?", (ebid,)).fetchone()):
+                return True
+            key = name_key(event.get("name", ""))
+            if not key:
+                return False
+            day = event.get("start_date", "")
+            rows = self._db.execute(
+                "SELECT name FROM pool WHERE start_date=? AND COALESCE(NULLIF(source, ''), 'eventbrite')='eventbrite'"
+                " UNION ALL SELECT name FROM cards WHERE start_date=? AND event_id != ?",
+                (day, day, event.get("id", ""))).fetchall()
+        return any(name_key(r["name"]) == key for r in rows)
 
     # digests and cards ------------------------------------------------------
 

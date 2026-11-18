@@ -183,3 +183,116 @@ def test_file_opens_again_with_its_rows(tmp_path):
         assert s.meta(LAST_REFRESH) == "t" and s.has_digest_for("s")
     finally:
         s.close()
+
+
+def test_an_old_file_gains_the_source_column(tmp_path):
+    import sqlite3
+
+    from src.events import discover_store as ds
+
+    old = ds.SCHEMA.replace(", source TEXT DEFAULT ''", "").replace("source TEXT DEFAULT '',", "")
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.executescript(old)
+    assert "source" not in [r[1] for r in db.execute("PRAGMA table_info(pool)")]
+    db.execute("INSERT INTO pool(id, name, start_date) VALUES('p', 'Old', '2026-11-20')")
+    db.execute("INSERT INTO cards(id, digest_id, event_id, why, name) VALUES('c', 'd', 'p', 'w', 'Old')")
+    db.commit()
+    db.close()
+    s = DiscoverStore(path)
+    assert s.pool_row("p")["source"] == "eventbrite"
+    assert s.card("c")["source"] == "eventbrite"
+    s.close()
+    DiscoverStore(path).close()
+
+
+def test_rows_keep_their_source(store):
+    store.upsert_pool([ev("fl-1", source="findlocal"), ev("2")], "t")
+    assert store.pool_row("fl-1")["source"] == "findlocal"
+    assert store.pool_row("2")["source"] == "eventbrite"
+    assert store.pool_size("findlocal") == 1
+    assert store.pool_size("eventbrite") == 1
+
+
+def test_clear_pool_by_source(store):
+    store.upsert_pool([ev("fl-1", source="findlocal"), ev("2")], "t")
+    assert store.clear_pool("findlocal") == 1
+    assert store.pool_row("fl-1") is None
+    assert store.pool_row("2") is not None
+
+
+def test_clear_pool_clears_all_without_one(store):
+    store.upsert_pool([ev("fl-1", source="findlocal"), ev("2")], "t")
+    assert store.clear_pool() == 2
+    assert store.pool_size() == 0
+
+
+def test_drop_stale_takes_only_old_rows_of_that_source(store):
+    store.upsert_pool([ev("fl-old", source="findlocal"), ev("eb-old")], "2026-11-17T09:00:00Z")
+    store.upsert_pool([ev("fl-new", source="findlocal")], "2026-11-18T09:00:00Z")
+    assert store.drop_stale("findlocal", "2026-11-18T00:00:00Z") == 1
+    assert store.pool_row("fl-old") is None
+    assert store.pool_row("fl-new") is not None
+    assert store.pool_row("eb-old") is not None
+
+
+def test_a_stale_findlocal_row_is_no_candidate(store):
+    store.upsert_pool([ev("fl-1", source="findlocal"), ev("2")], "2026-11-18T09:00:00Z")
+    late = "2026-11-18T09:00:01Z"
+    assert ids(store.candidates("2026-11-18", [], fresh_after=late)) == ["2"]
+    assert store.candidate_count("2026-11-18", [], fresh_after=late) == 1
+    assert not store.is_candidate("fl-1", "2026-11-18", [], fresh_after=late)
+    assert store.is_candidate("2", "2026-11-18", [], fresh_after=late)
+    assert sorted(ids(store.candidates("2026-11-18", [], fresh_after=""))) == ["2", "fl-1"]
+    assert store.candidate_count("2026-11-18", []) == 2
+    assert store.is_candidate("fl-1", "2026-11-18", [])
+
+
+def test_a_card_keeps_the_source_of_its_row(store):
+    store.upsert_pool([ev("fl-1", source="findlocal")], "t")
+    d = store.save_digest([(store.pool_row("fl-1"), "w")], kind="weekly", note="", session_id="s",
+                          created_at="2026-11-18T10:00:00Z")
+    assert d["cards"][0]["source"] == "findlocal"
+
+
+def test_name_key():
+    from src.events.discover_store import name_key
+
+    assert name_key("Jazz Night!") == "jazznight"
+    assert name_key("  !! ") == ""
+
+
+def test_known_duplicate_by_eventbrite_id_in_the_pool(store):
+    store.upsert_pool([ev("123")], "t")
+    assert store.known_duplicate({"id": "fl-1", "eventbrite_id": "123", "name": "x", "start_date": "2030-01-01"})
+
+
+def test_known_duplicate_by_eventbrite_id_on_a_card(store):
+    store.upsert_pool([ev("123")], "t")
+    store.save_digest([(store.pool_row("123"), "w")], kind="weekly", note="", session_id="s",
+                      created_at="2026-11-18T10:00:00Z")
+    store.clear_pool()
+    assert store.known_duplicate({"id": "fl-1", "eventbrite_id": "123", "name": "x", "start_date": "2030-01-01"})
+
+
+def test_known_duplicate_by_day_and_name(store):
+    store.upsert_pool([ev("1", name="jazz night")], "t")
+    fl = {"id": "fl-1", "source": "findlocal", "name": "Jazz Night!", "start_date": "2026-11-20"}
+    assert store.known_duplicate(fl)
+    assert not store.known_duplicate({**fl, "start_date": "2026-11-21"})
+
+
+def test_known_duplicate_ignores_findlocal_rows_and_the_same_events_card(store):
+    store.upsert_pool([ev("fl-2", name="Jazz Night", source="findlocal"), ev("fl-1", name="Jazz Night",
+                                                                            source="findlocal")], "t")
+    fl = {"id": "fl-1", "source": "findlocal", "name": "Jazz Night", "start_date": "2026-11-20"}
+    assert not store.known_duplicate(fl)
+    store.save_digest([(store.pool_row("fl-1"), "w")], kind="weekly", note="", session_id="s",
+                      created_at="2026-11-18T10:00:00Z")
+    assert not store.known_duplicate(fl)
+    assert store.known_duplicate({**fl, "id": "fl-9"})
+
+
+def test_known_duplicate_needs_a_name_with_letters_or_digits(store):
+    store.upsert_pool([ev("1", name="!!!")], "t")
+    assert not store.known_duplicate({"id": "fl-1", "name": "???", "start_date": "2026-11-20"})
