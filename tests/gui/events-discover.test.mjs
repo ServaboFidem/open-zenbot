@@ -207,7 +207,7 @@ test('lookStep: stopped without a digest counts only after it was seen running o
   assert.equal(lookStep(look({ running: false, now: RUN_APPEAR_MS })).done, true);
 });
 test('lookStep: still running with nothing new is not done', () => {
-  assert.deepEqual(lookStep(look()), { done: false, notice: '', seenRunning: true });
+  assert.deepEqual(lookStep(look()), { done: false, notice: '', seenRunning: true, arrived: false });
 });
 
 test('askable: a new card on screen, else null', () => {
@@ -233,4 +233,34 @@ test('firstLoadDone: a load that failed before any status is not "loaded"', () =
   assert.equal(firstLoadDone({ loaded: true, status: null, loadError: 'x' }), false);
   assert.equal(firstLoadDone({ loaded: true, status: st(), loadError: 'x' }), true);
   assert.equal(firstLoadDone({ loaded: false, status: st() }), false);
+});
+
+test('lookStep: scenario A, the digest is in but the status still says running; polling goes on, the digest shows', () => {
+  // the run this page started ends the wait on the new digest ...
+  const mine = lookStep(look({ digests: [{ id: 'd2' }, { id: 'd1' }] }));
+  assert.deepEqual([mine.done, mine.arrived], [true, true]);
+  // ... then the page watches the rest as a run that is not its own, with the digests on hand as known
+  const rest = lookStep(look({ mine: false, known: ['d2', 'd1'], digests: [{ id: 'd2' }, { id: 'd1' }], now: 9000 }));
+  assert.deepEqual([rest.done, rest.arrived], [false, false]);
+  const ok = { online: true, loaded: true, looking: false };
+  const digest = { id: 'd2', cards: [card()] };
+  assert.equal(viewState(st({ running: true }), digest, ok).kind, 'looking');
+  assert.equal(viewState(st({ running: true }), digest, { ...ok, arrived: true }).kind, 'digest');
+  assert.equal(viewState(st({ running: true }), null, { ...ok, arrived: true }).kind, 'looking');
+  assert.equal(viewState(st({ running: false }), null, { ...ok, arrived: true }).kind, 'empty');
+});
+test('lookStep: scenarios B and C, a run that is not ours with an older digest on hand polls until it stops', () => {
+  const base = { mine: false, known: ['d1'], digests: [{ id: 'd1' }], since: 0 };
+  assert.equal(lookStep(look({ ...base, now: 4000 })).done, false);
+  assert.equal(lookStep(look({ ...base, now: 8000 })).done, false);
+  // a digest that arrives while it runs is flagged, and polling still goes on
+  const mid = lookStep(look({ ...base, digests: [{ id: 'd2' }, { id: 'd1' }], now: 12000 }));
+  assert.deepEqual([mid.done, mid.arrived, mid.notice], [false, true, '']);
+  // it ends when the run does
+  const end = lookStep(look({ ...base, digests: [{ id: 'd2' }, { id: 'd1' }], running: false, seenRunning: true, now: 16000 }));
+  assert.equal(end.done, true);
+  // a load that failed does not end it; the time limit does
+  assert.equal(lookStep(look({ ...base, digests: null, running: false, now: 16000 })).done, false);
+  const late = lookStep(look({ ...base, now: LOOK_LIMIT_MS + 1 }));
+  assert.deepEqual([late.done, late.notice], [true, 'The scout has not finished. Check back later.']);
 });

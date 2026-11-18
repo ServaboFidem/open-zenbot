@@ -24,6 +24,9 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
   const [hasMore, setHasMore] = useState(false);
   const [adding, setAdding] = useState(() => new Set());   // ids of cards being added
   const [asking, setAsking] = useState(null);   // the card id the dialog is about
+  const [arrived, setArrived] = useState(false);   // a digest came in while a run went
+  const runSince = useRef(null);   // when the run being watched began
+  const digestsNow = useRef([]);
   const pending = useRef(null);   // the card whose link was followed (signupStep)
   const onScreen = useRef([]);   // the cards drawn now
   const mounted = useRef(true);
@@ -46,14 +49,16 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
   useEffect(() => { if (online) load(); }, [load, online]);
 
   // look again while a run goes: the one this page started (until a new digest, the scout stops or time is up),
-  // or one the harness started on its own (the weekly one; until time is up)
+  // or one that is not its own (the weekly one, or one going when the tab was opened): known is the digests on
+  // hand, and it goes on until the run stops or time is up. One time limit per run: runSince holds when it began.
   const running = !!status?.running;
   const watching = !!looking || running;
   useEffect(() => {
-    if (!watching) return undefined;
+    if (!watching) { runSince.current = null; setArrived(false); return undefined; }
     const mine = looking;
-    const since = mine ? mine.since : Date.now();
-    const known = mine ? mine.known : [];
+    if (!runSince.current) runSince.current = mine ? mine.since : Date.now();
+    const since = runSince.current;
+    const known = mine ? mine.known : digestsNow.current.map(d => d.id);
     let seenRunning = false;
     let cancelled = false;
     const t = setInterval(async () => {
@@ -62,8 +67,9 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
       let got;
       try { got = await load(); } finally { loading.current = false; }
       if (cancelled || !mounted.current) return;
-      const step = lookStep({ since, now: Date.now(), known, digests: got ? got.digests : null, running: got ? got.status.running : false, seenRunning });
+      const step = lookStep({ since, now: Date.now(), known, digests: got ? got.digests : null, running: got ? got.status.running : false, seenRunning, mine: !!mine });
       seenRunning = step.seenRunning;
+      if (step.arrived) setArrived(true);
       if (!step.done) return;
       clearInterval(t);
       if (mine) { setLooking(null); notifyRef.current(step.notice); }
@@ -71,6 +77,7 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
     return () => { cancelled = true; clearInterval(t); };
   }, [watching, looking, load]);
 
+  digestsNow.current = digests;
   const current = digests[0] || null;
 
   // "Did you sign up?": the window gets focus again after a link was followed
@@ -92,7 +99,8 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
 
   const run = () => guard(async () => {
     await discover.run();
-    setLooking({ known: digests.map(d => d.id), since: Date.now() });
+    runSince.current = Date.now(); setArrived(false);
+    setLooking({ known: digests.map(d => d.id), since: runSince.current });
     load();
   });
   const add = card => guard(async () => {
@@ -120,7 +128,7 @@ export default function DiscoverView({ api, online, notify, openSettings }) {
     setDigests(ds => [...ds, ...list]); setHasMore(list.length >= PAGE);
   });
 
-  const view = viewState(status, current, { online, loaded: firstLoadDone({ loaded, status, loadError }), looking: !!looking });
+  const view = viewState(status, current, { online, loaded: firstLoadDone({ loaded, status, loadError }), looking: !!looking, arrived });
   const notice = refreshNotice(status);
   const src = card => discover.imageSrc(api.baseUrl, card);
   const grid = digest => <div className="discover-grid">{shownCards(digest).map(card => <EventCard key={card.id} card={card} src={src(card)} adding={adding.has(card.id)} onOpen={opened} onAdd={add}/>)}</div>;

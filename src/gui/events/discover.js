@@ -115,12 +115,14 @@ export const whereLabel = card => [card?.venue, card?.city].filter(v => typeof v
 export const shownCards = digest => (Array.isArray(digest?.cards) ? digest.cards : []).filter(c => c && c.state !== 'dismissed');
 
 // What the Discover tab shows. opts: online (the app's harness check), loaded (the first status and
-// digest have answered), looking (a run this page started). action: '' | 'retry' | 'settings' | 'run'.
-export function viewState(status, digest, { online = true, loaded = true, looking = false } = {}) {
+// digest have answered), looking (a run this page started), arrived (a digest came in while the run went). action: '' | 'retry' | 'settings' | 'run'.
+export function viewState(status, digest, { online = true, loaded = true, looking = false, arrived = false } = {}) {
   if (!online) return { kind: 'offline', text: OFFLINE, action: 'retry' };
   if (!loaded || !status) return { kind: 'loading', text: 'Loading…', action: '' };
   if (!status.set_up) return { kind: 'not_set_up', text: 'Set up event discovery to see events near you.', action: 'settings' };
-  if (looking || status.running) return { kind: 'looking', text: 'Looking for events…', action: '' };
+  const hasCards = !!digest && Array.isArray(digest.cards) && digest.cards.length > 0;
+  // a digest that came in during this run shows, whatever the status still says
+  if ((looking || status.running) && !(arrived && hasCards)) return { kind: 'looking', text: 'Looking for events…', action: '' };
   if (!digest || !Array.isArray(digest.cards) || !digest.cards.length) return { kind: 'empty', text: 'No events yet.', action: 'run' };
   if (!shownCards(digest).length) return { kind: 'digest', text: 'You have dealt with every event in this digest.', action: '' };
   return { kind: 'digest', text: '', action: '' };
@@ -160,15 +162,23 @@ export const RUN_APPEAR_MS = 20000;
 
 // One look at a run this page is waiting for. in: since and now (ms), known (digest ids from before the run),
 // digests (the list just loaded, or null when the load failed), running (the status's flag), seenRunning (a
-// look has already seen it running). Returns { done, notice, seenRunning }; notice is '' when not done.
-// A load that failed gives digests null: it can still run out of time, but never decides the scout stopped.
-export function lookStep({ since, now, known = [], digests = null, running = false, seenRunning = false }) {
+// look has already seen it running), mine (this page started the run). Returns { done, notice, seenRunning,
+// arrived }; notice is '' when not done; arrived says a digest not in known is in.
+// A run this page started is done on its first new digest, or when the scout stops, or at the time limit.
+// A run that is not its own (the weekly one, or one from before the page was opened) has `known` seeded with
+// the digests on hand and is done only when the run is seen stopped or time is up: it never stops looking
+// while the last status says running. A load that failed gives digests null: it can still run out of time,
+// but never decides the scout stopped.
+export function lookStep({ since, now, known = [], digests = null, running = false, seenRunning = false, mine = true }) {
   const loaded = Array.isArray(digests);
-  if (loaded && digests.some(d => !known.includes(d.id))) return { done: true, notice: 'New events are in.', seenRunning };
-  if (now - since > LOOK_LIMIT_MS) return { done: true, notice: 'The scout has not finished. Check back later.', seenRunning };
+  const arrived = loaded && digests.some(d => !known.includes(d.id));
+  if (arrived && mine) return { done: true, notice: 'New events are in.', seenRunning, arrived };
+  if (now - since > LOOK_LIMIT_MS) return { done: true, notice: 'The scout has not finished. Check back later.', seenRunning, arrived };
   const seen = seenRunning || (loaded && !!running);
-  if (loaded && !running && (seen || now - since >= RUN_APPEAR_MS)) return { done: true, notice: 'The scout finished without a digest.', seenRunning: seen };
-  return { done: false, notice: '', seenRunning: seen };
+  if (loaded && !running && (!mine || seen || now - since >= RUN_APPEAR_MS)) {
+    return { done: true, notice: arrived ? '' : 'The scout finished without a digest.', seenRunning: seen, arrived };
+  }
+  return { done: false, notice: '', seenRunning: seen, arrived };
 }
 
 // The card the "Did you sign up?" dialog is about: only one on screen now (`shown`, the cards drawn) that is
