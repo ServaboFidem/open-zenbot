@@ -305,17 +305,20 @@ def discover_posts(harness) -> list[str]:
 
 async def test_no_discover_post_can_be_sent_as_a_simple_cross_site_request(client, harness, card, service):
     paths = discover_posts(harness)
-    assert {"/discover/run", "/discover/cards/{card_id}/dismiss", "/discover/cards/{card_id}/add"} <= set(paths)
+    assert {"/discover/run", "/discover/cards/{card_id}/dismiss", "/discover/cards/{card_id}/add",
+            "/discover/events/{event_id}/add", "/discover/refresh"} <= set(paths)
+    harness.discover.store.upsert_pool([listing("9100000000001")], "2026-11-18T09:00:00Z")
     foreign = {"Origin": "https://evil.example"}
     full = json.dumps({**TIMES}).encode()
     for path in paths:
-        url = path.replace("{card_id}", card["id"])
+        url = path.replace("{card_id}", card["id"]).replace("{event_id}", "9100000000001")
         for body in (b"", b"{}", full):
             for headers in (foreign, {**foreign, "Content-Type": "text/plain"},
                             {**foreign, "Content-Type": "application/x-www-form-urlencoded"}):
                 r = await client.post(url, content=body, headers=headers)
                 assert r.status_code == 422, (path, body, headers, r.status_code)
-    assert await calendar_events(client) == []
+    assert await calendar_events(client) == [] and harness.discover.store.added_event("9100000000001") == ""
+    assert harness.discover.refresh_task is None
     assert (await client.get("/discover/digests")).json()[0]["cards"][0]["state"] == "new"
     assert (await client.put("/discover/settings", content=b"{}", headers={"Content-Type": "text/plain"})).status_code == 422
 
@@ -384,3 +387,200 @@ async def test_a_findlocal_card_says_its_source(client, harness):
     cards = (await client.get("/discover/digests")).json()[0]["cards"]
     assert {c["event_id"]: c["source"] for c in cards} == {"9000000000009": "findlocal",
                                                           "9000000000010": "eventbrite"}
+
+
+# ---- the pool: list, one event, add, refresh ----------------------------------------------------------
+
+EVENTS = "/discover/events"
+EADD = "/discover/events/{}/add"
+SLIM = {"id", "name", "start_date", "start_time", "end_date", "end_time", "venue", "city", "category_names",
+        "source", "state"}
+FULL = SLIM | {"summary", "address", "region", "timezone", "url", "categories", "image"}
+
+
+@pytest.fixture
+async def active(client, harness, fake_site, fake_findlocal):
+    """Discovery set up, both sources read through the fakes (so a request would be seen)."""
+    assert (await client.put("/discover/settings", json=SET_UP)).status_code == 200
+    harness.discover.source = fake_site.eventbrite()
+    harness.discover.findlocal = fake_findlocal.reader()
+    return harness.discover
+
+
+def pool(harness, *rows):
+    harness.discover.store.upsert_pool(list(rows), "2026-11-18T09:00:00Z")
+
+
+async def states(client) -> dict:
+    return {e["id"]: e["state"] for e in (await client.get(EVENTS)).json()["events"]}
+
+
+async def test_events_is_empty_when_discovery_is_not_active(client, harness):
+    pool(harness, listing("9100000000001"))
+    assert (await client.get(EVENTS)).json() == {"events": [], "total": 0, "read_at": ""}
+
+
+async def test_events_are_slim_in_date_order_with_the_read_time(client, harness, active):
+    pool(harness, listing("9100000000002", start_date="2026-11-25"), listing("9100000000001"),
+         listing("9100000000003", start_date="2026-11-10"))
+    harness.discover.store.set_meta("last_refresh", "2026-11-18T08:00:00Z")
+    body = (await client.get(EVENTS)).json()
+    assert body["total"] == 2 and body["read_at"] == "2026-11-18T08:00:00Z"
+    assert [e["id"] for e in body["events"]] == ["9100000000001", "9100000000002"]
+    for e in body["events"]:
+        assert set(e) == SLIM
+    assert body["events"][0]["category_names"] == ["Music"] and body["events"][0]["state"] == ""
+
+
+async def test_events_state_follows_cards_and_added_rows(client, harness, active, service):
+    ids = [f"92000000000{i:02d}" for i in range(6)]
+    pool(harness, *(listing(i) for i in ids))
+    store = harness.discover.store
+    make_card(harness, ids[1])                                        # a new card: recommended
+    store.set_state(make_card(harness, ids[2])["id"], "dismissed")   # a dismissed card: nothing
+    live = service.store.add({"title": "x", "start": "2026-11-22", "end": "2026-11-23", "all_day": True, "tz": ""})
+    gone = service.store.add({"title": "y", "start": "2026-11-22", "end": "2026-11-23", "all_day": True, "tz": ""})
+    store.mark_added(make_card(harness, ids[3])["id"], live["id"])     # an added card: added
+    store.mark_event_added(ids[4], live["id"], "t")                    # an added row: added
+    store.mark_event_added(ids[5], gone["id"], "t")
+    assert (await client.delete(f"/calendar/events/{gone['id']}")).status_code == 200   # its event deleted: nothing
+    assert await states(client) == {ids[0]: "", ids[1]: "recommended", ids[2]: "", ids[3]: "added",
+                                    ids[4]: "added", ids[5]: ""}
+    for i, want in ((ids[1], "recommended"), (ids[3], "added"), (ids[5], "")):
+        assert (await client.get(f"{EVENTS}/{i}")).json()["state"] == want
+
+
+async def test_opening_the_list_or_an_event_reads_no_source(client, harness, active, fake_site, fake_findlocal):
+    called = []
+
+    async def no_refresh(*a, **k):
+        called.append(1)
+
+    harness.discover.refresh = no_refresh
+    pool(harness, listing("9100000000001"))
+    assert (await client.get(EVENTS)).status_code == 200
+    assert (await client.get(f"{EVENTS}/9100000000001")).status_code == 200
+    assert called == [] and fake_site.requests == [] and fake_findlocal.requests == []
+
+
+async def test_one_event_is_the_full_row_and_its_picture_address(client, harness, active):
+    pool(harness, listing("9100000000001", image_url="https://img.evbuc.com/x.jpg"), listing("9100000000002"),
+         listing("fl-0b1c2d3e-0000-4000-8000-000000000001", source="findlocal", image_url="https://x/y.jpg"))
+    a = (await client.get(f"{EVENTS}/9100000000001")).json()
+    assert set(a) == FULL and a["image"] == "/discover/events/9100000000001/image"
+    assert (a["summary"], a["address"], a["region"], a["timezone"]) == (
+        "A summary.", "1 Example Street", "OH", "America/New_York")
+    assert a["categories"] == ["EventbriteCategory/103"] and a["url"].startswith("https://www.eventbrite.com/e/")
+    assert (await client.get(f"{EVENTS}/9100000000002")).json()["image"] is None
+    fl = (await client.get(f"{EVENTS}/fl-0b1c2d3e-0000-4000-8000-000000000001")).json()
+    assert fl["image"] is None and fl["source"] == "findlocal"
+    r = await client.get(f"{EVENTS}/nope")
+    assert (r.status_code, r.json()["detail"]) == (404, "No such event.")
+
+
+async def test_add_from_the_pool_makes_one_event_like_a_card(client, harness, active):
+    pool(harness, listing("9100000000001"))
+    r = await client.post(EADD.format("9100000000001"), json=TIMES)
+    assert r.status_code == 200, r.text
+    ev, row = r.json()["calendar_event"], r.json()["event"]
+    assert (ev["title"], ev["tz"], ev["all_day"]) == ("Event 9100000000001", "America/New_York", False)
+    assert ev["location"] == "Example Hall, 1 Example Street"
+    assert ev["description"] == "A summary.\n\nhttps://www.eventbrite.com/e/x-9100000000001"
+    assert set(row) == FULL and row["state"] == "added" and "etag" not in ev
+    assert harness.discover.store.added_event("9100000000001") == ev["id"]
+    assert len(await calendar_events(client)) == 1
+    assert (await states(client))["9100000000001"] == "added"
+
+
+async def test_add_of_an_event_on_a_card_marks_the_card(client, harness, active):
+    pool(harness, listing("9100000000001"))
+    card = make_card(harness, "9100000000001")
+    r = await client.post(EADD.format("9100000000001"), json=TIMES)
+    assert r.status_code == 200, r.text
+    got = harness.discover.store.card(card["id"])
+    assert got["state"] == "added" and got["calendar_event_id"] == r.json()["calendar_event"]["id"]
+    assert harness.discover.store.added_event("9100000000001") == ""
+    assert r.json()["event"]["state"] == "added"
+
+
+async def test_add_checks_against_the_pool_row_not_the_cards_snapshot(client, harness, active):
+    make_card(harness, "9100000000001", start_time="03:00", end_time="05:00", name="Old name")
+    pool(harness, listing("9100000000001"))   # the row now says 10:00 to 16:00, as TIMES does
+    r = await client.post(EADD.format("9100000000001"), json=TIMES)
+    assert r.status_code == 200, r.text
+    assert r.json()["calendar_event"]["title"] == "Event 9100000000001"
+
+
+async def test_two_adds_at_once_make_one_event(client, harness, active):
+    pool(harness, listing("9100000000001"))
+    a, b = await asyncio.gather(*(client.post(EADD.format("9100000000001"), json=TIMES) for _ in range(2)))
+    assert a.status_code == b.status_code == 200
+    assert a.json()["calendar_event"]["id"] == b.json()["calendar_event"]["id"]
+    assert len(await calendar_events(client)) == 1
+
+
+async def test_add_again_after_the_event_was_deleted_makes_a_new_one(client, harness, active, service):
+    kicks = []
+    service.kick = lambda: kicks.append(1)
+    pool(harness, listing("9100000000001"))
+    first = (await client.post(EADD.format("9100000000001"), json=TIMES)).json()["calendar_event"]
+    again = (await client.post(EADD.format("9100000000001"), json=TIMES)).json()["calendar_event"]
+    assert again["id"] == first["id"] and kicks == [1]
+    assert (await client.delete(f"/calendar/events/{first['id']}")).status_code == 200
+    kicks.clear()                                            # the delete asked for its own
+    second = (await client.post(EADD.format("9100000000001"), json=TIMES)).json()["calendar_event"]
+    assert second["id"] != first["id"] and kicks == [1]
+    assert harness.discover.store.added_event("9100000000001") == second["id"]
+    assert [e["id"] for e in await calendar_events(client)] == [second["id"]]
+
+
+async def test_add_refusals(client, harness, active):
+    pool(harness, listing("9100000000001"), listing("9100000000002", timezone=""),
+         listing("9100000000003", start_date="2026-11-01", end_date="2026-11-01"))
+    r = await client.post(EADD.format("nope"), json=TIMES)
+    assert (r.status_code, r.json()["detail"]) == (404, "No such event.")
+    r = await client.post(EADD.format("9100000000003"), json={"start": "2026-11-01T15:00:00Z",
+                                                                "end": "2026-11-01T21:00:00Z"})
+    assert (r.status_code, r.json()["detail"]) == (409, "This event has already happened.")
+    r = await client.post(EADD.format("9100000000001"), json={"start": "garbage", "end": "2026-11-22T21:00:00Z"})
+    assert r.status_code == 422
+    r = await client.post(EADD.format("9100000000002"), json=TIMES)
+    assert (r.status_code, r.json()["detail"]) == (422, "This listing has no usable time zone.")
+    assert await calendar_events(client) == []
+    assert harness.discover.store.added_event("9100000000001") == ""
+
+
+async def test_refresh_starts_one_background_refresh(client, harness, active):
+    gate, runs = asyncio.Event(), []
+
+    async def slow(*a, **k):
+        runs.append((a, k))
+        await gate.wait()
+
+    harness.discover.refresh = slow
+    assert (await client.post("/discover/refresh")).status_code == 422
+    r = await client.post("/discover/refresh", json={})
+    assert r.status_code == 200 and r.json()["refreshing"] is True and r.json()["set_up"] is True
+    task = harness.discover.refresh_task
+    await asyncio.sleep(0)
+    assert (await client.post("/discover/refresh", json={})).json()["refreshing"] is True
+    assert harness.discover.refresh_task is task
+    gate.set()
+    await task
+    assert runs == [((), {})]
+    assert (await client.get("/discover/status")).json()["refreshing"] is False
+
+
+async def test_refresh_needs_discovery_set_up(client):
+    r = await client.post("/discover/refresh", json={})
+    assert (r.status_code, r.json()["detail"]) == (409, "Set up event discovery first.")
+    assert (await client.get("/discover/status")).json()["refreshing"] is False
+
+
+async def test_no_pool_response_carries_a_hidden_field(client, harness, active):
+    pool(harness, listing("9100000000001", image_url="https://img.evbuc.com/x.jpg"))
+    bodies = [(await client.get(EVENTS)).text, (await client.get(f"{EVENTS}/9100000000001")).text,
+              (await client.post(EADD.format("9100000000001"), json=TIMES)).text]
+    for body in bodies:
+        for word in ("image_url", "seen_at", "format", "img.evbuc.com", "discover-images"):
+            assert word not in body

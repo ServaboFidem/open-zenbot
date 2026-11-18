@@ -661,3 +661,47 @@ async def test_a_failed_key_save_keeps_the_old_key(discovery, monkeypatch):
     with pytest.raises(OSError):
         await discovery.set_key("NEW-KEY")
     assert discovery.keys.findlocal == "OLD-KEY"
+
+
+# ---- a refresh in the background (POST /discover/refresh) ---------------------------------------------
+
+async def test_start_refresh_runs_one_refresh_in_the_background(discovery, fake_site):
+    assert discovery.refreshing is False and discovery.refresh_task is None
+    assert discovery.start_refresh() is True
+    assert discovery.refreshing is True
+    assert discovery.start_refresh() is False               # one at a time
+    await discovery.refresh_task
+    assert discovery.refreshing is False and discovery.store.pool_size() > 0
+    pages = len(page_requests(fake_site))
+    assert discovery.start_refresh() is True                 # done: another may start, and is not forced
+    await discovery.refresh_task
+    assert len(page_requests(fake_site)) == pages
+
+
+async def test_a_background_refresh_that_raises_is_logged_by_class_name_only(discovery, caplog):
+    async def boom(*a, **k):
+        raise RuntimeError("secret listing text")
+
+    discovery.refresh = boom
+    assert discovery.start_refresh() is True
+    await discovery.refresh_task                             # nothing escapes
+    assert discovery.refreshing is False
+    assert "RuntimeError" in caplog.text and "secret listing text" not in caplog.text
+    assert all(r.exc_info is None for r in caplog.records)
+
+
+async def test_close_cancels_a_background_refresh(tmp_path, discovery):
+    import asyncio
+
+    started = asyncio.Event()
+
+    async def forever(*a, **k):
+        started.set()
+        await asyncio.Event().wait()
+
+    discovery.refresh = forever
+    discovery.start_refresh()
+    await started.wait()
+    task = discovery.refresh_task
+    await discovery.close()
+    assert task.cancelled() and discovery.refreshing is False

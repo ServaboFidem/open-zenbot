@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from src.events.discover_settings import CATEGORIES, FINDLOCAL_CITIES, DiscoverSettings, check_key
+from src.events.discover_store import LAST_REFRESH
 from src.events.discovery import BOT_ID, ROUTINE_SKILL
 from src.events.routes import NothingIn
 from src.events.store import EventError
@@ -26,11 +27,15 @@ ALREADY_LOOKING = "The event scout is already looking."
 PAST = "This event has already happened."
 BAD_TIMES = "Those times are not the listing's. Reload the page and try again."
 NO_ZONE = "This listing has no usable time zone."
+NO_EVENT = "No such event."
 RUN_TASK = ("On-demand picks: find local events for the user. "
             "Save them with events_save_digest using kind \"on_demand\".")
 MAX_HOURS = 14
 _INSTANT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 _DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+# what the pool's routes answer of a row: the list's slim fields, and the detail's (plus ``state`` and ``image``)
+SLIM = ("id", "name", "start_date", "start_time", "end_date", "end_time", "venue", "city", "category_names", "source")
+DETAIL = SLIM + ("summary", "address", "region", "timezone", "url", "categories")
 
 
 class KeyIn(BaseModel):
@@ -133,14 +138,51 @@ def discover_router(discovery, harness) -> APIRouter:
                 "routine": None if routine is None else {"enabled": routine.enabled, "next_run": nxt},
                 "refresh": {"last": s["last_refresh"], "error": s["last_error"], "pool": store.pool_size()},
                 "running": s["running"],
+                "refreshing": discovery.refreshing,
                 "findlocal": {**s["findlocal"], "cities": list(FINDLOCAL_CITIES)}}
 
     def event_view(row: dict) -> dict:
         return {k: v for k, v in row.items() if k != "etag"}
 
-    def live_event(card: dict) -> dict | None:
-        ev = discovery.calendar.store.event(card["calendar_event_id"]) if card["calendar_event_id"] else None
+    def live(calendar_event_id: str) -> dict | None:
+        ev = discovery.calendar.store.event(calendar_event_id) if calendar_event_id else None
         return ev if ev is not None and not ev["deleted"] else None
+
+    def live_event(card: dict) -> dict | None:
+        return live(card["calendar_event_id"])
+
+    def pool_live(row: dict) -> dict | None:
+        """The first calendar event made from a pool row (``calendar_ids``) that still exists, not deleted."""
+        return next((ev for ev in map(live, row["calendar_ids"]) if ev is not None), None)
+
+    def state(row: dict) -> str:
+        """A pool row's state, from its ``recommended`` and ``calendar_ids`` (``DiscoverStore.listing``, ``marks``)."""
+        return "added" if pool_live(row) is not None else "recommended" if row["recommended"] else ""
+
+    def slim_view(row: dict) -> dict:
+        return {**{k: row[k] for k in SLIM}, "state": state(row)}
+
+    def full_view(row: dict) -> dict:
+        image = f"/discover/events/{row['id']}/image" if row["source"] == "eventbrite" and row["image_url"] else None
+        return {**{k: row[k] for k in DETAIL}, "state": state(row), "image": image}
+
+    def marked_row(event_id: str) -> dict | None:
+        row = store.pool_row(event_id)
+        return None if row is None else {**row, **store.marks(event_id)}
+
+    def make_event(listing: dict, body: AddIn) -> dict:
+        """The calendar event for a card or a pool row, at the listing's own time: 409 when it has passed, 422 for
+        times that are not the listing's or fields the calendar refuses."""
+        if (listing["end_date"] or listing["start_date"]) < discovery.today():
+            raise HTTPException(409, PAST)
+        try:
+            timing = listing_times(listing, body.start, body.end)
+            place = ", ".join(p for p in (listing["venue"], listing["address"]) if p)
+            text = f"{listing['summary']}\n\n{listing['url']}" if listing["summary"] else listing["url"]
+            return discovery.calendar.store.add(
+                {"title": listing["name"], "location": place, "description": text, **timing})
+        except EventError as e:
+            raise HTTPException(422, str(e)) from None
 
     @r.get("/status")
     async def get_status() -> dict[str, Any]:
@@ -225,17 +267,54 @@ def discover_router(discovery, harness) -> APIRouter:
             if existing is not None:
                 card = store.mark_added(card_id, existing["id"]) or card
                 return {"card": card_view(card), "event": event_view(existing)}
-            if (card["end_date"] or card["start_date"]) < discovery.today():
-                raise HTTPException(409, PAST)
-            try:
-                timing = listing_times(card, body.start, body.end)
-                place = ", ".join(p for p in (card["venue"], card["address"]) if p)
-                text = f"{card['summary']}\n\n{card['url']}" if card["summary"] else card["url"]
-                row = calendar.store.add({"title": card["name"], "location": place, "description": text, **timing})
-            except EventError as e:
-                raise HTTPException(422, str(e)) from None
+            row = make_event(card, body)
             card = store.mark_added(card_id, row["id"], replace=True) or card
         calendar.kick()
         return {"card": card_view(card), "event": event_view(row)}
+
+    @r.get("/events")
+    async def list_events() -> dict[str, Any]:
+        """The pool from today on, slim. Never reads a source: the list is what the last refresh left."""
+        if not discovery.active:
+            return {"events": [], "total": 0, "read_at": ""}
+        events = [slim_view(row) for row in store.listing(discovery.today())]
+        return {"events": events, "total": len(events), "read_at": store.meta(LAST_REFRESH)}
+
+    @r.get("/events/{event_id}")
+    async def get_event(event_id: str) -> dict[str, Any]:
+        row = marked_row(event_id)
+        if row is None:
+            raise HTTPException(404, NO_EVENT)
+        return full_view(row)
+
+    @r.post("/events/{event_id}/add")
+    async def add_event(event_id: str, body: AddIn) -> dict[str, Any]:
+        """Add a pool event to the calendar, from the pool row (what the list showed), never a card's snapshot. On a
+        card that is not dismissed, that card is marked added; otherwise an ``added`` row is kept."""
+        calendar = discovery.calendar
+        async with add_lock:
+            row = marked_row(event_id)
+            if row is None:
+                raise HTTPException(404, NO_EVENT)
+            existing = pool_live(row)
+            if existing is not None:
+                return {"event": full_view(row), "calendar_event": event_view(existing)}
+            made = make_event(row, body)
+            card = store.card_for_event(event_id)
+            if card is not None:
+                store.mark_added(card["id"], made["id"], replace=True)
+            else:
+                store.mark_event_added(event_id, made["id"], discovery.now())
+            row = marked_row(event_id) or row
+        calendar.kick()
+        return {"event": full_view(row), "calendar_event": event_view(made)}
+
+    @r.post("/refresh")
+    async def refresh(body: NothingIn) -> dict[str, Any]:
+        """Read the sources again in the background (unforced: the usual waits hold) and answer the status."""
+        if not discovery.active:
+            raise HTTPException(409, SET_UP_FIRST)
+        discovery.start_refresh()
+        return status()
 
     return r

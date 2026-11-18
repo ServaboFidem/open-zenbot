@@ -87,6 +87,7 @@ class Discovery:
         self.findlocal = FindLocal(calendar.http)
         self.keys = DiscoverKeys.load(self.vault)
         self._lock = asyncio.Lock()
+        self.refresh_task: asyncio.Task | None = None  # a refresh asked for by the page (start_refresh); held here
         # attached by the harness, as MusicService's are: the tool runner and catalog the scout's tools go into, the
         # routine store and the scheduler that holds each routine's last session
         self.tools: Any = None
@@ -147,6 +148,24 @@ class Discovery:
         async with self._lock:
             out = await self._refresh_eventbrite(force)
             return {**out, "findlocal": await self._refresh_findlocal(weekly)}
+
+    @property
+    def refreshing(self) -> bool:
+        """A background refresh (``start_refresh``) is under way."""
+        return self.refresh_task is not None and not self.refresh_task.done()
+
+    def start_refresh(self) -> bool:
+        """Start an unforced ``refresh()`` in the background unless one is running; true when it started one."""
+        if self.refreshing:
+            return False
+        self.refresh_task = asyncio.get_running_loop().create_task(self._background_refresh())
+        return True
+
+    async def _background_refresh(self) -> None:
+        try:
+            await self.refresh()
+        except Exception as e:  # nothing escapes the task; the class name only, the text may hold listing text
+            log.warning("background refresh failed: %s", type(e).__name__)
 
     async def _refresh_eventbrite(self, force: bool) -> dict:
         none = {"pages": 0, "events": 0, "error": ""}
@@ -416,4 +435,11 @@ class Discovery:
             self._pause_routine()   # a routine left on from before (events.json gone) must not fire
 
     async def close(self) -> None:
+        task, self.refresh_task = self.refresh_task, None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         self.store.close()

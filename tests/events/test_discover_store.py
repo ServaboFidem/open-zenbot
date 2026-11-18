@@ -365,7 +365,7 @@ def test_listing_runs_a_fixed_number_of_queries(store):
     seen = []
     store._db.set_trace_callback(seen.append)
     store.listing("2026-11-18")
-    assert len(seen) <= 3
+    assert len(seen) == 3
 
 
 def test_card_for_event_skips_dismissed_and_picks_newest(store):
@@ -394,3 +394,28 @@ def test_an_added_event_is_no_candidate(store):
     assert store.candidate_count("2026-11-18", []) == 1
     assert not store.is_candidate("a", "2026-11-18", [])
     assert store.is_candidate("b", "2026-11-18", [])
+
+
+def test_listing_is_capped_at_five_thousand(store):
+    store.upsert_pool([ev(f"{i:05d}") for i in range(5001)], "t")
+    assert len(store.listing("2026-11-18", limit=10_000)) == 5000
+
+
+def test_an_event_with_a_dismissed_and_a_live_card_is_recommended(store):
+    store.upsert_pool([ev("a")], "t")
+    row = store.pool_row("a")
+    old = store.save_digest([(row, "old")], kind="weekly", note="", session_id="s1", created_at="2026-11-10T00:00:00Z")
+    store.save_digest([(row, "new")], kind="weekly", note="", session_id="s2", created_at="2026-11-12T00:00:00Z")
+    store.set_state(old["cards"][0]["id"], "dismissed")
+    assert store.listing("2026-11-18")[0]["recommended"] is True
+
+
+def test_marks_of_one_event_match_the_listing(store):
+    store.upsert_pool([ev("a"), ev("b"), ev("c")], "t")
+    d = store.save_digest([(store.pool_row(x), "w") for x in "ab"], kind="weekly", note="", session_id="s",
+                          created_at="2026-11-18T10:00:00Z")
+    store.mark_added(d["cards"][1]["id"], "calB")
+    store.mark_event_added("c", "calC", "t")
+    for r in store.listing("2026-11-18"):
+        assert store.marks(r["id"]) == {"recommended": r["recommended"], "calendar_ids": r["calendar_ids"]}
+    assert store.marks("nothing") == {"recommended": False, "calendar_ids": []}

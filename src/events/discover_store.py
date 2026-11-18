@@ -15,6 +15,7 @@ from pathlib import Path
 
 LAST_REFRESH, LAST_ERROR = "last_refresh", "last_error"
 MAX_LIMIT = 60
+MAX_LISTING = 5000  # the most rows listing() answers
 STATES = ("new", "dismissed", "added")
 
 # the event fields (Task 4's event dict, minus its id), in column order
@@ -212,28 +213,42 @@ class DiscoverStore:
             return {r[0] for r in self._db.execute(
                 "SELECT id FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?", (source,))}
 
-    def listing(self, today: str, limit: int = 5000) -> list[dict]:
-        """Every pool row starting ``today`` or later, in date order, each with ``recommended`` (a card that is not
-        dismissed exists) and ``calendar_ids`` (the calendar events made from it: the ``added`` row's and every
-        added card's). Two queries however many rows."""
+    def listing(self, today: str, limit: int = MAX_LISTING) -> list[dict]:
+        """Every pool row starting ``today`` or later, in date order, at most ``limit`` (never over MAX_LISTING),
+        each with ``recommended`` (a card that is not dismissed exists) and ``calendar_ids`` (the calendar events
+        made from it: the ``added`` row's and every added card's). Three queries however many rows."""
         with self._lock:
             rows = [_pool(r) for r in self._db.execute(
                 "SELECT * FROM pool WHERE start_date >= ? ORDER BY start_date, start_time, id LIMIT ?",
-                (today, max(0, int(limit))))]
-            marks = self._db.execute(
-                "SELECT event_id, MAX(state != 'dismissed') AS rec FROM cards GROUP BY event_id").fetchall()
-            cal = self._db.execute(
-                "SELECT event_id, calendar_event_id FROM added WHERE calendar_event_id != ''"
-                " UNION SELECT event_id, calendar_event_id FROM cards"
-                " WHERE state='added' AND calendar_event_id != '' ORDER BY 1, 2").fetchall()
-        recommended = {r["event_id"] for r in marks if r["rec"]}
-        ids: dict[str, list[str]] = {}
-        for r in cal:
-            ids.setdefault(r["event_id"], []).append(r["calendar_event_id"])
+                (today, max(0, min(int(limit), MAX_LISTING))))]
+            marks = self._marks()
         for r in rows:
-            r["recommended"] = r["id"] in recommended
-            r["calendar_ids"] = ids.get(r["id"], [])
+            r.update(marks.get(r["id"], {"recommended": False, "calendar_ids": []}))
         return rows  # type: ignore[return-value]
+
+    def marks(self, event_id: str) -> dict:
+        """``recommended`` and ``calendar_ids`` of one event, as ``listing`` gives them."""
+        with self._lock:
+            return self._marks(event_id).get(event_id, {"recommended": False, "calendar_ids": []})
+
+    def _marks(self, event_id: str | None = None) -> dict[str, dict]:
+        """Event id -> ``{"recommended", "calendar_ids"}`` for every event with a card or an ``added`` row (or only
+        ``event_id``'s). Two queries."""
+        one, args = ("", ()) if event_id is None else (" AND event_id=?", (event_id,))
+        rec = self._db.execute(
+            f"SELECT event_id, MAX(state != 'dismissed') AS rec FROM cards WHERE 1{one} GROUP BY event_id",
+            args).fetchall()
+        cal = self._db.execute(
+            f"SELECT event_id, calendar_event_id FROM added WHERE calendar_event_id != ''{one}"
+            f" UNION SELECT event_id, calendar_event_id FROM cards"
+            f" WHERE state='added' AND calendar_event_id != ''{one} ORDER BY 1, 2", args * 2).fetchall()
+        out: dict[str, dict] = {}
+        for r in rec:
+            out.setdefault(r["event_id"], {"recommended": False, "calendar_ids": []})["recommended"] = bool(r["rec"])
+        for r in cal:
+            out.setdefault(r["event_id"], {"recommended": False, "calendar_ids": []})["calendar_ids"].append(
+                r["calendar_event_id"])
+        return out
 
     def card_for_event(self, event_id: str) -> dict | None:
         """The newest card of an event (by its digest's time) that is not dismissed."""
