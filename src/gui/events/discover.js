@@ -27,6 +27,8 @@ function instantOf(key, time, zone) {
   const want = parseInt(time.slice(0, 2), 10) * 60 + parseInt(time.slice(3), 10);
   const there = instantToParts(iso, zone);
   if (there.key === key && minutesOf(there) === want) return iso;   // an ordinary time
+  // Up to 180 minutes back: no gap is longer. If it ever runs out, the late instant wallToInstant gave is
+  // returned unchanged (an hour late, still on the right day), never an error.
   let t = Date.parse(iso);
   for (let i = 0; i < 180; i++) {
     const before = instantToParts(toIso(t - 60000), zone);
@@ -38,18 +40,43 @@ function instantOf(key, time, zone) {
   return iso;
 }
 
-// What POST /discover/cards/{id}/add takes. A timed card: instants in the card's own zone, the end an
-// hour after the start when the listing gives none. An all-day card: the start date and the day after the
-// last day.
+// Card text is written by strangers, so every field is checked before it reaches the date helpers (which
+// throw on a date they cannot read). A date is usable when it is a real calendar day, a time when it is HH:MM.
+const isDay = v => {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const [y, m, d] = v.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+};
+const isClock = v => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
+const absent = v => v === '' || v === null || v === undefined;
+
+// What POST /discover/cards/{id}/add takes, or null when the card cannot be added: its start date is not
+// a real date, or it has a start time that is not a time. A timed card gives instants in the card's own
+// zone; an end that is unusable or not after the start counts as no listed end, so the end is an hour after
+// the start. An all-day card gives the start date and the day after the last day (the start date's own
+// next day when the end is unusable or before the start).
 export function addTimes(card) {
-  if (!card.start_time) {
-    return { start: card.start_date, end: addDays(card.end_date || card.start_date, 1) };
-  }
-  const zone = usableZone(card.timezone);
-  const start = instantOf(card.start_date, card.start_time, zone);
-  if (card.end_date && card.end_time) return { start, end: instantOf(card.end_date, card.end_time, zone) };
-  return { start, end: toIso(Date.parse(start) + HOUR_MS) };
+  try {
+    const c = card || {};
+    if (!isDay(c.start_date)) return null;
+    if (absent(c.start_time)) {
+      const last = isDay(c.end_date) && c.end_date >= c.start_date ? c.end_date : c.start_date;
+      return { start: c.start_date, end: addDays(last, 1) };
+    }
+    if (!isClock(c.start_time)) return null;
+    const zone = usableZone(c.timezone);
+    const start = instantOf(c.start_date, c.start_time, zone);
+    const hourLater = toIso(Date.parse(start) + HOUR_MS);
+    if (isDay(c.end_date) && isClock(c.end_time)) {   // the harness takes a listed end only with both
+      const end = instantOf(c.end_date, c.end_time, zone);
+      if (Date.parse(end) > Date.parse(start)) return { start, end };
+    }
+    return { start, end: hourLater };
+  } catch { return null; }
 }
+
+export const canAdd = card => addTimes(card) !== null;
 
 const dayName = key => dayTitle(key, { weekday: 'short', day: 'numeric', month: 'short' });
 
@@ -64,23 +91,28 @@ function zoneName(card, zone) {
 }
 
 // The card's time as the event's own wall clock; the zone is named when it differs from the computer's.
+// Never throws: no usable start date says so, and a start time that is not a time leaves the day alone.
 export function whenLabel(card, zone = localZone()) {
-  if (!card.start_time) {
-    const last = card.end_date || card.start_date;
-    return last > card.start_date ? `${dayName(card.start_date)} – ${dayName(last)}, all day` : `${dayName(card.start_date)}, all day`;
-  }
-  const name = zoneName(card, zone);
-  const tail = name ? ` ${name}` : '';
-  const head = `${dayName(card.start_date)}, ${card.start_time}`;
-  if (!card.end_time) return `${head}${tail}`;
-  const end = card.end_date || card.start_date;
-  if (end === card.start_date) return `${head} – ${card.end_time}${tail}`;
-  return `${head} – ${dayName(end)}, ${card.end_time}${tail}`;
+  try {
+    const c = card || {};
+    if (!isDay(c.start_date)) return 'Date not given';
+    const lastDay = isDay(c.end_date) && c.end_date >= c.start_date ? c.end_date : c.start_date;
+    if (absent(c.start_time)) {
+      return lastDay > c.start_date ? `${dayName(c.start_date)} – ${dayName(lastDay)}, all day` : `${dayName(c.start_date)}, all day`;
+    }
+    if (!isClock(c.start_time)) return dayName(c.start_date);
+    const name = zoneName(c, zone);
+    const tail = name ? ` ${name}` : '';
+    const head = `${dayName(c.start_date)}, ${c.start_time}`;
+    if (!isClock(c.end_time)) return `${head}${tail}`;
+    if (lastDay === c.start_date) return `${head} – ${c.end_time}${tail}`;
+    return `${head} – ${dayName(lastDay)}, ${c.end_time}${tail}`;
+  } catch { return 'Date not given'; }
 }
 
-export const whereLabel = card => [card.venue, card.city].filter(Boolean).join(', ');
+export const whereLabel = card => [card?.venue, card?.city].filter(v => typeof v === 'string' && v).join(', ');
 
-export const shownCards = digest => (digest?.cards || []).filter(c => c.state !== 'dismissed');
+export const shownCards = digest => (Array.isArray(digest?.cards) ? digest.cards : []).filter(c => c && c.state !== 'dismissed');
 
 // What the Discover tab shows. opts: online (the app's harness check), loaded (the first status and
 // digest have answered), looking (a run this page started). action: '' | 'retry' | 'settings' | 'run'.
@@ -89,7 +121,7 @@ export function viewState(status, digest, { online = true, loaded = true, lookin
   if (!loaded || !status) return { kind: 'loading', text: 'Loading…', action: '' };
   if (!status.set_up) return { kind: 'not_set_up', text: 'Set up event discovery to see events near you.', action: 'settings' };
   if (looking || status.running) return { kind: 'looking', text: 'Looking for events…', action: '' };
-  if (!digest || !(digest.cards || []).length) return { kind: 'empty', text: 'No events yet.', action: 'run' };
+  if (!digest || !Array.isArray(digest.cards) || !digest.cards.length) return { kind: 'empty', text: 'No events yet.', action: 'run' };
   if (!shownCards(digest).length) return { kind: 'digest', text: 'You have dealt with every event in this digest.', action: '' };
   return { kind: 'digest', text: '', action: '' };
 }

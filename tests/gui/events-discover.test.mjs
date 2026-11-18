@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  LOOK_LIMIT_MS, addTimes, refreshNotice, shownCards, signupStep, viewState, whenLabel, whereLabel,
+  LOOK_LIMIT_MS, addTimes, canAdd, refreshNotice, shownCards, signupStep, viewState, whenLabel, whereLabel,
 } from '../../src/gui/events/discover.js';
 import { wallToInstant, localZone } from '../../src/gui/events/dates.js';
 import { OFFLINE } from '../../src/gui/events/page-state.js';
@@ -128,4 +128,57 @@ test('shownCards leaves out dismissed cards and keeps added ones', () => {
   assert.deepEqual(shownCards(d).map(c => c.id), ['a', 'c']);
   assert.deepEqual(shownCards(null), []);
   assert.deepEqual(shownCards({}), []);
+});
+
+test('addTimes: the repeated hour in autumn takes the first one', () => {
+  const t = addTimes(card({ start_date: '2026-11-01', start_time: '01:30', end_date: '2026-11-01', end_time: '03:00' }));
+  assert.equal(t.start, '2026-11-01T05:30:00Z');
+});
+
+test('malformed cards: addTimes gives null for an unusable start date or a present, unusable start time', () => {
+  for (const over of [{ start_date: 'tbd' }, { start_date: '' }, { start_date: '2026-02-30' }, { start_date: null }, { start_date: 20261122 },
+    { start_time: 'soon' }, { start_time: '25:00' }, { start_time: '10:60' }, { start_time: 10 }]) {
+    assert.equal(addTimes(card(over)), null, JSON.stringify(over));
+    assert.equal(canAdd(card(over)), false);
+  }
+  assert.equal(addTimes(card({ start_date: 'x', start_time: '', end_date: '', end_time: '' })), null);
+  assert.equal(canAdd(card()), true);
+  assert.equal(canAdd(null), false);
+});
+test('malformed cards: an unusable end counts as no listed end', () => {
+  const hour = { start: '2026-11-22T15:00:00Z', end: '2026-11-22T16:00:00Z' };
+  assert.deepEqual(addTimes(card({ end_time: 'late' })), hour);
+  assert.deepEqual(addTimes(card({ end_date: 'tbd' })), hour);
+  assert.deepEqual(addTimes(card({ end_date: undefined, end_time: undefined })), hour);
+  // an end not after the start
+  assert.deepEqual(addTimes(card({ end_time: '10:00' })), hour);
+  assert.deepEqual(addTimes(card({ end_time: '09:00' })), hour);
+  // all-day: an unusable or earlier end gives the start date's own day
+  const day = { start: '2026-11-22', end: '2026-11-23' };
+  assert.deepEqual(addTimes(card({ start_time: '', end_date: 'x', end_time: '' })), day);
+  assert.deepEqual(addTimes(card({ start_time: '', end_date: '2026-11-20', end_time: '' })), day);
+  assert.deepEqual(addTimes(card({ start_time: null, end_date: null, end_time: null })), day);
+});
+test('malformed cards: whenLabel never throws', () => {
+  const z = 'America/New_York';
+  assert.equal(whenLabel(card({ start_date: 'tbd' }), z), 'Date not given');
+  assert.equal(whenLabel(card({ start_date: 'x', start_time: '', end_date: '', end_time: '' }), z), 'Date not given');
+  assert.equal(whenLabel(card({ start_date: null }), z), 'Date not given');
+  assert.equal(whenLabel(card({ start_time: 'soon' }), z), 'Sun 22 Nov');
+  assert.equal(whenLabel(card({ end_time: 'late' }), z), 'Sun 22 Nov, 10:00');
+  assert.equal(whenLabel(card({ end_date: 'tbd' }), z), 'Sun 22 Nov, 10:00 – 16:00');
+  assert.equal(whenLabel(null, z), 'Date not given');
+});
+test('nothing throws for fields that are strings, empty, null, undefined or numbers', () => {
+  const values = ['', 'x', null, undefined, 5, '2026-11-22', '10:00', 'Mars/Olympus', {}];
+  const keys = ['start_date', 'start_time', 'end_date', 'end_time', 'timezone', 'venue', 'city'];
+  for (const k of keys) {
+    for (const v of values) {
+      const c = card({ [k]: v });
+      assert.doesNotThrow(() => { addTimes(c); canAdd(c); whenLabel(c, 'America/Los_Angeles'); whereLabel(c); }, `${k}=${String(v)}`);
+    }
+  }
+  assert.doesNotThrow(() => { addTimes(undefined); whenLabel(undefined); whereLabel(undefined); });
+  assert.equal(whereLabel(card({ venue: 5, city: 'Grove City' })), 'Grove City');
+  assert.deepEqual(shownCards({ cards: 'nope' }), []);
 });
