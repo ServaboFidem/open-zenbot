@@ -214,7 +214,7 @@ def check_key(value: object) -> str:
 class DiscoverKeys:
     """The FindLocal key, in <vault>-settings/events_keys.json (owner only)."""
 
-    findlocal: str = ""
+    findlocal: str = field(default="", repr=False)  # not in a repr: telemetry sends frame locals
 
     def __post_init__(self) -> None:
         exclusion.register_secret_value(self.findlocal)  # the ledger masks it if it reaches a tool output

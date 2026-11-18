@@ -568,3 +568,37 @@ def test_the_notice_names_no_site():
     from src.events.discover_tools import LISTING_NOTICE as NOTICE
 
     assert "Eventbrite" not in NOTICE and NOTICE == LISTING_NOTICE
+
+
+# the final review: a refresh error is named only when there is no candidate at all ------------------------
+
+async def test_a_findlocal_failure_and_a_filter_that_matches_nothing_gives_the_filters_answer(
+        scout_tools, discovery, fake_findlocal):
+    fake_findlocal.fail[1] = 429
+    await _findlocal_ready(discovery, fake_findlocal)
+    out = await scout_tools.candidates(text="zzzz")
+    assert discovery.store.meta("findlocal_last_error") == "refused" and discovery.candidate_count() > 0
+    assert out.startswith("No candidate events match those filters.")
+    assert "could not be refreshed" not in out and "do not save a digest" not in out
+
+
+async def test_an_eventbrite_error_in_its_retry_window_and_a_filter_that_matches_nothing_gives_the_filters_answer(
+        scout_tools, discovery, fake_site, clock):
+    await scout_tools.candidates()
+    clock.now += REFRESH_AFTER_S + 60
+    fake_site.fail[("this", 1)] = 403
+    await scout_tools.candidates()                             # the refresh fails; the pool keeps its rows
+    clock.now += 60                                            # inside the 10-minute window: the error is held
+    assert (await discovery.refresh())["error"] == "refused"
+    out = await scout_tools.candidates(text="zzzz")
+    assert out.startswith("No candidate events match those filters.")
+    assert "could not be refreshed" not in out
+
+
+async def test_both_sources_failing_with_an_empty_pool_names_eventbrites_kind(scout_tools, discovery, fake_site,
+                                                                              fake_findlocal):
+    fake_site.fail[("this", 1)] = 403
+    fake_findlocal.fail[1] = 401
+    await _findlocal_ready(discovery, fake_findlocal)
+    out = await scout_tools.candidates(text="zzzz")
+    assert "could not be refreshed (refused)" in out and "do not save a digest" in out

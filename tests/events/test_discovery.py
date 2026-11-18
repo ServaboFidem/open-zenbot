@@ -497,3 +497,100 @@ async def test_status_never_holds_the_key(discovery):
     assert "KEY-abcdefgh" not in json.dumps(status)
     assert status["findlocal"] == {"city": "columbus", "timezone": "America/New_York", "key_set": True,
                                    "key_hint": "efgh", "last_refresh": "", "last_error": "", "ready": True}
+
+
+# the final review: any exception in a FindLocal read is a recorded failure, never Eventbrite's ------------
+
+class RaisingReader:
+    """A FindLocal reader whose read raises ``error``; ``calls`` counts the reads."""
+
+    def __init__(self, error: Exception):
+        self.error = error
+        self.calls = 0
+
+    async def read(self, *args, **kwargs):
+        self.calls += 1
+        raise self.error
+
+
+def fl_failures_logged(caplog) -> str:
+    return "\n".join(r.getMessage() for r in caplog.records if r.name == "src.events.discovery")
+
+
+async def test_an_unexpected_exception_in_a_findlocal_read_is_provider_and_waits(discovery, clock, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    await set_up_findlocal(discovery)
+    reader = discovery.findlocal = RaisingReader(RuntimeError("KEY-abcdefgh inside"))
+    out = await discovery.refresh()
+    assert out["findlocal"] == {"calls": 0, "events": 0, "error": "provider"} and out["error"] == ""
+    assert len(discovery.candidates()) == 11                      # Eventbrite's rows are still candidates
+    assert discovery.store.meta(FL_LAST_ERROR) == "provider" and discovery.store.meta(FL_LAST_FAILURE)
+    clock.now += 4 * 60
+    again = await discovery.refresh()
+    clock.now += 4 * 60
+    await discovery.refresh(weekly=True)
+    assert reader.calls == 1
+    assert again["findlocal"] == {"calls": 0, "events": 0, "error": "provider"}
+    logged = fl_failures_logged(caplog)
+    assert "RuntimeError" in logged and "KEY-abcdefgh" not in logged and "inside" not in logged
+    assert all(r.exc_info is None for r in caplog.records)
+    entries = [e for e in discovery.ledger.entries if e.get("source") == "findlocal"]
+    assert entries and entries[-1]["error"] == "provider" and "KEY-abcdefgh" not in json.dumps(entries)
+
+
+async def test_a_store_error_after_a_good_findlocal_read_is_provider_and_waits(discovery, fake_findlocal, clock,
+                                                                              caplog):
+    import logging
+    import sqlite3
+
+    caplog.set_level(logging.DEBUG)
+    await discovery.refresh()                                     # Eventbrite is read and fresh for 12 hours
+    fake_findlocal.rows = [fl(1)]
+    await set_up_findlocal(discovery)
+    real = discovery.store.upsert_pool
+
+    def upsert(events, *args, **kwargs):
+        if events:
+            raise sqlite3.OperationalError("KEY-abcdefgh inside")
+        return real(events, *args, **kwargs)
+
+    discovery.store.upsert_pool = upsert
+    out = await discovery.refresh()
+    assert out["findlocal"] == {"calls": 0, "events": 0, "error": "provider"}
+    assert len(discovery.candidates()) == 11
+    assert discovery.store.meta(FL_LAST_ERROR) == "provider" and discovery.store.meta(FL_LAST_FAILURE)
+    assert discovery.store.meta(FL_LAST_REFRESH) == ""
+    clock.now += 4 * 60
+    await discovery.refresh()
+    clock.now += 4 * 60
+    await discovery.refresh(weekly=True)
+    assert len(fake_findlocal.requests) == 1
+    logged = fl_failures_logged(caplog)
+    assert "OperationalError" in logged and "KEY-abcdefgh" not in logged and "inside" not in logged
+
+
+async def test_a_value_error_from_a_findlocal_read_is_provider_with_a_failure_time(discovery, clock):
+    await set_up_findlocal(discovery)
+    reader = discovery.findlocal = RaisingReader(ValueError("not a city"))
+    out = await discovery.refresh()
+    assert out["findlocal"]["error"] == "provider"
+    assert discovery.store.meta(FL_LAST_FAILURE) == "2026-11-18T09:00:00Z"
+    clock.now += 5 * 60
+    assert (await discovery.refresh())["findlocal"] == {"calls": 0, "events": 0, "error": "provider"}
+    assert reader.calls == 1
+
+
+async def test_a_failed_key_save_keeps_the_old_key(discovery, monkeypatch):
+    from src.events.discover_settings import DiscoverKeys
+
+    await discovery.set_key("OLD-KEY")
+
+    def refuse(self, vault_root):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(DiscoverKeys, "save", refuse)
+    with pytest.raises(OSError):
+        await discovery.set_key("NEW-KEY")
+    assert discovery.keys.findlocal == "OLD-KEY"

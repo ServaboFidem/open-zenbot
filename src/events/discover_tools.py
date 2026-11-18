@@ -121,10 +121,12 @@ class DiscoverTools:
         offset = max(0, _count(offset, 0))
         rows = self.discovery.candidates(limit=max(1, min(_count(limit, DEFAULT_PAGE), MAX_PAGE)), offset=offset, **want)
         if not rows:
-            if error:
+            # A refresh error is named only when there is no candidate at all: a filter that matches nothing is not
+            # a failure, and a source's error can stand for weeks (a used-up quota, a wrong key).
+            today, there = self.discovery.today(), self.discovery.candidate_count()
+            if not there and error:
                 return (f"No candidate events: the list of events could not be refreshed ({error}). "
                         "Stop and report this; do not save a digest.")
-            today, there = self.discovery.today(), self.discovery.candidate_count()
             if not there:
                 return (f"No candidate events from today ({today}) on. Stop and report this; do not save a digest.")
             return (f"No candidate events match those filters. Today is {today}, and {there} events from today on "

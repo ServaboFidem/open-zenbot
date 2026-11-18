@@ -189,14 +189,18 @@ class Discovery:
         s = self.settings
         try:
             result = await self.findlocal.read(s.findlocal_city, self.keys.findlocal, s.timezone, self.today())
-        except (SourceError, ValueError) as e:  # ValueError: a city not in the list, which settings never hold
+            fresh = [e for e in result.events if not self.store.known_duplicate(e)]
+            self.store.upsert_pool(fresh, self.now())
+        except Exception as e:  # any failure waits 10 minutes, so a surprise cannot spend the quota
+            # SourceError carries its kind; anything else (a ValueError for a city not in the list, a parser or
+            # store surprise) is "provider". Only the class name is logged: the text may hold the key.
             kind = e.kind if isinstance(e, SourceError) else "provider"
+            if not isinstance(e, SourceError):
+                log.warning("findlocal read failed: %s", type(e).__name__)
             self.store.set_meta(FL_LAST_ERROR, kind)
             self.store.set_meta(FL_LAST_FAILURE, self.now())
             out = {"calls": 0, "events": 0, "error": kind}
         else:
-            fresh = [e for e in result.events if not self.store.known_duplicate(e)]
-            self.store.upsert_pool(fresh, self.now())
             self.store.set_meta(FL_LAST_REFRESH, self.now())
             self.store.set_meta(FL_LAST_ERROR, result.error)
             self.store.set_meta(FL_LAST_FAILURE, "")
@@ -207,9 +211,10 @@ class Discovery:
 
     async def set_key(self, value: str | None) -> None:
         """Keep a new FindLocal key (checked; None forgets it) and clear FindLocal's last error and failure, so the
-        next refresh may read at once."""
-        self.keys = DiscoverKeys(findlocal=check_key(value) if value is not None else "")
-        self.keys.save(self.vault)
+        next refresh may read at once. The file is written first: a save that fails leaves the old key in use."""
+        keys = DiscoverKeys(findlocal=check_key(value) if value is not None else "")
+        keys.save(self.vault)
+        self.keys = keys
         async with self._lock:
             self.store.set_meta(FL_LAST_ERROR, "")
             self.store.set_meta(FL_LAST_FAILURE, "")

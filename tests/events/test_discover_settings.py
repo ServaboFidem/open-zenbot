@@ -125,3 +125,11 @@ def test_keys_file_is_owner_only_and_beside_the_vault(tmp_path):
 def test_keys_public_never_holds_the_key():
     assert DiscoverKeys(findlocal="fl_live_abcdefgh").public() == {"key_set": True, "key_hint": "efgh"}
     assert DiscoverKeys().public() == {"key_set": False, "key_hint": ""}
+
+
+# the final review: the key stays out of a repr, and a failed save keeps the old key in memory -------------
+
+def test_the_key_is_not_in_the_keys_repr():
+    from src.events.discover_settings import DiscoverKeys
+
+    assert "KEY-abcdefgh" not in repr(DiscoverKeys(findlocal="KEY-abcdefgh"))
