@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FINDLOCAL_ERRORS, FINDLOCAL_FAILED, KEY_HINT, URL_HINT, bodyFrom, canSave, changed, cityName, cityOptions, draftFrom, findLocalLine, nextRunLine, toggleCategory, zoneLine } from '../../src/gui/discovery-settings.js';
+import { readFileSync } from 'node:fs';
+import { FINDLOCAL_ERRORS, FINDLOCAL_FAILED, KEY_HINT, URL_HINT, bodyFrom, canSave, changed, cityName, cityOptions, draftFrom, findLocalLine, keyFieldEnter, nextRunLine, refusalField, toggleCategory, zoneLine } from '../../src/gui/discovery-settings.js';
 
 const status = (o = {}, f = {}) => ({
   settings: { enabled: false, city: 'Columbus', state: 'OH', country: 'US', source_url: 'https://www.eventbrite.com/d/oh--columbus/events/', place: 'oh--columbus', categories: ['EventbriteCategory/103'], interests: 'jazz', ...o },
@@ -104,5 +105,32 @@ test('findLocalLine gives the sentence for each error, and a default', () => {
 test('findLocalLine says when it last read, or that it has not', () => {
   const on = { city: 'columbus-oh', key_set: true };
   assert.match(findLocalLine(status({}, { ...on, last_refresh: '2026-11-18T14:30:00Z' })), /^Last read: .+\.$/);
-  assert.equal(findLocalLine(status({}, on)), 'Not read yet. The weekly run reads it.');
+  assert.equal(findLocalLine(status({}, on)), 'Not read yet. The next run reads it.');
+});
+
+test('Enter in the key field saves the key and never submits the settings form', () => {
+  const press = (key, extra = {}) => {
+    const e = { key, prevented: false, preventDefault() { this.prevented = true; }, ...extra };
+    let saved = 0;
+    const handled = keyFieldEnter(e, { key: extra.value ?? 'KEY-abcdefgh', busy: !!extra.busy }, () => { saved += 1; });
+    return { handled, prevented: e.prevented, saved };
+  };
+  assert.deepEqual(press('Enter'), { handled: true, prevented: true, saved: 1 });
+  assert.deepEqual(press('Enter', { value: '   ' }), { handled: true, prevented: true, saved: 0 });
+  assert.deepEqual(press('Enter', { busy: true }), { handled: true, prevented: true, saved: 0 });
+  assert.deepEqual(press('a'), { handled: false, prevented: false, saved: 0 });
+  assert.deepEqual(press('Enter', { nativeEvent: { isComposing: true } }), { handled: false, prevented: false, saved: 0 });
+});
+test('the key field uses keyFieldEnter and asks no password manager to save it', () => {
+  const src = readFileSync(new URL('../../src/gui/DiscoverySettings.jsx', import.meta.url), 'utf8');
+  const field = src.match(/<Input type="password"[\s\S]*?\/>/)?.[0] || '';
+  assert.match(field, /autoComplete="new-password"/);
+  assert.match(field, /onKeyDown=\{[^}]*keyFieldEnter\(/);
+});
+test('refusalField puts the harness’s FindLocal city refusals under the FindLocal city field', () => {
+  assert.equal(refusalField('Pick a FindLocal city from the list.'), 'findlocal_city');
+  assert.equal(refusalField('The time zone is missing. Pick the FindLocal city again.'), 'findlocal_city');
+  assert.equal(refusalField('Paste the address of your city’s Eventbrite results page.'), 'url');
+  assert.equal(refusalField(''), 'url');
+  assert.equal(refusalField(undefined), 'url');
 });

@@ -75,6 +75,20 @@ export function findLocalLine(status) {
   if (!f || !f.city || !f.key_set) return '';
   if (f.last_error) return FINDLOCAL_ERRORS[f.last_error] || FINDLOCAL_FAILED;
   const at = f.last_refresh ? new Date(f.last_refresh) : null;
-  if (!at || Number.isNaN(at.getTime())) return 'Not read yet. The weekly run reads it.';
+  if (!at || Number.isNaN(at.getTime())) return 'Not read yet. The next run reads it.';
   return `Last read: ${at.toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`;
 }
+
+// Enter in the key field saves the key, never the settings form (they are saved apart). Returns whether it was
+// handled. `state` is { key, busy }, as the Save key button sees them.
+export function keyFieldEnter(event, state, saveKey) {
+  if (event?.key !== 'Enter' || event.nativeEvent?.isComposing) return false;
+  event.preventDefault();
+  if (!state.busy && String(state.key ?? '').trim()) saveKey();
+  return true;
+}
+
+// Which field a refusal of PUT /discover/settings shows under: the harness's two FindLocal city sentences under
+// the FindLocal city, everything else under the Eventbrite address.
+const FINDLOCAL_CITY_REFUSALS = ['Pick a FindLocal city from the list.', 'The time zone is missing. Pick the FindLocal city again.'];
+export const refusalField = text => (FINDLOCAL_CITY_REFUSALS.includes(text) ? 'findlocal_city' : 'url');

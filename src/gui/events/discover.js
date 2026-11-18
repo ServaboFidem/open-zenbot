@@ -161,13 +161,16 @@ const REFRESH_ERRORS = {
 const REFRESH_FAILED = 'The last refresh did not finish.';   // a kind this page does not know
 
 // What a failed refresh says, '' when the last one was clean. With events kept from an earlier read it says so.
+// Settings' sentences, but on this tab the key is checked in Settings, not "here".
+const FINDLOCAL_TAB_ERRORS = { ...FINDLOCAL_ERRORS, key: 'FindLocal did not accept the key. Check it in Settings.' };
+
 export function refreshNotice(status) {
   const error = status?.refresh?.error;
   const flError = status?.findlocal?.last_error;
   if (!error && !flError) return '';
   const why = error
     ? (Object.hasOwn(REFRESH_ERRORS, error) ? REFRESH_ERRORS[error] : REFRESH_FAILED)
-    : (Object.hasOwn(FINDLOCAL_ERRORS, flError) ? FINDLOCAL_ERRORS[flError] : FINDLOCAL_FAILED);
+    : (Object.hasOwn(FINDLOCAL_TAB_ERRORS, flError) ? FINDLOCAL_TAB_ERRORS[flError] : FINDLOCAL_FAILED);
   return status.refresh?.pool > 0 ? `${why} Showing what was read.` : why;
 }
 

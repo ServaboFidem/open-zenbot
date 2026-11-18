@@ -300,7 +300,9 @@ test('needsCredit: a shown FindLocal card, not a dismissed one or a null digest'
 
 test('refreshNotice: a FindLocal error shows when Eventbrite is clean; Eventbrite wins when both failed', () => {
   const both = (flError, ebError = '', pool = 0) => st({ refresh: { last: '', error: ebError, pool }, findlocal: { last_error: flError } });
-  assert.equal(refreshNotice(both('key')), FINDLOCAL_ERRORS.key);
+  assert.equal(refreshNotice(both('key')), 'FindLocal did not accept the key. Check it in Settings.');
+  assert.equal(refreshNotice(both('key', '', 4)), 'FindLocal did not accept the key. Check it in Settings. Showing what was read.');
+  for (const k of ['refused', 'network', 'source_changed', 'provider']) assert.equal(refreshNotice(both(k)), FINDLOCAL_ERRORS[k], k);
   assert.equal(refreshNotice(both('weird')), FINDLOCAL_FAILED);
   assert.equal(refreshNotice(both('network', '', 4)), `${FINDLOCAL_ERRORS.network} Showing what was read.`);
   assert.equal(refreshNotice(both('key', 'network')), 'Could not reach Eventbrite.');

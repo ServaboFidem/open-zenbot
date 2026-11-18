@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Dropdown, Field, Input, Label, Option, Spinner, Switch, Textarea } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
-import { KEY_HINT, MAX_INTERESTS, URL_HINT, bodyFrom, canSave, changed, cityName, cityOptions, draftFrom, findLocalLine, nextRunLine, toggleCategory, zoneLine } from './discovery-settings';
+import { KEY_HINT, MAX_INTERESTS, URL_HINT, bodyFrom, canSave, changed, cityName, cityOptions, draftFrom, findLocalLine, keyFieldEnter, nextRunLine, refusalField, toggleCategory, zoneLine } from './discovery-settings';
 
 // Settings > Calendar > Event discovery: where the user lives, their city's Eventbrite page, which kinds of events,
 // their interests, and the on/off switch. The harness checks the address and answers 422 with the sentence to show.
@@ -64,7 +64,7 @@ export function DiscoverySettings({ api, online, notify }) {
       const fresh = await api.discover.saveSettings(bodyFrom(draft, Intl.DateTimeFormat().resolvedOptions().timeZone));
       if (alive.current) { setStatus(fresh); setDraft(draftFrom(fresh)); }
       notify('Event discovery saved');
-    } catch (err) { if (alive.current) setError({ at: 'url', text: message(err) }); }
+    } catch (err) { if (alive.current) setError({ at: refusalField(message(err)), text: message(err) }); }
     finally { if (alive.current) setBusy(false); }
   }
 
@@ -96,7 +96,7 @@ export function DiscoverySettings({ api, online, notify }) {
     <h4>FindLocal (optional)</h4>
     <p className="field-hint">A second source of events, read once a week. It needs a free key.</p>
     <Field label="FindLocal key" hint={KEY_HINT} validationState={keyError ? 'error' : 'none'} validationMessage={keyError || undefined}>
-      <Input type="password" autoComplete="off" spellCheck={false} value={key} disabled={keyBusy} onChange={(e, d) => { setKey(d.value); setKeyError(''); }}/>
+      <Input type="password" autoComplete="new-password" spellCheck={false} value={key} disabled={keyBusy} onChange={(e, d) => { setKey(d.value); setKeyError(''); }} onKeyDown={e => keyFieldEnter(e, { key, busy: keyBusy }, saveKey)}/>
     </Field>
     <div className="cal-actions">
       <Button appearance="outline" disabled={keyBusy || !key.trim()} onClick={saveKey}>{keyBusy ? 'Saving…' : 'Save key'}</Button>
@@ -105,7 +105,7 @@ export function DiscoverySettings({ api, online, notify }) {
         <Button appearance="outline" disabled={keyBusy} onClick={forgetKey}>Forget</Button>
       </>}
     </div>
-    <Field label="FindLocal city">
+    <Field label="FindLocal city" validationState={error.at === 'findlocal_city' ? 'error' : 'none'} validationMessage={error.at === 'findlocal_city' ? error.text : undefined}>
       <Dropdown aria-label="FindLocal city" disabled={busy} value={draft.findlocal_city ? cityName(draft.findlocal_city) : 'None'}
         selectedOptions={[draft.findlocal_city]} onOptionSelect={(e, d) => set({ findlocal_city: d.optionValue })}>
         <Option key="" value="" text="None">None</Option>
