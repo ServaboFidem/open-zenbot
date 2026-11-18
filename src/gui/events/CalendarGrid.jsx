@@ -1,15 +1,8 @@
 import React, { useEffect, useRef } from 'react';
-import { moveKey } from './dates.js';
+import { dayTitle, moveKey } from './dates.js';
 
 const MOVES = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']);
 const WEEKDAYS = [['Mon', 'Monday'], ['Tue', 'Tuesday'], ['Wed', 'Wednesday'], ['Thu', 'Thursday'], ['Fri', 'Friday'], ['Sat', 'Saturday'], ['Sun', 'Sunday']];
-
-// A day key as words, e.g. dayTitle('2026-11-17') -> "Tuesday 17 November". The key is a calendar date,
-// so it is formatted at UTC midnight: no zone can move it to another day.
-export function dayTitle(key, options = { weekday: 'long', day: 'numeric', month: 'long' }) {
-  const [y, m, d] = key.split('-').map(Number);
-  return new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', ...options }).format(new Date(Date.UTC(y, m - 1, d)));
-}
 
 const count = n => `${n} ${n === 1 ? 'event' : 'events'}`;
 

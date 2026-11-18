@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, Switch, Textarea } from '@fluentui/react-components';
 import { Dismiss24Regular } from '@fluentui/react-icons';
-import { dayTitle } from './CalendarGrid.jsx';
-import { addDays, eventDays, instantToParts, timeLabel, wallToInstant } from './dates.js';
+import { addDays, dayTitle, eventDays, instantToParts, timeLabel, wallToInstant } from './dates.js';
+import { isGoogleLink } from './page-state.js';
 
 const pad = n => String(n).padStart(2, '0');
 const longDay = key => dayTitle(key, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
@@ -63,9 +63,11 @@ export default function EventDialog({ cal, zone, event, day, calendarName, calen
     if (!title) { setTitleError('An event needs a title.'); return; }
     setTitleError('');
     if (!form.startDate || !form.endDate || (!form.all_day && (!form.startTime || !form.endTime))) { setError('Choose when the event starts and ends.'); return; }
+    // the form shows the computer's wall clock; a timed event keeps its own zone, a new or all-day one takes the computer's
+    const keptZone = event && !event.all_day && event.tz ? event.tz : zone;
     const body = { title, all_day: form.all_day, location: form.location, description: form.description, ...(form.all_day
       ? { start: form.startDate, end: addDays(form.endDate, 1), tz: '' }
-      : { start: wallToInstant(form.startDate, form.startTime, zone), end: wallToInstant(form.endDate, form.endTime, zone), tz: zone }) };
+      : { start: wallToInstant(form.startDate, form.startTime, zone), end: wallToInstant(form.endDate, form.endTime, zone), tz: keptZone }) };
     setBusy(true); setError('');
     try {
       if (event) await cal.update(event.id, body); else await cal.create(body);
@@ -84,7 +86,7 @@ export default function EventDialog({ cal, zone, event, day, calendarName, calen
   let title, content, actions;
   if (mode === 'details') {
     const zoneLine = ownZoneText(event, zone);
-    const link = event.origin === 'google' && /^https:\/\//i.test(event.link || '') ? event.link : '';
+    const link = event.origin === 'google' && isGoogleLink(event.link) ? event.link : '';
     title = event.title;
     content = <>
       <dl className="events-facts">

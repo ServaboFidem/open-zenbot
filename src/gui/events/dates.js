@@ -51,6 +51,22 @@ export function gridRange(grid) {
   return { start: grid[0][0], end: addDays(last[last.length - 1], 1) };
 }
 
+// The range to ask GET /calendar/events for: the grid's days plus one day on each side. The harness
+// compares day keys with UTC instants as text, so a key there means UTC midnight; away from UTC an event
+// on the grid's first or last day can start or end beyond that, and no zone is a whole day away from UTC.
+// eventsByDay files anything the padding brings in under keys the grid never shows.
+export function fetchRange(grid) {
+  const { start, end } = gridRange(grid);
+  return { start: addDays(start, -1), end: addDays(end, 1) };
+}
+
+// A day key as words, e.g. dayTitle('2026-11-17') -> "Tuesday 17 November". The key is a calendar date,
+// so it is formatted at UTC midnight: no zone can move it to another day.
+export function dayTitle(key, options = { weekday: 'long', day: 'numeric', month: 'long' }) {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', ...options }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
 const toIso = ms => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 export function instantToParts(iso, zone = localZone()) {

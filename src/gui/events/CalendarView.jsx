@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Checkbox, Spinner } from '@fluentui/react-components';
 import { Add24Regular, ArrowSync24Regular, ChevronLeft24Regular, ChevronRight24Regular } from '@fluentui/react-icons';
-import CalendarGrid, { dayTitle } from './CalendarGrid.jsx';
+import CalendarGrid from './CalendarGrid.jsx';
 import EventDialog from './EventDialog.jsx';
-import { eventsByDay, gridRange, instantToParts, monthGrid, timeLabel, todayKey } from './dates.js';
+import { dayTitle, eventsByDay, fetchRange, monthGrid, timeLabel, todayKey } from './dates.js';
+import { statusLine } from './page-state.js';
 
 const LOST_EDIT = 'An event you edited was deleted on Google, so your edit was lost.';
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -13,27 +14,15 @@ const sameMonth = (key, ym) => key.startsWith(firstOf(ym).slice(0, 8));
 
 export const calendarLabel = cal => (cal.source === 'google' ? `Google: ${cal.name}` : cal.name);
 
-// A sync time: the time alone when it is today, else the day and the time.
-function syncTime(iso, zone) {
-  const { key, time } = instantToParts(iso, zone);
-  return key === todayKey(new Date(), zone) ? time : `${dayTitle(key, { day: 'numeric', month: 'short' })} ${time}`;
-}
-
-function StatusLine({ status, running, zone, openSettings, onRetry }) {
-  if (!status) return null;
-  const { state, account } = status.google;
-  const { last, error } = status.sync;
-  if (state === 'not_set_up' || state === 'ready') {
-    return <div className="events-status">Only on this computer. <button type="button" className="text-link" onClick={openSettings}>Connect Google Calendar in Settings</button></div>;
-  }
-  if (state === 'needs_reconnect') {
-    return <div className="events-status">Google sign-in has expired. Events already here are still shown. <Button size="small" onClick={openSettings}>Reconnect in Settings</Button></div>;
-  }
-  if (running) return <div className="events-status" role="status"><Spinner size="tiny"/> Syncing…</div>;
-  if (!error) {
-    return <div className="events-status">{last ? `Synced ${syncTime(last, zone)}${account ? ` with ${account}` : ''}` : 'Not synced yet'}</div>;
-  }
-  return <div className="events-status">{last ? `Could not reach Google. Showing what was here at ${syncTime(last, zone)}.` : 'Could not reach Google. Showing what was here.'} <Button size="small" onClick={onRetry}>Retry</Button></div>;
+function StatusLine({ line, openSettings, onRetry }) {
+  if (!line.text) return null;
+  const act = line.action === 'settings' ? openSettings : onRetry;
+  return <div className="events-status" role={line.spinner ? 'status' : undefined}>
+    {line.spinner && <Spinner size="tiny"/>}{line.text}
+    {line.action && (line.link
+      ? <button type="button" className="text-link" onClick={act}>{line.actionLabel}</button>
+      : <Button size="small" onClick={act}>{line.actionLabel}</Button>)}
+  </div>;
 }
 
 // The month calendar, the selected day's agenda and the calendar toggles, against /calendar.
@@ -48,13 +37,14 @@ export default function CalendarView({ api, online, notify, openSettings }) {
   const [calendars, setCalendars] = useState([]);
   const [events, setEvents] = useState([]);
   const [loadError, setLoadError] = useState('');
+  const [failures, setFailures] = useState(0);   // failed loads so far: re-arms the look-again below
   const [syncing, setSyncing] = useState(false);
   const [dialog, setDialog] = useState(null);   // { event } or { event: null } for a new one
   const loads = useRef(0);
   const syncedOnMount = useRef(false);
 
   const grid = useMemo(() => monthGrid(ym.year, ym.month), [ym.year, ym.month]);
-  const { start, end } = gridRange(grid);
+  const { start, end } = fetchRange(grid);
 
   const load = useCallback(async () => {
     const n = ++loads.current;
@@ -63,7 +53,7 @@ export default function CalendarView({ api, online, notify, openSettings }) {
       if (n !== loads.current) return;   // a newer load (another month, a later change) answers instead
       setStatus(s); setCalendars(c); setEvents(e); setLoadError(''); setToday(todayKey());
     } catch (err) {
-      if (n === loads.current) setLoadError(err.message || 'The calendar could not be loaded.');
+      if (n === loads.current) { setLoadError(err.message || 'The calendar could not be loaded.'); setFailures(f => f + 1); }
     }
   }, [cal, start, end]);
   const loadRef = useRef(load);
@@ -86,12 +76,12 @@ export default function CalendarView({ api, online, notify, openSettings }) {
     syncedOnMount.current = true;
     sync();
   }, [status, sync]);
-  // a run the harness started on its own: look again until it ends
+  // a run the harness started on its own: look again until it ends, a failed look included
   useEffect(() => {
     if (!status?.sync?.running || syncing) return undefined;
     const t = setTimeout(() => loadRef.current(), 2000);
     return () => clearTimeout(t);
-  }, [status, syncing]);
+  }, [status, syncing, failures]);
 
   const calById = useMemo(() => new Map(calendars.map(c => [c.id, c])), [calendars]);
   const visible = useMemo(() => events.filter(e => calById.get(e.calendar_id)?.visible !== false), [events, calById]);
@@ -126,8 +116,7 @@ export default function CalendarView({ api, online, notify, openSettings }) {
     load();
   }
 
-  const connected = status?.google?.state === 'connected';
-  const running = syncing || !!status?.sync?.running;
+  const line = statusLine(status, { online, failed: !!loadError, syncing, zone });
   return <div className="events-calendar">
     <div className="events-head">
       <h2 className="events-month" aria-live="polite">{dayTitle(firstOf(ym), { month: 'long', year: 'numeric' })}</h2>
@@ -137,15 +126,15 @@ export default function CalendarView({ api, online, notify, openSettings }) {
         <Button appearance="subtle" icon={<ChevronRight24Regular/>} aria-label="Next month" onClick={() => shiftMonth(1)}/>
       </div>
       <div className="events-actions">
-        {connected && <Button icon={<ArrowSync24Regular/>} disabled={running} onClick={sync}>Refresh</Button>}
-        <Button appearance="primary" icon={<Add24Regular/>} onClick={() => setDialog({ event: null })}>New event</Button>
+        {line.refresh && <Button icon={<ArrowSync24Regular/>} disabled={line.refreshDisabled} onClick={sync}>Refresh</Button>}
+        <Button appearance="primary" icon={<Add24Regular/>} disabled={!line.ready} onClick={() => setDialog({ event: null })}>New event</Button>
       </div>
     </div>
     {loadError && <p className="events-error" role="alert">{loadError}</p>}
     <div className="events-layout">
       <div className="events-main">
         <CalendarGrid grid={grid} year={ym.year} month={ym.month} selected={selected} today={today} byDay={byDay} colorOf={colorOf} onSelect={select}/>
-        <StatusLine status={status} running={running} zone={zone} openSettings={openSettings} onRetry={sync}/>
+        <StatusLine line={line} openSettings={openSettings} onRetry={sync}/>
       </div>
       <aside className="events-side" aria-label="Selected day">
         <section className="events-agenda">
@@ -161,7 +150,7 @@ export default function CalendarView({ api, online, notify, openSettings }) {
                   </span>
                 </button>
               </li>)}</ul>
-            : <p className="events-empty">Nothing on this day.{monthEmpty && <><br/>No events this month.</>}</p>}
+            : line.ready && <p className="events-empty">Nothing on this day.{monthEmpty && <><br/>No events this month.</>}</p>}
         </section>
         {shown.length > 0 && <section className="events-calendars">
           <h3>Calendars</h3>
