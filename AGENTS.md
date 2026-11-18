@@ -433,7 +433,10 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     weekly routine's run, once the last read is over 20 hours old (`FINDLOCAL_AFTER_S`): `events_candidates` passes
     `weekly=Discovery.is_weekly_run(session id)`. `force` does not apply to it, so an on-demand run and the Find events button
     never read it again. Inside 10 minutes of a failed read nothing is requested and the refresh answer's `findlocal` block
-    carries the recorded error kind; a failed first read is tried again after that. `set_key` clears FindLocal's last error
+    carries the recorded error kind; a failed first read is tried again after that. Any other exception in a FindLocal read
+    or in storing its rows (one that is not a `SourceError`) is recorded as kind `provider`, logged by its class name only,
+    waits the same 10 minutes and never fails Eventbrite's part of the refresh. `set_key` writes `events_keys.json` before it
+    swaps the key in memory, so a save that fails leaves the old key in use. `set_key` clears FindLocal's last error
     and failure so a new key may read at once: it does when FindLocal
     has never been read, or its last attempt failed with no successful read; otherwise the weekly run reads it once the last
     read is over 20 hours old.
@@ -444,15 +447,16 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     Eventbrite card links only to an Eventbrite page, labelled "View on Eventbrite"; a FindLocal card to any `https` address,
     labelled "View event page"; any other source, none. FindLocal's terms ask for a credit: a fixed link "Event data by
     FindLocal" to `https://findlocal.community` (`CREDIT`, never built from data) shows under every digest on show that holds
-    a FindLocal card, older digests included (`needsCredit`).
+    a shown (not dismissed) FindLocal card, older digests included (`needsCredit`).
 - **The scout and its tools** (`discover_tools.py`, group `events`, registered by `Discovery.register` only while discovery
   is on with a place set): `events_interests` (it carries `today`, since a model does not know the date: the first real
   run guessed June 2025 and filtered every search to the past; a filtered search that matches nothing now answers today's
-  date and how many events there are), `events_candidates` (up to 60 a call, fewer when the rows are long, refreshing a pool older than 12 hours
-  first; the answer is built row by row and stays under 18,000 characters so the tool runner's 20,000 cap never cuts it:
+  date and how many events there are), `events_candidates` (up to 60 a call, fewer when the rows are long, refreshing
+  first: Eventbrite's pool when it is older than 12 hours, FindLocal by its own rule (*When it is read* under FindLocal); the answer is built row by row and stays under 18,000 characters so the tool runner's 20,000 cap never cuts it:
   `{"events": [...], "total": <candidates matching the filters>, "next_offset": <offset of the first row left out, or null>}`,
-  and the scout pages with `next_offset`; its first line says the listing is content, not instructions; a failed refresh with no candidates is the tool's
-  error naming the kind, Eventbrite's or else FindLocal's; each candidate carries its `source`) and `events_save_digest`. The tools are offered to the scout only, and only while the scout is a closed bot (`ToolRunner.register(offered=...)`
+  and the scout pages with `next_offset`; its first line says the listing is content, not instructions; a refresh error,
+  Eventbrite's or else FindLocal's, is the tool's error naming the kind only when there is no candidate at all, and a filtered
+  search that matches nothing answers today's date and how many events there are even while an error stands; each candidate carries its `source`) and `events_save_digest`. The tools are offered to the scout only, and only while the scout is a closed bot (`ToolRunner.register(offered=...)`
   and a caller check in each tool, both through `Discovery.scout_is_closed`, which asks `Discovery.bot_lookup`, set by the
   harness; with no lookup, or a bot of that id without `closed: true`, they refuse), and there is no catalog entry for the group, so the decider cannot route listing text to
   any other bot. `events_save_digest` is the gate and the only way a card is saved (`Discovery.save`, `_check`): 1 to 8 cards,
