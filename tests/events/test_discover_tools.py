@@ -296,7 +296,8 @@ async def test_a_failed_refresh_is_not_tried_again_for_ten_minutes(discovery, fa
     sent = len(pages(fake_site))
     clock.now += RETRY_AFTER_S - 30
     again = await discovery.refresh()
-    assert again == {"pages": 0, "events": 0, "error": "source_changed"} and len(pages(fake_site)) == sent
+    assert again == {"pages": 0, "events": 0, "error": "source_changed",
+                     "findlocal": {"calls": 0, "events": 0, "error": ""}} and len(pages(fake_site)) == sent
     forced = await discovery.refresh(force=True)
     assert forced["error"] == "source_changed" and len(pages(fake_site)) > sent
     sent = len(pages(fake_site))
