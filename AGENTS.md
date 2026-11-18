@@ -330,8 +330,8 @@ before a release:
   whose safety argument ("only the user makes events here") leans on it. Closing it needs authentication across
   the whole harness API (for example a per-launch token the GUI holds), which is not built. Until then, do not
   describe the calendar as out of bots' reach.
-- **Not built.** Anything beyond this: finding local events, and the other pieces of the design. Don't count them
-  as there.
+- **Not built.** Anything beyond this and event discovery (finding local events, under `### Event discovery`, which
+  makes a calendar event only through its two add routes). Don't count other pieces of the design as there.
 
 Don't add a calendar tool for bots without revisiting automatic push: it sends whatever is in the calendar to
 Google with no review. Don't write an event write to Google outside `Sync.push` (every insert, patch and delete of
@@ -393,8 +393,8 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   (`drop_past`). Each row has a `source`, `eventbrite` or `findlocal` (a row from before FindLocal counts as `eventbrite`).
   `Discovery.refresh` reads Eventbrite and then FindLocal under one lock. Eventbrite is skipped while its last good refresh
   is under 12 hours old (`REFRESH_AFTER_S`) unless forced, and a refresh that failed is not tried again for 10 minutes
-  (`RETRY_AFTER_S`) unless forced (no caller passes `force` today). After both sources a refresh sweeps the pool pictures
-  (`Discovery._sweep`, under *All Events* below).
+  (`RETRY_AFTER_S`) unless forced (no caller passes `force` today). After both sources, once the refresh lock is released,
+  a refresh sweeps the pool pictures (`Discovery._sweep`, under the picture lock; see *All Events* below).
   The candidates are the pool rows starting today or later, in a ticked category (or with no category tag, or any when none
   is ticked), never on a saved card and never in the `added` table (an event the user added from All Events is no
   candidate from then on, whether or not its calendar event still exists). The pool has no place column: when the settings are saved with a different `place`,
@@ -492,7 +492,8 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   shows at once (`discover.js` `lookStep`, `viewState`). One 15-minute limit per run. A digest's `note` is held to the same
   plain-text check and length cap as a card's `why`.
 - **All Events** (`AllEventsView.jsx`, `EventPanel.jsx`, decisions in `all-events.js`, through `discover-api.js`). The grid
-  shows the pool as the last refresh left it; its routes never read a source.
+  shows the pool as the last refresh left it; its routes never read Eventbrite's pages or FindLocal, and the picture route
+  fetches only the picture, from `img.evbuc.com`.
   - *The list* (`GET /discover/events`): while discovery is active, every pool row starting today or later in date order,
     at most `MAX_LISTING` (5,000; `DiscoverStore.listing`), each with the slim fields (`SLIM`: id, name, dates and times,
     venue, city, category names, source) and its `state`; plus `total` and `read_at` (Eventbrite's last refresh). Not
@@ -500,8 +501,8 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     both sources are present; from and to, inclusive, on the start date), sorts by any column (an empty venue or category
     last either way; ties by date, time with all day first, name), draws 200 rows at a time as the user scrolls, and
     marks a row ★ Recommended or ✓ On your calendar.
-  - *An event's `state`* (`state` in `discover_router`, from `DiscoverStore.listing` and `marks`): `added` while a calendar event made from it (the `added` row's or an
-    added card's) still exists, not deleted; else `recommended` while it has a card that is not dismissed; else empty.
+  - *An event's `state`* (`state` in `discover_router`, from `DiscoverStore.listing` and `marks`): `added` while a calendar event made from it (the `added` row's or any
+    card's, a dismissed card included) still exists, not deleted; else `recommended` while it has a card that is not dismissed; else empty.
   - *The panel* (`EventPanel.jsx`, opened from a row): `GET /discover/events/{id}` answers the row's `DETAIL` fields, its
     `state` and `image` (`/discover/events/{id}/image` for an Eventbrite row with a picture address, else null), or 404
     "No such event." It shows the picture, the details, the link (`cardLink`'s rule), and Add to calendar when
@@ -514,14 +515,18 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     them), and kept as `discover-images/pool/<id>`: written new to `<id>.part` (`O_EXCL`, `O_NOFOLLOW` where there is one)
     and renamed into place; a failed fetch keeps nothing, so a later ask tries again. When `discover-images` or `pool` is a
     link nothing is read or written. Served with its type by first bytes and `nosniff`; 404 "No picture." otherwise. After
-    each refresh the sweep (`sweep_pool_images`, under the same lock as the fetches) deletes kept pictures whose event is
-    no longer an Eventbrite pool row, stray part files and links (never followed).
+    each refresh, once the refresh lock is released, the sweep (`sweep_pool_images`, under the picture lock the fetches
+    take, so it never holds up a settings or key save, or the scout's candidates, while fetches queued ahead of it run)
+    deletes kept pictures whose event is no longer an Eventbrite pool row, stray part files and links (never followed). A
+    sweep that fails is logged by its class name and never fails the refresh.
   - *Refresh* (`POST /discover/refresh`, `NothingIn`; 409 when discovery is not active). Starts an unforced `refresh()` in
     the background (`Discovery.start_refresh`; none while one is under way) and answers the status, whose `refreshing`
     says one is going. Unforced, so Eventbrite's 12-hour and 10-minute waits hold, and FindLocal is read only when it has
     no last read. The page offers Refresh only when set up, online, nothing refreshing, and Eventbrite's last read is
     none or 12 hours old (`canRefresh`); while one goes it shows "Reading events…", looks at the status every 3 s and
-    loads the list again when it ends, for at most 10 minutes.
+    loads the list again when it ends, for at most 10 minutes. After that the reading line goes (`isBusy`), the page says
+    "The refresh has not finished. Check back later.", and Refresh follows `canRefresh` (still not offered while the
+    last status it read says `refreshing`).
   - *Active or not.* `GET /discover/events/{id}`, the pool add and the picture route do not check that discovery is active:
     with discovery switched off the pool rows stay, a picture can still be fetched on request, and no sweep runs until a
     refresh happens again (a refresh does nothing while discovery is off).
@@ -535,16 +540,20 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   daylight-saving gap is stepped back to the jump minute). The harness checks each instant lies within 14 hours of the card's
   wall-clock value (no zone is further from UTC), else 422; it makes the event from the card's snapshot through `store.add` and
   its validation (title the name, location venue and address, description the summary then the link, `tz` the event's zone),
-  marks the card `added` with the event's id, and asks for a sync. A card already `added` answers its event and makes no
-  second. A timed event with no end ends one hour after it starts. A timed card whose listing had no usable zone (stored as
+  marks the card `added` with the event's id, and asks for a sync. Before making one it answers a live calendar event
+  (existing, not deleted) made from the same pool event by either add route: the card's own, else the `added` row's or
+  another card's, a dismissed card included (`marks`, `pool_live`); the card is then marked `added` with that event's id
+  and nothing is made. So for one pool event, while a calendar event made from it by either route still exists and is not
+  deleted, neither route makes another; once it is deleted, an add makes a new one. A timed event with no end ends one hour after it starts. A timed card whose listing had no usable zone (stored as
   empty) cannot be added: `addTimes` gives null, so Add is not offered, and the route answers 422 "This listing has no
   usable time zone." With push on, the event goes to Google like any made here.
   Adding is the user's yes: "Yes, add it" in the dialog after following a link and coming back, or Add on the card. No
   dismiss is offered on an added card.
   From All Events, `POST /discover/events/{id}/add` (body `{start, end}`, `addTimes` of the pool row; 404 "No such event."
   for an id that is no pool row) does the same checks (`make_event`, shared with the card add: 409 for a past event, 422 for times that are not the listing's or fields the
-  calendar refuses) and makes the event from the pool row, never a card's older snapshot. When the row already has a live
-  calendar event it answers that one and makes no second. Otherwise, when the event has a card that is not dismissed
+  calendar refuses) and makes the event from the pool row, never a card's older snapshot. When the event already has a live
+  calendar event made by either route (the `added` row's or any card's, a dismissed card included) it answers that one
+  and makes none. Otherwise, when the event has a card that is not dismissed
   (`card_for_event`, the newest), that card is marked `added` with the new event's id instead of writing an `added` row;
   else an `added` row is kept (`mark_event_added`). It answers `{"event": <the detail with its new state>,
   "calendar_event": ...}` and asks for a sync. Both add routes run under one lock (`add_lock`), and they are the only way
@@ -584,17 +593,19 @@ Unverified, and open:
   throwaway vault and a digest saved by hand, not by the scout; the "window got focus again" event was sent by script, not by a real window switch
   (the Electron shell was not run).
 - **The All Events tab, the event panel and the renamed tab have not been seen on screen by anyone**: only `npm test` and
-  the build have run them. The grid has not been tried with a real pool's size. A known small fault: once the page stops
-  looking at the status after 10 minutes, the tab can keep showing "Reading events…" until it is reopened.
+  the build have run them. The grid has not been tried with a real pool's size.
 - The harness API still has no authentication, so a bot with `shell` (curl) or the `browser` server can call the `/discover`
   routes as it can call `/calendar`: read the digests and the whole pool (`GET /discover/events`, `/events/{id}`), dismiss
   a card, add any card or pool event to the calendar (`POST /discover/cards/{id}/add`, `/events/{id}/add`), which push
   then sends to Google, start a refresh (`POST /discover/refresh`), and make the harness fetch any Eventbrite pool row's
-  picture from `img.evbuc.com` (`GET /discover/events/{id}/image`). Do not describe discovery as out of bots' reach.
+  picture from `img.evbuc.com` (`GET /discover/events/{id}/image`). A caller walking every id makes the harness keep up
+  to 1,500,000 bytes for each Eventbrite pool row with a picture: bounded by the pool, and deleted by the sweep after the
+  next refresh once the row has left it. Do not describe discovery as out of bots' reach.
 
 Rules for contributors. No card is saved except through `events_save_digest` (`Discovery.save`). No fetch to a host other than
 `www.eventbrite.com` (the pages), `img.evbuc.com` (pictures) and `findlocal.community/api/events` (FindLocal), none to a
-URL read from a page or an answer, and no 3xx followed. The FindLocal key never goes in a route answer, a log line, an exception message, a ledger
+URL read from a page or an answer except a picture address that `Eventbrite.image` accepts (`https://img.evbuc.com/`),
+and no 3xx followed. The FindLocal key never goes in a route answer, a log line, an exception message, a ledger
 entry or a URL, only in the request's `Authorization` header; no bot gets the key or a FindLocal tool of its own. The
 scout stays `closed: true` and out of rooms; do not give any bot a calendar or discovery tool, and do not add one to the
 decider's catalog. Every `/discover` POST takes a required JSON body. No listing text, disk path or picture bytes in a
@@ -602,7 +613,8 @@ ledger entry the discovery code writes, a log line or a route answer beyond what
 and `turn` entries for the scout's session hold its tool answers and messages: see Ledger above). The pool picture route
 answers only for an id of digits (`POOL_ID`) that is an Eventbrite pool row, names its file by that id alone, and fetches
 only through `Eventbrite.image` (`img.evbuc.com`); never build a picture's path or address from anything else. The grid's
-routes (`GET /discover/events`, `/events/{id}`, `/events/{id}/image`) never read a source; only a refresh does. The two add
+routes (`GET /discover/events`, `/events/{id}`, `/events/{id}/image`) never read Eventbrite's pages or FindLocal; only a
+refresh does, and the picture route fetches only the picture, from `img.evbuc.com`. The two add
 routes (`POST /discover/cards/{id}/add`, `/events/{id}/add`) are the only way discovery makes a calendar event. Tests never touch the network: the connector takes an
 `httpx.MockTransport` (`fake_site`, `FakeFindLocal`). Tests: `tests/events/test_eventbrite.py`, `test_findlocal.py`, `test_discover_settings.py`,
 `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_discover_routes.py`; GUI
