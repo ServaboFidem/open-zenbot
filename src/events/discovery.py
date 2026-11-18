@@ -15,16 +15,26 @@ import unicodedata
 from collections.abc import Callable
 from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
 from src.events.discover_settings import DiscoverSettings
 from src.events.discover_store import LAST_ERROR, LAST_REFRESH, DiscoverStore
 from src.events.eventbrite import Eventbrite, SourceError
 from src.events.settings import calendar_dir
+from src.harness.loop import SessionState
+from src.harness.scheduler import Routine, Schedule
 from src.memory.ledger import Kind
 
 log = logging.getLogger(__name__)
 
 REFRESH_AFTER_S = 12 * 3600
+RETRY_AFTER_S = 10 * 60  # a failed refresh is not tried again this soon, unless forced
+LAST_FAILURE = "last_failure"  # meta: when the last refresh failed; cleared by a good one
+BOT_ID = "event-scout"
+ROUTINE_SKILL = "events-digest"
+ROUTINE_NAME = "Weekly events digest"
+MANAGED_BY = "events"
 MAX_CARDS = 8
 MAX_WHY = 300
 MAX_NOTE = 500
@@ -70,6 +80,13 @@ class Discovery:
         self.store = DiscoverStore(folder / "discover.db")
         self.source = Eventbrite(calendar.http)
         self._lock = asyncio.Lock()
+        # attached by the harness, as MusicService's are: the tool runner and catalog the scout's tools go into, the
+        # routine store and the scheduler that holds each routine's last session
+        self.tools: Any = None
+        self.catalog: Any = None
+        self.routines: Any = None
+        self.scheduler: Any = None
+        self.on_demand_sessions: set[str] = set()  # sessions the discover route started: they save on_demand only
 
     @property
     def active(self) -> bool:
@@ -87,25 +104,40 @@ class Discovery:
             return False
         return 0 <= (current - last).total_seconds() < REFRESH_AFTER_S
 
+    def _recently_failed(self) -> bool:
+        """The last refresh failed under RETRY_AFTER_S ago, by the ``now`` clock."""
+        try:
+            failed = datetime.strptime(self.store.meta(LAST_FAILURE), INSTANT)
+            current = datetime.strptime(self.now(), INSTANT)
+        except ValueError:
+            return False
+        return 0 <= (current - failed).total_seconds() < RETRY_AFTER_S
+
     async def refresh(self, force: bool = False) -> dict:
         """Read the place's pages into the pool. Skipped while the last refresh is under 12 hours old, unless
-        forced; one at a time. Answers ``{"pages", "events", "error"}``."""
+        forced; one at a time. A refresh that failed is not tried again for 10 minutes: inside that window an
+        unforced call answers the recorded error kind with no request. Answers ``{"pages", "events", "error"}``."""
         none = {"pages": 0, "events": 0, "error": ""}
         if not self.active:
             return none
         async with self._lock:
-            if not force and self._fresh():
-                return none
+            if not force:
+                if self._recently_failed():
+                    return {**none, "error": self.store.meta(LAST_ERROR)}
+                if self._fresh():
+                    return none
             try:
                 result = await self.source.read(self.settings.place)
             except SourceError as e:
                 self.store.set_meta(LAST_ERROR, e.kind)
+                self.store.set_meta(LAST_FAILURE, self.now())
                 out = {"pages": 0, "events": 0, "error": e.kind}
             else:
                 self.store.upsert_pool(result.events, self.now())
                 self.store.drop_past(self.today())
                 self.store.set_meta(LAST_REFRESH, self.now())
                 self.store.set_meta(LAST_ERROR, result.error)
+                self.store.set_meta(LAST_FAILURE, "")
                 out = {"pages": result.pages, "events": len(result.events), "error": result.error}
             self.ledger.append(Kind.calendar, "", "", event="discover_refresh", **out)
             return out
@@ -147,13 +179,18 @@ class Discovery:
 
     async def save(self, cards: list, *, kind: str, note: str, session_id: str) -> dict:
         """Check every card against the pool and save the digest whole, then fetch the thumbnails. Raises
-        ``ValueError`` for a wrong count, kind or note, and ``DigestRefused`` for any card that fails."""
+        ``ValueError`` for a wrong count, kind or note (or a weekly save from an on-demand run), and
+        ``DigestRefused`` for any card that fails."""
         if not isinstance(cards, list) or not 1 <= len(cards) <= MAX_CARDS:
             raise ValueError(f"A digest holds 1 to {MAX_CARDS} cards.")
         if kind not in KINDS:
             raise ValueError("A digest is weekly or on_demand.")
         if not isinstance(note, str) or len(note.strip()) > MAX_NOTE:
             raise ValueError(f"The note can be at most {MAX_NOTE} characters.")
+        if kind == "weekly" and session_id and session_id in self.on_demand_sessions:
+            raise ValueError("this is an on-demand run; save with kind on_demand")
+        # No await between the candidate check and the store write: two saves at once for one event cannot both
+        # pass the check, so one event never lands on two cards. Keep it that way.
         good = self._check(cards)
         digest = self.store.save_digest(good, kind=kind, note=note.strip(), session_id=str(session_id),
                                         created_at=self.now())
@@ -185,6 +222,10 @@ class Discovery:
             tmp.replace(self.images_dir / card["id"])
         except OSError as e:
             log.warning("discover thumbnail not written: %s", type(e).__name__)
+            try:
+                tmp.unlink(missing_ok=True)  # a rename that failed leaves no part file behind
+            except OSError:
+                pass
             return 0
         self.store.set_image(card["id"], True)
         return 1
@@ -198,3 +239,76 @@ class Discovery:
             return None
         path = self.images_dir / card_id
         return path if path.is_file() and not path.is_symlink() else None
+
+    # the scout: tools, routine, status ----------------------------------------
+
+    def register(self) -> bool:
+        """Offer the scout's tools while discovery is on with a place; else take them away."""
+        if self.tools is None or self.catalog is None:
+            return False
+        from src.events.discover_tools import DiscoverTools  # it imports this module
+
+        return DiscoverTools(self).register(self.tools, self.catalog)
+
+    def managed_routine(self) -> Routine | None:
+        return next((r for r in self.routines.all() if r.managed_by == MANAGED_BY), None) if self.routines else None
+
+    def ensure_routine(self) -> Routine | None:
+        """The weekly routine, made if missing (Thursday 09:00, before the weekend) and switched on."""
+        if self.routines is None:
+            return None
+        r = self.managed_routine()
+        if r is None:
+            r = Routine(uuid4().hex[:10], ROUTINE_NAME, BOT_ID, ROUTINE_SKILL, True,
+                        Schedule("weekly", [3], "09:00", 0), managed_by=MANAGED_BY)
+        else:
+            r.enabled = True
+        self.routines.upsert(r)
+        self.routines.save()
+        return r
+
+    def _pause_routine(self) -> None:
+        r = self.managed_routine()
+        if r is not None and r.enabled:
+            r.enabled = False
+            self.routines.save()
+
+    def running_run(self, sessions: dict) -> str:
+        """The id of a scout run still going (an on-demand one or the routine's), or ""."""
+        ended = (SessionState.done, SessionState.failed, SessionState.stopped)
+        r = self.managed_routine()
+        routine_session = self.scheduler.sessions.get(r.id) if r and self.scheduler else None
+        candidates = [sessions.get(sid) for sid in self.on_demand_sessions] + [routine_session]
+        return next((s.id for s in candidates if s is not None and s.state not in ended), "")
+
+    def run_failure(self, session) -> str:
+        """Why a routine run failed although its session ended: it saved no digest. "" when it did."""
+        return "" if self.store.has_digest_for(session.id) else "no digest saved"
+
+    async def apply(self, settings: DiscoverSettings) -> dict:
+        """Use new settings: keep them (in memory and saved), make or pause the routine, register the tools."""
+        before = self.settings
+        self.settings = settings
+        settings.save(self.vault)
+        if self.active and not (before.enabled and before.place):
+            self.ensure_routine()
+        elif not self.active:
+            self._pause_routine()
+        self.register()
+        return self.status({})
+
+    def status(self, sessions: dict) -> dict:
+        r = self.managed_routine()
+        return {"settings": self.settings.public(), "active": self.active,
+                "routine_id": r.id if r else None, "routine_on": bool(r and r.enabled),
+                "last_refresh": self.store.meta(LAST_REFRESH), "last_error": self.store.meta(LAST_ERROR),
+                "running": self.running_run(sessions)}
+
+    async def start(self) -> None:
+        """At harness start: the tools, and the routine when discovery is on and it is missing."""
+        self.register()
+        if self.active and self.managed_routine() is None:
+            self.ensure_routine()
+
+    async def close(self) -> None:
+        self.store.close()

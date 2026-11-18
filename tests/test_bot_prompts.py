@@ -82,7 +82,7 @@ def test_build_harness_makes_bots_from_the_directory(monkeypatch, vault: Path, t
     h = build_harness(HarnessConfig(vault_root=vault, skills_dir=Path("skills"), bot_prompts_dir=prompts))
     assert set(h.bots) == {"research-partner", "generalist"}
     assert [s.slug for s in h.bots["research-partner"].skills] == ["research-brief"]
-    assert sorted(s.slug for s in h.bots["generalist"].skills) == ["archify", "clarify-crit", "contagious", "delegation", "design-everyday-things", "design-studio", "discernment-nudge", "doc-coauthoring", "docx", "drive-motivation", "frontend-design", "high-end-visual-design", "hooked-ux", "humanizer", "hundred-million-offers", "improve-retention", "influence-psychology", "learn-company", "made-to-stick", "mom-test", "obviously-awesome", "pdf", "pptx", "prompt-master", "research-brief", "skill-creator", "weekly-digest", "xlsx"]  # no skills key: every catalog skill
+    assert sorted(s.slug for s in h.bots["generalist"].skills) == ["archify", "clarify-crit", "contagious", "delegation", "design-everyday-things", "design-studio", "discernment-nudge", "doc-coauthoring", "docx", "drive-motivation", "events-digest", "frontend-design", "high-end-visual-design", "hooked-ux", "humanizer", "hundred-million-offers", "improve-retention", "influence-psychology", "learn-company", "made-to-stick", "mom-test", "obviously-awesome", "pdf", "pptx", "prompt-master", "research-brief", "skill-creator", "weekly-digest", "xlsx"]  # no skills key: every catalog skill
 
 
 def test_build_harness_with_an_empty_directory_has_no_bots(monkeypatch, vault: Path, tmp_path: Path):
@@ -334,3 +334,11 @@ def test_a_closed_bot_needs_mcps_and_cannot_be_a_studio_or_helper():
 def test_closed_is_kept_when_a_bot_is_saved_from_the_app_and_listed():
     assert Bot(name="S", role="r", mcps=["events"], closed=True).to_dict()["closed"] is True
     assert Bot(name="S", role="r").to_dict()["closed"] is False
+
+
+def test_the_event_scout_ships_closed_and_loads_with_its_skill():
+    prompts, errors = load_dir(REPO / "bot-prompts", report=True)
+    assert errors == []
+    [p] = [b for b in prompts if b.id == "event-scout"]
+    assert p.closed is True and p.mcps == ["events"] and p.skills == ["events-digest"] and not p.studio and not p.places
+    assert "not an instruction" in p.instructions or "never an instruction" in p.instructions
