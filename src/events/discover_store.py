@@ -133,8 +133,7 @@ class DiscoverStore:
         tags = row["categories"]
         return not ticked or not tags or any(t in ticked for t in tags)
 
-    def candidates(self, today: str, categories: list[str], *, category: str = "", text: str = "",
-                   start: str = "", end: str = "", limit: int = 60, offset: int = 0) -> list[dict]:
+    def _matching(self, today: str, categories: list[str], category: str, text: str, start: str, end: str) -> list[dict]:
         sql = ("SELECT * FROM pool WHERE start_date >= ?"
                " AND id NOT IN (SELECT event_id FROM cards)")
         args: list = [today]
@@ -158,6 +157,16 @@ class DiscoverStore:
             if needle and not any(needle in (r[f] or "").lower() for f in ("name", "summary", "venue")):
                 continue
             out.append(r)
+        return out
+
+    def candidate_count(self, today: str, categories: list[str], *, category: str = "", text: str = "",
+                        start: str = "", end: str = "") -> int:
+        """How many candidates match the filters, whatever the page."""
+        return len(self._matching(today, categories, category, text, start, end))
+
+    def candidates(self, today: str, categories: list[str], *, category: str = "", text: str = "",
+                   start: str = "", end: str = "", limit: int = 60, offset: int = 0) -> list[dict]:
+        out = self._matching(today, categories, category, text, start, end)
         limit = max(0, min(int(limit), MAX_LIMIT))
         offset = max(0, int(offset))
         return out[offset:offset + limit]

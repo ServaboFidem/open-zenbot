@@ -383,5 +383,6 @@ def discovery(tmp_path, fake_site, clock):
                   today=lambda: "2026-11-18",
                   now=lambda: (base + timedelta(seconds=clock.now - start)).strftime("%Y-%m-%dT%H:%M:%SZ"))
     d.source = fake_site.eventbrite()
+    d.bot_lookup = lambda bot_id: SimpleNamespace(id=bot_id, closed=True)   # the scout is a closed bot
     yield d
     d.store.close()

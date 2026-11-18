@@ -16,6 +16,11 @@ function usableZone(zone) {
   if (!zone) return localZone();
   try { new Intl.DateTimeFormat('en-US', { timeZone: zone }); return zone; } catch { return localZone(); }
 }
+// A zone the listing gave and Intl accepts. A timed card without one is not added (the harness refuses it too).
+function knownZone(zone) {
+  if (typeof zone !== 'string' || !zone) return false;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: zone }); return true; } catch { return false; }
+}
 
 const minutesOf = parts => Number(parts.time.slice(0, 2)) * 60 + Number(parts.time.slice(3));
 
@@ -52,7 +57,7 @@ const isClock = v => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v
 const absent = v => v === '' || v === null || v === undefined;
 
 // What POST /discover/cards/{id}/add takes, or null when the card cannot be added: its start date is not
-// a real date, or it has a start time that is not a time. A timed card gives instants in the card's own
+// a real date, it has a start time that is not a time, or it is timed and its zone is missing or unknown. A timed card gives instants in the card's own
 // zone; an end that is unusable or not after the start counts as no listed end, so the end is an hour after
 // the start. An all-day card gives the start date and the day after the last day (the start date's own
 // next day when the end is unusable or before the start).
@@ -65,7 +70,8 @@ export function addTimes(card) {
       return { start: c.start_date, end: addDays(last, 1) };
     }
     if (!isClock(c.start_time)) return null;
-    const zone = usableZone(c.timezone);
+    if (!knownZone(c.timezone)) return null;
+    const zone = c.timezone;
     const start = instantOf(c.start_date, c.start_time, zone);
     const hourLater = toIso(Date.parse(start) + HOUR_MS);
     if (isDay(c.end_date) && isClock(c.end_time)) {   // the harness takes a listed end only with both

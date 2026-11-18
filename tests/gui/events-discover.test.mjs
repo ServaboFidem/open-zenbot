@@ -41,11 +41,15 @@ test('addTimes: a start inside a daylight-saving gap moves to the first real min
   assert.equal(t.start, '2027-03-14T07:00:00Z');
   assert.equal(t.end, '2027-03-14T09:00:00Z');
 });
-test('addTimes: an unknown zone falls back to the computer zone rather than throwing', () => {
-  const t = addTimes(card({ timezone: 'Mars/Olympus' }));
-  assert.equal(t.start, wallToInstant('2026-11-22', '10:00', localZone()));
-  assert.equal(t.end, wallToInstant('2026-11-22', '16:00', localZone()));
-  assert.deepEqual(addTimes(card({ timezone: '' })).start, wallToInstant('2026-11-22', '10:00', localZone()));
+test('addTimes: a timed card with no zone, or one Intl does not accept, cannot be added; its time still shows', () => {
+  for (const timezone of ['', 'Mars/Olympus', undefined, null]) {
+    const c = card({ timezone });
+    assert.equal(addTimes(c), null);
+    assert.equal(canAdd(c), false);
+    assert.match(whenLabel(c), /10:00/);
+  }
+  // an all-day card has no zone to need
+  assert.deepEqual(addTimes(card({ timezone: '', start_time: '', end_time: '' })), { start: '2026-11-22', end: '2026-11-23' });
 });
 
 test('whenLabel names the zone only when it differs from the computer zone', () => {

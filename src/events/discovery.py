@@ -86,11 +86,18 @@ class Discovery:
         self.catalog: Any = None
         self.routines: Any = None
         self.scheduler: Any = None
+        self.bot_lookup: Callable[[str], Any] | None = None  # bot id -> the bot, set by the harness; none means refuse
         self.on_demand_sessions: set[str] = set()  # sessions the discover route started: they save on_demand only
 
     @property
     def active(self) -> bool:
         return bool(self.settings.enabled and self.settings.place)
+
+    def scout_is_closed(self) -> bool:
+        """The event scout exists and is a closed bot (`closed: true`). A bot file of the same id without it, or no
+        way to look the bot up, is not: the events tools are then offered to nobody and refused."""
+        bot = self.bot_lookup(BOT_ID) if self.bot_lookup is not None else None
+        return bot is not None and getattr(bot, "closed", False) is True
 
     # refresh ----------------------------------------------------------------
 
@@ -146,6 +153,9 @@ class Discovery:
 
     def candidates(self, **filters) -> list[dict]:
         return self.store.candidates(self.today(), self.settings.categories, **filters)
+
+    def candidate_count(self, **filters) -> int:
+        return self.store.candidate_count(self.today(), self.settings.categories, **filters)
 
     # the gate ---------------------------------------------------------------
 

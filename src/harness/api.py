@@ -342,6 +342,7 @@ class Harness:
         if self.discover is None:
             self.discover = Discovery(c, self.ledger, self.calendar)
             self.discover.tools, self.discover.catalog = self.tools, self.catalog
+            self.discover.bot_lookup = lambda bot_id: self.bots.get(bot_id)
         self.discover.register()  # the scout's tools appear only while discovery is on with a place set
         if self.scorer is not None:
             self.orchestrator = self.orchestrator or Orchestrator(

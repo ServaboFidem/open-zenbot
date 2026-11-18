@@ -121,7 +121,7 @@ async def test_run_refusals_and_start(client, harness):
     await client.put("/discover/settings", json={**SET_UP, "interests": "jazz"})
     r = await client.post("/discover/run", json={})
     assert r.status_code == 409 and "does not exist" in r.json()["detail"]
-    harness.add_bot(Bot(name="Scout", role="Events", id="event-scout"))
+    harness.add_bot(Bot(name="Scout", role="Events", id="event-scout", mcps=["events"], closed=True))
     harness.provider = UnboundProvider()
     r = await client.post("/discover/run", json={})
     assert (r.status_code, r.json()["detail"]) == (503, "no provider is bound")
@@ -148,6 +148,21 @@ async def test_run_refusals_and_start(client, harness):
     assert seen["task"] == ("On-demand picks: find local events for the user. "
                             "Save them with events_save_digest using kind \"on_demand\".")
     assert "sess1" in harness.discover.on_demand_sessions
+
+
+async def test_run_refuses_a_scout_that_is_not_closed(client, harness):
+    await client.put("/discover/settings", json=SET_UP)
+    harness.add_bot(Bot(name="Scout", role="Events", id="event-scout"))
+    r = await client.post("/discover/run", json={})
+    assert (r.status_code, r.json()["detail"]) == (409, "The event scout must be a closed bot.")
+
+
+async def test_the_harness_looks_the_scout_up_for_the_tools(harness):
+    assert harness.discover.scout_is_closed() is False          # no such bot
+    harness.add_bot(Bot(name="Scout", role="Events", id="event-scout"))
+    assert harness.discover.scout_is_closed() is False          # an open one
+    harness.add_bot(Bot(name="Scout", role="Events", id="event-scout", mcps=["events"], closed=True))
+    assert harness.discover.scout_is_closed() is True
 
 
 async def test_digests_carry_an_image_url_not_has_image(client, harness, card):
@@ -222,11 +237,11 @@ async def test_add_with_no_listed_end_takes_one_hour(client, no_end_card):
     assert r.status_code == 200 and r.json()["event"]["end"] == "2026-11-22T16:00:00Z"
 
 
-async def test_a_listing_with_no_zone_is_refused_with_the_stores_sentence(client, harness):
+async def test_a_timed_listing_with_no_zone_is_refused(client, harness):
     c = make_card(harness, "9000000000011", timezone="")
     r = await client.post(ADD.format(c["id"]), json=TIMES)
-    assert r.status_code == 422 and r.json()["detail"] == "A timed event needs a time zone."
-    assert await calendar_events(client) == []
+    assert r.status_code == 422 and r.json()["detail"] == "This listing has no usable time zone."
+    assert await calendar_events(client) == [] and harness.discover.store.card(c["id"])["state"] == "new"
 
 
 async def test_add_after_the_calendar_event_was_deleted_makes_it_again(client, card):

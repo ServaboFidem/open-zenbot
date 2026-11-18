@@ -25,6 +25,7 @@ SET_UP_FIRST = "Set up event discovery first."
 ALREADY_LOOKING = "The event scout is already looking."
 PAST = "This event has already happened."
 BAD_TIMES = "Those times are not the listing's. Reload the page and try again."
+NO_ZONE = "This listing has no usable time zone."
 RUN_TASK = ("On-demand picks: find local events for the user. "
             "Save them with events_save_digest using kind \"on_demand\".")
 MAX_HOURS = 14
@@ -82,6 +83,8 @@ def listing_times(card: dict, start: str, end: str) -> dict[str, Any]:
                 or end != (last + timedelta(days=1)).isoformat():
             raise EventError(BAD_TIMES)
         return {"all_day": True, "start": start, "end": end, "tz": ""}
+    if not card["timezone"]:  # the listing's zone failed the check when it was stored: no instant can be trusted
+        raise EventError(NO_ZONE)
     a, b = _instant(start), _instant(end)
     wall = _wall(card["start_date"], card["start_time"])
     if a is None or b is None or wall is None or b <= a:
@@ -174,6 +177,8 @@ def discover_router(discovery, harness) -> APIRouter:
         bot = harness.bots.get(BOT_ID)
         if bot is None:
             raise HTTPException(409, f"the {BOT_ID} bot does not exist")
+        if not bot.closed:
+            raise HTTPException(409, "The event scout must be a closed bot.")
         if not harness.bound:
             raise HTTPException(503, "no provider is bound")
         if discovery.running_run(harness.sessions):

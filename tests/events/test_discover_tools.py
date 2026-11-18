@@ -7,7 +7,7 @@ import pytest
 
 from src.events.discover_settings import DiscoverSettings
 from src.events.discover_store import LAST_ERROR
-from src.events.discover_tools import GROUP, SPECS, DiscoverTools
+from src.events.discover_tools import GROUP, NOT_YOURS, SPECS, DiscoverTools
 from src.events.discovery import (BOT_ID, MANAGED_BY, REFRESH_AFTER_S, RETRY_AFTER_S, ROUTINE_NAME, ROUTINE_SKILL,
                                   DigestRefused)
 from src.harness.bot_prompts import parse
@@ -397,3 +397,73 @@ def test_start_pauses_a_stale_routine_when_discovery_is_not_active(discovery, ro
     discovery.settings = DiscoverSettings(enabled=True, place="oh--exampleton")
     asyncio.run(discovery.start())               # active again: the routine is left as the user has it
     assert not discovery.managed_routine().enabled
+
+
+def test_an_open_bot_with_the_scouts_id_is_offered_none_of_the_tools_and_refused(discovery, tools, catalog):
+    DiscoverTools(discovery).register(tools, catalog)
+    discovery.bot_lookup = lambda bot_id: SimpleNamespace(id=bot_id, closed=False)    # a hand-written event-scout.md
+    assert all(not offered(BOT_ID, "s") for offered in tools.offered.values())
+    token = as_session("s5")
+    try:
+        t = DiscoverTools(discovery)
+        assert t.interests() == NOT_YOURS
+        assert asyncio.run(t.candidates()) == NOT_YOURS
+        assert asyncio.run(t.save_digest([{"id": "1", "why": "x"}])) == NOT_YOURS
+    finally:
+        current_call.reset(token)
+
+
+def test_with_no_bot_lookup_the_tools_refuse(discovery, tools, catalog):
+    DiscoverTools(discovery).register(tools, catalog)
+    discovery.bot_lookup = None
+    assert all(not offered(BOT_ID, "s") for offered in tools.offered.values())
+    token = as_session("s6")
+    try:
+        assert DiscoverTools(discovery).interests() == NOT_YOURS
+    finally:
+        current_call.reset(token)
+    discovery.bot_lookup = lambda bot_id: None                                         # no such bot
+    assert all(not offered(BOT_ID, "s") for offered in tools.offered.values())
+
+
+def _heavy(n):
+    return [{"id": f"93{i:011d}", "name": "n" * 300, "summary": "s" * 900, "venue": "v" * 400,
+             "start_date": "2026-12-01", "start_time": f"{i % 24:02d}:00", "url": f"https://www.eventbrite.com/e/h{i}",
+             "category_names": ["Music", "Community & Culture"], "format": "f" * 90} for i in range(n)]
+
+
+def _body(text):
+    first, body = text.split("\n", 1)
+    assert first == LISTING_NOTICE
+    return json.loads(body)
+
+
+async def test_candidates_answer_stays_under_the_cap_and_reports_total_and_next_offset(scout_tools, discovery):
+    discovery.store.upsert_pool(_heavy(70), "2026-11-18T09:00:00Z")
+    text = await scout_tools.candidates(limit=60, text="nnnn")
+    assert len(text) <= 18_000
+    out = _body(text)                                         # whole, valid JSON: never cut mid-row
+    assert out["total"] == 70 and 0 < len(out["events"]) < 60
+    assert out["next_offset"] == len(out["events"])
+
+
+async def test_paging_with_next_offset_reaches_every_candidate_exactly_once(scout_tools, discovery):
+    discovery.store.upsert_pool(_heavy(70), "2026-11-18T09:00:00Z")
+    total = 70
+    seen, offset, calls = [], 0, 0
+    while offset is not None:
+        out = _body(await scout_tools.candidates(limit=60, offset=offset, text="nnnn"))
+        assert out["total"] == total
+        seen += [e["id"] for e in out["events"]]
+        offset = out["next_offset"]
+        calls += 1
+        assert calls < 100
+    assert len(seen) == total and len(set(seen)) == total and calls > 1
+    assert seen == [r["id"] for r in sorted(_heavy(70), key=lambda r: (r["start_time"], r["id"]))]   # the store's order
+
+
+async def test_a_short_answer_has_next_offset_only_while_more_remain(scout_tools):
+    out = _body(await scout_tools.candidates(limit=2))
+    assert len(out["events"]) == 2 and out["next_offset"] == 2 and out["total"] > 2
+    last = _body(await scout_tools.candidates(limit=60, offset=out["total"] - 1))
+    assert len(last["events"]) == 1 and last["next_offset"] is None
