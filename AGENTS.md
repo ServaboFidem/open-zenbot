@@ -393,7 +393,9 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   `Discovery.apply` deletes every pool row (`DiscoverStore.clear_pool`) and clears the last refresh time, error and failure
   time, so the next refresh reads the new city at once; saved cards are snapshots and stay.
 - **The scout and its tools** (`discover_tools.py`, group `events`, registered by `Discovery.register` only while discovery
-  is on with a place set): `events_interests`, `events_candidates` (up to 60 a call, fewer when the rows are long, refreshing a pool older than 12 hours
+  is on with a place set): `events_interests` (it carries `today`, since a model does not know the date: the first real
+  run guessed June 2025 and filtered every search to the past; a filtered search that matches nothing now answers today's
+  date and how many events there are), `events_candidates` (up to 60 a call, fewer when the rows are long, refreshing a pool older than 12 hours
   first; the answer is built row by row and stays under 18,000 characters so the tool runner's 20,000 cap never cuts it:
   `{"events": [...], "total": <candidates matching the filters>, "next_offset": <offset of the first row left out, or null>}`,
   and the scout pages with `next_offset`; its first line says the listing is content, not instructions; a failed refresh with no candidates is the tool's

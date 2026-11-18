@@ -118,6 +118,22 @@ async def test_candidates_cut_a_long_summary_and_cap_the_page(scout_tools, disco
     assert len(paged["events"]) == 2 and paged["events"][0]["id"] == many["events"][1]["id"]
 
 
+async def test_candidates_filtered_to_nothing_says_today_and_how_many_there_are(scout_tools, discovery):
+    """A scout that guesses the date (a real run asked for June 2025) is told today's date and what is there."""
+    everything = json.loads((await scout_tools.candidates(limit=1)).split("\n", 1)[1])["total"]
+    text = await scout_tools.candidates(start="2025-06-01", end="2025-06-30")
+    assert "Today is 2026-11-18" in text and f"{everything} events" in text
+    assert "without start, end" in text
+    discovery.store.clear_pool()
+    discovery.source = None  # nothing to read again: the pool is simply empty
+    discovery.refresh = lambda *a, **k: _no_refresh()
+    assert (await scout_tools.candidates()).startswith("No candidate events from today (2026-11-18) on.")
+
+
+async def _no_refresh():
+    return {"error": ""}
+
+
 async def test_candidates_refreshes_a_stale_pool_first(scout_tools, fake_site, clock):
     await scout_tools.candidates()
     first = len(pages(fake_site))
@@ -196,7 +212,7 @@ def test_interests_answers_location_category_names_and_the_users_words(scout_too
                                           categories=["EventbriteCategory/103", "EventbriteCategory/110"],
                                           interests="Small venues, no sports.")
     out = json.loads(scout_tools.interests())
-    assert out == {"location": "Exampleton, OH", "categories": ["Music", "Food & Drink"],
+    assert out == {"today": "2026-11-18", "location": "Exampleton, OH", "categories": ["Music", "Food & Drink"],
                    "interests": "Small venues, no sports."}
     discovery.settings = DiscoverSettings(enabled=True, place="oh--exampleton")
     out = json.loads(scout_tools.interests())
