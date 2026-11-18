@@ -3,6 +3,7 @@ import { Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, Dia
 import { Copy24Regular } from '@fluentui/react-icons';
 import { anchorId } from './settings-index';
 import { APP_STEPS, POLL_LIMIT_MS, POLL_MS, bringInList, defaultDestination, destinations, pushFailure, pushSentence, watchStatus, shownSections, signInChanged } from './calendar-settings';
+import { DiscoverySettings } from './DiscoverySettings';
 import './calendar-settings.css';
 
 // Settings > Calendar: the user's own Google app (client ID and secret, saved in the harness, never sent back), the
@@ -209,6 +210,8 @@ export function CalendarSettings({ api, online, notify }) {
       {!pushOn && offNote && <p className="field-hint">Changes you make here will wait until you turn this back on.</p>}
       {here('push')}
     </div>}
+
+    <DiscoverySettings api={api} online={online} notify={notify}/>
 
     <Dialog open={!!ask} onOpenChange={(e, d) => { if (!d.open) setAsk(null); }}>
       <DialogSurface className="cal-dialog"><DialogBody>
