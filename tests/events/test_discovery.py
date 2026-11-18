@@ -364,20 +364,81 @@ async def test_duplicates_of_eventbrite_rows_are_not_stored(discovery, fake_find
     assert fl_ids(discovery) == ["fl-0b1c2d3e-0000-4000-8000-000000000003"]
 
 
-async def test_findlocal_rows_stop_being_candidates_after_a_day(discovery, fake_findlocal, clock):
+FL1 = "fl-0b1c2d3e-0000-4000-8000-000000000001"
+FL2 = "fl-0b1c2d3e-0000-4000-8000-000000000002"
+
+
+async def test_a_findlocal_row_is_a_candidate_a_week_after_it_was_read(discovery, fake_findlocal, clock):
     fake_findlocal.rows = [fl(1)]
     await set_up_findlocal(discovery)
     await discovery.refresh()
-    fid = "fl-0b1c2d3e-0000-4000-8000-000000000001"
-    assert fid in [r["id"] for r in discovery.candidates()]
-    clock.now += 25 * HOUR
-    assert all(r["source"] != "findlocal" for r in discovery.candidates())
-    assert discovery.candidate_count() == len(discovery.candidates())
-    with pytest.raises(DigestRefused) as e:
-        await discovery.save([{"id": fid, "why": "fine"}], kind="weekly", note="", session_id="s1")
-    assert e.value.failures[0]["reasons"] == ["not_a_candidate"]
+    clock.now += 6 * 24 * HOUR
     await discovery.refresh()
+    assert FL1 in [r["id"] for r in discovery.candidates()]
+    assert discovery.candidate_count() == len(discovery.candidates())
+    assert discovery.store.is_candidate(FL1, discovery.today(), [])
+    saved = await discovery.save([{"id": FL1, "why": "fine"}], kind="weekly", note="", session_id="s1")
+    assert [c["event_id"] for c in discovery.store.digest(saved["id"])["cards"]] == [FL1]
+
+
+async def test_a_complete_findlocal_read_drops_rows_it_did_not_see(discovery, fake_findlocal, clock):
+    fake_findlocal.rows = [fl(1), fl(2)]
+    await set_up_findlocal(discovery)
+    await discovery.refresh()
+    assert sorted(fl_ids(discovery)) == [FL1, FL2]
+    fake_findlocal.rows = [fl(2)]
+    clock.now += 7 * 24 * HOUR
+    out = await discovery.refresh(weekly=True)
+    assert out["findlocal"]["error"] == ""
+    assert fl_ids(discovery) == [FL2]
+
+
+async def test_a_failed_findlocal_read_drops_nothing(discovery, fake_findlocal, clock):
+    fake_findlocal.rows = [fl(1), fl(2)]
+    await set_up_findlocal(discovery)
+    await discovery.refresh()
+    fake_findlocal.fail[1] = 429
+    clock.now += 7 * 24 * HOUR
+    out = await discovery.refresh(weekly=True)
+    assert out["findlocal"]["error"] == "refused"
+    assert sorted(fl_ids(discovery)) == [FL1, FL2]
+
+
+async def test_a_partial_findlocal_read_drops_nothing(discovery, fake_findlocal, clock):
+    fake_findlocal.rows = [fl(1), fl(2)]
+    await set_up_findlocal(discovery)
+    await discovery.refresh()
+    fake_findlocal.rows = [fl(n) for n in range(2, 152)]
+    fake_findlocal.fail[2] = 503
+    clock.now += 7 * 24 * HOUR
+    out = await discovery.refresh(weekly=True)
+    assert out["findlocal"]["error"] == "provider"
+    assert FL1 in fl_ids(discovery) and FL2 in fl_ids(discovery)
+
+
+async def test_forgetting_the_key_clears_findlocal_rows_and_its_last_read(discovery, fake_findlocal):
+    fake_findlocal.rows = [fl(1)]
+    await set_up_findlocal(discovery)
+    await discovery.refresh()
+    eb = discovery.store.pool_size("eventbrite")
+    assert discovery.store.pool_size("findlocal") == 1 and eb > 0
+    await discovery.set_key(None)
     assert discovery.store.pool_size("findlocal") == 0
+    assert discovery.store.pool_size("eventbrite") == eb
+    for k in (FL_LAST_REFRESH, FL_LAST_ERROR, FL_LAST_FAILURE):
+        assert discovery.store.meta(k) == ""
+    await discovery.set_key("KEY-abcdefgh")
+    await discovery.refresh()
+    assert len(fake_findlocal.requests) == 2 and discovery.store.pool_size("findlocal") == 1
+
+
+async def test_saving_a_new_key_over_an_old_one_keeps_the_rows(discovery, fake_findlocal):
+    fake_findlocal.rows = [fl(1)]
+    await set_up_findlocal(discovery)
+    await discovery.refresh()
+    await discovery.set_key("NEW-abcdefgh")
+    assert fl_ids(discovery) == [FL1]
+    assert discovery.store.meta(FL_LAST_REFRESH) != ""
 
 
 async def test_a_saved_findlocal_card_stays(discovery, fake_findlocal, clock):

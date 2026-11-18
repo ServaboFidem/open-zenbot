@@ -158,14 +158,11 @@ class DiscoverStore:
         tags = row["categories"]
         return not ticked or not tags or any(t in ticked for t in tags)
 
-    def _matching(self, today: str, categories: list[str], category: str, text: str, start: str, end: str,
-                  fresh_after: str = "") -> list[dict]:
+    def _matching(self, today: str, categories: list[str], category: str, text: str, start: str,
+                  end: str) -> list[dict]:
         sql = ("SELECT * FROM pool WHERE start_date >= ?"
                " AND id NOT IN (SELECT event_id FROM cards)")
         args: list = [today]
-        if fresh_after:
-            sql += " AND NOT (source='findlocal' AND seen_at < ?)"
-            args.append(fresh_after)
         if start:
             sql += " AND start_date >= ?"
             args.append(start)
@@ -189,23 +186,20 @@ class DiscoverStore:
         return out
 
     def candidate_count(self, today: str, categories: list[str], *, category: str = "", text: str = "",
-                        start: str = "", end: str = "", fresh_after: str = "") -> int:
+                        start: str = "", end: str = "") -> int:
         """How many candidates match the filters, whatever the page."""
-        return len(self._matching(today, categories, category, text, start, end, fresh_after))
+        return len(self._matching(today, categories, category, text, start, end))
 
     def candidates(self, today: str, categories: list[str], *, category: str = "", text: str = "",
-                   start: str = "", end: str = "", limit: int = 60, offset: int = 0,
-                   fresh_after: str = "") -> list[dict]:
-        out = self._matching(today, categories, category, text, start, end, fresh_after)
+                   start: str = "", end: str = "", limit: int = 60, offset: int = 0) -> list[dict]:
+        out = self._matching(today, categories, category, text, start, end)
         limit = max(0, min(int(limit), MAX_LIMIT))
         offset = max(0, int(offset))
         return out[offset:offset + limit]
 
-    def is_candidate(self, id: str, today: str, categories: list[str], *, fresh_after: str = "") -> bool:
+    def is_candidate(self, id: str, today: str, categories: list[str]) -> bool:
         row = self.pool_row(id)
         if row is None or row["start_date"] < today or not self._wanted(row, set(categories)):
-            return False
-        if fresh_after and row["source"] == "findlocal" and row["seen_at"] < fresh_after:
             return False
         with self._lock:
             return self._db.execute("SELECT 1 FROM cards WHERE event_id=?", (id,)).fetchone() is None

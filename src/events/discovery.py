@@ -13,7 +13,7 @@ import logging
 import re
 import unicodedata
 from collections.abc import Callable
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -36,7 +36,6 @@ FL_LAST_REFRESH = "findlocal_last_refresh"  # FindLocal's own three, as Eventbri
 FL_LAST_ERROR = "findlocal_last_error"
 FL_LAST_FAILURE = "findlocal_last_failure"
 FINDLOCAL_AFTER_S = 20 * 3600  # the weekly run reads FindLocal again once its last read is this old
-FINDLOCAL_LIFE_S = 24 * 3600  # a FindLocal row not seen again for this long is no candidate, then dropped
 BOT_ID = "event-scout"
 ROUTINE_SKILL = "events-digest"
 ROUTINE_NAME = "Weekly events digest"
@@ -133,10 +132,6 @@ class Discovery:
         age = self._age(key)
         return age is not None and 0 <= age < RETRY_AFTER_S
 
-    def _before(self, seconds: int) -> str:
-        """The instant ``seconds`` before now, by the ``now`` clock."""
-        return (datetime.strptime(self.now(), INSTANT) - timedelta(seconds=seconds)).strftime(INSTANT)
-
     async def refresh(self, force: bool = False, weekly: bool = False) -> dict:
         """Read both sources into the pool, one refresh at a time. Answers ``{"pages", "events", "error"}`` for
         Eventbrite and ``"findlocal": {"calls", "events", "error"}``.
@@ -151,7 +146,6 @@ class Discovery:
             return {**none, "findlocal": fl_none}
         async with self._lock:
             out = await self._refresh_eventbrite(force)
-            self.store.drop_stale("findlocal", self._before(FINDLOCAL_LIFE_S))
             return {**out, "findlocal": await self._refresh_findlocal(weekly)}
 
     async def _refresh_eventbrite(self, force: bool) -> dict:
@@ -187,10 +181,13 @@ class Discovery:
         if self.store.meta(FL_LAST_REFRESH) and not (weekly and (age is None or age > FINDLOCAL_AFTER_S)):
             return none
         s = self.settings
+        began = self.now()
         try:
             result = await self.findlocal.read(s.findlocal_city, self.keys.findlocal, s.timezone, self.today())
             fresh = [e for e in result.events if not self.store.known_duplicate(e)]
             self.store.upsert_pool(fresh, self.now())
+            if result.error == "":  # a complete read: rows it did not see are gone from FindLocal
+                self.store.drop_stale("findlocal", began)
         except Exception as e:  # any failure waits 10 minutes, so a surprise cannot spend the quota
             # SourceError carries its kind; anything else (a ValueError for a city not in the list, a parser or
             # store surprise) is "provider". Only the class name is logged: the text may hold the key.
@@ -218,20 +215,17 @@ class Discovery:
         async with self._lock:
             self.store.set_meta(FL_LAST_ERROR, "")
             self.store.set_meta(FL_LAST_FAILURE, "")
+            if not keys.findlocal:  # forgotten: its rows and its last read go too
+                self.store.clear_pool("findlocal")
+                self.store.set_meta(FL_LAST_REFRESH, "")
 
     # the pool ---------------------------------------------------------------
 
-    def _fresh_after(self) -> str:
-        """FindLocal rows last seen before this instant are no candidates."""
-        return self._before(FINDLOCAL_LIFE_S)
-
     def candidates(self, **filters) -> list[dict]:
-        return self.store.candidates(self.today(), self.settings.categories, fresh_after=self._fresh_after(),
-                                     **filters)
+        return self.store.candidates(self.today(), self.settings.categories, **filters)
 
     def candidate_count(self, **filters) -> int:
-        return self.store.candidate_count(self.today(), self.settings.categories, fresh_after=self._fresh_after(),
-                                          **filters)
+        return self.store.candidate_count(self.today(), self.settings.categories, **filters)
 
     # the gate ---------------------------------------------------------------
 
@@ -239,7 +233,7 @@ class Discovery:
         failures: list[dict] = []
         good: list[tuple[dict, str]] = []
         seen: set[str] = set()
-        today, ticked, fresh_after = self.today(), self.settings.categories, self._fresh_after()
+        today, ticked = self.today(), self.settings.categories
         for card in cards:
             card = card if isinstance(card, dict) else {}
             event_id, why = card.get("id"), card.get("why")
@@ -249,7 +243,7 @@ class Discovery:
                 reasons.append("unknown_event")
             elif event_id in seen:
                 reasons.append("duplicate_in_batch")
-            elif not self.store.is_candidate(event_id, today, ticked, fresh_after=fresh_after):
+            elif not self.store.is_candidate(event_id, today, ticked):
                 reasons.append("not_a_candidate")
             if isinstance(event_id, str):
                 seen.add(event_id)

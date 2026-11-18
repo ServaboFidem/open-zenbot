@@ -236,16 +236,13 @@ def test_drop_stale_takes_only_old_rows_of_that_source(store):
     assert store.pool_row("eb-old") is not None
 
 
-def test_a_stale_findlocal_row_is_no_candidate(store):
-    store.upsert_pool([ev("fl-1", source="findlocal"), ev("2")], "2026-11-18T09:00:00Z")
-    late = "2026-11-18T09:00:01Z"
-    assert ids(store.candidates("2026-11-18", [], fresh_after=late)) == ["2"]
-    assert store.candidate_count("2026-11-18", [], fresh_after=late) == 1
-    assert not store.is_candidate("fl-1", "2026-11-18", [], fresh_after=late)
-    assert store.is_candidate("2", "2026-11-18", [], fresh_after=late)
-    assert sorted(ids(store.candidates("2026-11-18", [], fresh_after=""))) == ["2", "fl-1"]
+def test_an_old_findlocal_row_is_still_a_candidate(store):
+    store.upsert_pool([ev("fl-1", source="findlocal"), ev("2")], "2026-11-11T09:00:00Z")
+    assert sorted(ids(store.candidates("2026-11-18", []))) == ["2", "fl-1"]
     assert store.candidate_count("2026-11-18", []) == 2
     assert store.is_candidate("fl-1", "2026-11-18", [])
+    with pytest.raises(TypeError):
+        store.candidates("2026-11-18", [], fresh_after="2026-11-18T00:00:00Z")
 
 
 def test_a_card_keeps_the_source_of_its_row(store):
