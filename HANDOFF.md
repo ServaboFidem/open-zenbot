@@ -63,17 +63,20 @@ New behaviour from the fix pass:
 
 ## Never checked against the real thing
 
-- **Google.** The whole exchange has only run against the test fake (`tests/events/conftest.py`
-  `FakeGoogle`). `AGENTS.md` lists the assumptions to check by hand. The two most likely to bite:
-  whether a Desktop-app client accepts the redirect `http://127.0.0.1:8765/calendar/google/callback`, and
-  whether sync tokens work with `singleEvents=true` the way the code expects.
+- **Google.** Sign-in and a first pull were run by hand against Google on 2026-11-17 and worked: a
+  Desktop-app client accepted the redirect `http://127.0.0.1:8765/calendar/google/callback`, and events
+  arrived from the primary, shared and holiday calendars. Everything else has only run against the test
+  fake (`tests/events/conftest.py` `FakeGoogle`): push has never reached Google, and no pull by sync token
+  was watched. `AGENTS.md` lists the assumptions still to check. The one most likely to bite: whether sync
+  tokens work with `singleEvents=true` the way the code expects.
 - **The connected screens.** In a browser, only the states reachable without Google were seen: the Events
   page with made-here events (add, edit, delete, narrow widths), and the settings panel up to Connect
   opening Google's sign-in. The connected and needs-reconnect states, the calendar list, the push switch,
   Refresh, and a pulled event's details were read in code only.
 
-Manual check to run with a real Google Desktop-app client: paste the credentials, connect, tick a calendar
-and see its events arrive, switch push on, make an event here and see it on Google, edit it, delete it,
+Manual check to run with a real Google Desktop-app client. Done: paste the credentials, connect, tick a
+calendar and see its events arrive. Still to do: change and delete an event on Google and see each arrive
+on Refresh (the sync-token read), then switch push on, make an event here and see it on Google, edit it, delete it,
 switch an event between all-day and timed, delete one on Google and sync.
 
 ## Decisions made during the build

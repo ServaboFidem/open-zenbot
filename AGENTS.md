@@ -169,28 +169,29 @@ The Events page shows a built-in calendar, kept by the harness in `<vault>-calen
 (`src/gui/calendar-api.js`) and never talks to Google. Google is one account at a time (`Settings.account`,
 the primary calendar's id), brought in by pull and, when the user switches it on, sent back by push.
 
-**Unverified (2026-11-17): the whole Google exchange has only run against the test fake (`tests/events/conftest.py`
-`FakeGoogle`), never against Google itself.** That includes whether Google accepts a loopback redirect with a path
-(`/calendar/google/callback`) on the harness's port. If it does not, the fix is confined to
-`Connection.redirect_uri` and the callback route. Assumptions about Google to check by hand before a release:
+**Partly verified (2026-11-17): sign-in and a first pull have run against Google itself, once, by hand; everything
+else has only run against the test fake (`tests/events/conftest.py` `FakeGoogle`).** Push has never reached Google,
+and neither has a pull by sync token that was watched for its result. Assumptions about Google to check by hand
+before a release:
 
+- Seen working against Google (one account, a "Desktop app" client):
+  - The client accepts the loopback redirect with a path (`/calendar/google/callback`) on the harness's port.
+  - The read sign-in returns a refresh token and a `scope`, and the calendar list has a primary calendar.
+  - `calendar.calendarlist.readonly` and `calendar.events.readonly` are enough for `calendarList.list` and
+    `events.list`, on shared and holiday calendars too: their events arrived.
 - Believed right, confirm once:
   - An event id of 32 hex characters plus `g` plus digits is accepted (base32hex, 5 to 1,024 characters).
   - Inserting a reused id answers 409, including when the earlier event was deleted.
   - GET of a deleted event answers 200 with `status: "cancelled"`; DELETE of an already-deleted one answers 410.
   - A PATCH merges `start` and `end` key by key, and a null removes a key (why `to_google(patch=True)` nulls the
     other form; the fake now behaves this way).
-  - The token answer to a code exchange carries `scope`, and with `include_granted_scopes=true` it lists the
-    combined grant.
-  - `prompt=consent` with `access_type=offline` always returns a refresh token.
-  - `calendar.calendarlist.readonly` and `calendar.events.readonly` are enough for `calendarList.list` and
-    `events.list` on shared and holiday calendars.
+  - On the write upgrade, with `include_granted_scopes=true`, the token answer's `scope` lists the combined grant.
+  - `prompt=consent` with `access_type=offline` returns a refresh token every time, not only the first.
   - The `primary` flag is on exactly one calendar-list entry (a list without one is now refused as `provider`).
   - `htmlLink` is on `*.google.com` (otherwise `isGoogleLink` hides the link).
 - Not sure:
   - PATCH of a cancelled event: 404, 410 and a 200 that is still cancelled are handled; a 403 or 400 would
     retry on every run.
-  - Whether a "Desktop app" client accepts the loopback redirect with a path on a fixed port.
   - Sync tokens with `singleEvents=true`: whether a first read with `timeMin`/`timeMax`, `singleEvents` and
     `showDeleted` returns `nextSyncToken`, and whether the next read takes `singleEvents` and `showDeleted`
     beside `syncToken`.
