@@ -516,7 +516,7 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     and renamed into place; a failed fetch keeps nothing, so a later ask tries again. When `discover-images` or `pool` is a
     link nothing is read or written. Served with its type by first bytes and `nosniff`; 404 "No picture." otherwise. After
     each refresh, once the refresh lock is released, the sweep (`sweep_pool_images`, under the picture lock the fetches
-    take, so it never holds up a settings or key save, or the scout's candidates, while fetches queued ahead of it run)
+    take, so it never holds up a settings or key save while fetches queued ahead of it run; the call that started the refresh, the scout's `events_candidates` included, still waits for its own sweep)
     deletes kept pictures whose event is no longer an Eventbrite pool row, stray part files and links (never followed). A
     sweep that fails is logged by its class name and never fails the refresh.
   - *Refresh* (`POST /discover/refresh`, `NothingIn`; 409 when discovery is not active). Starts an unforced `refresh()` in
