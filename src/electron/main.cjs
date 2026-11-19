@@ -172,6 +172,11 @@ app.whenReady().then(() => {
     const r = await dialog.showOpenDialog({ properties: ['openFile'] });
     return r.canceled ? null : r.filePaths[0];
   });
+  // Browse your vault: the vault's root in the OS file manager. The page sends no path (open-vault.cjs)
+  ipcMain.handle('open-vault', event => {
+    if (!fromApp(event)) throw new Error('not allowed');
+    return require('./open-vault.cjs').openVault({ shell });
+  });
   // Save…: the page names a harness URL and a file name; the dialog names the path; nothing else is written
   ipcMain.handle('save-media', (event, args) => saveMedia(args, {
     harnessBase: harnessBase(),
