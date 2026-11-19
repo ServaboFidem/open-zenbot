@@ -4,7 +4,7 @@
 # (tests/test_packaged_deps.py checks this), then run `uv lock --project packaging/harness`.
 [project]
 name = "open-zenbot-harness"
-version = "0.1.1"
+version = "0.1.2"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.27",
