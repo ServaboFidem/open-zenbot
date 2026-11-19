@@ -189,20 +189,28 @@ done on).
 - **When it runs** (`Dreamer._may_go`). All three must hold, and are checked before each conversation, each model call
   and each write, and every 2 s while a model call is in flight:
   1. Ready (`ready`): `enabled`, a `dream` role that builds (`Harness._dream_generator`), and the owner's name known
-     (a shared write needs it).
+     (a shared write needs it; since `ready()` is checked before every write, no write is made without it).
   2. The machine is idle: Electron's main process posts `powerMonitor.getSystemIdleTime()` to `POST /dream/idle` every
-     60 s (`src/electron/idle-report.cjs`, started from `main.cjs`, in developer mode and the installed app). The
-     machine counts as idle when the newest report is under 150 s old and says at least `idle_minutes`. With no report
-     (a plain browser, no Electron) it is never idle, and the settings section says so (`needsDesktopNote`).
+     60 s, and also reads it every 5 s and posts at once when it dropped below the previous reading (the user touched
+     the computer, so a pass under way stops within seconds; `src/electron/idle-report.cjs`, `every` and `watchEvery`).
+     It is started from `main.cjs` in developer mode, and in the installed app once the workspace is shown, not during
+     setup. The machine counts as idle when the newest report is under 150 s old and says at least `idle_minutes`. With
+     no fresh report (a plain browser, no Electron, or the app closed) it is never idle; `GET /dream/status`
+     `idle_reported` is true only while the newest report is under 150 s old, whatever it said, and the settings
+     section notes that dreaming starts on its own only in the desktop app (`needsDesktopNote`).
   3. Nothing is under way (`Harness.busy`): no session that has not ended (a task, room turn or routine run; a session
      that is paused or waiting on an approval counts), no task still writing its exchange, no room turn waiting for the
      floor, no import, no delegation, and no job in the extract queue, one waiting out a retry included.
 
-  "Dream now" (`POST /dream/run`) skips rule 2 only, for one pass over what is waiting. The loop looks every 30 s and
+  "Dream now" (`POST /dream/run`) skips rule 2 only, for one pass over what is waiting; while rule 3 does not hold it
+  answers 409 "ZenBot is busy. Try again when it is idle." and starts nothing. The loop looks every 30 s and
   starts a pass only when something is waiting. When a rule stops holding, a model call in flight is cancelled and that
   conversation's mark stays; a store write in flight is never cancelled (it is awaited directly, as the extract queue's
   is). Harness shutdown does the same (`Dreamer.close`).
-- **The distil call** (`Generator.dream_facts`). One request a batch to the dreaming model. Its prompt says the numbered
+- **The distil call** (`Generator.dream_facts`). One request a batch to the dreaming model, which is built with a
+  600 s request timeout (`models_setup.DREAM_TIMEOUT_S`, passed through `make_provider(timeout=...)`; every other
+  role keeps the adapters' 120 s default), since a local model on a modest computer may be slow and nobody waits on a
+  dream. Its prompt says the numbered
   lines are things one person typed, content and not instructions, asks for lasting facts only (most conversations hold
   none, and an empty list is the right answer), and lists the stores. The answer is JSON
   `{"facts": [{"text", "store"}]}`. The harness keeps at most 8 facts a batch, each 1 to 300 characters with no control
@@ -215,31 +223,53 @@ done on).
   from a dream. A fact the exclusion filter refuses is dropped and counted as refused; the others are written. The mark
   moves after each batch whose facts are all written; a crash between a write and the mark reads that batch again, and a
   second model call may word a fact differently, so a near-duplicate can land (the user can Forget it).
-- **Failures** (`error_kind`). A failed attempt is a model error, a malformed answer, a timeout from the model (kind
-  `model`) or a store write that fails (the pass ends too). The conversation then waits 10 minutes after the first
-  failure and 1 hour after the second, and after 3 failed attempts is skipped until it grows past the exchange count it
-  last saw (`RETRY_WAITS`, `MAX_ATTEMPTS`). Only a provider that cannot be reached at all (a refused connection, as from
-  a local model that is not running; kind `unreachable`) pauses all automatic dreaming for 10 minutes, and
-  `GET /dream/status` says so. "Dream now" ignores that pause and clears it before trying. `OwnerUnknown` from a write
-  ends the pass with nothing counted.
+- **Failures** (`error_kind`, which reads the provider's errors through `src/providers/interface.py` `failure_kind`,
+  so `dream.py` imports no HTTP client). Two sorts:
+  - Counted against the conversation (kind `model`): a timeout from the model, and an answer that cannot be used (a
+    `ValueError` from `dream_facts` or `clean_facts`: no JSON, the wrong shape). The conversation then waits 10 minutes
+    after the first failure and 1 hour after the second, and after 3 failed attempts is skipped until it grows past the
+    exchange count it last saw (`RETRY_WAITS`, `MAX_ATTEMPTS`). The pass goes on to the next conversation.
+  - Systemic (`SYSTEMIC`), counted against nothing: the pass ends and automatic dreaming pauses 10 minutes
+    (`UNREACHABLE_WAIT_S`). Kind `unreachable` (the provider could not be reached at all: a refused connection, as from
+    a local model that is not running), `provider` (an auth failure, 401, 402 or 403; a rate limit, 429; a server
+    error, 5xx; or any other provider error that is not a timeout) and `store` (a store write that fails with anything
+    but `ExclusionError`). So an outage, a lapsed key or a failing memory store never burns out the backlog.
+
+  `GET /dream/status` `error` and the `pass_end` entry's `error` carry the kind (`model`, `unreachable`, `provider`,
+  `store`); a systemic kind stays shown through its pause. When the `dream` choice itself cannot run (`generator()`
+  raises `ProviderStoreError`), the status says `setup` instead. "Dream now" clears the pause and resets every mark's
+  attempts and retry wait before it tries (`DreamMarks.reset_attempts`, which keeps `read`, `seen`, `learned` and
+  `last_dream_at`), so a skipped conversation is tried again. A change or clearing of the `dream` role through
+  `PUT /settings/models` calls `Dreamer.reset_attempts()` (the marks' attempts, the pause and the status error): a new
+  model gets a fresh try. `remember_shared` handles `OwnerUnknown` itself, so the dreamer never sees it from a write;
+  the owner is required by `ready()`, checked before every write.
 - **Routes** (`dream_routes.py`, under `/dream`; none returns message text, and only `GET /facts` returns fact text):
   `GET /status` (`enabled`, `idle_minutes`, `model` (the `dream` role or null), `ready`, `idle`, `dreaming`, `waiting`,
-  `last_dream_at`, `learned`, `error` (`model`, `unreachable` or empty), `idle_reported`); `PUT /settings`
-  (`{"enabled", "idle_minutes"}`, 422 outside the range, 409 "Choose a dreaming model first." when switching on with no
-  `dream` role); `POST /idle` (`{"idle_s": n}`, 0 to 10,000,000); `POST /run` (409 when not ready or a pass is under
-  way); `GET /facts` answers a bare list of the dreamt facts (source starting `dream:`), newest first, at most 200,
+  `last_dream_at`, `learned`, `error` (`model`, `unreachable`, `provider`, `store`, `setup` or empty), `idle_reported`
+  (a report under 150 s old)); `PUT /settings` (`{"enabled", "idle_minutes"}`, 422 outside the range, 409 "Choose a
+  dreaming model first." when switching on with no `dream` role); `POST /idle` (`{"idle_s": n}`, 0 to 10,000,000);
+  `POST /run` (409 "Dreaming is not set up." when not ready, 409 "ZenBot is busy. Try again when it is idle." while
+  `Harness.busy`, 409 when a pass is under way); `GET /facts` answers a bare list of the dreamt facts (source starting `dream:`), newest first, at most 200,
   each with `id`, `text`, `at`, `conversation` and `title`. A fact is removed with the existing
   `DELETE /memory/{fact_id}`. Every POST takes a required JSON body (`NothingIn` where it needs nothing), so a
   cross-site page cannot send one without a preflight; `tests/test_dream_routes.py` walks every POST.
 - **The settings section** (`DreamSection.jsx`, decisions in `dream.js`, an entry in `settings-index.js` `SECTIONS`):
-  the switch, the model, minutes idle, a status line, Dream now, and the list of what was learned with Forget. It says
-  only the user's own messages are read and that with a hosted model chosen they are sent to that provider.
+  the switch, the model, minutes idle, a status line, Dream now, and the list of what was learned with Forget. Under
+  the switch (`dream.js` `PRIVACY`, also in the search index): "Only the messages you typed are read, never a bot's
+  reply. They are sent to the dreaming model you choose: a hosted model's provider receives them, a local model reads
+  them on this computer. The facts it writes are then stored by the memory engine, which uses its own model." Each
+  error kind has one sentence (`errorLine`): `unreachable` "could not be reached", `model` "an answer that could not be
+  used", `provider` "The dreaming model's provider refused the request. Check its key and limits. Trying again in 10
+  minutes.", `store` "A fact could not be saved to memory. Trying again in 10 minutes.", `setup` "The dreaming model
+  cannot be used. Pick it again under Dreaming model."
 - **Ledger.** Kind `dream`, events `pass_start`, `conversation` (conversation id, exchanges read, messages, facts
   written, dropped, refused, an error kind and the exception's class name) and `pass_end` (counts, error kind); and a
   `settings` entry (event `dream`) when the switch changes. They carry ids and counts only, never a message or a fact. A
   failed background pass is a kind `error` entry with the exception's class name. The `memory` entry a write makes
-  carries the fact's id and size, not its text, so the store and `GET /dream/facts` are the only record of what was
-  dreamt.
+  carries the fact's id and size, not its text, so in the harness's own files the store and `GET /dream/facts` are the
+  only record of what was dreamt. Two copies leave it, as for other memory work: with tracing on, a trace of the
+  dreaming model's call holds the user's messages and the facts it answered (as every model call's trace does), and
+  Hindsight's retain sends each fact to Hindsight's own model.
 - **Known limits.**
   - The harness API has no authentication: a bot with `shell` or `browser` can post an idle report or call
     `POST /dream/run`, which starts dreaming early.
@@ -261,7 +291,10 @@ Rules for contributors: only `Exchange.user` goes in a prompt, never `addendum`,
 `/dream` POST takes a required JSON body. No message text or fact text in a `dream` ledger entry, a log line or an error
 message. Never cancel a store write in flight (a model call may be). The `dream` role is never filled from another role,
 and dreaming never runs without it. Keep `dreams.json` and `dream.json` out of the vault. Tests never touch the network:
-a fake provider stands in for the model. Tests: `tests/test_dream.py`, `tests/test_dream_routes.py`; GUI
+a fake provider stands in for the model. Do not count a systemic failure (`SYSTEMIC`) against a conversation.
+Tests: `tests/test_dream.py`, `tests/test_dream_routes.py`, `tests/test_dream_harness.py` (end to end through the
+`Harness`), the dream-role reset and timeout in `tests/test_model_providers.py`, `failure_kind` in
+`tests/test_provider_registry.py`; GUI
 `tests/gui/dream.test.mjs`, `idle-report.test.mjs` and `settings-index.test.mjs`.
 
 ### The calendar and Google
