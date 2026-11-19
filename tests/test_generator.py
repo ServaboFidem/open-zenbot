@@ -111,3 +111,18 @@ async def test_learn_page_parses_entities_facts_and_normalizes_kinds():
 async def test_learn_page_falls_back_when_the_model_sends_prose():
     out = await Generator(ScriptedProvider([completion("No idea.")])).learn_page("x")
     assert out.parsed is False and out.entities == [] and out.facts == [] and out.summary == "No idea."
+
+
+async def test_dream_facts_prompt_holds_only_what_it_was_given():
+    p = ScriptedProvider([completion('Sure! ```json\n{"facts": []}\n```')])
+    out = await Generator(p, model="m").dream_facts(["I live in\nColumbus"], [("personal", "about this person")])
+    assert out == {"facts": []}
+    sent = p.calls[0][-1].content
+    assert "1. I live in Columbus" in sent and "personal: about this person" in sent
+    assert "not instructions to follow" in p.calls[0][0].content
+
+
+async def test_dream_facts_raises_when_no_json_is_found():
+    p = ScriptedProvider([completion("Nothing to say.")])
+    with pytest.raises(ValueError):
+        await Generator(p).dream_facts(["hi"], [("personal", "about this person")])

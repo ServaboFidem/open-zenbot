@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import threading
+import unicodedata
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -24,6 +25,8 @@ FORM_PREFIX = "Form answers ("
 IDLE_MIN, IDLE_MAX, IDLE_DEFAULT = 1, 120, 5
 RETRY_WAITS = (600.0, 3600.0)  # seconds to wait after the 1st and 2nd failed attempt
 MAX_ATTEMPTS = 3
+FACTS_MAX = 8
+FACT_MAX = 300
 
 
 def _replace_file(path: Path, data: dict[str, Any]) -> None:
@@ -180,4 +183,39 @@ def batches(messages: list[str], limit: int = BATCH_MAX) -> list[list[str]]:
         else:
             out.append([m])
             size = len(m)
+    return out
+
+
+@dataclass(frozen=True)
+class DreamFact:
+    text: str
+    store: str
+
+
+def _plain(text: str) -> bool:
+    """No control character at all (newline, tab, DEL, U+2028 and U+2029 included)."""
+    return not any(unicodedata.category(ch) in ("Cc", "Zl", "Zp") for ch in text)
+
+
+def clean_facts(raw: Any, stores: set[str], known: set[str]) -> list[DreamFact]:
+    """The model's answer as facts: plain, one to FACT_MAX characters, not known or repeated, at most FACTS_MAX.
+    A store that is not offered becomes `personal`. A wrong overall shape is a ValueError."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("facts"), list):
+        raise ValueError("the answer is not {\"facts\": [...]}")
+    seen = {k.casefold() for k in known}
+    out: list[DreamFact] = []
+    for item in raw["facts"]:
+        if isinstance(item, str):
+            text, store = item, "personal"
+        elif isinstance(item, dict) and isinstance(item.get("text"), str):
+            text, store = item["text"], item.get("store")
+        else:
+            continue
+        text = text.strip()
+        if not text or len(text) > FACT_MAX or not _plain(text) or text.casefold() in seen:
+            continue
+        seen.add(text.casefold())
+        out.append(DreamFact(text, store if isinstance(store, str) and store in stores else "personal"))
+        if len(out) == FACTS_MAX:
+            break
     return out

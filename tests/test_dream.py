@@ -1,7 +1,7 @@
 from src.harness.conversations import Conversation, ConversationStore, Conversations, Exchange
 import pytest
 
-from src.memory.dream import DreamMarks, DreamSettings, Mark, batches, unread, unread_marked
+from src.memory.dream import DreamFact, DreamMarks, DreamSettings, Mark, batches, clean_facts, unread, unread_marked
 from src.vault_settings import settings_dir
 
 
@@ -112,3 +112,26 @@ def test_damaged_marks_file_is_kept_aside(tmp_path):
     p = tmp_path / "dreams.json"
     p.write_text("{not json", encoding="utf-8")
     assert DreamMarks(p).get("c1") == Mark() and (tmp_path / "dreams.json.bad").is_file()
+
+
+STORES = {"personal", "world", "org:acme"}
+
+
+def test_clean_keeps_shape_caps_and_stores():
+    raw = {"facts": [{"text": " Gordon lives in Columbus. ", "store": "personal"}, {"text": "Acme ships on Fridays.", "store": "org:acme"},
+                     {"text": "Water boils at 100 C.", "store": "org:unknown"}, "Gordon prefers metric units.",
+                     {"text": "x" * 301, "store": "personal"}, {"text": "line\nbreak", "store": "personal"}, {"text": "", "store": "personal"}, 7]}
+    assert clean_facts(raw, STORES, set()) == [DreamFact("Gordon lives in Columbus.", "personal"), DreamFact("Acme ships on Fridays.", "org:acme"),
+                                                DreamFact("Water boils at 100 C.", "personal"), DreamFact("Gordon prefers metric units.", "personal")]
+
+
+def test_clean_drops_known_and_repeated_text_and_keeps_eight():
+    raw = {"facts": [{"text": "Gordon lives in Columbus."}, {"text": "gordon lives in columbus."}] + [{"text": f"Fact {i}."} for i in range(12)]}
+    got = clean_facts(raw, STORES, {"GORDON LIVES IN COLUMBUS."})
+    assert [f.text for f in got] == [f"Fact {i}." for i in range(8)]
+
+
+@pytest.mark.parametrize("raw", [None, [], "facts", {"facts": "none"}, {"fact": []}])
+def test_clean_refuses_a_wrong_shape(raw):
+    with pytest.raises(ValueError):
+        clean_facts(raw, STORES, set())
