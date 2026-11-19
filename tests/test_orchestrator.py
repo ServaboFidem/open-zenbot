@@ -285,3 +285,14 @@ async def test_a_matching_room_still_wins_over_a_studio_bot(ledger: Ledger, tmp_
     out = await o.route("Make the hero bigger")
     assert (out.outcome, out.room_id, out.created) == ("room", room.id, False)
     await svc.settle(room.id)
+
+
+async def test_a_closed_bot_is_never_a_specialist(ledger: Ledger, tmp_path: Path):
+    svc = make(provider(), ledger, tmp_path)
+    svc.bots["writer"].closed = True
+    scorer = MockScorer(scores(**{"bot:writer": 0.95, "bot:critic": 0.9}))
+    out = await orch(scorer, svc, ledger).route("Find events near me")
+    asked = [q for req in scorer.requests for q in req.questions]
+    assert "bot:writer" not in asked and "bot:critic" in asked
+    assert out.outcome == "room" and svc.get(out.room_id).members == ["lead", "critic"]
+    await svc.settle(out.room_id)

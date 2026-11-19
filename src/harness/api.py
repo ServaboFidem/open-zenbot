@@ -81,6 +81,10 @@ from src.context.compaction import Compactor
 from src.context.protected import ProtectedBlock, ScopeGuard
 from src.decider.supervisor import LoopSupervisor
 from src.generation.generator import Generator
+from src.events.discover_routes import discover_router
+from src.events.routes import calendar_router
+from src.events.service import CalendarService
+from src.events.discovery import MANAGED_BY as EVENTS_MANAGED_BY, Discovery
 from src.music.routes import music_router
 from src.music.service import MANAGED_BY as MUSIC_MANAGED_BY, MusicService
 from src.generation.images import DEFAULT_MODEL as DEFAULT_IMAGE_MODEL, ImageConfig, ImageGenerator
@@ -183,6 +187,8 @@ class Harness:
     agents: Agents | None = None  # Claude Code and Codex: where they are, sign-in, switches (agent_clis.py)
     delegator: Delegator | None = None  # the delegate tool: hands a job to an agent that is on; a rebind keeps it
     music: MusicService | None = None  # music discovery: settings, Discogs token, atlas, digests, the /music routes
+    calendar: CalendarService | None = None  # the built-in calendar: its store, Google sync, the /calendar routes
+    discover: Discovery | None = None  # event discovery: the Eventbrite pool, the scout's tools and routine, the digests
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
     provider_store: ProviderStore | None = None  # vault-settings/providers.json: providers, their keys, their enabled models
     model_lister: ModelLister = field(default_factory=ModelLister)
@@ -331,6 +337,13 @@ class Harness:
         if self.music is None:
             self.music = MusicService(c, self.ledger, self.memory, self.tools, self.catalog)
         self.music.register()  # the music tools appear only when music is on and the token is set
+        if self.calendar is None:
+            self.calendar = CalendarService(c, self.ledger)  # no network until Google is connected
+        if self.discover is None:
+            self.discover = Discovery(c, self.ledger, self.calendar)
+            self.discover.tools, self.discover.catalog = self.tools, self.catalog
+            self.discover.bot_lookup = lambda bot_id: self.bots.get(bot_id)
+        self.discover.register()  # the scout's tools appear only while discovery is on with a place set
         if self.scorer is not None:
             self.orchestrator = self.orchestrator or Orchestrator(
                 self.scorer, self.rooms, self.bots, self.ledger, Generator(summaries, model=c.summary_model).room_topic, ASSISTANT_ID)
@@ -854,7 +867,7 @@ class Harness:
         self, bot: Bot, task: str, *, conversation_id: str | None = None, in_conversation: bool = True,
         protected: dict[str, Any] | None = None, pinned_skills: list[str] | None = None,
         comments: list[dict[str, str]] | None = None, addendum: str = "",
-        owner: Bot | None = None, part: PartTurn | None = None, brief: str = "",
+        owner: Bot | None = None, part: PartTurn | None = None, brief: str = "", recall_query: str = "",
     ) -> Session:
         """Run a task for a bot. `owner` is the conversation's owner when it is another bot: `bot` then acts
         in that conversation as a helper (no design folder or design system block, no turn note). It joins the bot's current conversation (or
@@ -863,7 +876,8 @@ class Harness:
         when the task ends. Raises KeyError for a named conversation that is
         not this bot's. `part` makes the task a helper's turn on the conversation's design (`start_helper`).
         `brief` is read after the addendum and pinned with it, but not kept with the exchange (a helper's
-        worksheet and rules: a later turn must not replay them)."""
+        worksheet and rules: a later turn must not replay them). `recall_query`, when given, is what memory recall
+        searches instead of the task (the events routine's is the user's interests text)."""
         session = Session(bot_id=bot.id, task=task, pinned_skills=list(pinned_skills or []))
         conv = None
         helper = owner is not None and owner.id != bot.id
@@ -896,6 +910,8 @@ class Harness:
                 session.design = "\n\n".join(p for p in (design_studio.folder_block(folder), session.design) if p)
         if addendum or brief:
             session.recall_query = task  # recall searches the user's words, not the comment block
+        if recall_query:
+            session.recall_query = recall_query
         self.sessions[session.id] = session
         if part is not None:
             self.part_turns[session.id] = part  # before the task runs: the design tools are offered by it
@@ -930,7 +946,8 @@ class Harness:
                     session.state, session.error = SessionState.failed, f"{type(e).__name__}: {e}"
                     self.ledger.append(Kind.error, bot.id, session.id, error=session.error)
                     return session
-                if session.state == SessionState.done and session.result:  # tier 3: the result is a session fact, no model call
+                # tier 3: the result is a session fact, no model call. Not for a closed bot: it reads untrusted listing text
+                if session.state == SessionState.done and session.result and not bot.closed:
                     self.cache.add(session.id, bot.id, session.result)
                 return session
             finally:  # also on a stop that cancels the task, so the next message knows how this one ended
@@ -1402,12 +1419,17 @@ def create_app(h: Harness) -> FastAPI:
         skill = next((sk for sk in bot.skills if sk.slug == r.skill), None)
         if skill is None:
             raise RoutineError(f"Routine {r.name!r}: skill {r.skill!r} is not attached to {bot.id}.")
-        return h.start_task(bot, f"{r.name}: {skill.use}", in_conversation=False, pinned_skills=[r.skill])
+        # the events routine's task text is the skill's, so recall is keyed to what the user said they like instead
+        recall = h.discover.settings.interests if r.managed_by == EVENTS_MANAGED_BY else ""
+        return h.start_task(bot, f"{r.name}: {skill.use}", in_conversation=False, pinned_skills=[r.skill],
+                            recall_query=recall)
 
     scheduler = Scheduler(lambda: routines, start_routine, h.ledger)
     scheduler.verifiers[MUSIC_MANAGED_BY] = h.music.run_failure  # a digest run that saved no digest failed
+    scheduler.verifiers[EVENTS_MANAGED_BY] = h.discover.run_failure  # a scout run that saved no digest failed
     h.music.routines, h.music.scheduler = routines, scheduler
-    app_routers = [music_router(h.music, h)]
+    h.discover.routines, h.discover.scheduler = routines, scheduler
+    app_routers = [music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -1443,6 +1465,8 @@ def create_app(h: Harness) -> FastAPI:
         h.learner.restore()  # learn holds waiting in Approvals come back after a restart
         scheduling = asyncio.create_task(scheduler.run())
         h.music.spawn(h.music.start())  # tools, the atlas check and a first scan, when music is on
+        await h.discover.start()  # the scout's tools and weekly routine, when discovery is on with a place
+        h.calendar.spawn(h.calendar.start())  # a sync now and every 15 minutes, while Google is connected
         stop = asyncio.Event()
         extracting = asyncio.create_task(h.extract_queue.run(stop)) if h.extract_queue else None
         try:
@@ -1458,6 +1482,8 @@ def create_app(h: Harness) -> FastAPI:
                 await h.extract_queue.shutdown(extracting)
             await h.mcps.close()
             await h.music.close()
+            await h.discover.close()  # first: its background refresh reads through the calendar's HTTP client
+            await h.calendar.close()
             await h.learner.drain(timeout=30)  # background learn writes land before memory closes; a hung one does not hold shutdown
             # after the worker: the store stops its server and closes; blocks, so off the loop
             await asyncio.to_thread(h.memory.close)
@@ -2581,6 +2607,8 @@ def create_app(h: Harness) -> FastAPI:
     @app.patch("/bots/{bot_id}")
     async def patch_bot(bot_id: str, body: BotPatch) -> dict[str, Any]:
         bot = _bot(h, bot_id)
+        if bot.closed and body.mcps is not None and list(body.mcps) != list(bot.mcps):
+            raise HTTPException(422, "This bot's tools are fixed in its file.")
         if body.name is not None:
             bot.name = body.name
         if body.role is not None:
@@ -3035,7 +3063,7 @@ def _persist(h: Harness, bot: Bot) -> None:
     taken: set[str] = set()
     if h.config.user_content:  # the user's folder is empty of shipped ids: a new bot must not take one, or it would shadow it
         taken = set(h.bots) | {f.stem for f in h.config.bot_prompts_dir.glob("*.md")} if h.config.bot_prompts_dir.is_dir() else set(h.bots)
-    p = save_bot_prompt(h.config.bots_write_dir, BotPrompt(id=bot.id, name=bot.name, role=bot.role, instructions=bot.instructions, skills=[s.slug for s in bot.skills], mcps=list(bot.mcps) or None, studio=bot.studio, places=list(bot.places)), taken)
+    p = save_bot_prompt(h.config.bots_write_dir, BotPrompt(id=bot.id, name=bot.name, role=bot.role, instructions=bot.instructions, skills=[s.slug for s in bot.skills], mcps=list(bot.mcps) or None, studio=bot.studio, places=list(bot.places), closed=bot.closed), taken)
     bot.id = p.id
 
 

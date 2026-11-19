@@ -10,7 +10,7 @@ import pytest
 
 from src.harness.approvals import ApprovalState, ApprovalStore, needs_approval
 from src.harness.bot import Bot
-from src.harness.loop import SessionState, TaskLoop
+from src.harness.loop import SessionState, TaskLoop, offered_groups
 from src.harness.tools import ToolRunner
 from src.memory.ledger import Ledger
 from src.providers.interface import ToolCall
@@ -432,3 +432,44 @@ async def test_missing_pinned_skill_fails_session(bot: Bot, ledger: Ledger, tmp_
     assert s.state == SessionState.failed
     assert s.error == f"Routine skill 'nope' is not attached to {bot.id}."
     assert provider.calls == []
+
+
+def test_offered_groups_for_a_closed_bot_ignores_the_route():
+    bot = Bot(name="S", role="r", mcps=["events"], closed=True)
+    for route in (None, {}, {"bands": {"mcp": 1}, "mcps": ["browser"]}, {"pinned": True, "mcps": ["events", "files"]}):
+        assert offered_groups(bot, route) == ({"events"}, False)
+    open_bot = Bot(name="O", role="r")
+    assert offered_groups(open_bot, None) == (None, True)
+    assert offered_groups(open_bot, {"pinned": True, "mcps": ["a"]}) == ({"a"}, True)
+
+
+async def test_a_closed_bot_is_offered_only_its_own_tools(ledger: Ledger, tmp_path: Path):
+    provider = ScriptedProvider([completion("ok")])
+    loop = make_loop(provider, ledger, tmp_path)
+    obj = {"type": "object", "properties": {}}
+    loop.tools.register("events_x", "d", obj, lambda: "ok", group="events")
+    loop.tools.register("music_x", "d", obj, lambda: "ok", group="music")
+    loop.tools.register("attach_file", "d", obj, lambda: "ok")
+    await loop.run(Bot(name="S", role="r", mcps=["events"], closed=True), "go")
+    assert set(provider.tools[0]) == {"events_x"}
+
+
+async def test_a_closed_bot_cannot_run_a_tool_it_was_not_offered(ledger: Ledger, tmp_path: Path):
+    ran: list[str] = []
+    provider = ScriptedProvider([
+        completion(calls=[("c1", "shell", {"command": "echo hi"}), ("c2", "music_x", {}), ("c3", "events_x", {})]),
+        completion("done"),
+    ])
+    loop = make_loop(provider, ledger, tmp_path)
+    obj = {"type": "object", "properties": {}}
+    loop.tools.register("music_x", "d", obj, lambda: ran.append("music") or "ok", group="music")
+    loop.tools.register("events_x", "d", obj, lambda: ran.append("events") or "ok", group="events")
+    loop.tools.register("shell", "d", {"type": "object", "properties": {"command": {"type": "string"}}},
+                        lambda command: ran.append("shell") or "ok")
+    s = await loop.run(Bot(name="S", role="r", mcps=["events"], closed=True), "go")
+    assert s.state == SessionState.done
+    results = {m.name: m.content for m in provider.calls[1] if m.role == "tool"}
+    assert "not available to this bot" in results["shell"] and "not available to this bot" in results["music_x"]
+    assert "ok" in results["events_x"]
+    assert ran == ["events"]
+    assert not [e for e in ledger.tail(kind="tool_start", session_id=s.id) if e.data["tool"] != "events_x"]

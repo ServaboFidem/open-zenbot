@@ -1,0 +1,123 @@
+/* The Events page. Everything is scoped under .events-area; the event dialog renders in a portal outside
+   it, so its rules are scoped under .events-dialog. The page is a container: its own width, not the
+   window's, decides between two columns (grid, agenda) and one. */
+.events-area{container-type:inline-size;color:var(--ink)}
+.events-area .events-tabs{margin-bottom:var(--s5);border-bottom:1px solid var(--border)}
+.events-area .events-error{color:#a4262c;font-size:var(--small);margin-bottom:var(--s3)}
+.events-area .events-discover{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--s5)}
+.events-area .events-discover p{margin-top:var(--s2)}
+.events-area .discover-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--s3);margin-bottom:var(--s4)}
+.events-area .discover-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:var(--s4);margin-top:var(--s3)}
+.events-area .discover-card{display:flex;flex-direction:column;gap:var(--s2);min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--s4)}
+.events-area .discover-card p{margin:0}
+.events-area .discover-picture,.events-area .discover-picture-fallback{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:var(--small-radius);border:1px solid var(--line);background:#f0f0f0}
+.events-area .discover-picture-fallback{display:flex;align-items:center;justify-content:center;color:#616161}
+.events-area .discover-name{font-size:var(--h3,1.05rem);line-height:1.3;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.events-area .discover-when{font-size:var(--small);font-weight:600;color:var(--brand)}
+.events-area .discover-where,.events-area .discover-why{font-size:var(--small);color:var(--muted);overflow-wrap:anywhere}
+.events-area .discover-actions{display:flex;flex-wrap:wrap;gap:var(--s2);margin-top:auto;padding-top:var(--s3)}
+.events-area .discover-state{display:flex;flex-direction:column;align-items:center;text-align:center;gap:var(--s3);padding:var(--s6,32px) var(--s4)}
+.events-area .discover-state>.od-icon{--od-icon-size:48px;color:var(--brand)}
+.events-area .discover-progress{width:min(100%,320px)}
+.events-area .discover-bar{margin-top:var(--s4)}
+.events-area .discover-digest{margin-top:var(--s5)}
+
+/* header: month title, previous / Today / next, Refresh and New event; wraps rather than overflows */
+.events-area .events-head{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3) var(--s4);margin-bottom:var(--s4)}
+.events-area .events-month{flex:1 1 12ch;min-width:0}
+.events-area .events-nav,.events-area .events-actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2)}
+
+.events-area .events-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--s5);align-items:start}
+.events-area .events-main{min-width:0}
+@container (width > 800px){.events-area .events-layout{grid-template-columns:minmax(0,1fr) 288px}}
+
+/* the month grid */
+.events-area .events-grid{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.events-area .events-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}
+.events-area .events-weekdays{background:var(--canvas);border-bottom:1px solid var(--line);font-size:var(--tiny);color:var(--muted);text-align:center}
+.events-area .events-weekdays>div{padding:var(--s2) var(--s1);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.events-area .events-week>[role=gridcell]{min-width:0;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.events-area .events-week>[role=gridcell]:last-child{border-right:0}
+.events-area .events-week:last-child>[role=gridcell]{border-bottom:0}
+.events-area .events-day{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:100%;height:100%;min-height:104px;min-width:0;padding:var(--s1) var(--s2) var(--s2);border:0;border-radius:0;background:var(--surface);color:var(--ink);text-align:left;font-size:var(--tiny);line-height:1.4}
+.events-area .events-day:focus-visible{outline:2px solid var(--brand);outline-offset:-4px}
+@media(hover:hover){.events-area .events-day:hover{background:#eef4fa}}
+.events-area .events-day.is-outside{background:#fafafa;color:#707070}
+/* selected: a ring and a bold number; today: a filled circle. Neither is colour alone. */
+.events-area .events-day.is-selected{background:#edf5fc;box-shadow:inset 0 0 0 2px var(--brand)}
+.events-area .events-day-number{display:grid;place-items:center;flex:none;width:24px;height:24px;border-radius:50%;font-size:var(--small)}
+.events-area .is-selected .events-day-number{font-weight:700}
+.events-area .is-today .events-day-number{background:var(--brand);color:#fff;font-weight:600}
+.events-area .events-day-item{display:flex;align-items:center;gap:var(--s1);min-width:0}
+.events-area .events-swatch{display:inline-block;flex:none;width:8px;height:8px;border-radius:2px}
+.events-area .events-day-title{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.events-area .events-day-more{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.events-area .events-day-count{display:none}
+/* a narrow month: counts instead of titles (the full list is in the agenda and the cell's label) */
+@container (width < 520px){
+  .events-area .events-day{min-height:60px;padding:var(--s1)}
+  .events-area .events-day-item,.events-area .events-day-more{display:none}
+  .events-area .events-day-count{display:block;padding-left:6px;font-weight:600;color:var(--brand)}
+}
+
+/* the status line under the grid */
+.events-area .events-status{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2);margin-top:var(--s3);font-size:var(--small);color:var(--muted);overflow-wrap:anywhere}
+.events-area .events-status .text-link{font-size:inherit}
+
+/* the agenda and the calendar toggles */
+.events-area .events-side{display:grid;gap:var(--s4);min-width:0;align-items:start}
+@container (520px <= width <= 800px){.events-area .events-side{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}}
+.events-area .events-agenda,.events-area .events-calendars{min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--s4)}
+.events-area .events-side h3{margin-bottom:var(--s2);overflow-wrap:anywhere}
+.events-area .events-agenda-list{list-style:none;margin:0;padding:0}
+.events-area .events-agenda-item{display:grid;grid-template-columns:88px minmax(0,1fr);gap:var(--s3);width:100%;padding:var(--s3) var(--s1);border:0;border-top:1px solid var(--line);border-radius:0;background:none;color:var(--ink);text-align:left}
+.events-area .events-agenda-list>li:first-child .events-agenda-item{border-top:0}
+@media(hover:hover){.events-area .events-agenda-item:hover{background:#eef4fa}}
+.events-area .events-agenda-item:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.events-area .events-agenda-time{font-size:var(--tiny);font-weight:600;color:var(--brand);padding-top:2px}
+.events-area .events-agenda-body{display:grid;gap:2px;min-width:0}
+.events-area .events-agenda-title{font-size:var(--small);font-weight:600;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.events-area .events-agenda-where{font-size:var(--tiny);color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.events-area .events-agenda-cal{display:flex;align-items:center;gap:var(--s1);min-width:0;font-size:var(--tiny);color:var(--muted);overflow-wrap:anywhere}
+.events-area .events-empty{font-size:var(--small)}
+.events-area .events-calendars{display:grid;gap:var(--s1)}
+.events-area .events-calendars label{overflow-wrap:anywhere}
+
+/* the event dialog (in a portal) */
+.events-dialog{width:min(560px,calc(100vw - 32px))}
+.events-dialog .fui-DialogTitle{overflow-wrap:anywhere}
+.events-dialog p{margin-top:var(--s3);max-width:none}
+.events-dialog .events-facts{margin:0;display:grid;gap:var(--s3)}
+.events-dialog .events-facts dt{font-size:var(--tiny);color:var(--muted)}
+.events-dialog .events-facts dd{margin:2px 0 0;font-size:var(--small);overflow-wrap:anywhere}
+.events-dialog .events-description{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink);font-size:var(--small)}
+.events-dialog .events-muted{color:var(--muted);font-size:var(--small)}
+.events-dialog .events-error{color:#a4262c;font-size:var(--small)}
+.events-dialog .events-form{display:grid;gap:var(--s3)}
+.events-dialog .events-form-when{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s3)}
+@media(max-width:480px){.events-dialog .events-form-when{grid-template-columns:minmax(0,1fr)}}
+.events-dialog .events-confirm{align-self:center;font-size:var(--small);margin-right:auto}
+
+.events-dialog .fui-DialogActions .fui-Button{white-space:nowrap}
+
+/* All Events: the filter bar, the count line, and a table that scrolls inside the tab under a fixed header */
+.events-area .all-events-bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--s2) var(--s3)}
+.events-area .all-events-bar .fui-Field{min-width:0}
+.events-area .all-events-meta{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2) var(--s4);margin:var(--s3) 0;font-size:var(--small);color:var(--muted)}
+.events-area .all-events-scroll{max-height:min(70vh,720px);overflow:auto;border:1px solid var(--border);border-radius:var(--small-radius);scroll-padding-top:40px}
+.events-area .all-events-table{width:100%;border-collapse:separate;border-spacing:0;font-size:var(--small)}
+.events-area .all-events-table th{position:sticky;top:0;z-index:1;padding:0;background:var(--canvas);border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+.events-area .all-events-table th button{width:100%;padding:var(--s2) var(--s3);border:0;background:none;color:var(--ink);font:inherit;font-weight:600;text-align:left;cursor:pointer}
+.events-area .all-events-table th button:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.events-area .all-events-table td{padding:var(--s2) var(--s3);border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+.events-area .all-events-table .col-date,.events-area .all-events-table .col-time{white-space:nowrap}
+.events-area .all-events-table tbody tr{cursor:pointer}
+@media(hover:hover){.events-area .all-events-table tbody tr:hover{background:#eef4fa}}
+.events-area .all-events-table tbody tr:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.events-area .all-events-mark{color:var(--brand);font-weight:700}
+/* narrow: the name, when and where stay; category and source are in the panel */
+@container (width < 640px){.events-area .all-events-table .col-category,.events-area .all-events-table .col-source{display:none}}
+
+/* the All Events panel's picture (the dialog is in a portal) */
+.events-dialog .discover-picture,.events-dialog .discover-picture-fallback{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:var(--small-radius);border:1px solid var(--line);background:#f0f0f0;margin-bottom:var(--s3)}
+.events-dialog .discover-picture-fallback{display:flex;align-items:center;justify-content:center;color:#616161}

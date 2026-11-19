@@ -54,7 +54,7 @@ def test_the_harness_settings_ledger_and_music_folders_are_refused(tmp_path: Pat
     zen = tmp_path / ".zen-agents"
     vault = zen / "vault"
     private = af.private_folders(vault)
-    assert private == [zen / "vault-settings", zen / "vault-ledger", zen / "vault-music", zen / "vault-bots", zen / "vault-skills"]
+    assert private == [zen / "vault-settings", zen / "vault-ledger", zen / "vault-music", zen / "vault-calendar", zen / "vault-bots", zen / "vault-skills"]
     for d in (vault / "notes", *private, zen / "vault-settings" / "sub"):
         d.mkdir(parents=True, exist_ok=True)
     home = tmp_path / "home"

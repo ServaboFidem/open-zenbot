@@ -2,6 +2,8 @@
 // and out. No state beyond the base URL: the provider key passes through
 // setProvider once and is never kept here or in localStorage.
 import { createMusicApi } from './music-api.js';
+import { createCalendarApi } from './calendar-api.js';
+import { createDiscoverApi } from './discover-api.js';
 
 export const DEFAULT_HARNESS = 'http://127.0.0.1:8765';
 
@@ -63,6 +65,8 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     baseUrl: base,
     call,
     music: createMusicApi(call),
+    calendar: createCalendarApi(call),
+    discover: createDiscoverApi(call),
     // routines (the Music digest schedule is one; a managed routine keeps managed_by on every save)
     routines: () => get('/routines'),
     saveRoutine: ({ id, name, bot, skill, enabled, schedule, managed_by = '' }) => {

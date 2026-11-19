@@ -1655,6 +1655,32 @@ async def test_places_survive_a_bot_edit(monkeypatch, vault: Path, tmp_path: Pat
     assert "places:\n- text" in (prompts / "writer.md").read_text(encoding="utf-8") or "places: [text]" in (prompts / "writer.md").read_text(encoding="utf-8")
 
 
+async def test_a_closed_bot_keeps_closed_and_mcps_through_an_edit_and_refuses_new_mcps(monkeypatch, vault: Path, tmp_path: Path):
+    from src.harness.bot_prompts import parse
+    from src.harness.main import build_harness
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("ZEN_MEMORY_BACKEND", "local")
+    prompts = tmp_path / "bot-prompts"
+    prompts.mkdir()
+    (prompts / "scout.md").write_text("---\nname: Scout\nrole: Old role\nmcps: [events]\nclosed: true\n---\nScout.\n", encoding="utf-8")
+    h = build_harness(HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=prompts))
+    transport = httpx.ASGITransport(app=create_app(h))
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
+        r = await c.patch("/bots/scout", json={"instructions": "Scout harder."})
+        assert r.status_code == 200 and r.json()["closed"] is True
+        for new in (["events", "files"], ["files"], []):
+            r = await c.patch("/bots/scout", json={"mcps": new})
+            assert r.status_code == 422 and r.json()["detail"] == "This bot's tools are fixed in its file."
+        bot = (await c.get("/bots/scout")).json()
+        assert bot["mcps"] == ["events"] and bot["closed"] is True
+        assert (await c.patch("/bots/scout", json={"mcps": ["events"], "role": "New role"})).status_code == 200
+    saved = parse((prompts / "scout.md").read_text(encoding="utf-8"), "scout")
+    assert saved.closed is True and saved.mcps == ["events"] and saved.instructions == "Scout harder." and saved.role == "New role"
+    reloaded = build_harness(HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=prompts))
+    assert reloaded.bots["scout"].closed is True and reloaded.bots["scout"].mcps == ["events"]
+
+
 # design comments on a task
 
 def _comment(att_id: str, note: str = "Make this bigger") -> dict:
@@ -2045,3 +2071,24 @@ async def test_a_bot_that_is_not_a_studio_bot_may_start_a_second_task(client, ha
     r = await client.post("/bots/bot1/tasks", json={"task": "more", "conversation_id": conv.id})
     assert r.status_code == 202
     await harness.tasks[r.json()["session_id"]]
+
+
+async def test_shutdown_closes_discovery_before_the_calendar(vault: Path, tmp_path: Path):
+    """Discovery's background refresh reads through the calendar's HTTP client: it is cancelled before that closes."""
+    h = profiled(vault, tmp_path)
+    order: list[str] = []
+    real_calendar, real_discover = h.calendar.close, h.discover.close
+
+    async def calendar_close():
+        order.append("calendar")
+        await real_calendar()
+
+    async def discover_close():
+        order.append("discover")
+        await real_discover()
+
+    h.calendar.close, h.discover.close = calendar_close, discover_close
+    app = create_app(h)
+    async with app.router.lifespan_context(app):
+        pass
+    assert order == ["discover", "calendar"]

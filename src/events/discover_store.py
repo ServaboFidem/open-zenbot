@@ -1,0 +1,398 @@
+"""SQLite store for event discovery: the pool of fetched events, saved digests and their cards.
+
+A separate file (``discover.db``) beside ``calendar.db``. One connection shared across threads behind a
+lock; WAL mode. Lists are stored as JSON text. A card is a snapshot of a pool row as it was when saved:
+a later refresh never changes it. Rows come back as plain dicts.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+import uuid
+from pathlib import Path
+
+LAST_REFRESH, LAST_ERROR = "last_refresh", "last_error"
+MAX_LIMIT = 60
+MAX_LISTING = 5000  # the most rows listing() answers
+STATES = ("new", "dismissed", "added")
+
+# the event fields (Task 4's event dict, minus its id), in column order
+_TEXT = ("name", "summary", "start_date", "start_time", "end_date", "end_time", "timezone", "venue",
+         "address", "city", "region", "image_url", "url", "format", "source")
+_LISTS = ("categories", "category_names")
+_FIELDS = _TEXT + _LISTS
+
+SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS pool(
+  id TEXT PRIMARY KEY, {", ".join(f"{c} TEXT DEFAULT ''" for c in _TEXT)},
+  {", ".join(f"{c} TEXT DEFAULT '[]'" for c in _LISTS)}, seen_at TEXT DEFAULT '');
+CREATE INDEX IF NOT EXISTS pool_start ON pool(start_date, start_time, id);
+CREATE TABLE IF NOT EXISTS digests(
+  id TEXT PRIMARY KEY, kind TEXT, note TEXT, session_id TEXT, created_at TEXT);
+CREATE INDEX IF NOT EXISTS digests_created ON digests(created_at);
+CREATE INDEX IF NOT EXISTS digests_session ON digests(session_id);
+CREATE TABLE IF NOT EXISTS cards(
+  id TEXT PRIMARY KEY, digest_id TEXT, event_id TEXT, why TEXT, state TEXT DEFAULT 'new',
+  calendar_event_id TEXT DEFAULT '', has_image INTEGER DEFAULT 0, position INTEGER DEFAULT 0,
+  {", ".join(f"{c} TEXT DEFAULT ''" for c in _TEXT)},
+  {", ".join(f"{c} TEXT DEFAULT '[]'" for c in _LISTS)});
+CREATE INDEX IF NOT EXISTS cards_digest ON cards(digest_id, position);
+CREATE INDEX IF NOT EXISTS cards_event ON cards(event_id);
+CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS added(event_id TEXT PRIMARY KEY, calendar_event_id TEXT, added_at TEXT);
+"""
+
+
+def name_key(name: str) -> str:
+    """A name as a comparison key: casefolded, letters and digits only."""
+    return "".join(ch for ch in str(name or "").casefold() if ch.isalnum())
+
+
+def _event_values(event: dict) -> list:
+    out = []
+    for c in _TEXT:
+        v = event.get(c)
+        out.append("" if v is None else str(v))
+        if c == "source" and not out[-1]:
+            out[-1] = "eventbrite"
+    for c in _LISTS:
+        v = event.get(c)
+        out.append(json.dumps([str(x) for x in v] if isinstance(v, (list, tuple)) else []))
+    return out
+
+
+def _unpack(d: dict) -> dict:
+    d["source"] = d.get("source") or "eventbrite"
+    for c in _LISTS:
+        try:
+            v = json.loads(d.get(c) or "[]")
+        except ValueError:
+            v = []
+        d[c] = v if isinstance(v, list) else []
+    return d
+
+
+def _pool(row: sqlite3.Row | None) -> dict | None:
+    return None if row is None else _unpack(dict(row))
+
+
+def _card(row: sqlite3.Row | None) -> dict | None:
+    if row is None:
+        return None
+    d = _unpack(dict(row))
+    d["has_image"] = bool(d["has_image"])
+    d.pop("position", None)
+    return d
+
+
+class DiscoverStore:
+    def __init__(self, path: Path):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._db = sqlite3.connect(path, check_same_thread=False)
+        self._db.row_factory = sqlite3.Row
+        with self._lock:
+            self._db.execute("PRAGMA journal_mode=WAL")
+            self._db.executescript(SCHEMA)
+            for table in ("pool", "cards"):
+                if "source" not in [r[1] for r in self._db.execute(f"PRAGMA table_info({table})")]:
+                    self._db.execute(f"ALTER TABLE {table} ADD COLUMN source TEXT DEFAULT ''")
+            self._db.commit()
+
+    def close(self) -> None:
+        with self._lock:
+            self._db.close()
+
+    # the pool ---------------------------------------------------------------
+
+    def upsert_pool(self, events: list[dict], seen_at: str) -> int:
+        """Insert or update each event by id; delete nothing. Returns how many were written."""
+        cols = ", ".join(("id",) + _FIELDS + ("seen_at",))
+        marks = ", ".join("?" * (len(_FIELDS) + 2))
+        sets = ", ".join(f"{c}=excluded.{c}" for c in _FIELDS + ("seen_at",))
+        n = 0
+        with self._lock, self._db:
+            for e in events:
+                eid = e.get("id")
+                if not isinstance(eid, str) or not eid:
+                    continue
+                self._db.execute(f"INSERT INTO pool({cols}) VALUES({marks}) ON CONFLICT(id) DO UPDATE SET {sets}",
+                                 [eid, *_event_values(e), seen_at])
+                n += 1
+        return n
+
+    def drop_past(self, today: str) -> int:
+        """Delete pool rows starting before ``today`` (a day key). Returns how many went."""
+        with self._lock, self._db:
+            return self._db.execute("DELETE FROM pool WHERE start_date < ?", (today,)).rowcount
+
+    def clear_pool(self, source: str | None = None) -> int:
+        """Delete every pool row, or only those of ``source`` (the place changed). Saved cards are snapshots and
+        stay. Returns how many went."""
+        with self._lock, self._db:
+            if source is None:
+                return self._db.execute("DELETE FROM pool").rowcount
+            return self._db.execute("DELETE FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?",
+                                    (source,)).rowcount
+
+    def drop_stale(self, source: str, before: str) -> int:
+        """Delete pool rows of ``source`` last seen before ``before`` (a UTC instant). Returns how many went."""
+        with self._lock, self._db:
+            return self._db.execute("DELETE FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?"
+                                    " AND seen_at < ?", (source, before)).rowcount
+
+    def keep_pool(self, source: str, ids: set[str], before: str = "") -> int:
+        """Delete the pool rows of ``source`` whose id is not in ``ids`` (what a read saw); with ``before`` (a day
+        key), only those starting before that day (a read that stopped part way saw nothing later). By id, not by
+        time, so no clock change can keep a row that is gone or drop one that was just read. Returns how many went."""
+        with self._lock, self._db:
+            have = self._db.execute(
+                "SELECT id, start_date FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?", (source,)).fetchall()
+            gone = [(r[0],) for r in have if r[0] not in ids and (not before or (r[1] or "") < before)]
+            self._db.executemany("DELETE FROM pool WHERE id=?", gone)
+        return len(gone)
+
+    def image_urls(self, source: str = "eventbrite") -> dict[str, str]:
+        """Pool id -> ``image_url`` for the rows of ``source``."""
+        with self._lock:
+            return {r[0]: r[1] or "" for r in self._db.execute(
+                "SELECT id, image_url FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?", (source,))}
+
+    def set_zone(self, source: str, zone: str) -> int:
+        """Give every pool row of ``source``, and every card of it not yet added, the time zone ``zone`` (the user
+        corrected the city's zone). An added card keeps the zone its calendar event was made with."""
+        with self._lock, self._db:
+            n = self._db.execute("UPDATE pool SET timezone=? WHERE source=?", (zone, source)).rowcount
+            self._db.execute("UPDATE cards SET timezone=? WHERE source=? AND state != 'added'", (zone, source))
+        return n
+
+    def pool_size(self, source: str | None = None) -> int:
+        with self._lock:
+            if source is None:
+                return self._db.execute("SELECT COUNT(*) FROM pool").fetchone()[0]
+            return self._db.execute("SELECT COUNT(*) FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?",
+                                    (source,)).fetchone()[0]
+
+    def pool_row(self, id: str) -> dict | None:
+        with self._lock:
+            return _pool(self._db.execute("SELECT * FROM pool WHERE id=?", (id,)).fetchone())
+
+    @staticmethod
+    def _wanted(row: dict, ticked: set[str]) -> bool:
+        tags = row["categories"]
+        return not ticked or not tags or any(t in ticked for t in tags)
+
+    def _matching(self, today: str, categories: list[str], category: str, text: str, start: str,
+                  end: str) -> list[dict]:
+        sql = ("SELECT * FROM pool WHERE start_date >= ?"
+               " AND id NOT IN (SELECT event_id FROM cards)"
+               " AND id NOT IN (SELECT event_id FROM added)")
+        args: list = [today]
+        if start:
+            sql += " AND start_date >= ?"
+            args.append(start)
+        if end:
+            sql += " AND start_date <= ?"
+            args.append(end)
+        sql += " ORDER BY start_date, start_time, id"
+        with self._lock:
+            rows = [_pool(r) for r in self._db.execute(sql, args)]
+        ticked = set(categories)
+        cat, needle = category.strip().lower(), text.strip().lower()
+        out = []
+        for r in rows:
+            if not self._wanted(r, ticked):
+                continue
+            if cat and not any(cat == t.lower() for t in r["categories"] + r["category_names"]):
+                continue
+            if needle and not any(needle in (r[f] or "").lower() for f in ("name", "summary", "venue")):
+                continue
+            out.append(r)
+        return out
+
+    def candidate_count(self, today: str, categories: list[str], *, category: str = "", text: str = "",
+                        start: str = "", end: str = "") -> int:
+        """How many candidates match the filters, whatever the page."""
+        return len(self._matching(today, categories, category, text, start, end))
+
+    def candidates(self, today: str, categories: list[str], *, category: str = "", text: str = "",
+                   start: str = "", end: str = "", limit: int = 60, offset: int = 0) -> list[dict]:
+        out = self._matching(today, categories, category, text, start, end)
+        limit = max(0, min(int(limit), MAX_LIMIT))
+        offset = max(0, int(offset))
+        return out[offset:offset + limit]
+
+    def is_candidate(self, id: str, today: str, categories: list[str]) -> bool:
+        row = self.pool_row(id)
+        if row is None or row["start_date"] < today or not self._wanted(row, set(categories)):
+            return False
+        with self._lock:
+            return (self._db.execute("SELECT 1 FROM cards WHERE event_id=?", (id,)).fetchone() is None
+                    and self._db.execute("SELECT 1 FROM added WHERE event_id=?", (id,)).fetchone() is None)
+
+    def pool_ids(self, source: str = "eventbrite") -> set[str]:
+        with self._lock:
+            return {r[0] for r in self._db.execute(
+                "SELECT id FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?", (source,))}
+
+    def listing(self, today: str, limit: int = MAX_LISTING) -> list[dict]:
+        """Every pool row starting ``today`` or later, in date order, at most ``limit`` (never over MAX_LISTING),
+        each with ``recommended`` (a card that is not dismissed exists) and ``calendar_ids`` (the calendar events
+        made from it: the ``added`` row's and every card's, dismissed ones included). Three queries however many rows."""
+        with self._lock:
+            rows = [_pool(r) for r in self._db.execute(
+                "SELECT * FROM pool WHERE start_date >= ? ORDER BY start_date, start_time, id LIMIT ?",
+                (today, max(0, min(int(limit), MAX_LISTING))))]
+            marks = self._marks()
+        for r in rows:
+            r.update(marks.get(r["id"], {"recommended": False, "calendar_ids": []}))
+        return rows  # type: ignore[return-value]
+
+    def marks(self, event_id: str) -> dict:
+        """``recommended`` and ``calendar_ids`` of one event, as ``listing`` gives them."""
+        with self._lock:
+            return self._marks(event_id).get(event_id, {"recommended": False, "calendar_ids": []})
+
+    def _marks(self, event_id: str | None = None) -> dict[str, dict]:
+        """Event id -> ``{"recommended", "calendar_ids"}`` for every event with a card or an ``added`` row (or only
+        ``event_id``'s). Two queries."""
+        one, args = ("", ()) if event_id is None else (" AND event_id=?", (event_id,))
+        rec = self._db.execute(
+            f"SELECT event_id, MAX(state != 'dismissed') AS rec FROM cards WHERE 1{one} GROUP BY event_id",
+            args).fetchall()
+        # every card's calendar event, whatever its state: a card added and then dismissed still made one
+        cal = self._db.execute(
+            f"SELECT event_id, calendar_event_id FROM added WHERE calendar_event_id != ''{one}"
+            f" UNION SELECT event_id, calendar_event_id FROM cards"
+            f" WHERE calendar_event_id != ''{one} ORDER BY 1, 2", args * 2).fetchall()
+        out: dict[str, dict] = {}
+        for r in rec:
+            out.setdefault(r["event_id"], {"recommended": False, "calendar_ids": []})["recommended"] = bool(r["rec"])
+        for r in cal:
+            out.setdefault(r["event_id"], {"recommended": False, "calendar_ids": []})["calendar_ids"].append(
+                r["calendar_event_id"])
+        return out
+
+    def card_for_event(self, event_id: str) -> dict | None:
+        """The newest card of an event (by its digest's time) that is not dismissed."""
+        with self._lock:
+            return _card(self._db.execute(
+                "SELECT c.* FROM cards c JOIN digests d ON d.id=c.digest_id"
+                " WHERE c.event_id=? AND c.state != 'dismissed' ORDER BY d.created_at DESC, d.rowid DESC LIMIT 1",
+                (event_id,)).fetchone())
+
+    def mark_event_added(self, event_id: str, calendar_event_id: str, added_at: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("INSERT OR REPLACE INTO added(event_id, calendar_event_id, added_at) VALUES(?,?,?)",
+                             (event_id, calendar_event_id, added_at))
+
+    def added_event(self, event_id: str) -> str:
+        """The calendar event id recorded for an event added from the pool, else an empty string."""
+        with self._lock:
+            row = self._db.execute("SELECT calendar_event_id FROM added WHERE event_id=?", (event_id,)).fetchone()
+        return (row[0] or "") if row else ""
+
+    def known_duplicate(self, event: dict) -> bool:
+        """Whether an event is already here under another id: its Eventbrite id is a pool row or a card, or an
+        Eventbrite row or another event's card has the same day and name."""
+        ebid = event.get("eventbrite_id")
+        with self._lock:
+            if ebid and (self._db.execute("SELECT 1 FROM pool WHERE id=?", (ebid,)).fetchone()
+                         or self._db.execute("SELECT 1 FROM cards WHERE event_id=?", (ebid,)).fetchone()):
+                return True
+            key = name_key(event.get("name", ""))
+            if not key:
+                return False
+            day = event.get("start_date", "")
+            rows = self._db.execute(
+                "SELECT name FROM pool WHERE start_date=? AND COALESCE(NULLIF(source, ''), 'eventbrite')='eventbrite'"
+                " UNION ALL SELECT name FROM cards WHERE start_date=? AND event_id != ?",
+                (day, day, event.get("id", ""))).fetchall()
+        return any(name_key(r["name"]) == key for r in rows)
+
+    # digests and cards ------------------------------------------------------
+
+    def save_digest(self, cards: list[tuple[dict, str]], *, kind: str, note: str, session_id: str,
+                    created_at: str) -> dict:
+        """Save a digest and a snapshot card for each (pool row, why), whole or not at all."""
+        digest_id = uuid.uuid4().hex
+        cols = ", ".join(("id", "digest_id", "event_id", "why", "position") + _FIELDS)
+        marks = ", ".join("?" * (5 + len(_FIELDS)))
+        with self._lock, self._db:
+            self._db.execute("INSERT INTO digests(id, kind, note, session_id, created_at) VALUES(?,?,?,?,?)",
+                             (digest_id, kind, note, session_id, created_at))
+            for i, (row, why) in enumerate(cards):
+                self._db.execute(f"INSERT INTO cards({cols}) VALUES({marks})",
+                                 [uuid.uuid4().hex, digest_id, row["id"], why, i, *_event_values(row)])
+        return self.digest(digest_id)  # type: ignore[return-value]
+
+    def _cards_of(self, digest_id: str) -> list[dict]:
+        rows = self._db.execute("SELECT * FROM cards WHERE digest_id=? ORDER BY position", (digest_id,))
+        return [_card(r) for r in rows]  # type: ignore[misc]
+
+    def _digest(self, row: sqlite3.Row | None) -> dict | None:
+        if row is None:
+            return None
+        d = dict(row)
+        d["cards"] = self._cards_of(d["id"])
+        return d
+
+    def digest(self, id: str) -> dict | None:
+        with self._lock:
+            return self._digest(self._db.execute("SELECT * FROM digests WHERE id=?", (id,)).fetchone())
+
+    def digests(self, before: str | None, limit: int) -> list[dict]:
+        """Newest first; ``before`` is a ``created_at`` to page past."""
+        sql, args = "SELECT * FROM digests", []
+        if before:
+            sql += " WHERE created_at < ?"
+            args.append(before)
+        sql += " ORDER BY created_at DESC, rowid DESC LIMIT ?"
+        args.append(max(0, int(limit)))
+        with self._lock:
+            return [self._digest(r) for r in self._db.execute(sql, args)]  # type: ignore[misc]
+
+    def has_digest_for(self, session_id: str) -> bool:
+        if not session_id:
+            return False
+        with self._lock:
+            return self._db.execute("SELECT 1 FROM digests WHERE session_id=?", (session_id,)).fetchone() is not None
+
+    def card(self, id: str) -> dict | None:
+        with self._lock:
+            return _card(self._db.execute("SELECT * FROM cards WHERE id=?", (id,)).fetchone())
+
+    def set_state(self, card_id: str, state: str) -> dict | None:
+        if state not in STATES:
+            raise ValueError(f"Unknown card state: {state}")
+        with self._lock, self._db:
+            self._db.execute("UPDATE cards SET state=? WHERE id=?", (state, card_id))
+        return self.card(card_id)
+
+    def mark_added(self, card_id: str, calendar_event_id: str, *, replace: bool = False) -> dict | None:
+        """Mark a card added. The first calendar event id stays if it is called again, unless ``replace`` (the
+        event it named was deleted and a new one was made)."""
+        keep = "?" if replace else "CASE WHEN calendar_event_id='' THEN ? ELSE calendar_event_id END"
+        with self._lock, self._db:
+            self._db.execute(f"UPDATE cards SET state='added', calendar_event_id={keep} WHERE id=?",
+                             (calendar_event_id, card_id))
+        return self.card(card_id)
+
+    def set_image(self, card_id: str, has: bool) -> None:
+        with self._lock, self._db:
+            self._db.execute("UPDATE cards SET has_image=? WHERE id=?", (1 if has else 0, card_id))
+
+    # meta -------------------------------------------------------------------
+
+    def meta(self, key: str) -> str:
+        with self._lock:
+            row = self._db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else ""
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key)"
+                             " DO UPDATE SET value=excluded.value", (key, value))

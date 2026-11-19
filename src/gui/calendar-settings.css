@@ -1,0 +1,17 @@
+/* Settings > Calendar. Everything wraps: a long calendar name or email address never widens the page. */
+.cal-set .cal-wrap{overflow-wrap:anywhere;min-width:0}
+.cal-set .cal-steps{margin:0;padding-left:var(--s5);display:flex;flex-direction:column;gap:var(--s2)}
+.cal-set .cal-uri{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2)}
+.cal-set .cal-uri code{flex:1 1 220px;min-width:0;overflow-wrap:anywhere;padding:var(--s1) var(--s2);background:var(--canvas);border-radius:var(--small-radius,4px)}
+.cal-set .cal-fields{display:grid;align-items:start;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:var(--s3)}
+.cal-set .cal-actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2)}
+.cal-set .cal-list{display:flex;flex-direction:column;gap:var(--s1)}
+.cal-set .cal-item{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s1) var(--s3);min-width:0}
+.cal-set .cal-item .fui-Checkbox{min-width:0;max-width:100%}
+.cal-set .cal-item .fui-Checkbox__label{overflow-wrap:anywhere;min-width:0}
+.cal-set .cal-swatch{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:var(--s2);flex:none}
+.cal-set .fui-Dropdown{min-width:0;max-width:100%;width:320px}
+.cal-dialog{width:min(520px,calc(100vw - 32px))}
+.cal-dialog .fui-DialogTitle,.cal-dialog .fui-DialogContent{overflow-wrap:anywhere}
+
+.cal-set .cal-group{display:flex;flex-direction:column;gap:var(--s1)}

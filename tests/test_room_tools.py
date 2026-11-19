@@ -144,6 +144,16 @@ async def test_invite_refusals(ledger: Ledger, tmp_path: Path):
     assert invited == ["critic", "ops", "artist"]
 
 
+async def test_invite_refuses_a_closed_bot(ledger: Ledger, tmp_path: Path):
+    svc = make(ScriptedProvider(), ledger, tmp_path)
+    svc.bots["critic"].closed = True
+    room = svc.create("r", ["lead", "writer"], lead="lead")
+    svc.turn_of["s1"] = (room.id, "root1")
+    out = await call(svc, "lead", "s1", "invite_to_room", bot_id="critic", job="j")
+    assert "critic" in out and "closed" in out and room.members == ["lead", "writer"]
+    assert [e for e in ledger.tail(kind="room") if e.data.get("event") == "invited"] == []
+
+
 async def test_attach_file_lands_on_the_post(ledger: Ledger, tmp_path: Path):
     (tmp_path / "diagram.html").write_text("<svg></svg>", encoding="utf-8")
     provider = ScriptedProvider([

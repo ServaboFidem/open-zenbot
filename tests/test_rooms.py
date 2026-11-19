@@ -507,3 +507,39 @@ async def test_room_conversation_endpoints(vault: Path, tmp_path: Path):
         assert [p["text"] for p in r.json()["posts"]] == ["first thing"]
         assert (await c.post(f"/rooms/{room_id}/conversations/nope/current")).status_code == 422
         assert (await c.post("/rooms/nope/conversations")).status_code == 404
+
+
+def test_a_closed_bot_cannot_be_a_room_member(ledger: Ledger, tmp_path: Path):
+    svc, bs = make(ScriptedProvider(), ledger, tmp_path)
+    bs["critic"].closed = True
+    assert svc.joinable(bs["writer"]) and not svc.joinable(bs["critic"])
+    with pytest.raises(ValueError, match="critic"):
+        svc.create("r", ["lead", "critic"])
+    room = svc.create("r", ["lead", "writer"])
+    with pytest.raises(ValueError, match="critic"):
+        svc.set_members(room.id, ["lead", "writer", "critic"])
+    assert room.members == ["lead", "writer"]
+
+
+async def test_a_closed_member_started_no_turn(ledger: Ledger, tmp_path: Path):
+    provider = ScriptedProvider([completion("Writer here.")])
+    svc, bs = make(provider, ledger, tmp_path)
+    room = svc.create("r", ["lead", "writer", "critic"])
+    bs["critic"].closed = True  # closed after it joined (a saved room, or a prompt edited since)
+    await svc.post(room.id, "user", "@critic take this")
+    await svc.settle(room.id)
+    assert [p.author for p in svc.get(room.id).posts] == ["user"] and provider.calls == []
+
+
+async def test_room_routes_refuse_a_closed_bot(vault: Path, tmp_path: Path):
+    cfg = HarnessConfig(vault_root=vault, shell_cwd=tmp_path)
+    h = Harness(config=cfg, provider=ScriptedProvider(), ledger=Ledger(vault), catalog=Catalog())
+    for b in bots(3):
+        h.add_bot(b)
+    h.bots["critic"].closed = True
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(h)), base_url="http://localhost") as c:
+        r = await c.post("/rooms", json={"name": "r", "members": ["lead", "critic"]})
+        assert r.status_code == 422 and "critic" in r.json()["detail"]
+        room_id = (await c.post("/rooms", json={"name": "r", "members": ["lead", "writer"]})).json()["id"]
+        r = await c.put(f"/rooms/{room_id}/members", json={"members": ["lead", "writer", "critic"]})
+        assert r.status_code == 422 and "critic" in r.json()["detail"]

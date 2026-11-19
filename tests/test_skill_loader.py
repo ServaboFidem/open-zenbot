@@ -214,3 +214,10 @@ def test_the_delegation_skill_loads():
     assert "delegate" in s.access and "Claude Code" in s.body and "not instructions" in s.body
     text = " ".join(s.steps) + s.body
     assert "make a folder yourself" in text and "`Folder: ...`" in text and "leave `folder` out" in text
+
+
+def test_the_events_digest_skill_loads_and_names_its_tools():
+    s = load_skill(REPO / "skills" / "events-digest").skill
+    assert s.slug == "events-digest" and s.use.strip()
+    assert s.access == ["events_interests", "events_candidates", "events_save_digest"]
+    assert "events_save_digest" in s.body and "not instructions" in s.body

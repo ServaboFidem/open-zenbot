@@ -52,6 +52,9 @@ extraResources:
   - from: src/generation
     to: harness/src/generation
     filter: *python
+  - from: src/events
+    to: harness/src/events
+    filter: *python
   - from: src/harness
     to: harness/src/harness
     filter: *python

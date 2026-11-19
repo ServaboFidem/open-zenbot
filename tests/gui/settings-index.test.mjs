@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PANELS, SECTIONS, anchorId, liveSections, searchSettings } from '../../src/gui/settings-index.js';
 
-test('panels are the eleven, in order', () => {
-  assert.deepEqual(PANELS.map(p => p.id), ['harness', 'providers', 'tools', 'mcps', 'skills', 'agents', 'folders', 'tracing', 'memory', 'apps', 'about']);
+test('panels are the twelve, in order', () => {
+  assert.deepEqual(PANELS.map(p => p.id), ['harness', 'providers', 'tools', 'mcps', 'skills', 'agents', 'folders', 'calendar', 'tracing', 'memory', 'apps', 'about']);
   for (const p of PANELS) assert.ok(p.name && p.description);
 });
 test('every section belongs to a panel and its anchor is anchorId', () => {
@@ -28,6 +28,7 @@ test('a panel or section name ranks above body text', () => {
   const body = r.findIndex(m => m.panel !== 'tracing');
   assert.ok(body === -1 || body > 0);
 });
+test('desktop app finds the calendar panel', () => assert.ok(searchSettings('desktop app').some(m => m.panel === 'calendar')));
 test('claude finds the coding agents panel', () => assert.ok(searchSettings('claude').some(m => m.panel === 'agents')));
 test('empty and blank queries give nothing', () => { assert.deepEqual(searchSettings(''), []); assert.deepEqual(searchSettings('   '), []); });
 test('regex characters are plain text', () => { for (const q of ['c++', '(', '.*', '[', '\\']) assert.ok(Array.isArray(searchSettings(q))); assert.deepEqual(searchSettings('.*'), []); });
@@ -106,4 +107,16 @@ test('MCP servers and skills are settings panels, found by name and by their car
 test('update finds the About panel\'s Version and updates section', () => {
   const m = searchSettings('update').find(x => x.panel === 'about');
   assert.ok(m); assert.equal(m.section, 'Version and updates'); assert.equal(m.anchor, 'settings-about-version-and-updates');
+});
+
+test('FindLocal is found under the calendar panel\'s Event discovery section', () => {
+  for (const q of ['findlocal', 'findlocal key', 'findlocal city']) {
+    assert.ok(searchSettings(q).some(m => m.panel === 'calendar' && m.section === 'Event discovery'), q);
+  }
+});
+
+test('Event discovery is found by Discover, Your Recommendations and All Events', () => {
+  const s = SECTIONS.find(x => x.panel === 'calendar' && x.title === 'Event discovery');
+  for (const w of ['Discover', 'Your Recommendations', 'All Events']) assert.ok(s.words.includes(w), w);
+  for (const q of ['your recommendations', 'all events']) assert.ok(searchSettings(q).some(m => m.section === 'Event discovery'), q);
 });

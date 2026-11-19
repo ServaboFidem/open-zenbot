@@ -343,6 +343,12 @@ class RoomService:
 
     # -- membership ---------------------------------------------------------
 
+    @staticmethod
+    def joinable(bot) -> bool:
+        """A closed bot (it reads untrusted pages) works in its own conversation and routine only: what it
+        writes in a room would be read by bots with shell and browser."""
+        return not getattr(bot, "closed", False)
+
     def _check_members(self, members: list[str]) -> list[str]:
         members = list(dict.fromkeys(members))
         c = self.config
@@ -351,6 +357,9 @@ class RoomService:
         unknown = [m for m in members if m not in self.bots]
         if unknown:
             raise RoomError(f"unknown bots: {unknown}")
+        closed = [m for m in members if not self.joinable(self.bots[m])]
+        if closed:
+            raise RoomError(f"closed bots cannot join a room: {closed}")
         return members
 
     def _persist(self, room: Room) -> None:
@@ -483,6 +492,8 @@ class RoomService:
             return "This conversation has used up its hand-offs for now; post a short note instead."
         if bot_id not in self.bots:
             return f"There is no bot @{bot_id}. Pick one from the list of bots not in this room."
+        if not self.joinable(self.bots[bot_id]):
+            return f"@{bot_id} is a closed bot and cannot join a room; it works only in its own conversation."
         if bot_id in room.members:
             return f"@{bot_id} is already in the room; @mention it instead."
         if len(room.members) >= self.config.max_members:
@@ -570,7 +581,7 @@ class RoomService:
                 "file the user can open (a self-contained HTML page works well), save it in your working folder, and "
                 "call `attach_file` with its path. If you made any other file the user should open, attach it the same way.\n"
             ) + tail
-        roster = [f"@{bid} — {b.name}: {b.role}" for bid, b in self.bots.items() if bid not in room.members]
+        roster = [f"@{bid} — {b.name}: {b.role}" for bid, b in self.bots.items() if bid not in room.members and self.joinable(b)]
         others = "Bots not in this room:\n" + ("\n".join(roster) if roster else "(none)") + "\n"
         spent = trigger.hop + 1 >= self.config.max_hops  # the post this turn delivers cannot hand the floor on
         used_up = "The hand-off chain is used up for this message, so don't invite or mention anyone"
@@ -701,6 +712,9 @@ class RoomService:
             return
         if bot_id not in self.bots:  # a member whose bot was removed since (e.g. across a restart)
             self.ledger.append("room_turn", bot_id, room.id, event="skipped", speaker=bot_id, reason="unknown bot")
+            return
+        if not self.joinable(self.bots[bot_id]):  # closed after it joined: a saved room, or its prompt edited since
+            self.ledger.append("room_turn", bot_id, room.id, event="skipped", speaker=bot_id, reason="closed bot")
             return
         conv = trigger.conversation or room.conversation_id  # a switch mid-turn does not move the turn's post
         turn = await self._wait_for_floor(room, bot_id)

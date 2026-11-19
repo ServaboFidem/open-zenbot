@@ -3,6 +3,8 @@
 // puts id={anchorId(panel, title)} on its element; a section headed by data (a provider, a tool, an agent card)
 // has no entry and reaches the search as `extra` instead.
 
+import { APP_STEPS } from './calendar-settings.js';
+
 export const PANELS = [
   { id: 'harness', name: 'Harness settings', description: 'The models your bots, summaries and the decider run on.' },
   { id: 'providers', name: 'Model providers', description: 'Where models come from: providers, their API keys and which models are enabled.' },
@@ -11,6 +13,7 @@ export const PANELS = [
   { id: 'skills', name: 'Skills', description: 'Good work, worth repeating: the skills in the catalog and which bots carry them.' },
   { id: 'agents', name: 'Coding agents', description: 'Claude Code and Codex on this computer: found, signed in, and whether bots may hand work to them.' },
   { id: 'folders', name: 'Allowed Folders', description: 'The folders outside the vault that bots may read or write.' },
+  { id: 'calendar', name: 'Calendar', description: 'Google Calendar: your own Google app, which calendars to bring in, and sending events made here to Google.' },
   { id: 'tracing', name: 'Tracing', description: 'Where errors and traces go: Sentry, GlitchTip and Langfuse.' },
   { id: 'memory', name: 'Memory', description: 'Your name in memory, and rebuilding what the bots have learned.' },
   { id: 'apps', name: 'Connected apps', description: 'App connections. A mockup for now.' },
@@ -64,6 +67,17 @@ export const SECTIONS = [
   ]),
   section('folders', 'Allowed Folders', ['Folders your bots can reach through the files tool, besides the vault. With Full Access a bot can read, change, or delete anything inside the folder; with Read-Only it can only read, list, and search.', 'A Read-Only folder can sit inside a Full Access one to protect that corner of it. Changes reconnect the files tool right away.', 'Remove a folder']),
   section('folders', 'Add a folder', ['Access for the new folder', 'Folder path: the full path, like D:\\Projects\\site or /home/you/notes.']),
+  section('calendar', 'Your Google app', [
+    ...APP_STEPS, 'Redirect address', 'Client ID', 'Client secret',
+  ]),
+  section('calendar', 'Google Calendar', ['Connect Google Calendar', 'Reconnect', 'Disconnect', 'OpenZenBot asks to see your calendars and their events. It does not ask to change anything yet.', 'Google sign-in has expired.']),
+  section('calendar', 'Calendars to bring in', ['Choose which of your Google calendars show their events here.', 'view only']),
+  section('calendar', 'Send events to Google', ['Send events made here to Google', 'Destination calendar', 'Allow sending to Google']),
+  section('calendar', 'Event discovery', [
+    'Finds events near you on Eventbrite, once a week, and offers the best ones under Your Recommendations. Nothing is added to your calendar until you say so.',
+    'Look for events near me', 'City', 'State', 'Your city’s Eventbrite page', 'Kinds of events', 'Your interests', 'Eventbrite', 'Discover', 'Your Recommendations', 'All Events',
+    'FindLocal', 'FindLocal key', 'FindLocal city',
+  ]),
   section('tracing', 'Tracing', ['Where the harness sends errors and traces. Saved here, a setting wins over .env and is kept in vault-settings/tracing.json.']),
   section('tracing', 'Sentry (GlitchTip)', [
     'Errors and request traces from the harness and the desktop app.',

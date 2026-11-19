@@ -35,6 +35,7 @@ class BotPrompt:
     mcps: list[str] | None = None  # MCP servers loaded on every task, whatever routing scores; None: routing only
     studio: bool = False  # a design bot: the GUI shows its design preview pane; set only in the file
     places: list[str] = field(default_factory=list)  # what this bot can place in another bot's design: "text", "images"; set only in the file
+    closed: bool = False  # the bot gets only the tools of its own `mcps` (no built-ins, no routed servers); set only in the file
 
 
 def slugify(name: str) -> str:
@@ -63,7 +64,14 @@ def parse(text: str, bot_id: str) -> BotPrompt:
         raise ValueError("places must be a list of: text, images")
     if places and studio:
         raise ValueError("a studio bot cannot have places")
-    return BotPrompt(id=bot_id, name=name.strip(), role=role.strip(), instructions=body.strip(), skills=skills, mcps=mcps, studio=studio, places=list(places))
+    closed = meta.get("closed", False)
+    if not isinstance(closed, bool):
+        raise ValueError("closed must be true or false")
+    if closed and not mcps:
+        raise ValueError("a closed bot needs mcps: the servers it may use")
+    if closed and (studio or places):
+        raise ValueError("a closed bot cannot be a studio bot or have places")
+    return BotPrompt(id=bot_id, name=name.strip(), role=role.strip(), instructions=body.strip(), skills=skills, mcps=mcps, studio=studio, places=list(places), closed=closed)
 
 
 def render(p: BotPrompt) -> str:
@@ -76,6 +84,8 @@ def render(p: BotPrompt) -> str:
         meta["studio"] = True
     if p.places:
         meta["places"] = list(p.places)
+    if p.closed:
+        meta["closed"] = True
     head = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, default_flow_style=None).strip()
     return f"---\n{head}\n---\n{p.instructions.strip()}\n"
 

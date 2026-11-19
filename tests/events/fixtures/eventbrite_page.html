@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Events</title></head><body>
+<script>
+_ = {"locale":"en_US"};
+
+    window.__SERVER_DATA__ = {
+ "env": {
+  "serverUrl": "https://www.eventbrite.com"
+ },
+ "request": {
+  "path": "/d/oh--columbus/events--this-month/"
+ },
+ "search_data": {
+  "events": {
+   "results": [
+    {
+     "id": "1000000000001",
+     "eid": "1000000000001",
+     "eventbrite_event_id": "1000000000001",
+     "name": "Made-up Tea Afternoon",
+     "summary": "A made-up gathering for tea and talk.",
+     "full_description": null,
+     "start_time": "12:00",
+     "end_time": "14:00",
+     "start_date": "2026-12-01",
+     "end_date": "2026-12-01",
+     "published": "2026-08-21T16:09:12Z",
+     "hide_start_date": false,
+     "hide_end_date": false,
+     "language": "en-us",
+     "timezone": "America/New_York",
+     "url": "https://www.eventbrite.com/e/example-event-1-tickets-1000000000001",
+     "parent_url": null,
+     "tickets_url": "https://www.eventbrite.com/checkout-external?eid=1000000000001",
+     "tickets_by": "Eventbrite",
+     "is_cancelled": null,
+     "is_online_event": false,
+     "is_protected_event": false,
+     "primary_venue_id": "90001",
+     "primary_organizer_id": "80001",
+     "series_id": null,
+     "tags": [
+      {
+       "prefix": "EventbriteSubCategory",
+       "tag": "EventbriteSubCategory/13007",
+       "display_name": "Sub"
+      },
+      {
+       "prefix": "EventbriteCategory",
+       "tag": "EventbriteCategory/113",
+       "display_name": "Community & Culture"
+      },
+      {
+       "prefix": "EventbriteFormat",
+       "tag": "EventbriteFormat/9",
+       "display_name": "Class, Training, or Workshop"
+      },
+      {
+       "prefix": "OrganizerTag",
+       "tag": "OrganizerTag/madeup",
+       "display_name": "madeup"
+      }
+     ],
+     "image_id": "70001",
+     "checkout_flow": "widget",
+     "debug_info": {},
+     "num_children": 1,
+     "dedup": {
+      "count": 1,
+      "hash": "00000000000000000000000000000000"
+     },
+     "urgency_signals": {
+      "messages": [
+       "salesEndSoon",
+       "goingFast"
+      ],
+      "categories": []
+     },
+     "locations": [
+      {
+       "id": "102191575",
+       "type": "continent",
+       "name": "North America"
+      },
+      {
+       "id": "85633793",
+       "type": "country",
+       "name": "United States"
+      },
+      {
+       "id": "85688485",
+       "type": "region",
+       "name": "Ohio"
+      },
+      {
+       "id": "102080969",
+       "type": "county",
+       "name": "Franklin"
+      },
+      {
+       "id": "404524635",
+       "type": "localadmin",
+       "name": "Jackson"
+      },
+      {
+       "id": "101712407",
+       "type": "locality",
+       "name": "Grove City"
+      }
+     ],
+     "_type": "destination_event",
+     "image": {
+      "id": "70001",
+      "original": {
+       "url": "https://img.evbuc.com/https%3A%2F%2Fcdn.evbuc.com%2Fimages%2F70001%2Foriginal.jpg?auto=format%2Ccompress&q=75&s=0123456789abcdef",
+       "width": 960,
+       "height": 588
+      },
+      "url": "https://img.evbuc.com/https%3A%2F%2Fcdn.evbuc.com%2Fimages%2F70001%2Foriginal.jpg?auto=format%2Ccompress&q=75&s=0123456789abcdef"
+     },
+     "primary_venue": {
+      "_type": "destination_venue",
+      "id": "90001",
+      "name": "Example Hall",
+      "address": {
+       "address_1": "1 Example Street",
+       "address_2": "",
+       "city": "Exampleton",
+       "region": "OH",
+       "postal_code": "43000",
+       "country": "US",
+       "latitude": "40.0",
+       "longitude": "-83.0",
+       "localized_address_display": "1 Example Street, Exampleton, OH 43000",
+       "localized_area_display": "Exampleton, OH",
+       "localized_multi_line_address_display": [
+        "1 Example Street",
+        "Exampleton, OH 43000"
+       ]
+      },
+      "venue_profile_id": null,
+      "venue_profile_url": ""
+     }
+    },
+    {
+     "id": "1000000000002",
+     "eid": "1000000000002",
+     "eventbrite_event_id": "1000000000002",
+     "name": "Made-up Cancelled Show",
+     "summary": "This one was called off.",
+     "full_description": null,
+     "start_time": "19:00",
+     "end_time": "21:00",
+     "start_date": "2026-12-02",
+     "end_date": "2026-12-02",
+     "published": "2026-08-21T16:09:12Z",
+     "hide_start_date": false,
+     "hide_end_date": false,
+     "language": "en-us",
+     "timezone": "America/New_York",
+     "url": "https://www.eventbrite.com/e/example-event-2-tickets-1000000000002",
+     "parent_url": null,
+     "tickets_url": "https://www.eventbrite.com/checkout-external?eid=1000000000002",
+     "tickets_by": "Eventbrite",
+     "is_cancelled": true,
+     "is_online_event": false,
+     "is_protected_event": false,
+     "primary_venue_id": "90002",
+     "primary_organizer_id": "80002",
+     "series_id": null,
+     "tags": [
+      {
+       "prefix": "EventbriteSubCategory",
+       "tag": "EventbriteSubCategory/13007",
+       "display_name": "Sub"
+      },
+      {
+       "prefix": "EventbriteCategory",
+       "tag": "EventbriteCategory/103",
+       "display_name": "Music"
+      },
+      {
+       "prefix": "EventbriteFormat",
+       "tag": "EventbriteFormat/6",
+       "display_name": "Concert or Performance"
+      },
+      {
+       "prefix": "OrganizerTag",
+       "tag": "OrganizerTag/madeup",
+       "display_name": "madeup"
+      }
+     ],
+     "image_id": "70002",
+     "checkout_flow": "widget",
+     "debug_info": {},
+     "num_children": 1,
+     "dedup": {
+      "count": 1,
+      "hash": "00000000000000000000000000000000"
+     },
+     "urgency_signals": {
+      "messages": [
+       "salesEndSoon",
+       "goingFast"
+      ],
+      "categories": []
+     },
+     "locations": [
+      {
+       "id": "102191575",
+       "type": "continent",
+       "name": "North America"
+      },
+      {
+       "id": "85633793",
+       "type": "country",
+       "name": "United States"
+      },
+      {
+       "id": "85688485",
+       "type": "region",
+       "name": "Ohio"
+      },
+      {
+       "id": "102080969",
+       "type": "county",
+       "name": "Franklin"
+      },
+      {
+       "id": "404524635",
+       "type": "localadmin",
+       "name": "Jackson"
+      },
+      {
+       "id": "101712407",
+       "type": "locality",
+       "name": "Grove City"
+      }
+     ],
+     "_type": "destination_event",
+     "image": {
+      "id": "70002",
+      "original": {
+       "url": "https://img.evbuc.com/https%3A%2F%2Fcdn.evbuc.com%2Fimages%2F70002%2Foriginal.jpg?auto=format%2Ccompress&q=75&s=0123456789abcdef",
+       "width": 960,
+       "height": 588
+      },
+      "url": "https://img.evbuc.com/https%3A%2F%2Fcdn.evbuc.com%2Fimages%2F70002%2Foriginal.jpg?auto=format%2Ccompress&q=75&s=0123456789abcdef"
+     },
+     "primary_venue": {
+      "_type": "destination_venue",
+      "id": "90002",
+      "name": "Example Theatre",
+      "address": {
+       "address_1": "1 Example Street",
+       "address_2": "",
+       "city": "Exampleton",
+       "region": "OH",
+       "postal_code": "43000",
+       "country": "US",
+       "latitude": "40.0",
+       "longitude": "-83.0",
+       "localized_address_display": "1 Example Street, Exampleton, OH 43000",
+       "localized_area_display": "Exampleton, OH",
+       "localized_multi_line_address_display": [
+        "1 Example Street",
+        "Exampleton, OH 43000"
+       ]
+      },
+      "venue_profile_id": null,
+      "venue_profile_url": ""
+     }
+    },
+    {
+     "id": "1000000000003",
+     "eid": "1000000000003",
+     "eventbrite_event_id": "1000000000003",
+     "name": "Made-up Online Class",
+     "summary": "Held on the internet only.",
+     "full_description": null,
+     "start_time": "10:00",
+     "end_time": "11:00",
+     "start_date": "2026-12-03",
+     "end_date": "2026-12-03",
+     "published": "2026-08-21T16:09:12Z",
+     "hide_start_date": false,
+     "hide_end_date": false,
+     "language": "en-us",
+     "timezone": "America/New_York",
+     "url": "https://www.eventbrite.com/e/example-event-3-tickets-1000000000003",
+     "parent_url": null,
+     "tickets_url": "https://www.eventbrite.com/checkout-external?eid=1000000000003",
+     "tickets_by": "Eventbrite",
+     "is_cancelled": null,
+     "is_online_event": true,
+     "is_protected_event": false,
+     "primary_venue_id": "90003",
+     "primary_organizer_id": "80003",
+     "series_id": null,
+     "tags": [
+      {
+       "prefix": "EventbriteSubCategory",
+       "tag": "EventbriteSubCategory/13007",
+       "display_name": "Sub"
+      },
+      {
+       "prefix": "EventbriteCategory",
+       "tag": "EventbriteCategory/113",
+       "display_name": "Community & Culture"
+      },
+      {
+       "prefix": "EventbriteFormat",
+       "tag": "EventbriteFormat/9",
+       "display_name": "Class, Training, or Workshop"
+      },
+      {
+       "prefix": "OrganizerTag",
+       "tag": "OrganizerTag/madeup",
+       "display_name": "madeup"
+      }
+     ],
+     "image_id": "70003",
+     "checkout_flow": "widget",
+     "debug_info": {},
+     "num_children": 1,
+     "dedup": {
+      "count": 1,
+      "hash": "00000000000000000000000000000000"
+     },
+     "urgency_signals": {
+      "messages": [
+       "salesEndSoon",
+       "goingFast"
+      ],
+      "categories": []
+     },
+     "locations": [
+      {
+       "id": "102191575",
+       "type": "continent",
+       "name": "North America"
+      },
+      {
+       "id": "85633793",
+       "type": "country",
+       "name": "United States"
+      },
+      {
+       "id": "85688485",
+       "type": "region",
+       "name": "Ohio"
+      },
+      {
+       "id": "102080969",
+       "type": "county",
+       "name": "Franklin"
+      },
+      {
+       "id": "404524635",
+       "type": "localadmin",
+       "name": "Jackson"
+      },
+      {
+       "id": "101712407",
+       "type": "locality",
+       "name": "Grove City"
+      }
+     ],
+     "_type": "destination_event",
+     "image": {
+      "id": "70003",
+      "original": {
+       "url": "https://img.evbuc.com/https%3A%2F%2Fcdn.evbuc.com%2Fimages%2F70003%2Foriginal.jpg?auto=format%2Ccompress&q=75&s=0123456789abcdef",
+       "width": 960,
+       "height": 588
+      },
+      "url": "https://img.evbuc.com/https%3A%2F%2Fcdn.evbuc.com%2Fimages%2F70003%2Foriginal.jpg?auto=format%2Ccompress&q=75&s=0123456789abcdef"
+     },
+     "primary_venue": {
+      "_type": "destination_venue",
+      "id": "90003",
+      "name": "Online",
+      "address": {
+       "address_1": "1 Example Street",
+       "address_2": "",
+       "city": "Exampleton",
+       "region": "OH",
+       "postal_code": "43000",
+       "country": "US",
+       "latitude": "40.0",
+       "longitude": "-83.0",
+       "localized_address_display": "1 Example Street, Exampleton, OH 43000",
+       "localized_area_display": "Exampleton, OH",
+       "localized_multi_line_address_display": [
+        "1 Example Street",
+        "Exampleton, OH 43000"
+       ]
+      },
+      "venue_profile_id": null,
+      "venue_profile_url": ""
+     }
+    },
+    {
+     "id": "1000000000004",
+     "eid": "1000000000004",
+     "eventbrite_event_id": "1000000000004",
+     "name": "Made-up Street Festival",
+     "summary": "A made-up all-day festival.",
+     "full_description": null,
+     "start_time": null,
+     "end_time": null,
+     "start_date": "2026-12-04",
+     "end_date": "2026-12-05",
+     "published": "2026-08-21T16:09:12Z",
+     "hide_start_date": false,
+     "hide_end_date": false,
+     "language": "en-us",
+     "timezone": "America/New_York",
+     "url": "https://www.eventbrite.com/e/example-event-4-tickets-1000000000004",
+     "parent_url": null,
+     "tickets_url": "https://www.eventbrite.com/checkout-external?eid=1000000000004",
+     "tickets_by": "Eventbrite",
+     "is_cancelled": null,
+     "is_online_event": false,
+     "is_protected_event": false,
+     "primary_venue_id": "90004",
+     "primary_organizer_id": "80004",
+     "series_id": null,
+     "tags": [
+      {
+       "prefix": "EventbriteSubCategory",
+       "tag": "EventbriteSubCategory/13007",
+       "display_name": "Sub"
+      },
+      {
+       "prefix": "EventbriteCategory",
+       "tag": "EventbriteCategory/110",
+       "display_name": "Food & Drink"
+      },
+      {
+       "prefix": "EventbriteFormat",
+       "tag": "EventbriteFormat/11",
+       "display_name": "Party or Social Gathering"
+      },
+      {
+       "prefix": "OrganizerTag",
+       "tag": "OrganizerTag/madeup",
+       "display_name": "madeup"
+      }
+     ],
+     "image_id": "70004",
+     "checkout_flow": "widget",
+     "debug_info": {},
+     "num_children": 1,
+     "dedup": {
+      "count": 1,
+      "hash": "00000000000000000000000000000000"
+     },
+     "urgency_signals": {
+      "messages": [
+       "salesEndSoon",
+       "goingFast"
+      ],
+      "categories": []
+     },
+     "locations": [
+      {
+       "id": "102191575",
+       "type": "continent",
+       "name": "North America"
+      },
+      {
+       "id": "85633793",
+       "type": "country",
+       "name": "United States"
+      },
+      {
+       "id": "85688485",
+       "type": "region",
+       "name": "Ohio"
+      },
+      {
+       "id": "102080969",
+       "type": "county",
+       "name": "Franklin"
+      },
+      {
+       "id": "404524635",
+       "type": "localadmin",
+       "name": "Jackson"
+      },
+      {
+       "id": "101712407",
+       "type": "locality",
+       "name": "Grove City"
+      }
+     ],
+     "_type": "destination_event",
+     "image": {
+      "id": "70004",
+      "original": {
+       "url": "https://img.evbuc.com/https%3A%2F%2Fcdn.evbuc.com%2Fimages%2F70004%2Foriginal.jpg?auto=format%2Ccompress&q=75&s=0123456789abcdef",
+       "width": 960,
+       "height": 588
+      },
+      "url": "https://img.evbuc.com/https%3A%2F%2Fcdn.evbuc.com%2Fimages%2F70004%2Foriginal.jpg?auto=format%2Ccompress&q=75&s=0123456789abcdef"
+     },
+     "primary_venue": {
+      "_type": "destination_venue",
+      "id": "90004",
+      "name": "Example Park",
+      "address": {
+       "address_1": "1 Example Street",
+       "address_2": "",
+       "city": "Exampleton",
+       "region": "OH",
+       "postal_code": "43000",
+       "country": "US",
+       "latitude": "40.0",
+       "longitude": "-83.0",
+       "localized_address_display": "1 Example Street, Exampleton, OH 43000",
+       "localized_area_display": "Exampleton, OH",
+       "localized_multi_line_address_display": [
+        "1 Example Street",
+        "Exampleton, OH 43000"
+       ]
+      },
+      "venue_profile_id": null,
+      "venue_profile_url": ""
+     }
+    }
+   ],
+   "pagination": {
+    "page_size": 20,
+    "object_count": 60,
+    "page_number": 1,
+    "page_count": 3
+   }
+  }
+ }
+};
+</script>
+</body></html>

@@ -264,3 +264,20 @@ def test_csp_frames_only_the_hindsight_control_plane_and_the_harness():
     frame_src = next(d.strip() for d in csp.split(";") if d.strip().startswith("frame-src"))
     assert frame_src.split()[1:] == ["http://127.0.0.1:9999", "http://localhost:9999", "http://127.0.0.1:8765", "http://localhost:8765"]
     assert "default-src 'self'" in csp and "script-src 'self'" in csp and "object-src 'none'" in csp
+
+
+async def test_a_closed_bots_result_stays_out_of_the_session_cache(bclient, bound: Harness):
+    """A closed bot reads untrusted listing text: its result is not kept as a memory fact, even tier 3."""
+    bound.add_bot(Bot(name="Scout", role="Reads listings", id="scout", mcps=["events"], closed=True))
+    sid = (await bclient.post("/bots/scout/tasks", json={"task": "pick events"})).json()["session_id"]
+    s = await _finish(bclient, sid)
+    assert s["state"] == "done"
+    assert bound.cache.facts(sid) == []
+
+
+async def test_a_recall_query_replaces_the_task_for_recall_and_empty_changes_nothing(bound: Harness):
+    bot = bound.bots["bot1"]
+    plain = bound.start_task(bot, "task one", in_conversation=False)
+    given = bound.start_task(bot, "task two", in_conversation=False, recall_query="likes jazz and markets")
+    assert plain.recall_query == "" and given.recall_query == "likes jazz and markets"
+    await asyncio.gather(*bound.tasks.values(), return_exceptions=True)
