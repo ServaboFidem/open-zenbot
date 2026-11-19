@@ -145,7 +145,8 @@ function startArrivalPolling() {
   setInterval(() => arrival.poll(), 60_000);
   startIdleReport();
 }
-// The computer's idle time goes to the harness every 60 s, so it knows when it may dream (POST /dream/idle).
+// The computer's idle time goes to the harness every 60 s, and at once when the user comes back (checked every 5 s),
+// so it knows when it may dream (POST /dream/idle).
 let idleReport = null;
 function startIdleReport() {
   if (idleReport) return;

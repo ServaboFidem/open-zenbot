@@ -4,8 +4,16 @@
 export const MIN_MINUTES = 1;
 export const MAX_MINUTES = 120;
 export const NO_REPORT = 'Dreaming starts on its own only in the desktop app. Use Dream now here.';
-const UNREACHABLE = 'The dreaming model could not be reached. Trying again in 10 minutes.';
-const MODEL_ANSWER = 'The dreaming model gave an answer that could not be used.';
+// The line under the switch: what is read, where it goes, and that the memory engine has a model of its own.
+export const PRIVACY = "Only the messages you typed are read, never a bot's reply. They are sent to the dreaming model you choose: a hosted model's provider receives them, a local model reads them on this computer. The facts it writes are then stored by the memory engine, which uses its own model.";
+// One sentence per error kind of GET /dream/status.
+const ERRORS = {
+  unreachable: 'The dreaming model could not be reached. Trying again in 10 minutes.',
+  model: 'The dreaming model gave an answer that could not be used.',
+  provider: "The dreaming model's provider refused the request. Check its key and limits. Trying again in 10 minutes.",
+  store: 'A fact could not be saved to memory. Trying again in 10 minutes.',
+  setup: 'The dreaming model cannot be used. Pick it again under Dreaming model.',
+};
 
 const enc = encodeURIComponent;
 
@@ -48,10 +56,8 @@ export function statusLine(status, now = new Date()) {
 }
 
 export function errorLine(status) {
-  if (status?.error === 'unreachable') return UNREACHABLE;
-  if (status?.error === 'model') return MODEL_ANSWER;
-  return '';
+  return Object.hasOwn(ERRORS, status?.error ?? '') ? ERRORS[status.error] : '';
 }
 
-// The desktop app reports idle time; with none arriving and dreaming on, it will not start by itself.
+// The desktop app reports idle time; with no fresh report and dreaming on, it will not start by itself.
 export const needsDesktopNote = status => !!status?.enabled && status?.idle_reported === false;

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Button, Field, Input } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
 import { KIND_LABELS, choiceKey, enabledByKind, modelLabel, parseChoice } from './models.js';
-import { MAX_MINUTES, MIN_MINUTES, canEnable, canRunNow, errorLine, needsDesktopNote, statusLine, validMinutes } from './dream.js';
+import { MAX_MINUTES, MIN_MINUTES, PRIVACY, canEnable, canRunNow, errorLine, needsDesktopNote, statusLine, validMinutes } from './dream.js';
 
 const POLL_MS = 5000;
 
@@ -60,7 +60,7 @@ export function DreamSection({ ctx, providers, roles, onSaved, openProviders }) 
       ? <p className="field-hint">{online ? 'Loading…' : 'The harness is offline.'}</p>
       : <>
         <label className="od-row"><input type="checkbox" checked={status.enabled} disabled={!online || (!status.enabled && !canEnable(status))} onChange={e => save(e.target.checked, validMinutes(minutes) ? Number(minutes) : status.idle_minutes)}/> Learn from my conversations while the computer is idle</label>
-        <p className="field-hint">Only the messages you typed are read, never a bot's reply. With a hosted model chosen, those messages are sent to that provider; a local model keeps them on this computer.</p>
+        <p className="field-hint">{PRIVACY}</p>
         <Field label="Dreaming model">
           {groups.length || status.model
             ? <select aria-label="Dreaming model" value={current} disabled={!online} onChange={e => choose(e.target.value)}>

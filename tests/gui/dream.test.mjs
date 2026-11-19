@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canEnable, canRunNow, dreamApi, errorLine, needsDesktopNote, statusLine, validMinutes } from '../../src/gui/dream.js';
+import { PRIVACY, canEnable, canRunNow, dreamApi, errorLine, needsDesktopNote, statusLine, validMinutes } from '../../src/gui/dream.js';
+import { SECTIONS } from '../../src/gui/settings-index.js';
+
+test('the privacy sentence says where the messages and the facts go', () => {
+  assert.equal(PRIVACY, "Only the messages you typed are read, never a bot's reply. They are sent to the dreaming model you choose: a hosted model's provider receives them, a local model reads them on this computer. The facts it writes are then stored by the memory engine, which uses its own model.");
+  const entry = SECTIONS.find(s => s.title === 'Dreaming');
+  assert.ok(entry && JSON.stringify(entry).includes(PRIVACY));
+  assert.ok(!JSON.stringify(SECTIONS).includes('keeps them on this computer'));
+});
 
 test('canEnable needs a chosen model', () => {
   assert.equal(canEnable({ model: { provider: 'p', model: 'm' } }), true);
@@ -31,6 +39,9 @@ test('statusLine names another day', () => {
 test('errorLine', () => {
   assert.equal(errorLine({ error: 'unreachable' }), 'The dreaming model could not be reached. Trying again in 10 minutes.');
   assert.equal(errorLine({ error: 'model' }), 'The dreaming model gave an answer that could not be used.');
+  assert.equal(errorLine({ error: 'provider' }), "The dreaming model's provider refused the request. Check its key and limits. Trying again in 10 minutes.");
+  assert.equal(errorLine({ error: 'store' }), 'A fact could not be saved to memory. Trying again in 10 minutes.');
+  assert.equal(errorLine({ error: 'setup' }), 'The dreaming model cannot be used. Pick it again under Dreaming model.');
   assert.equal(errorLine({ error: '' }), ''); assert.equal(errorLine(null), '');
 });
 test('the desktop-app note shows only with dreaming on and no report', () => {
