@@ -5,8 +5,8 @@ import EventPanel from './EventPanel.jsx';
 import { CREDIT, refreshNotice, viewState } from './discover.js';
 import {
   canRefresh, categoryOptions, cells, COLUMNS, countLabel, DEFAULT_SORT, EMPTY_FILTERS, filterEvents, gridCredit,
-  gridState, isBusy, keepFilters, MARKS, nearEnd, nextSort, NO_EVENTS, NO_MATCH, PAGE, READING, readLabel, rowKeyStep,
-  showSourceFilter, SOURCE_NAMES, sortEvents, visibleCount, withState,
+  gridState, isBusy, keepFilters, MARKS, nearEnd, nextSort, NO_EVENTS, NO_MATCH, PAGE, pollExpired, READING, readLabel,
+  rowKeyStep, showSourceFilter, SOURCE_NAMES, sortEvents, visibleCount, withAdded, withState,
 } from './all-events.js';
 
 const POLL_MS = 3000;
@@ -84,6 +84,7 @@ export default function AllEventsView({ api, online, notify, openSettings }) {
   const [now, setNow] = useState(() => Date.now());
   const rowRefs = useRef(new Map());
   const wantFocus = useRef(false);
+  const addLog = useRef([]);   // the ids added here, in order (see load)
   const mounted = useRef(true);
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
@@ -92,10 +93,11 @@ export default function AllEventsView({ api, online, notify, openSettings }) {
 
   // status and the list, together; a refresh in progress (started here or elsewhere) is watched
   const load = useCallback(async () => {
+    const from = addLog.current.length;   // adds that finish while this load is out are put back over its answer
     try {
       const [s, list] = await Promise.all([discover.status(), discover.events()]);
       if (!mounted.current) return;
-      const rows = Array.isArray(list?.events) ? list.events : [];
+      const rows = withAdded(Array.isArray(list?.events) ? list.events : [], addLog.current.slice(from));
       setStatus(s); setEvents(rows); setReadAt(list?.read_at || ''); setError('');
       setFilters(f => keepFilters(f, rows));   // a category or source no longer listed stops filtering
       if (s?.refreshing) setReading(true);
@@ -112,14 +114,19 @@ export default function AllEventsView({ api, online, notify, openSettings }) {
     const since = Date.now();
     let cancelled = false, busy = false;
     const t = setInterval(async () => {
+      // the limit first, on every tick: a status request that never answers keeps `busy` set, and must not keep
+      // the reading line up past the limit. Its answer, if it ever comes, is then ignored (`cancelled`).
+      if (pollExpired(since, Date.now(), POLL_LIMIT_MS)) {
+        cancelled = true; clearInterval(t); setReading(false); setTimedOut(true); notifyRef.current(STILL_READING);
+        return;
+      }
       if (busy) return;
       busy = true;
       let s = null;
       try { s = await discover.status(); } catch { s = null; } finally { busy = false; }   // a failed look keeps the list
       if (cancelled) return;
       if (s) setStatus(s);
-      if (s && !s.refreshing) { clearInterval(t); setReading(false); load(); return; }
-      if (Date.now() - since > POLL_LIMIT_MS) { clearInterval(t); setReading(false); setTimedOut(true); notifyRef.current(STILL_READING); }
+      if (s && !s.refreshing) { clearInterval(t); setReading(false); load(); }
     }, POLL_MS);
     return () => { cancelled = true; clearInterval(t); };
   }, [reading, discover, load]);
@@ -155,7 +162,7 @@ export default function AllEventsView({ api, online, notify, openSettings }) {
     setOpened(null);
     setTimeout(() => { if (id) rowRefs.current.get(id)?.focus(); }, 0);   // back to the row the panel came from
   };
-  const added = id => setEvents(list => withState(list, id, 'added'));
+  const added = id => { addLog.current.push(id); setEvents(list => withState(list, id, 'added')); };
 
   const state = gridState({ online, loaded, error: status ? '' : error, status, events, shown });
   const notice = refreshNotice(status);
@@ -195,7 +202,9 @@ export default function AllEventsView({ api, online, notify, openSettings }) {
   return <section className="events-discover all-events">
     <div className="discover-head"><h2>All Events</h2></div>
     {notice && <p className="events-error" role="status">{notice}</p>}
-    {error && status && <p className="events-error" role="alert">{error}</p>}
+    {/* a list read that failed with the status still on hand: the rows stay, and the read can be tried again here
+        (Refresh, which reads the sources, is a different thing and may not be offered for hours) */}
+    {error && status && <p className="events-error" role="alert">{error} <Button size="small" onClick={load}>Try again</Button></p>}
     {body}
     {opened && <EventPanel api={api} event={opened} onClose={close} onAdded={added} notify={notify}/>}
   </section>;

@@ -408,10 +408,14 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     the vault; registered with the exclusion filter), set on Settings > Calendar > Event discovery. The key is sent only as
     an `Authorization: Bearer` header. Settings answers carry `key_set` and `key_hint` (the last four characters when it
     has eight or more, `mcp_keys.hint`), never the key.
-  - *The time zone.* FindLocal rows carry no zone, so the page sends its own (`Intl`) with the settings and the harness
-    stores it as `timezone` (`^[A-Za-z0-9_+\-/]{1,64}$`); the zone is kept while the city stays the same and a new city
-    needs one in the request (else 422), and every FindLocal event gets it as its `timezone`. A zone is not checked against a
-    database; it is the user's browser's.
+  - *The time zone.* FindLocal rows carry no zone, so the settings hold one, `timezone` (`^[A-Za-z0-9_+\-/]{1,64}$`), and
+    every FindLocal event gets it as its `timezone`. The settings section shows it as "Time zone of that city": picking a
+    city starts it on the computer's own zone (`Intl`, `discovery-settings.js` `pickCity`), which is wrong for a city
+    elsewhere, so the user can correct it; the page saves only a zone `Intl` accepts (`validZone`, `canSave`). The harness
+    takes the zone in the request; with none sent it keeps the saved one for the same city, and a new city needs one (else
+    422). It has no zone database and does not check the name beyond its shape. When the zone changes and the city does
+    not, the FindLocal rows already read and their cards not yet added take the new zone (`DiscoverStore.set_zone`), with
+    no new read; an added card keeps the zone its calendar event was made with.
   - *Reading* (`FindLocal.read`). One request at a time, `GAP_S` (1 s) apart, each with a `TIMEOUT_S` (30 s) timeout and an answer limit of `PAGE_LIMIT` (5,000,000 bytes), at most `MAX_CALLS` (10) calls of `LIMIT` (100)
     rows from today for `DAYS_AHEAD` (60) days, sorted by date, stopping at an empty page or when `meta.total` is reached. The
     free plan allows 100 calls a month, so a run costs up to a tenth of it. Requests go only to `API_URL` with the city
@@ -420,7 +424,8 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     `source_changed` (a redirect, or an answer that is not JSON with a `data` list, or rows none of which has a string
     `id`), `provider` (any other status or an answer over the 5,000,000-byte limit). A failure on the first call fails the read; a later
     failure ends it and keeps what was read, with its kind in `error`. `pages` in the read's ledger entry counts the calls
-    that answered.
+    that answered. The result's `complete` is true only when the read reached the end (an empty page, or `meta.total`):
+    a read stopped at `MAX_CALLS` with more left has no error and is not complete.
   - *What is kept* (`findlocal._event`): an `id` that is a UUID (stored as `fl-<uuid>`), a non-empty `title`, a real
     `event_date`, and a link (`detail_page_url`, else `ticket_page_url`) that is `https` with a host, at most 500 characters
     and made only of ASCII with no space, control character, backslash or user info; a link that fails these checks (a
@@ -433,10 +438,13 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     skipped when the Eventbrite id in its link is a pool row or a card already, or an Eventbrite pool row, or a card of
     another event, has the same day and the same name (casefolded, letters and digits only).
   - *A row's life.* A read stores the rows it kept with the time they were stored (`seen_at`). A FindLocal row stays in
-    the pool (no age rule makes it less of a candidate) until the next complete read: a read with no error (one that stopped at `MAX_CALLS`
-    counts as complete) then deletes every FindLocal row it did not store (`drop_stale` with the instant the read began),
-    which includes a stored row that has since become a duplicate of an Eventbrite row (it is skipped, so not stored
-    again), and the rows past the tenth call's. A failed or partial read deletes nothing. A row that starts before today is
+    the pool (no age rule makes it less of a candidate) until a later read with no error says it is gone
+    (`DiscoverStore.keep_pool`, by id, never by `seen_at`, so a clock set back cannot keep a gone row or drop one just
+    read). A read that reached the end (`complete`) deletes every FindLocal row it did not store, which includes a stored
+    row that has since become a duplicate of an Eventbrite row (it is skipped, so not stored again). A read stopped at
+    `MAX_CALLS` saw, in date order, everything before the day of its last row: it deletes only the rows it did not store
+    that start before that day, and a row past the cap stays (not seen is not gone); if its rows were not in date order
+    it deletes nothing. A failed or partial read deletes nothing. A row that starts before today is
     never listed or a candidate, and is deleted by the next good Eventbrite refresh (`drop_past` takes every source's).
     So a mid-week on-demand run and the All Events grid see the weekly read's FindLocal rows all week.
   - *When it is read* (`Discovery._refresh_findlocal`). The first time it is set up (no last read), and after that only on the
@@ -447,9 +455,12 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     or in storing its rows (one that is not a `SourceError`) is recorded as kind `provider`, logged by its class name only,
     waits the same 10 minutes and never fails Eventbrite's part of the refresh. `set_key` writes `events_keys.json` before it
     swaps the key in memory, so a save that fails leaves the old key in use. `set_key` clears FindLocal's last error
-    and failure so a new key may read at once: it does when FindLocal
-    has never been read, or its last attempt failed with no successful read; otherwise the weekly run reads it once the last
-    read is over 20 hours old. Saving a new key over an old one keeps the FindLocal rows. Forgetting the key
+    and failure, and, when the last read had failed (a refused key, say), the last read time too, so a new key after a
+    failure is read at the next refresh of any kind. After a good read the last read time stays, and the new key is first
+    used by the weekly run once the last read is over 20 hours old (the quota). Saving a new key over an old one keeps the
+    FindLocal rows. A key that cannot be written (`PUT` or `DELETE /discover/findlocal/key`) is answered 500 "The key could
+    not be saved." and never raised: the key is in that call's frames, and an exception leaving the route would carry
+    them to the error tracker. Forgetting the key
     (`DELETE /discover/findlocal/key`, `set_key(None)`) also deletes every FindLocal pool row (`clear_pool("findlocal")`)
     and clears its last read time, so with its error and failure time cleared too, a key entered later is read at the next
     refresh.
@@ -514,7 +525,11 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     one fetch at a time and `GAP_S` apart with one another (card thumbnails fetched at a digest save are not paced with
     them), and kept as `discover-images/pool/<id>`: written new to `<id>.part` (`O_EXCL`, `O_NOFOLLOW` where there is one)
     and renamed into place; a failed fetch keeps nothing, so a later ask tries again. When `discover-images` or `pool` is a
-    link nothing is read or written. Served with its type by first bytes and `nosniff`; 404 "No picture." otherwise. After
+    link nothing is read or written. Served with its type by first bytes and `nosniff`; 404 "No picture." otherwise. Both
+    picture routes read the file once and answer those bytes (`discover_routes.picture`), so a file removed after its path
+    was found is a 404, never a failed response. A refresh that reads a new `image_url` for a row marks its kept picture
+    stale (`Discovery._stale_images`): it is no longer answered, the next ask fetches the new one, and the sweep removes
+    the old file; a fetch whose row's `image_url` changed while it waited keeps nothing. After
     each refresh, once the refresh lock is released, the sweep (`sweep_pool_images`, under the picture lock the fetches
     take, so it never holds up a settings or key save while fetches queued ahead of it run; the call that started the refresh, the scout's `events_candidates` included, still waits for its own sweep)
     deletes kept pictures whose event is no longer an Eventbrite pool row, stray part files and links (never followed). A
@@ -522,7 +537,11 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   - *Refresh* (`POST /discover/refresh`, `NothingIn`; 409 when discovery is not active). Starts an unforced `refresh()` in
     the background (`Discovery.start_refresh`; none while one is under way) and answers the status, whose `refreshing`
     says one is going. Unforced, so Eventbrite's 12-hour and 10-minute waits hold, and FindLocal is read only when it has
-    no last read. The page offers Refresh only when set up, online, nothing refreshing, and Eventbrite's last read is
+    no last read. A background refresh that ends in an unexpected exception is logged by class name and shows as error
+    kind `provider` in the status (`Discovery.refresh_failed`, in memory) until a refresh ends. The 10-minute limit is
+    checked at the start of every look (`pollExpired`), so a status request that never answers cannot hold it off; a list
+    load that was out while an add finished keeps that add's mark (`withAdded`); and a list read that fails with the
+    status on hand shows its error with "Try again". The page offers Refresh only when set up, online, nothing refreshing, and Eventbrite's last read is
     none or 12 hours old (`canRefresh`); while one goes it shows "Reading events…", looks at the status every 3 s and
     loads the list again when it ends, for at most 10 minutes. After that the reading line goes (`isBusy`), the page says
     "The refresh has not finished. Check back later.", and Refresh follows `canRefresh` (still not offered while the
@@ -544,7 +563,11 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   (existing, not deleted) made from the same pool event by either add route: the card's own, else the `added` row's or
   another card's, a dismissed card included (`marks`, `pool_live`); the card is then marked `added` with that event's id
   and nothing is made. So for one pool event, while a calendar event made from it by either route still exists and is not
-  deleted, neither route makes another; once it is deleted, an add makes a new one. A timed event with no end ends one hour after it starts. A timed card whose listing had no usable zone (stored as
+  deleted, neither route makes another; once it is deleted, an add makes a new one. If the calendar event is made and the
+  mark then cannot be written, the event is deleted again and the route answers 500 "The event could not be added. Try
+  again.", so a retry makes one event and not a second (best effort: if the delete fails too, the event stays). A listing
+  whose last day is before today is 409 "This event has already happened.", and so is a timed listing whose end instant
+  (the page's, checked against the listing) is not after now; an all-day listing keeps the date rule. A timed event with no end ends one hour after it starts. A timed card whose listing had no usable zone (stored as
   empty) cannot be added: `addTimes` gives null, so Add is not offered, and the route answers 422 "This listing has no
   usable time zone." With push on, the event goes to Google like any made here.
   Adding is the user's yes: "Yes, add it" in the dialog after following a link and coming back, or Add on the card. No

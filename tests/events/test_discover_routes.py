@@ -368,11 +368,28 @@ async def test_a_bad_key_is_422(client, harness, kwargs):
         assert r.json()["detail"] == "A FindLocal key is plain text with no spaces, at most 200 characters."
 
 
-async def test_settings_keep_the_saved_zone(client):
-    body = {**SET_UP, "findlocal_city": "columbus", "timezone": "America/New_York"}
+async def test_settings_take_a_corrected_zone_and_keep_it_when_none_is_sent(client):
+    body = {**SET_UP, "findlocal_city": "new-york", "timezone": "America/Los_Angeles"}   # the computer's zone
     assert (await client.put("/discover/settings", json=body)).status_code == 200
-    r = await client.put("/discover/settings", json={**body, "timezone": "Europe/Paris"})
+    r = await client.put("/discover/settings", json={**body, "timezone": "America/New_York"})   # the city's
     assert r.status_code == 200 and r.json()["findlocal"]["timezone"] == "America/New_York"
+    r = await client.put("/discover/settings", json={**SET_UP, "findlocal_city": "new-york"})
+    assert r.status_code == 200 and r.json()["findlocal"]["timezone"] == "America/New_York"
+
+
+async def test_a_key_that_cannot_be_written_is_answered_not_raised(client, harness, monkeypatch):
+    """An exception leaving the route would carry the key, in its frames, to the error tracker."""
+    from src.events.discover_settings import DiscoverKeys
+
+    def full_disk(self, vault_root):
+        raise OSError(f"no space left writing {self.findlocal}")
+
+    monkeypatch.setattr(DiscoverKeys, "save", full_disk)
+    r = await client.put("/discover/findlocal/key", json={"key": KEY})
+    assert (r.status_code, r.json()) == (500, {"detail": "The key could not be saved."})
+    assert KEY not in r.text and harness.discover.keys.findlocal == ""
+    r = await client.delete("/discover/findlocal/key")
+    assert (r.status_code, r.json()) == (500, {"detail": "The key could not be saved."})
 
 
 async def test_an_unknown_findlocal_city_is_422(client):
@@ -549,6 +566,68 @@ async def test_add_refusals(client, harness, active):
     assert (r.status_code, r.json()["detail"]) == (422, "This listing has no usable time zone.")
     assert await calendar_events(client) == []
     assert harness.discover.store.added_event("9100000000001") == ""
+
+
+async def test_a_timed_listing_that_ended_earlier_today_is_409(client, harness, active):
+    pool(harness, listing("9100000000001"))                       # 22 Nov, 10:00 to 16:00 New York: ends 21:00Z
+    harness.discover.today = lambda: "2026-11-22"
+    harness.discover.now = lambda: "2026-11-22T21:00:00Z"         # it has just ended
+    r = await client.post(EADD.format("9100000000001"), json=TIMES)
+    assert (r.status_code, r.json()["detail"]) == (409, "This event has already happened.")
+    card = make_card(harness, "9100000000001")
+    r = await client.post(ADD.format(card["id"]), json=TIMES)
+    assert (r.status_code, r.json()["detail"]) == (409, "This event has already happened.")
+    assert await calendar_events(client) == []
+    harness.discover.now = lambda: "2026-11-22T20:59:59Z"         # still going: it may be added
+    assert (await client.post(EADD.format("9100000000001"), json=TIMES)).status_code == 200
+
+
+async def test_an_all_day_listing_today_may_still_be_added(client, harness, active):
+    pool(harness, listing("9100000000001", start_time="", end_time="", end_date="2026-11-22"))
+    harness.discover.today = lambda: "2026-11-22"
+    harness.discover.now = lambda: "2026-11-22T23:30:00Z"
+    r = await client.post(EADD.format("9100000000001"), json={"start": "2026-11-22", "end": "2026-11-23"})
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.parametrize("on_card", [False, True])
+async def test_an_add_whose_link_cannot_be_written_leaves_no_event_and_a_retry_makes_one(client, harness, active,
+                                                                                        on_card):
+    """The calendar event is made first; if marking it then fails, it is taken back, so a retry makes one."""
+    store = harness.discover.store
+    pool(harness, listing("9100000000001"))
+    card = make_card(harness, "9100000000001") if on_card else None
+    path = ADD.format(card["id"]) if on_card else EADD.format("9100000000001")
+    real = (store.mark_added, store.mark_event_added)
+
+    def broken(*a, **k):
+        raise RuntimeError("database is locked")
+
+    store.mark_added = store.mark_event_added = broken
+    r = await client.post(path, json=TIMES)
+    assert (r.status_code, r.json()["detail"]) == (500, "The event could not be added. Try again.")
+    assert await calendar_events(client) == []
+    store.mark_added, store.mark_event_added = real
+    assert (await client.post(path, json=TIMES)).status_code == 200
+    assert len(await calendar_events(client)) == 1
+
+
+async def test_a_picture_removed_before_it_is_read_is_404(client, harness, active, fake_site, card):
+    pool(harness, listing("9100000000001", image_url=PIC))
+    fake_site.images[PIC] = httpx.Response(200, content=PNG)
+    assert (await client.get(IMG.format("9100000000001"))).status_code == 200
+    kept = harness.discover.pool_images_dir / "9100000000001"
+
+    async def swept(event_id):          # the route got the path, then a refresh's sweep removed the file
+        kept.unlink()
+        return kept
+
+    harness.discover.pool_image = swept
+    r = await client.get(IMG.format("9100000000001"))
+    assert (r.status_code, r.json()["detail"]) == (404, "No picture.")
+    gone = harness.discover.images_dir / card["id"]
+    harness.discover.image_path = lambda card_id: gone      # a card's picture that is no longer there
+    assert (await client.get(f"/discover/images/{card['id']}")).status_code == 404
 
 
 async def test_refresh_starts_one_background_refresh(client, harness, active):

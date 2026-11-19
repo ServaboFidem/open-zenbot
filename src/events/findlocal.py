@@ -178,7 +178,7 @@ class FindLocal:
     async def read(self, city: str, key: str, zone: str, today: str) -> ReadResult:
         """The city's events from `today` for `DAYS_AHEAD` days, a page of `LIMIT` at a time, at most `MAX_CALLS`
         calls, `GAP_S` apart. Raises SourceError only when the first call fails; a later failure ends the reading
-        and is named in `error`."""
+        and is named in `error`. `complete` is true only when the end was reached, never when the cap stopped it."""
         if city not in FINDLOCAL_CITIES:
             raise ValueError("not a FindLocal city")
         if not isinstance(key, str) or not key or not all(c.isascii() and c.isprintable() and c != " " for c in key):
@@ -189,6 +189,7 @@ class FindLocal:
         events: list[dict] = []
         seen: set[str] = set()
         calls = 0
+        complete = False  # true only when the reader saw the end: an empty page, or as many rows as `meta.total`
         while calls < MAX_CALLS:
             if calls:
                 await self._sleep(GAP_S)
@@ -199,7 +200,7 @@ class FindLocal:
             except SourceError as e:
                 if not calls:
                     raise
-                return ReadResult(events, calls, e.kind)
+                return ReadResult(events, calls, e.kind, complete=False)
             calls += 1
             for r in data:
                 event = _event(r, zone)
@@ -207,5 +208,7 @@ class FindLocal:
                     seen.add(event["id"])
                     events.append(event)
             if not data or (total is not None and calls * LIMIT >= total):
+                complete = True
                 break
-        return ReadResult(events, calls, "")
+        # stopped at MAX_CALLS with more left: no error, but the rows not seen are not gone from FindLocal
+        return ReadResult(events, calls, "", complete=complete)

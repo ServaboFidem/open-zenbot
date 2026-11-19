@@ -98,6 +98,8 @@ class Discovery:
         self.sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
         self.monotonic: Callable[[], float] = time.monotonic
         self.refresh_task: asyncio.Task | None = None  # a refresh asked for by the page (start_refresh); held here
+        self.refresh_failed = False  # the last background refresh ended in a surprise; cleared by a refresh that ends
+        self._stale_images: set[str] = set()  # pool ids whose image_url changed: their kept picture is the old one
         # attached by the harness, as MusicService's are: the tool runner and catalog the scout's tools go into, the
         # routine store and the scheduler that holds each routine's last session
         self.tools: Any = None
@@ -161,6 +163,7 @@ class Discovery:
         # after the refresh lock is released: the sweep waits for the picture lock, and picture fetches queued ahead
         # of it must not hold up a settings or key save, or the scout's candidates, meanwhile
         await self._sweep()
+        self.refresh_failed = False
         return {**out, "findlocal": findlocal}
 
     @property
@@ -180,6 +183,7 @@ class Discovery:
             await self.refresh()
         except Exception as e:  # nothing escapes the task; the class name only, the text may hold listing text
             log.warning("background refresh failed: %s", type(e).__name__)
+            self.refresh_failed = True  # status then says `provider`, so the page can tell it did not finish
 
     async def _refresh_eventbrite(self, force: bool) -> dict:
         none = {"pages": 0, "events": 0, "error": ""}
@@ -195,6 +199,10 @@ class Discovery:
             self.store.set_meta(LAST_FAILURE, self.now())
             out = {"pages": 0, "events": 0, "error": e.kind}
         else:
+            # a row whose picture address changed: the kept picture is the old one, so the sweep removes it
+            had = self.store.image_urls("eventbrite")
+            self._stale_images |= {e["id"] for e in result.events
+                                   if e.get("id") in had and had[e["id"]] != (e.get("image_url") or "")}
             self.store.upsert_pool(result.events, self.now())
             self.store.drop_past(self.today())
             self.store.set_meta(LAST_REFRESH, self.now())
@@ -214,14 +222,22 @@ class Discovery:
         if self.store.meta(FL_LAST_REFRESH) and not (weekly and (age is None or age > FINDLOCAL_AFTER_S)):
             return none
         s = self.settings
-        began = self.now()
         try:
             result = await self.findlocal.read(s.findlocal_city, self.keys.findlocal, s.timezone, self.today())
             fresh = [e for e in result.events if not self.store.known_duplicate(e)]
-            # never before ``began``: a clock set back during the read must not make the rows just read look stale
-            self.store.upsert_pool(fresh, max(began, self.now()))
-            if result.error == "":  # a complete read: rows it did not see are gone from FindLocal
-                self.store.drop_stale("findlocal", began)
+            self.store.upsert_pool(fresh, self.now())
+            # A read with no error says which rows are gone. One that reached the end saw everything, so every row
+            # it did not store goes (a stored row that has become a duplicate included). One that stopped at the
+            # reader's cap saw, in date order, everything before the day of its last row: only rows before that
+            # day go, and a row past the cap stays (it was not seen, which is not the same as gone). If the answer
+            # was not in date order nothing can be said, and nothing goes. A read that failed part way drops
+            # nothing. Rows go by id, never by time, so a clock set back cannot keep a gone row or drop a new one.
+            if result.error == "":
+                days = [e["start_date"] for e in result.events]
+                if result.complete:
+                    self.store.keep_pool("findlocal", {e["id"] for e in fresh})
+                elif days and days == sorted(days):
+                    self.store.keep_pool("findlocal", {e["id"] for e in fresh}, before=days[-1])
         except Exception as e:  # any failure waits 10 minutes, so a surprise cannot spend the quota
             # SourceError carries its kind; anything else (a ValueError for a city not in the list, a parser or
             # store surprise) is "provider". Only the class name is logged: the text may hold the key.
@@ -242,16 +258,21 @@ class Discovery:
 
     async def set_key(self, value: str | None) -> None:
         """Keep a new FindLocal key (checked; None forgets it) and clear FindLocal's last error and failure, so the
-        next refresh may read at once. Forgetting the key (None) also removes the FindLocal rows and the last read
-        time. The file is written first: a save that fails leaves the old key in use."""
+        10-minute wait after a failure does not hold the next read. When the last read failed (a refused key, say),
+        the last read time is cleared too, so the next refresh reads at once; after a good read it stays, and the
+        new key is first used by the weekly run (the free plan allows 100 requests a month). Forgetting the key
+        (None) also removes the FindLocal rows and the last read time. The file is written first: a save that fails
+        leaves the old key in use."""
         keys = DiscoverKeys(findlocal=check_key(value) if value is not None else "")
         keys.save(self.vault)
         self.keys = keys
         async with self._lock:
+            failed = bool(self.store.meta(FL_LAST_ERROR))
             self.store.set_meta(FL_LAST_ERROR, "")
             self.store.set_meta(FL_LAST_FAILURE, "")
             if not keys.findlocal:  # forgotten: its rows and its last read go too
                 self.store.clear_pool("findlocal")
+            if not keys.findlocal or failed:
                 self.store.set_meta(FL_LAST_REFRESH, "")
 
     # the pool ---------------------------------------------------------------
@@ -362,7 +383,7 @@ class Discovery:
         return self.images_dir.is_symlink() or self.pool_images_dir.is_symlink()
 
     def _kept_pool_image(self, event_id: str) -> Path | None:
-        if self._pool_folder_linked():
+        if self._pool_folder_linked() or event_id in self._stale_images:  # stale: the listing's picture changed
             return None
         path = self.pool_images_dir / event_id
         return path if path.is_file() and not path.is_symlink() else None
@@ -397,7 +418,15 @@ class Discovery:
                 data = None
             finally:
                 self._last_image_fetch = self.monotonic()
-            return self._write_pool_image(event_id, data) if data else None
+            if not data:
+                return None
+            after = self.store.pool_row(event_id)  # a refresh may have changed the row while the fetch waited
+            if after is None or after["image_url"] != row["image_url"]:
+                return None  # these bytes are the old picture's: keep nothing, the next ask fetches the new one
+            path = self._write_pool_image(event_id, data)
+            if path is not None:
+                self._stale_images.discard(event_id)  # the kept picture is now the row's own
+            return path
 
     def _write_pool_image(self, event_id: str, data: bytes) -> Path | None:
         """Write ``<id>.part`` (made new, never through a link) and rename it to ``<id>``. None when it fails, with
@@ -429,9 +458,10 @@ class Discovery:
         followed). A folder inside is left alone; a missing or linked pictures folder is 0. Returns how many went.
         Run under ``_image_lock`` so it cannot remove a part file a fetch is writing."""
         folder = self.pool_images_dir
+        stale, self._stale_images = self._stale_images, set()
         if self._pool_folder_linked() or not folder.is_dir():
             return 0
-        keep = self.store.pool_ids("eventbrite")
+        keep = self.store.pool_ids("eventbrite") - stale  # a picture whose address changed goes too
         removed = 0
         with os.scandir(folder) as entries:
             for entry in entries:
@@ -522,6 +552,11 @@ class Discovery:
                     self.store.clear_pool(source)
                     for key in keys:
                         self.store.set_meta(key, "")
+        if settings.findlocal_city and settings.findlocal_city == before.findlocal_city \
+                and settings.timezone != before.timezone:
+            # the same city with a corrected zone: the rows already read take it, with no new read (the quota)
+            async with self._lock:
+                self.store.set_zone("findlocal", settings.timezone)
         if self.active and not (before.enabled and before.place):
             self.ensure_routine()
         elif not self.active:
@@ -533,7 +568,8 @@ class Discovery:
         r = self.managed_routine()
         return {"settings": self.settings.public(), "active": self.active,
                 "routine_id": r.id if r else None, "routine_on": bool(r and r.enabled),
-                "last_refresh": self.store.meta(LAST_REFRESH), "last_error": self.store.meta(LAST_ERROR),
+                "last_refresh": self.store.meta(LAST_REFRESH),
+                "last_error": self.store.meta(LAST_ERROR) or ("provider" if self.refresh_failed else ""),
                 "running": self.running_run(sessions),
                 "findlocal": {"city": self.settings.findlocal_city, "timezone": self.settings.timezone,
                               **self.keys.public(), "last_refresh": self.store.meta(FL_LAST_REFRESH),

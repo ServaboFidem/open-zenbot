@@ -927,3 +927,131 @@ async def test_a_clock_step_back_during_a_findlocal_read_keeps_the_rows_just_rea
     out = await discovery.refresh()
     assert out["findlocal"] == {"calls": 1, "events": 2, "error": ""}
     assert sorted(fl_ids(discovery)) == [FL1, FL2]
+
+
+# ---- fixes after review: what a read may drop, a new key, a corrected zone, a failed refresh, pictures ----
+
+async def test_a_clock_set_back_between_reads_still_drops_a_row_that_is_gone(discovery, fake_findlocal, clock):
+    """Rows go by id, not by when they were seen: an old ``seen_at`` that is later than the new read's clock
+    must not keep a row FindLocal no longer lists."""
+    fake_findlocal.rows = [fl(1), fl(2)]
+    await set_up_findlocal(discovery)
+    await discovery.refresh()
+    clock.now -= 48 * HOUR                       # the clock goes back two days
+    discovery.store.set_meta(FL_LAST_REFRESH, "")   # and a read is due
+    fake_findlocal.rows = [fl(2)]
+    out = await discovery.refresh()
+    assert out["findlocal"] == {"calls": 1, "events": 1, "error": ""}
+    assert fl_ids(discovery) == [FL2]
+
+
+async def test_a_read_stopped_at_the_cap_keeps_a_row_past_it_and_drops_one_gone_before_it(discovery, fake_findlocal,
+                                                                                      clock):
+    """The reader stops at 10 calls with no error. A row past the cap was not seen, which is not the same as gone;
+    a row dated before the last one read, and not in the answer, is gone."""
+    fake_findlocal.rows = [fl(2, event_date="2026-11-25"), fl(1, event_date="2026-12-20")]
+    await set_up_findlocal(discovery)
+    await discovery.refresh()
+    # 1,000 new listings dated before FL1 push it past the cap; FL2 is no longer listed at all
+    fake_findlocal.rows = ([fl(n, event_date="2026-11-21") for n in range(1001, 1501)]
+                           + [fl(n, event_date="2026-12-01") for n in range(1501, 2001)]
+                           + [fl(1, event_date="2026-12-20")])
+    clock.now += 21 * HOUR
+    out = await discovery.refresh(weekly=True)
+    assert out["findlocal"] == {"calls": 10, "events": 1000, "error": ""}
+    ids = discovery.store.pool_ids("findlocal")
+    assert FL1 in ids and FL2 not in ids and len(ids) == 1001
+
+
+async def test_a_capped_read_that_is_not_in_date_order_drops_nothing(discovery, fake_findlocal, clock):
+    fake_findlocal.rows = [fl(2, event_date="2026-11-25"), fl(1, event_date="2026-12-20")]
+    await set_up_findlocal(discovery)
+    await discovery.refresh()
+    fake_findlocal.rows = ([fl(n, event_date="2026-12-01") for n in range(1001, 1501)]
+                           + [fl(n, event_date="2026-11-21") for n in range(1501, 2002)])
+    clock.now += 21 * HOUR
+    out = await discovery.refresh(weekly=True)
+    assert out["findlocal"]["calls"] == 10 and out["findlocal"]["error"] == ""
+    assert {FL1, FL2} <= discovery.store.pool_ids("findlocal")
+
+
+async def test_a_new_key_after_a_failed_read_is_read_at_once(discovery, fake_findlocal, clock):
+    fake_findlocal.rows = [fl(1)]
+    await set_up_findlocal(discovery)
+    await discovery.refresh()                    # a good read: the last read time is set
+    fake_findlocal.fail[1] = 401                 # then the key is revoked
+    clock.now += 21 * HOUR
+    assert (await discovery.refresh(weekly=True))["findlocal"]["error"] == "key"
+    del fake_findlocal.fail[1]
+    await discovery.set_key("NEW-abcdefgh")
+    assert discovery.store.meta(FL_LAST_REFRESH) == "" and fl_ids(discovery) == [FL1]   # the rows stay
+    out = await discovery.refresh()              # any refresh, not only the weekly one
+    assert out["findlocal"] == {"calls": 1, "events": 1, "error": ""}
+    assert fake_findlocal.requests[-1].headers["authorization"] == "Bearer NEW-abcdefgh"
+
+
+async def test_a_corrected_zone_reaches_the_rows_already_read_with_no_new_read(discovery, fake_findlocal):
+    from dataclasses import replace
+
+    fake_findlocal.rows = [fl(1, event_date="2026-12-20"), fl(2, event_date="2026-12-21")]
+    await set_up_findlocal(discovery)
+    await discovery.refresh()
+    saved = await discovery.save([{"id": FL1, "why": "fine"}], kind="weekly", note="", session_id="s1")
+    other = next(r for r in discovery.candidates(limit=60) if r["source"] == "eventbrite")
+    await discovery.apply(replace(discovery.settings, timezone="America/Chicago"))
+    assert len(fake_findlocal.requests) == 1
+    assert discovery.store.pool_row(FL2)["timezone"] == "America/Chicago"
+    assert discovery.store.digest(saved["id"])["cards"][0]["timezone"] == "America/Chicago"
+    assert discovery.store.pool_row(other["id"])["timezone"] == other["timezone"]
+    assert discovery.store.meta(FL_LAST_REFRESH) != ""
+
+
+async def test_a_background_refresh_that_fails_shows_in_status_until_one_ends(discovery):
+    real = discovery.refresh
+
+    async def boom(*a, **k):
+        raise RuntimeError("secret listing text")
+
+    discovery.refresh = boom
+    discovery.start_refresh()
+    await discovery.refresh_task
+    assert discovery.status({})["last_error"] == "provider"
+    discovery.refresh = real
+    discovery.start_refresh()
+    await discovery.refresh_task
+    assert discovery.status({})["last_error"] == ""
+
+
+async def test_a_picture_whose_address_changed_is_fetched_again_and_survives_the_sweep(pictured, fake_site):
+    assert (await pictured.pool_image(A)).read_bytes() == PNG
+    new = "https://img.evbuc.com/new-picture.png"
+    fake_site.images[new] = httpx.Response(200, content=PNG + b"new")
+    pictured._stale_images.add(A)                                # what a refresh does on reading a new address
+    pictured.store.upsert_pool([ev(A, image_url=new)], "2026-11-18T09:00:00Z")
+    assert pictured._kept_pool_image(A) is None                  # the old picture is no longer answered
+    assert (await pictured.pool_image(A)).read_bytes() == PNG + b"new"
+    assert pictured.sweep_pool_images() == 0 and kept(pictured) == [A]
+
+
+async def test_a_refresh_that_reads_a_new_picture_address_removes_the_kept_picture(discovery, fake_site):
+    await discovery.refresh()
+    event_id, url = next((i, u) for i, u in discovery.store.image_urls().items() if u)
+    fake_site.images[url] = httpx.Response(200, content=PNG)
+    assert await discovery.pool_image(event_id) is not None and event_id in kept(discovery)
+    row = discovery.store.pool_row(event_id)
+    discovery.store.upsert_pool([{**row, "image_url": "https://img.evbuc.com/an-older-address.png"}], "x")
+    await discovery.refresh(force=True)                          # the site's address differs from the stored one
+    assert event_id not in kept(discovery)
+    assert discovery.store.pool_row(event_id)["image_url"] == url
+
+
+async def test_a_picture_fetched_for_an_address_that_changed_meanwhile_is_not_kept(pictured):
+    real = pictured.source.image
+
+    async def image_then_change(url):
+        data = await real(url)
+        pictured.store.upsert_pool([ev(A, image_url="https://img.evbuc.com/changed.png")], "x")
+        return data
+
+    pictured.source.image = image_then_change
+    assert await pictured.pool_image(A) is None and kept(pictured) == []

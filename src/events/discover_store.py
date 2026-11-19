@@ -144,6 +144,31 @@ class DiscoverStore:
             return self._db.execute("DELETE FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?"
                                     " AND seen_at < ?", (source, before)).rowcount
 
+    def keep_pool(self, source: str, ids: set[str], before: str = "") -> int:
+        """Delete the pool rows of ``source`` whose id is not in ``ids`` (what a read saw); with ``before`` (a day
+        key), only those starting before that day (a read that stopped part way saw nothing later). By id, not by
+        time, so no clock change can keep a row that is gone or drop one that was just read. Returns how many went."""
+        with self._lock, self._db:
+            have = self._db.execute(
+                "SELECT id, start_date FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?", (source,)).fetchall()
+            gone = [(r[0],) for r in have if r[0] not in ids and (not before or (r[1] or "") < before)]
+            self._db.executemany("DELETE FROM pool WHERE id=?", gone)
+        return len(gone)
+
+    def image_urls(self, source: str = "eventbrite") -> dict[str, str]:
+        """Pool id -> ``image_url`` for the rows of ``source``."""
+        with self._lock:
+            return {r[0]: r[1] or "" for r in self._db.execute(
+                "SELECT id, image_url FROM pool WHERE COALESCE(NULLIF(source, ''), 'eventbrite')=?", (source,))}
+
+    def set_zone(self, source: str, zone: str) -> int:
+        """Give every pool row of ``source``, and every card of it not yet added, the time zone ``zone`` (the user
+        corrected the city's zone). An added card keeps the zone its calendar event was made with."""
+        with self._lock, self._db:
+            n = self._db.execute("UPDATE pool SET timezone=? WHERE source=?", (zone, source)).rowcount
+            self._db.execute("UPDATE cards SET timezone=? WHERE source=? AND state != 'added'", (zone, source))
+        return n
+
     def pool_size(self, source: str | None = None) -> int:
         with self._lock:
             if source is None:

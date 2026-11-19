@@ -14,7 +14,24 @@ export const FINDLOCAL_ERRORS = {
   provider: PROVIDER_SENTENCE,
 };
 
-const FIELDS = ['enabled', 'city', 'state', 'source_url', 'interests', 'findlocal_city'];
+export const ZONE_HINT = 'FindLocal gives times with no zone, so they are read in this one. It starts as your computer’s; change it if the city is somewhere else. For example America/Chicago.';
+export const ZONE_NEEDED = 'Enter the time zone of your FindLocal city, like America/Chicago.';
+
+const FIELDS = ['enabled', 'city', 'state', 'source_url', 'interests', 'findlocal_city', 'timezone'];
+
+// Whether `zone` is a time zone name this computer knows (Intl refuses any other).
+export function validZone(zone) {
+  if (typeof zone !== 'string' || !zone.trim()) return false;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: zone.trim() }); return true; } catch { return false; }
+}
+
+// The draft's FindLocal city and zone after a pick. A new city starts with the computer's zone (`zone`), a first
+// guess the user can correct; the same city keeps what is there; no city has no zone.
+export function pickCity(draft, slug, zone) {
+  if (!slug) return { findlocal_city: '', timezone: '' };
+  if (slug === draft.findlocal_city && draft.timezone) return { findlocal_city: slug, timezone: draft.timezone };
+  return { findlocal_city: slug, timezone: zone || '' };
+}
 
 // What the form edits, from GET /discover/status. `country` is always US and `place` is the harness's, so neither is here.
 export function draftFrom(status) {
@@ -23,6 +40,7 @@ export function draftFrom(status) {
     enabled: !!s.enabled, city: s.city || '', state: s.state || '', source_url: s.source_url || '',
     categories: Array.isArray(s.categories) ? [...s.categories] : [], interests: s.interests || '',
     findlocal_city: status?.findlocal?.city || '',
+    timezone: status?.findlocal?.timezone || '',   // the FindLocal city's zone, which the user may correct
   };
 }
 
@@ -36,6 +54,7 @@ export function changed(draft, status) {
 export function canSave(draft) {
   if (draft.enabled && !draft.source_url.trim()) return { ok: false, why: 'Paste the address of your city’s Eventbrite page first.' };
   if (draft.interests.length > MAX_INTERESTS) return { ok: false, why: 'Keep your interests under 2,000 characters.' };
+  if (draft.findlocal_city && !validZone(draft.timezone)) return { ok: false, why: ZONE_NEEDED };
   return { ok: true, why: '' };
 }
 
@@ -45,8 +64,9 @@ export function toggleCategory(tags, tag, on) {
 }
 
 // The body of PUT /discover/settings. The harness reads the place from the address.
-// `zone` is the browser's own time zone (the page reads it); it is an argument so this module needs no browser.
-export const bodyFrom = (draft, zone) => ({ ...draft, country: 'US', city: draft.city.trim(), state: draft.state.trim(), source_url: draft.source_url.trim(), timezone: zone });
+// The zone is the draft's own (what the user sees and may correct); `zone`, the browser's time zone, is used only
+// when the draft has none. It is an argument so this module needs no browser.
+export const bodyFrom = (draft, zone) => ({ ...draft, country: 'US', city: draft.city.trim(), state: draft.state.trim(), source_url: draft.source_url.trim(), timezone: (draft.timezone || '').trim() || zone });
 
 // The weekly run's next time, read-only here: its day and time are changed on the Routines page.
 export function nextRunLine(routine) {

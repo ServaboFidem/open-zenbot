@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Dropdown, Field, Input, Label, Option, Spinner, Switch, Textarea } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
-import { KEY_HINT, MAX_INTERESTS, URL_HINT, bodyFrom, canSave, changed, cityName, cityOptions, draftFrom, findLocalLine, keyFieldEnter, nextRunLine, refusalField, toggleCategory, zoneLine } from './discovery-settings';
+import { KEY_HINT, MAX_INTERESTS, URL_HINT, ZONE_HINT, bodyFrom, canSave, changed, cityName, cityOptions, draftFrom, findLocalLine, keyFieldEnter, nextRunLine, pickCity, refusalField, toggleCategory, validZone } from './discovery-settings';
 
 // Settings > Calendar > Event discovery: where the user lives, their city's Eventbrite page, which kinds of events,
 // their interests, and the on/off switch. The harness checks the address and answers 422 with the sentence to show.
@@ -42,9 +42,13 @@ export function DiscoverySettings({ api, online, notify }) {
   const fl = status.findlocal || {};
   const cities = cityOptions(status);
   const flLine = findLocalLine(status);
-  const zone = zoneLine(status);
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // A key save and a settings save each answer the whole status. Only one goes at a time, so an older answer
+  // can never replace a newer one (and hide a key that was just saved).
+  const pending = busy || keyBusy;
 
   async function keyCall(run, done) {
+    if (pending) return;
     setKeyBusy(true); setKeyError('');
     try {
       const fresh = await run();
@@ -58,10 +62,10 @@ export function DiscoverySettings({ api, online, notify }) {
 
   async function save(e) {
     e.preventDefault();
-    if (!check.ok) return;
+    if (!check.ok || pending) return;
     setBusy(true); setError({ at: '', text: '' });
     try {
-      const fresh = await api.discover.saveSettings(bodyFrom(draft, Intl.DateTimeFormat().resolvedOptions().timeZone));
+      const fresh = await api.discover.saveSettings(bodyFrom(draft, browserZone));
       if (alive.current) { setStatus(fresh); setDraft(draftFrom(fresh)); }
       notify('Event discovery saved');
     } catch (err) { if (alive.current) setError({ at: refusalField(message(err)), text: message(err) }); }
@@ -96,27 +100,29 @@ export function DiscoverySettings({ api, online, notify }) {
     <h4>FindLocal (optional)</h4>
     <p className="field-hint">A second source of events, read once a week. It needs a free key.</p>
     <Field label="FindLocal key" hint={KEY_HINT} validationState={keyError ? 'error' : 'none'} validationMessage={keyError || undefined}>
-      <Input type="password" autoComplete="new-password" spellCheck={false} value={key} disabled={keyBusy} onChange={(e, d) => { setKey(d.value); setKeyError(''); }} onKeyDown={e => keyFieldEnter(e, { key, busy: keyBusy }, saveKey)}/>
+      <Input type="password" autoComplete="new-password" spellCheck={false} value={key} disabled={keyBusy} onChange={(e, d) => { setKey(d.value); setKeyError(''); }} onKeyDown={e => keyFieldEnter(e, { key, busy: pending }, saveKey)}/>
     </Field>
     <div className="cal-actions">
-      <Button appearance="outline" disabled={keyBusy || !key.trim()} onClick={saveKey}>{keyBusy ? 'Saving…' : 'Save key'}</Button>
+      <Button appearance="outline" disabled={pending || !key.trim()} onClick={saveKey}>{keyBusy ? 'Saving…' : 'Save key'}</Button>
       {fl.key_set && <>
         <span className="cal-wrap">{fl.key_hint ? `Saved, ending in ${fl.key_hint}` : 'Saved'}</span>
-        <Button appearance="outline" disabled={keyBusy} onClick={forgetKey}>Forget</Button>
+        <Button appearance="outline" disabled={pending} onClick={forgetKey}>Forget</Button>
       </>}
     </div>
     <Field label="FindLocal city" validationState={error.at === 'findlocal_city' ? 'error' : 'none'} validationMessage={error.at === 'findlocal_city' ? error.text : undefined}>
       <Dropdown aria-label="FindLocal city" disabled={busy} value={draft.findlocal_city ? cityName(draft.findlocal_city) : 'None'}
-        selectedOptions={[draft.findlocal_city]} onOptionSelect={(e, d) => set({ findlocal_city: d.optionValue })}>
+        selectedOptions={[draft.findlocal_city]} onOptionSelect={(e, d) => set(pickCity(draft, d.optionValue, browserZone))}>
         <Option key="" value="" text="None">None</Option>
         {cities.map(c => <Option key={c.slug} value={c.slug} text={c.name}>{c.name}</Option>)}
       </Dropdown>
     </Field>
-    {zone && <p className="field-hint">{zone}</p>}
+    {draft.findlocal_city && <Field label="Time zone of that city" hint={ZONE_HINT} validationState={validZone(draft.timezone) ? 'none' : 'error'}>
+      <Input value={draft.timezone} spellCheck={false} placeholder="America/Chicago" disabled={busy} onChange={(e, d) => set({ timezone: d.value })}/>
+    </Field>}
     {flLine && <p className="field-hint cal-wrap">{flLine}</p>}
     {!check.ok && dirty && <p className="form-error cal-wrap" role="alert">{check.why}</p>}
     <div className="cal-actions">
-      <Button appearance="primary" type="submit" disabled={busy || !dirty || !check.ok}>{busy ? 'Saving…' : 'Save'}</Button>
+      <Button appearance="primary" type="submit" disabled={pending || !dirty || !check.ok}>{busy ? 'Saving…' : 'Save'}</Button>
     </div>
   </form>;
 }

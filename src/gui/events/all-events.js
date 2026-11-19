@@ -176,6 +176,17 @@ export const nearEnd = ({ scrollTop = 0, clientHeight = 0, scrollHeight = 0 } = 
 // The list with one event's state replaced (a new list; the other rows are shared).
 export const withState = (events, id, state) => list(events).map(e => (e.id === id ? { ...e, state } : e));
 
+// A list as loaded, with the events in `ids` marked added: the adds that finished after that load began. The harness
+// answered the list before those adds, so without this a slow load would put the old state back over the new mark.
+export function withAdded(events, ids) {
+  const late = new Set(Array.isArray(ids) ? ids : []);
+  return late.size ? list(events).map(e => (late.has(e.id) && e.state !== 'added' ? { ...e, state: 'added' } : e)) : list(events);
+}
+
+// Whether a watch of a refresh has run past its limit. Checked at the start of every tick, before anything is
+// awaited, so a status request that never answers cannot keep the reading line up for ever.
+export const pollExpired = (since, now, limit) => now - since > limit;
+
 // A key on a row: where focus goes, or open it; null for any other key.
 export function rowKeyStep(key, index, count) {
   const last = Math.max(0, count - 1);

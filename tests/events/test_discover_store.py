@@ -236,6 +236,43 @@ def test_drop_stale_takes_only_old_rows_of_that_source(store):
     assert store.pool_row("eb-old") is not None
 
 
+def test_keep_pool_drops_the_rows_of_a_source_that_were_not_seen(store):
+    store.upsert_pool([ev("fl-1", source="findlocal"), ev("fl-2", source="findlocal"), ev("3")], "t")
+    assert store.keep_pool("findlocal", {"fl-2", "fl-9"}) == 1
+    assert store.pool_ids("findlocal") == {"fl-2"} and store.pool_row("3") is not None
+    assert store.keep_pool("findlocal", set()) == 1 and store.pool_ids("findlocal") == set()
+
+
+def test_keep_pool_with_a_day_drops_only_unseen_rows_before_it(store):
+    store.upsert_pool([ev("fl-early", source="findlocal", start_date="2026-11-20"),
+                       ev("fl-seen", source="findlocal", start_date="2026-11-21"),
+                       ev("fl-last-day", source="findlocal", start_date="2026-12-01"),
+                       ev("fl-later", source="findlocal", start_date="2026-12-20")], "t")
+    assert store.keep_pool("findlocal", {"fl-seen"}, before="2026-12-01") == 1
+    assert store.pool_ids("findlocal") == {"fl-seen", "fl-last-day", "fl-later"}
+
+
+def test_image_urls_are_by_id_for_one_source(store):
+    store.upsert_pool([ev("1", image_url="https://img.evbuc.com/a.png"), ev("2", image_url=""),
+                       ev("fl-1", source="findlocal")], "t")
+    assert store.image_urls() == {"1": "https://img.evbuc.com/a.png", "2": ""}
+
+
+def test_set_zone_changes_a_sources_rows_and_its_cards_not_yet_added(store):
+    store.upsert_pool([ev("fl-1", source="findlocal"), ev("fl-2", source="findlocal"), ev("3")], "t")
+    digest = store.save_digest([(store.pool_row("fl-1"), "why"), (store.pool_row("fl-2"), "why"),
+                                (store.pool_row("3"), "why")], kind="weekly", note="", session_id="s",
+                               created_at="2026-11-18T09:00:00Z")
+    first, second, third = digest["cards"]
+    store.mark_added(second["id"], "cal-1")
+    assert store.set_zone("findlocal", "America/Chicago") == 2
+    assert store.pool_row("fl-1")["timezone"] == "America/Chicago"
+    assert store.pool_row("3")["timezone"] == "America/New_York"
+    assert store.card(first["id"])["timezone"] == "America/Chicago"
+    assert store.card(second["id"])["timezone"] == "America/New_York"    # added: its event was made with this
+    assert store.card(third["id"])["timezone"] == "America/New_York"     # another source
+
+
 def test_an_old_findlocal_row_is_still_a_candidate(store):
     store.upsert_pool([ev("fl-1", source="findlocal"), ev("2")], "2026-11-11T09:00:00Z")
     assert sorted(ids(store.candidates("2026-11-18", []))) == ["2", "fl-1"]

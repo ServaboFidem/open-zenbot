@@ -7,12 +7,14 @@ instant (no zone database), so the page sends the instants; each is read as a na
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from src.events.discover_settings import CATEGORIES, FINDLOCAL_CITIES, DiscoverSettings, check_key
@@ -28,6 +30,11 @@ PAST = "This event has already happened."
 BAD_TIMES = "Those times are not the listing's. Reload the page and try again."
 NO_ZONE = "This listing has no usable time zone."
 NO_EVENT = "No such event."
+NO_PICTURE = "No picture."
+KEY_NOT_SAVED = "The key could not be saved."
+NOT_ADDED = "The event could not be added. Try again."
+PICTURE_MAX = 1_500_000  # the most a kept picture holds (the connector's own cap)
+log = logging.getLogger(__name__)
 RUN_TASK = ("On-demand picks: find local events for the user. "
             "Save them with events_save_digest using kind \"on_demand\".")
 MAX_HOURS = 14
@@ -82,6 +89,19 @@ def _sniff(head: bytes) -> str:
     if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return "image/webp"
     return "application/octet-stream"
+
+
+def picture(path: Path) -> Response:
+    """The picture at ``path`` as a response holding its bytes, or 404. The bytes checked are the bytes sent: the
+    file is read once, so one removed meanwhile (a refresh's sweep) is a 404 here, never a failed response."""
+    try:
+        with path.open("rb") as f:
+            data = f.read(PICTURE_MAX + 1)
+    except OSError:
+        raise HTTPException(404, NO_PICTURE) from None
+    if not data or len(data) > PICTURE_MAX:
+        raise HTTPException(404, NO_PICTURE)
+    return Response(data, media_type=_sniff(data[:12]), headers={"X-Content-Type-Options": "nosniff"})
 
 
 def listing_times(card: dict, start: str, end: str) -> dict[str, Any]:
@@ -177,12 +197,34 @@ def discover_router(discovery, harness) -> APIRouter:
             raise HTTPException(409, PAST)
         try:
             timing = listing_times(listing, body.start, body.end)
-            place = ", ".join(p for p in (listing["venue"], listing["address"]) if p)
+            # a timed listing that ended earlier today: its end instant (checked against the listing just above)
+            # has passed. An all-day listing keeps the date rule.
+            if not timing["all_day"] and timing["end"] <= discovery.now():
+                raise HTTPException(409, PAST)
+            place =", ".join(p for p in (listing["venue"], listing["address"]) if p)
             text = f"{listing['summary']}\n\n{listing['url']}" if listing["summary"] else listing["url"]
             return discovery.calendar.store.add(
                 {"title": listing["name"], "location": place, "description": text, **timing})
         except EventError as e:
             raise HTTPException(422, str(e)) from None
+
+    def undo(made: dict) -> None:
+        """Take back a calendar event whose discovery link could not be written, so a retry of Add makes one event
+        and not a second. Best effort: if this fails too, the event stays and is logged by class name."""
+        try:
+            discovery.calendar.store.delete(made["id"])
+        except Exception as e:
+            log.warning("discover add not undone: %s", type(e).__name__)
+
+    async def keep_key(value: str | None) -> Any:
+        """Save or forget the FindLocal key and answer the status. A failure is answered, never raised: the key
+        is in this call's frames, and an exception that left the route would carry them to the error tracker."""
+        try:
+            await discovery.set_key(value)
+        except Exception as e:
+            log.warning("findlocal key not saved: %s", type(e).__name__)
+            return JSONResponse({"detail": KEY_NOT_SAVED}, status_code=500)
+        return status()
 
     @r.get("/status")
     async def get_status() -> dict[str, Any]:
@@ -198,18 +240,16 @@ def discover_router(discovery, harness) -> APIRouter:
         return status()
 
     @r.put("/findlocal/key")
-    async def put_key(body: KeyIn) -> dict[str, Any]:
+    async def put_key(body: KeyIn) -> Any:
         try:
             key = check_key(body.key)
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
-        await discovery.set_key(key)
-        return status()
+        return await keep_key(key)
 
     @r.delete("/findlocal/key")
-    async def delete_key() -> dict[str, Any]:
-        await discovery.set_key(None)
-        return status()
+    async def delete_key() -> Any:
+        return await keep_key(None)
 
     @r.get("/digests")
     async def list_digests(before: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
@@ -223,13 +263,11 @@ def discover_router(discovery, harness) -> APIRouter:
         return digest_view(d)
 
     @r.get("/images/{card_id}")
-    async def image(card_id: str) -> FileResponse:
+    async def image(card_id: str) -> Response:
         path = discovery.image_path(card_id)
         if path is None:
-            raise HTTPException(404, "No picture.")
-        with path.open("rb") as f:
-            kind = _sniff(f.read(12))
-        return FileResponse(path, media_type=kind, headers={"X-Content-Type-Options": "nosniff"})
+            raise HTTPException(404, NO_PICTURE)
+        return picture(path)
 
     @r.post("/run")
     async def run(body: NothingIn) -> dict[str, Any]:
@@ -270,7 +308,12 @@ def discover_router(discovery, harness) -> APIRouter:
                 card = store.mark_added(card_id, existing["id"], replace=True) or card
                 return {"card": card_view(card), "event": event_view(existing)}
             row = make_event(card, body)
-            card = store.mark_added(card_id, row["id"], replace=True) or card
+            try:
+                card = store.mark_added(card_id, row["id"], replace=True) or card
+            except Exception as e:  # the link was not written: without it a retry would make a second event
+                log.warning("discover add not linked: %s", type(e).__name__)
+                undo(row)
+                raise HTTPException(500, NOT_ADDED) from None
         calendar.kick()
         return {"card": card_view(card), "event": event_view(row)}
 
@@ -290,18 +333,13 @@ def discover_router(discovery, harness) -> APIRouter:
         return full_view(row)
 
     @r.get("/events/{event_id}/image")
-    async def event_image(event_id: str) -> FileResponse:
+    async def event_image(event_id: str) -> Response:
         """A pool event's picture, fetched from Eventbrite's image host on the first ask and kept. 404 when the row
         has no picture, is not Eventbrite's, or the fetch failed."""
         path = await discovery.pool_image(event_id)
         if path is None:
-            raise HTTPException(404, "No picture.")
-        try:
-            with path.open("rb") as f:
-                kind = _sniff(f.read(12))
-        except OSError:
-            raise HTTPException(404, "No picture.") from None
-        return FileResponse(path, media_type=kind, headers={"X-Content-Type-Options": "nosniff"})
+            raise HTTPException(404, NO_PICTURE)
+        return picture(path)
 
     @r.post("/events/{event_id}/add")
     async def add_event(event_id: str, body: AddIn) -> dict[str, Any]:
@@ -316,11 +354,16 @@ def discover_router(discovery, harness) -> APIRouter:
             if existing is not None:
                 return {"event": full_view(row), "calendar_event": event_view(existing)}
             made = make_event(row, body)
-            card = store.card_for_event(event_id)
-            if card is not None:
-                store.mark_added(card["id"], made["id"], replace=True)
-            else:
-                store.mark_event_added(event_id, made["id"], discovery.now())
+            try:
+                card = store.card_for_event(event_id)
+                if card is not None:
+                    store.mark_added(card["id"], made["id"], replace=True)
+                else:
+                    store.mark_event_added(event_id, made["id"], discovery.now())
+            except Exception as e:  # the link was not written: without it a retry would make a second event
+                log.warning("discover add not linked: %s", type(e).__name__)
+                undo(made)
+                raise HTTPException(500, NOT_ADDED) from None
             row = marked_row(event_id) or row
         calendar.kick()
         return {"event": full_view(row), "calendar_event": event_view(made)}

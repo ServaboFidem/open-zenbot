@@ -50,6 +50,18 @@ async def test_a_read_stops_at_ten_calls(fake_findlocal):
     fake_findlocal.rows = uuid_rows(1500)
     result = await read(fake_findlocal)
     assert (result.pages, len(result.events)) == (10, 1000)
+    assert result.error == "" and result.complete is False      # stopped at the cap: not everything was seen
+
+
+async def test_a_read_that_reaches_the_end_is_complete(fake_findlocal):
+    fake_findlocal.rows = uuid_rows(250)
+    assert (await read(fake_findlocal)).complete is True
+    fake_findlocal.rows = uuid_rows(1000)                        # exactly the cap, and the total says so
+    result = await read(fake_findlocal)
+    assert (result.pages, result.complete) == (10, True)
+    fake_findlocal.fail[2] = 503                                 # a read cut short by a failure is not
+    result = await read(fake_findlocal)
+    assert (result.error, result.complete) == ("provider", False)
 
 
 @pytest.mark.parametrize("total", [None, "many", -1, 10**12])

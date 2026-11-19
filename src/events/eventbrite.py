@@ -72,6 +72,7 @@ class ReadResult:
     events: list[dict]
     pages: int
     error: str = ""  # "" or the kind that cut the reading short
+    complete: bool = True  # False when the reading stopped at its cap with more left (FindLocal sets it)
 
 
 def page_url(place: str, month: str, page: int) -> str:

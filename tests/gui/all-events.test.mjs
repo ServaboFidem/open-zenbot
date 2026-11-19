@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import {
   COLUMNS, DEFAULT_SORT, EMPTY_FILTERS, MARKS, NO_EVENTS, NO_MATCH, PAGE, READING, SOURCE_NAMES,
   canRefresh, categoryOptions, cells, countLabel, filterEvents, gridCredit, gridState, isBusy, keepFilters, nearEnd,
-  nextSort, panelCredit, readLabel, rowKeyStep, showSourceFilter, sortEvents, sourcesPresent, visibleCount, withState,
+  nextSort, panelCredit, pollExpired, readLabel, rowKeyStep, showSourceFilter, sortEvents, sourcesPresent, visibleCount,
+  withAdded, withState,
 } from '../../src/gui/events/all-events.js';
 
 const ev = (over = {}) => ({
@@ -201,6 +202,34 @@ test('withState replaces one event\'s state without touching the rest or the inp
   assert.equal(out[1], list[1]);
   assert.deepEqual(withState(list, 'zzz', 'added').map(e => e.state), ['', 'recommended']);
   assert.deepEqual(withState(null, 'a', 'added'), []);
+});
+
+test('withAdded puts back the adds that finished while a list load was out', () => {
+  // the harness answered the list before the add of "a": its row still says recommended
+  const loaded = [ev({ id: 'a', state: 'recommended' }), ev({ id: 'b' }), ev({ id: 'c', state: 'added' })];
+  const out = withAdded(loaded, ['a']);
+  assert.deepEqual(out.map(e => e.state), ['added', '', 'added']);
+  assert.equal(loaded[0].state, 'recommended');
+  assert.equal(out[1], loaded[1]); assert.equal(out[2], loaded[2]);
+  assert.deepEqual(withAdded(loaded, []).map(e => e.state), ['recommended', '', 'added']);   // no late add: as loaded
+  assert.deepEqual(withAdded(loaded, ['gone']).map(e => e.state), ['recommended', '', 'added']);
+  assert.deepEqual(withAdded(null, ['a']), []);
+  assert.deepEqual(withAdded(loaded, null).length, 3);
+});
+
+test('pollExpired is true only past the limit', () => {
+  assert.equal(pollExpired(1000, 1000 + 600000, 600000), false);
+  assert.equal(pollExpired(1000, 1000 + 600001, 600000), true);
+});
+
+test('the All Events tab checks the poll limit before it waits, keeps late adds, and offers a retry', () => {
+  const src = gui('AllEventsView.jsx');
+  const tick = src.slice(src.indexOf('setInterval(async'), src.indexOf('}, POLL_MS)'));
+  assert.ok(tick.indexOf('pollExpired(') > -1 && tick.indexOf('pollExpired(') < tick.indexOf('if (busy) return'),
+    'the limit is checked before the busy guard, so a request that never answers cannot hold it off');
+  assert.match(src, /withAdded\(.*addLog\.current\.slice\(from\)\)/);
+  assert.match(src, /addLog\.current\.push\(id\)/);
+  assert.match(src, /\{error && status && <p[^>]*role="alert">\{error\} <Button[^>]*onClick=\{load\}>Try again<\/Button><\/p>\}/);
 });
 
 test('rowKeyStep', () => {

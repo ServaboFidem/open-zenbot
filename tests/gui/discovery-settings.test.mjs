@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { FINDLOCAL_ERRORS, FINDLOCAL_FAILED, KEY_HINT, URL_HINT, bodyFrom, canSave, changed, cityName, cityOptions, draftFrom, findLocalLine, keyFieldEnter, nextRunLine, refusalField, toggleCategory, zoneLine } from '../../src/gui/discovery-settings.js';
+import { FINDLOCAL_ERRORS, FINDLOCAL_FAILED, KEY_HINT, URL_HINT, ZONE_NEEDED, bodyFrom, canSave, changed, cityName, cityOptions, draftFrom, findLocalLine, keyFieldEnter, nextRunLine, pickCity, refusalField, toggleCategory, validZone, zoneLine } from '../../src/gui/discovery-settings.js';
 
 const status = (o = {}, f = {}) => ({
   settings: { enabled: false, city: 'Columbus', state: 'OH', country: 'US', source_url: 'https://www.eventbrite.com/d/oh--columbus/events/', place: 'oh--columbus', categories: ['EventbriteCategory/103'], interests: 'jazz', ...o },
@@ -14,11 +14,11 @@ test('the URL hint says where to find the address', () => {
 });
 test('draftFrom copies the settings, and not by reference', () => {
   const s = status(); const d = draftFrom(s);
-  assert.deepEqual(d, { enabled: false, city: 'Columbus', state: 'OH', source_url: 'https://www.eventbrite.com/d/oh--columbus/events/', categories: ['EventbriteCategory/103'], interests: 'jazz', findlocal_city: '' });
+  assert.deepEqual(d, { enabled: false, city: 'Columbus', state: 'OH', source_url: 'https://www.eventbrite.com/d/oh--columbus/events/', categories: ['EventbriteCategory/103'], interests: 'jazz', findlocal_city: '', timezone: '' });
   d.categories.push('x'); assert.deepEqual(s.settings.categories, ['EventbriteCategory/103']);
 });
 test('draftFrom copes with a missing status', () => {
-  assert.deepEqual(draftFrom(null), { enabled: false, city: '', state: '', source_url: '', categories: [], interests: '', findlocal_city: '' });
+  assert.deepEqual(draftFrom(null), { enabled: false, city: '', state: '', source_url: '', categories: [], interests: '', findlocal_city: '', timezone: '' });
 });
 test('changed is false untouched and true after any field changes', () => {
   const s = status();
@@ -75,6 +75,42 @@ test('cityOptions is sorted by name', () => {
 test('bodyFrom adds the FindLocal city and the zone', () => {
   const b = bodyFrom({ ...draftFrom(status({}, { city: 'columbus-oh' })) }, 'America/New_York');
   assert.equal(b.findlocal_city, 'columbus-oh'); assert.equal(b.timezone, 'America/New_York'); assert.equal(b.country, 'US');
+});
+test('the draft carries the FindLocal city’s zone, and a corrected zone is a change that is sent', () => {
+  const s = status({}, { city: 'new-york', timezone: 'America/Los_Angeles' });   // saved from a Pacific computer
+  const d = draftFrom(s);
+  assert.equal(d.timezone, 'America/Los_Angeles');
+  assert.equal(changed(d, s), false);
+  const fixed = { ...d, timezone: ' America/New_York ' };
+  assert.equal(changed(fixed, s), true);
+  assert.equal(bodyFrom(fixed, 'America/Los_Angeles').timezone, 'America/New_York');   // the draft's, not the computer's
+});
+test('validZone knows a real zone from a made-up one', () => {
+  for (const z of ['America/Chicago', 'Europe/Berlin', 'UTC']) assert.equal(validZone(z), true, z);
+  for (const z of ['', '   ', 'America/New York', 'Mars/Olympus', null, undefined, 5]) assert.equal(validZone(z), false, String(z));
+});
+test('canSave needs a real zone once a FindLocal city is picked, and none without one', () => {
+  const d = draftFrom(status());
+  assert.equal(canSave({ ...d, findlocal_city: 'new-york', timezone: 'America/New_York' }).ok, true);
+  assert.deepEqual(canSave({ ...d, findlocal_city: 'new-york', timezone: 'Somewhere/Else' }), { ok: false, why: ZONE_NEEDED });
+  assert.deepEqual(canSave({ ...d, findlocal_city: 'new-york', timezone: '' }), { ok: false, why: ZONE_NEEDED });
+  assert.equal(canSave({ ...d, findlocal_city: '', timezone: '' }).ok, true);
+});
+test('pickCity starts a new city on the computer’s zone, keeps the zone of the same city, and clears it for None', () => {
+  const d = { ...draftFrom(status()), findlocal_city: 'new-york', timezone: 'America/New_York' };
+  assert.deepEqual(pickCity(d, 'chicago', 'America/Los_Angeles'), { findlocal_city: 'chicago', timezone: 'America/Los_Angeles' });
+  assert.deepEqual(pickCity(d, 'new-york', 'America/Los_Angeles'), { findlocal_city: 'new-york', timezone: 'America/New_York' });
+  assert.deepEqual(pickCity(d, '', 'America/Los_Angeles'), { findlocal_city: '', timezone: '' });
+  assert.deepEqual(pickCity(draftFrom(status()), 'austin', 'America/Chicago'), { findlocal_city: 'austin', timezone: 'America/Chicago' });
+});
+test('a key save and a settings save cannot run at once', () => {
+  const src = readFileSync(new URL('../../src/gui/DiscoverySettings.jsx', import.meta.url), 'utf8');
+  assert.match(src, /const pending = busy \|\| keyBusy;/);
+  assert.match(src, /disabled=\{pending \|\| !key\.trim\(\)\}/);                 // Save key
+  assert.match(src, /disabled=\{pending\} onClick=\{forgetKey\}/);              // Forget
+  assert.match(src, /type="submit" disabled=\{pending \|\| !dirty \|\| !check\.ok\}/);   // Save
+  assert.match(src, /if \(pending\) return;/);
+  assert.match(src, /if \(!check\.ok \|\| pending\) return;/);
 });
 test('zoneLine names the zone, or nothing', () => {
   assert.equal(zoneLine(status({}, { timezone: 'America/New_York' })), 'Event times are read as America/New_York.');

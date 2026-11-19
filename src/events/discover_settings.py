@@ -138,7 +138,9 @@ class DiscoverSettings:
 
     @classmethod
     def validated(cls, raw: dict[str, Any], saved: "DiscoverSettings | None" = None) -> "DiscoverSettings":
-        """Settings from a request body, or ValueError with a sentence. `saved` keeps a city's zone while it stays."""
+        """Settings from a request body, or ValueError with a sentence. The FindLocal city's time zone is the
+        body's (the user may correct it: the page's first guess is the computer's own zone, which is wrong for a
+        city elsewhere); `saved` gives the zone only when the body sends none for a city that has not changed."""
         if not isinstance(raw, dict):
             raise ValueError("The settings must be an object.")
         enabled = raw.get("enabled", False)
@@ -167,10 +169,9 @@ class DiscoverSettings:
         if fl_city:
             if fl_city not in FINDLOCAL_CITIES:
                 raise ValueError("Pick a FindLocal city from the list.")
-            if saved is not None and saved.findlocal_city == fl_city and saved.timezone:
+            zone = _text(raw, "timezone")
+            if not zone and saved is not None and saved.findlocal_city == fl_city:
                 zone = saved.timezone
-            else:
-                zone = _text(raw, "timezone")
             if not ZONE.fullmatch(zone):
                 raise ValueError("The time zone is missing. Pick the FindLocal city again.")
         source_url = _text(raw, "source_url")

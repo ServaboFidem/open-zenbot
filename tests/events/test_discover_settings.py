@@ -78,10 +78,17 @@ def test_a_city_without_a_usable_zone_is_refused():
             DiscoverSettings.validated({**BASE, "findlocal_city": "columbus", "timezone": zone})
 
 
-def test_the_saved_zone_is_kept_while_the_city_stays():
-    saved = DiscoverSettings(findlocal_city="columbus", timezone="America/New_York")
-    s = DiscoverSettings.validated({**BASE, "findlocal_city": "columbus", "timezone": "Europe/Paris"}, saved)
+def test_a_corrected_zone_for_the_same_city_is_taken():
+    saved = DiscoverSettings(findlocal_city="new-york", timezone="America/Los_Angeles")   # the computer's zone
+    s = DiscoverSettings.validated({**BASE, "findlocal_city": "new-york", "timezone": "America/New_York"}, saved)
     assert s.timezone == "America/New_York"
+
+
+def test_the_saved_zone_is_kept_when_none_is_sent_for_the_same_city():
+    saved = DiscoverSettings(findlocal_city="columbus", timezone="America/New_York")
+    assert DiscoverSettings.validated({**BASE, "findlocal_city": "columbus"}, saved).timezone == "America/New_York"
+    with pytest.raises(ValueError, match="The time zone is missing. Pick the FindLocal city again."):
+        DiscoverSettings.validated({**BASE, "findlocal_city": "chicago"}, saved)   # another city: nothing to keep
 
 
 def test_a_new_city_takes_the_new_zone():
