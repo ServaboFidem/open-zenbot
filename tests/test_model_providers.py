@@ -530,3 +530,39 @@ async def test_an_empty_key_is_422(client_without_key, vault: Path):
         r = await client_without_key.post("/settings/openrouter-key", json={"key": key})
         assert r.status_code == 422 and r.json()["detail"] == "key is empty"
     assert _providers_text(vault) == before
+
+
+# -- a key kept only in providers.json (no key in the environment, no harness.json) --
+
+
+def _unbound_config(vault: Path, tmp_path: Path, monkeypatch) -> HarnessConfig:
+    monkeypatch.delenv("ZEN_TEST_OR_KEY", raising=False)
+    monkeypatch.setenv("ZEN_PROVIDER_OPENROUTER_API_KEY", "")  # so the stored key's export is undone after the test
+    monkeypatch.delenv("ZEN_PROVIDER_OPENROUTER_API_KEY")
+    return HarnessConfig(vault_root=vault, shell_cwd=tmp_path, key_ref="env:ZEN_TEST_OR_KEY", skills_dir=tmp_path / "none",
+                         bot_prompts_dir=tmp_path / "none")
+
+
+def test_a_key_saved_on_the_provider_binds_at_start_without_saved_roles(vault: Path, tmp_path: Path, monkeypatch):
+    from src.harness.main import build_harness
+
+    cfg = _unbound_config(vault, tmp_path, monkeypatch)
+    first = build_harness(cfg)  # the first start seeds the OpenRouter provider, with no key anywhere
+    assert not first.bound
+    first.provider_store.update("openrouter", key="sk-or-stored0123456789")
+    assert ModelRoles.load(vault) is None
+    h = build_harness(cfg)
+    assert h.bound and h.provider.kind == "openrouter" and h.scorer is not None
+    assert h.settings()["key_set"] is True
+
+
+async def test_saving_a_key_on_a_provider_binds_an_unbound_harness(vault: Path, tmp_path: Path, monkeypatch):
+    cfg = _unbound_config(vault, tmp_path, monkeypatch)
+    h = Harness(config=cfg, provider=None, ledger=Ledger(vault), catalog=Catalog())
+    h.model_lister = ModelLister(transport=_transport())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(h)), base_url="http://localhost") as c:
+        assert (await c.get("/settings")).json()["key_set"] is False
+        r = await c.patch("/settings/providers/openrouter", json={"key": "sk-or-stored0123456789"})
+        assert r.status_code == 200, r.text
+        assert (await c.get("/settings")).json()["key_set"] is True
+    assert h.bound and h.scorer is not None

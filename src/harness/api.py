@@ -500,6 +500,17 @@ class Harness:
         self.summary_provider, self.openrouter_ref = b.summary_provider, b.openrouter_ref
         self.rebind(b.provider, b.scorer)
 
+    def bind_saved_key(self) -> bool:
+        """While unbound, try to run on the keys kept in providers.json: the saved model choices, else the
+        defaults. A key saved on a provider must bind without a key in the environment or a saved
+        harness.json. Says whether the harness is bound; a choice that cannot run leaves it unbound."""
+        if not self.bound:
+            try:
+                self.apply_models(self.model_roles())
+            except ProviderStoreError:
+                return False
+        return True
+
     def rebind(self, provider: Provider, scorer: Scorer | None) -> None:
         """Swap provider and scorer and rebuild everything that holds them.
         Bots, sessions, approvals, ledger, memory, the cache, the pause
@@ -1736,6 +1747,7 @@ def create_app(h: Harness) -> FastAPI:
         except ProviderStoreError as ex:
             raise HTTPException(404 if ex.args[0].startswith("no provider") else 422, str(ex)) from None
         h.model_lister.forget(provider_id)
+        h.bind_saved_key()  # the first key saved here starts the harness on it
         h.ledger.append(Kind.settings, "", "", event="provider_changed", provider=e.id, key_changed=body.key is not None or body.key_ref is not None,
                         **({"no_key": e.no_key} if body.no_key is not None else {}))
         return provider_out(e)
@@ -1789,6 +1801,7 @@ def create_app(h: Harness) -> FastAPI:
         known = {m.id: m for m in e.models}
         models = [listed.get(mid) or known.get(mid) or ModelInfo(id=mid, name=mid, kinds=guess_kinds(mid), guessed=True) for mid in wanted]
         h.provider_store.set_models(provider_id, models)
+        h.bind_saved_key()
         h.ledger.append(Kind.settings, "", "", event="models_enabled", provider=provider_id, enabled=len(models), dropped=dropped)
         return provider_out(e)
 
