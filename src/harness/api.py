@@ -766,7 +766,7 @@ class Harness:
         return f"Set [{slot_id}]."
 
     def start_helper(self, helper: Bot, owner: Bot, conv: Any, task: str, comments: list[dict[str, str]],
-                     addendum: str, protected: dict[str, Any] | None = None) -> Session | None:
+                     addendum: str, protected: dict[str, Any] | None = None, answers_to: str = "") -> Session | None:
         """Run `helper` on the newest design of the owner's conversation `conv`: it reads a worksheet of the
         slots it may change (the commented ones, or all of its kind) and places changes with the design tools;
         the harness applies them when the task ends well. None when there is no worksheet for this helper
@@ -779,7 +779,7 @@ class Harness:
         turn, sheet = found
         return self.start_task(helper, task, conversation_id=conv.id, owner=owner, comments=comments,
                                addendum=addendum, brief=f"{sheet}\n\n{studio_helpers.RULES}", part=turn,
-                               protected=protected)
+                               protected=protected, answers_to=answers_to)
 
     def _apply_part(self, bot: Bot, session: Session, turn: PartTurn | None) -> str:
         """At a helper turn's end: apply what it placed when the task ended well. Returns the sentence the
@@ -868,6 +868,7 @@ class Harness:
         protected: dict[str, Any] | None = None, pinned_skills: list[str] | None = None,
         comments: list[dict[str, str]] | None = None, addendum: str = "",
         owner: Bot | None = None, part: PartTurn | None = None, brief: str = "", recall_query: str = "",
+        answers_to: str = "",
     ) -> Session:
         """Run a task for a bot. `owner` is the conversation's owner when it is another bot: `bot` then acts
         in that conversation as a helper (no design folder or design system block, no turn note). It joins the bot's current conversation (or
@@ -883,7 +884,8 @@ class Harness:
         helper = owner is not None and owner.id != bot.id
         if in_conversation:
             conv, _ = self.conversations.begin((owner or bot).id, task, session_id=session.id, conv_id=conversation_id,
-                                               comments=comments, addendum=addendum, bot=bot.id if helper else "")
+                                               comments=comments, addendum=addendum, bot=bot.id if helper else "",
+                                               answers_to=answers_to)
             session.conversation_id = conv.id
             session.conversation_owner = conv.owner
             if not helper and self.turn_notes is not None and self.turn_notes.config.enabled:
@@ -2719,7 +2721,7 @@ def create_app(h: Harness) -> FastAPI:
             att, (slug, version, name) = newest
             scope = asked.comments if asked.comments and all(c.get("attachment_id") == att["id"] for c in asked.comments) else []
             block = design_studio.comment_block(f"designs/{slug}/{name}", version, scope) if scope else ""
-            return h.start_helper(helper, bot, conv, task, scope, block, protected=protected)
+            return h.start_helper(helper, bot, conv, task, scope, block, protected=protected, answers_to=body.answers_to)
         if h.scorer is None or body.route != "auto" or body.redo_of:
             return None
         chosen = await studio_help.pick(h.scorer, h.ledger, bot, helpers, task, comments)
@@ -2765,7 +2767,7 @@ def create_app(h: Harness) -> FastAPI:
                                    in_conversation=body.conversation,
                                    protected=body.protected.model_dump() if body.protected else None,
                                    comments=comments,
-                                   addendum=addendum)
+                                   addendum=addendum, answers_to=body.answers_to or "")
         except KeyError:
             raise HTTPException(404, "no such conversation") from None
         return {"session_id": session.id, "state": str(session.state)}
