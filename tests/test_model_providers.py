@@ -530,3 +530,42 @@ async def test_an_empty_key_is_422(client_without_key, vault: Path):
         r = await client_without_key.post("/settings/openrouter-key", json={"key": key})
         assert r.status_code == 422 and r.json()["detail"] == "key is empty"
     assert _providers_text(vault) == before
+
+
+# -- the optional dreaming role -----------------------------------------------
+
+
+def test_dream_role_round_trips_and_is_optional(vault: Path):
+    from src.harness.model_roles import OPTIONAL_ROLES, ROLE_LABELS, ROLES, Choice
+    r = ModelRoles(chat=Choice("p", "a"), summary=Choice("p", "b"), dream=Choice("local", "qwen"))
+    r.save(vault)
+    assert ModelRoles.load(vault).dream == Choice("local", "qwen")
+    assert ModelRoles.from_dict({"chat": {"provider": "p", "model": "a"}}).dream is None
+    assert ROLES["dream"] == "text" and ROLE_LABELS["dream"] == "Dreaming model" and OPTIONAL_ROLES == {"dream"}
+
+
+def test_roles_from_config_leaves_dream_unset(vault: Path, tmp_path: Path):
+    from src.harness.models_setup import roles_from_config
+    assert roles_from_config(HarnessConfig(vault_root=vault, shell_cwd=tmp_path)).dream is None
+
+
+def test_dream_provider_is_none_without_a_role_and_refuses_a_bad_choice(harness: Harness):
+    from src.harness.model_roles import Choice
+    from src.harness.models_setup import dream_provider
+    assert dream_provider(harness.provider_store, ModelRoles()) is None
+    with pytest.raises(ProviderStoreError, match="Dreaming model"):
+        dream_provider(harness.provider_store, ModelRoles(dream=Choice("openrouter", "not-enabled")))
+    p, model = dream_provider(harness.provider_store, ModelRoles(dream=Choice("openrouter", "scaledown/summarize")))
+    assert model == "scaledown/summarize" and p.kind == "openrouter"
+
+
+async def test_put_models_sets_checks_and_clears_dream(client):
+    good = {"provider": "openrouter", "model": "scaledown/summarize"}
+    r = await client.put("/settings/models", json={"dream": {"provider": "openrouter", "model": "not-enabled"}})
+    assert r.status_code == 422 and "Dreaming model" in r.json()["detail"]
+    assert (await client.get("/settings/models")).json()["dream"] is None
+    ok = await client.put("/settings/models", json={"dream": good})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["dream"] == good and ok.json()["labels"]["dream"] == "Dreaming model" and ok.json()["optional"] == ["dream"]
+    assert (await client.put("/settings/models", json={})).json()["dream"] == good  # kept
+    assert (await client.put("/settings/models", json={"clear_dream": True})).json()["dream"] is None

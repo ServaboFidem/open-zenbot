@@ -4,6 +4,7 @@ models enabled on the Model providers page. Kept in `vault-settings/harness.json
 - chat: bots' tasks (a text model)
 - summary: compaction, conversation folds, vault-doc summaries (a text model)
 - decision: the decider's scorer (a decision model on an OpenRouter provider; the decisions API is OpenRouter's)
+- dream: the background dreamer (a text model); optional, never filled from another role
 
 Image generation has its own entry in `vault-settings/tools.json` (Harness Tools)."""
 
@@ -18,8 +19,9 @@ from src.vault_settings import settings_dir
 
 FILE = "harness.json"
 BOT_FILE = "bot-models.json"  # bot id -> {provider, model}; the bot-prompts files are in git, provider ids are this vault's
-ROLES = {"chat": "text", "summary": "text", "decision": "decision"}
-ROLE_LABELS = {"chat": "Chat model", "summary": "Summary model", "decision": "Decision model"}
+ROLES = {"chat": "text", "summary": "text", "decision": "decision", "dream": "text"}
+ROLE_LABELS = {"chat": "Chat model", "summary": "Summary model", "decision": "Decision model", "dream": "Dreaming model"}
+OPTIONAL_ROLES = {"dream"}  # may stay unset; the harness runs without them
 
 
 @dataclass
@@ -36,6 +38,7 @@ class ModelRoles:
     chat: Choice | None = None
     summary: Choice | None = None
     decision: Choice | None = None
+    dream: Choice | None = None
     scorer: str = ""  # a scorer kind, or "" for none
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -53,6 +56,7 @@ class ModelRoles:
             return None
 
         return cls(chat=choice(d.get("chat")), summary=choice(d.get("summary")), decision=choice(d.get("decision")),
+                   dream=choice(d.get("dream")),
                    scorer=d.get("scorer") if isinstance(d.get("scorer"), str) else "")
 
     @classmethod

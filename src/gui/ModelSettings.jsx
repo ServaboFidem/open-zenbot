@@ -205,7 +205,8 @@ function ModelBrowser({ ctx, provider, reload }) {
 export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, openProviders }) {
   const { api, online, guard, notify, log } = ctx;
   const initial = r => ({ chat: choiceKey(r?.chat?.provider, r?.chat?.model), summary: choiceKey(r?.summary?.provider, r?.summary?.model),
-    decision: choiceKey(r?.decision?.provider, r?.decision?.model), scorer: r?.scorer || '' });
+    decision: choiceKey(r?.decision?.provider, r?.decision?.model), scorer: r?.scorer || '',
+    ...Object.fromEntries((r?.optional || []).map(o => [o, choiceKey(r?.[o]?.provider, r?.[o]?.model)])) });
   const [form, setForm] = useState(initial(roles));
   useEffect(() => setForm(initial(roles)), [roles]);
   if (!roles || !providers) return <>{status}<div className="resource-row"><p>{online ? 'Loading…' : 'The harness is offline.'}</p></div></>;
@@ -214,7 +215,8 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
   async function save(e) {
     e.preventDefault();
     const r = await guard(() => api.setModelRoles({ chat: parseChoice(form.chat), summary: parseChoice(form.summary),
-      decision: form.scorer ? parseChoice(form.decision) : null, scorer: form.scorer }));
+      decision: form.scorer ? parseChoice(form.decision) : null, scorer: form.scorer,
+      ...Object.fromEntries((roles.optional || []).map(o => form[o] ? [o, parseChoice(form[o])] : [`clear_${o}`, true])) }));
     if (r) { onSaved(r); notify('Harness settings saved'); log('Harness settings saved', `chat ${r.chat?.model} · summary ${r.summary?.model}${r.scorer ? ` · decision ${r.decision?.model}` : ''}`); }
   }
   const picker = (role, hint, disabled = false) => {
@@ -222,9 +224,11 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
     const groups = enabledByKind(providers, kind, role === 'decision' ? providers.filter(p => p.kind === 'openrouter').map(p => p.id) : null);
     const current = parseChoice(form[role]);
     const missing = current && !groups.some(g => g.provider === current.provider && g.models.some(m => m.id === current.model));
+    const optional = (roles.optional || []).includes(role);
     return <Field label={roles.labels[role]} hint={groups.length ? hint : undefined}>
       {groups.length ? <select aria-label={roles.labels[role]} value={form[role]} disabled={disabled || !online} onChange={e => setForm(f => ({ ...f, [role]: e.target.value }))}>
-        {(!form[role] || missing) && <option value={form[role]}>{missing ? `${current.model} (not enabled)` : 'Pick a model'}</option>}
+        {optional && <option value="">None</option>}
+        {(missing || (!optional && !form[role])) && <option value={form[role]}>{missing ? `${current.model} (not enabled)` : 'Pick a model'}</option>}
         {groups.map(g => <optgroup key={g.provider} label={g.name}>{g.models.map(m => <option key={m.id} value={choiceKey(g.provider, m.id)}>{modelLabel(m)}</option>)}</optgroup>)}
       </select> : <p className="field-hint">No {KIND_LABELS[kind]?.toLowerCase() || kind} models enabled{role === 'decision' ? ' on an OpenRouter provider' : ''}. <button type="button" className="text-link" onClick={openProviders}>Enable one on the Model providers page</button>.</p>}
     </Field>;

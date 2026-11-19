@@ -93,8 +93,8 @@ from src.providers.probe import ProbeJobs
 from src.providers.openrouter import OpenRouterHttp
 from src.providers.secrets import Secret
 from src.providers.store import KINDS as PROVIDER_KINDS, OPENROUTER_BASE, PRESETS as PROVIDER_PRESETS, ProviderStore, ProviderStoreError
-from .model_roles import ROLE_LABELS, ROLES, Choice, ModelRoles, load_bot_models, save_bot_models
-from .models_setup import build as build_models, check_choice, default_models, make_provider, roles_from_config
+from .model_roles import OPTIONAL_ROLES, ROLE_LABELS, ROLES, Choice, ModelRoles, load_bot_models, save_bot_models
+from .models_setup import build as build_models, check_choice, default_models, dream_provider, make_provider, roles_from_config
 from .stubs import InjectAllSelector
 from src.rooms.orchestrator import Orchestrator
 from src.rooms.room import Attachment, RoomConfig, RoomError, RoomService, workspace_file
@@ -1098,6 +1098,8 @@ class ModelRolesIn(BaseModel):
     chat: ChoiceIn | None = None
     summary: ChoiceIn | None = None
     decision: ChoiceIn | None = None
+    dream: ChoiceIn | None = None  # None keeps it
+    clear_dream: bool = False
     scorer: str | None = None  # "" for none
 
 
@@ -1866,7 +1868,7 @@ def create_app(h: Harness) -> FastAPI:
     # which provider and model the harness uses for each job
 
     def models_out() -> dict[str, Any]:
-        return {**h.model_roles().to_dict(), "roles": ROLES, "labels": ROLE_LABELS, "scorer_kinds": scorers.kinds(),
+        return {**h.model_roles().to_dict(), "roles": ROLES, "labels": ROLE_LABELS, "optional": sorted(OPTIONAL_ROLES), "scorer_kinds": scorers.kinds(),
                 "bound": h.bound}
 
     @app.get("/settings/models")
@@ -1878,8 +1880,10 @@ def create_app(h: Harness) -> FastAPI:
         cur = h.model_roles()
         pick = lambda v, old: old if v is None else Choice(v.provider, v.model)  # noqa: E731
         roles = ModelRoles(chat=pick(body.chat, cur.chat), summary=pick(body.summary, cur.summary), decision=pick(body.decision, cur.decision),
+                           dream=None if body.clear_dream else pick(body.dream, cur.dream),
                            scorer=cur.scorer if body.scorer is None else body.scorer)
         try:
+            dream_provider(h.provider_store, roles)  # the dream model is checked, never bound into the harness
             h.apply_models(roles)
         except ProviderStoreError as ex:
             raise HTTPException(422, str(ex)) from None

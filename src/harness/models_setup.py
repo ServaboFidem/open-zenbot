@@ -38,6 +38,15 @@ def roles_from_config(c: HarnessConfig, provider_id: str = "openrouter") -> Mode
                       decision=Choice(provider_id, c.decision_model or DEFAULT_DECISION), scorer=c.scorer_kind or "")
 
 
+def dream_provider(store: ProviderStore, roles: ModelRoles) -> tuple[Provider, str] | None:
+    """The dreamer's provider and model, or None when no Dreaming model is chosen (it is never filled from
+    another role). Raises ProviderStoreError when the choice cannot run."""
+    if roles.dream is None:
+        return None
+    e = check_choice(store, roles.dream, "text", ROLE_LABELS["dream"])
+    return make_provider(store, e, roles.dream.model), roles.dream.model
+
+
 @dataclass
 class Bound:
     provider: Provider
