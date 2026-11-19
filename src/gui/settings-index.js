@@ -37,6 +37,11 @@ export const SECTIONS = [
     'Decider scorer: chooses skills and MCP servers per task, and watches long tasks. Without one, every skill and tool is offered.',
     "Decision model: the scorer's model. Decision models come from OpenRouter.",
   ]),
+  section('harness', 'Dreaming', [
+    'Learn from my conversations while the computer is idle',
+    "Only the messages you typed are read, never a bot's reply. With a hosted model chosen, those messages are sent to that provider; a local model keeps them on this computer.",
+    'Dreaming model', 'Start after', 'minutes idle', 'Dream now', 'What was learned', 'Forget', 'learn', 'memory', 'idle', 'conversations', 'local model',
+  ]),
   section('providers', 'Model providers', ["Each provider's key lives in the harness's providers.json, readable by you only. Enable the models the harness may use; the Harness settings and Harness Tools pages pick from them.", 'Test a provider', 'Refresh the model list', 'OpenRouter', 'OpenAI-compatible']),
   section('providers', 'Add a provider', [
     'Preconfigured provider', 'Hosted', 'Runs on your machine', 'Name', 'Kind', 'Provider kind',

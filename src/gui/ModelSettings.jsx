@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, ProgressBar, Spinner } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
+import { DreamSection } from './DreamSection.jsx';
 import { KIND_LABELS, capabilityTags, choiceKey, probeReducer, probeStart, enabledByKind, filterModels, fromPreset, keyLabel, modelLabel, parseChoice, presetOf } from './models.js';
 
 const SHOWN = 150;  // rows a model list renders at once; a search narrows the rest
@@ -246,6 +247,7 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
       {form.scorer && picker('decision', "The scorer's model. Decision models come from OpenRouter.")}
       <div className="od-row"><div className="od-fill"/>{dirty && <Button appearance="subtle" onClick={() => setForm(initial(roles))}>Discard</Button>}<Button appearance="primary" type="submit" disabled={!online || !dirty || !form.chat || !form.summary || (form.scorer && !form.decision)}>Save</Button></div>
     </form>
+    <DreamSection ctx={ctx} providers={providers} roles={roles} onSaved={onSaved} openProviders={openProviders}/>
   </>;
 }
 
