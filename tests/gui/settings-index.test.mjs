@@ -120,3 +120,8 @@ test('Event discovery is found by Discover, Your Recommendations and All Events'
   for (const w of ['Discover', 'Your Recommendations', 'All Events']) assert.ok(s.words.includes(w), w);
   for (const q of ['your recommendations', 'all events']) assert.ok(searchSettings(q).some(m => m.section === 'Event discovery'), q);
 });
+
+test('Dreaming is found under Harness settings by its words', () => {
+  for (const q of ['dreaming', 'idle', 'local model', 'learn']) assert.ok(searchSettings(q).some(m => m.panel === 'harness' && m.section === 'Dreaming'), q);
+  assert.equal(searchSettings('dreaming')[0].anchor, 'settings-harness-dreaming');
+});

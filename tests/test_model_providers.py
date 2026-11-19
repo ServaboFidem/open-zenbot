@@ -532,6 +532,78 @@ async def test_an_empty_key_is_422(client_without_key, vault: Path):
     assert _providers_text(vault) == before
 
 
+# -- the optional dreaming role -----------------------------------------------
+
+
+def test_dream_role_round_trips_and_is_optional(vault: Path):
+    from src.harness.model_roles import OPTIONAL_ROLES, ROLE_LABELS, ROLES, Choice
+    r = ModelRoles(chat=Choice("p", "a"), summary=Choice("p", "b"), dream=Choice("local", "qwen"))
+    r.save(vault)
+    assert ModelRoles.load(vault).dream == Choice("local", "qwen")
+    assert ModelRoles.from_dict({"chat": {"provider": "p", "model": "a"}}).dream is None
+    assert ROLES["dream"] == "text" and ROLE_LABELS["dream"] == "Dreaming model" and OPTIONAL_ROLES == {"dream"}
+
+
+def test_roles_from_config_leaves_dream_unset(vault: Path, tmp_path: Path):
+    from src.harness.models_setup import roles_from_config
+    assert roles_from_config(HarnessConfig(vault_root=vault, shell_cwd=tmp_path)).dream is None
+
+
+def test_dream_provider_is_none_without_a_role_and_refuses_a_bad_choice(harness: Harness):
+    from src.harness.model_roles import Choice
+    from src.harness.models_setup import dream_provider
+    assert dream_provider(harness.provider_store, ModelRoles()) is None
+    with pytest.raises(ProviderStoreError, match="Dreaming model"):
+        dream_provider(harness.provider_store, ModelRoles(dream=Choice("openrouter", "not-enabled")))
+    p, model = dream_provider(harness.provider_store, ModelRoles(dream=Choice("openrouter", "scaledown/summarize")))
+    assert model == "scaledown/summarize" and p.kind == "openrouter"
+
+
+async def test_put_models_sets_checks_and_clears_dream(client):
+    good = {"provider": "openrouter", "model": "scaledown/summarize"}
+    r = await client.put("/settings/models", json={"dream": {"provider": "openrouter", "model": "not-enabled"}})
+    assert r.status_code == 422 and "Dreaming model" in r.json()["detail"]
+    assert (await client.get("/settings/models")).json()["dream"] is None
+    ok = await client.put("/settings/models", json={"dream": good})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["dream"] == good and ok.json()["labels"]["dream"] == "Dreaming model" and ok.json()["optional"] == ["dream"]
+    assert (await client.put("/settings/models", json={})).json()["dream"] == good  # kept
+    assert (await client.put("/settings/models", json={"clear_dream": True})).json()["dream"] is None
+
+
+async def test_a_changed_dream_role_gives_every_conversation_a_fresh_try(client, harness: Harness):
+    import time
+
+    from src.memory.dream import Mark
+    other = harness.model_roles().chat.model  # another enabled text model
+    d = harness.dreamer
+    for t in (1.0, 2.0, 3.0):
+        d.marks.fail("c1", now=t, seen=2)
+    d._paused_until, d._error = time.time() + 300, "provider"
+    assert (await client.put("/settings/models", json={"dream": {"provider": "openrouter", "model": "scaledown/summarize"}})).status_code == 200
+    assert d.marks.get("c1") == Mark(seen=2) and not d._paused() and d.status()["error"] == ""
+    d.marks.fail("c1", now=time.time(), seen=2)
+    assert (await client.put("/settings/models", json={})).status_code == 200  # the same role: nothing reset
+    assert (await client.put("/settings/models", json={"dream": {"provider": "openrouter", "model": "scaledown/summarize"}})).status_code == 200
+    assert d.marks.get("c1").attempts == 1
+    assert (await client.put("/settings/models", json={"dream": {"provider": "openrouter", "model": other}})).status_code == 200
+    assert d.marks.get("c1").attempts == 0
+    d.marks.fail("c1", now=time.time(), seen=2)
+    assert (await client.put("/settings/models", json={"clear_dream": True})).status_code == 200
+    assert d.marks.get("c1").attempts == 0
+
+
+def test_the_dream_provider_waits_ten_minutes_and_chat_keeps_its_timeout(harness: Harness):
+    from src.harness.model_roles import Choice
+    from src.harness.models_setup import DREAM_TIMEOUT_S, build, dream_provider
+    roles = harness.model_roles()
+    roles.dream = Choice("openrouter", "scaledown/summarize")
+    p, _ = dream_provider(harness.provider_store, roles)
+    assert DREAM_TIMEOUT_S == 600.0 and p.http._client.timeout.read == 600.0
+    bound = build(harness.provider_store, roles)
+    assert bound.provider.http._client.timeout.read == 120.0
+
+
 # -- a key kept only in providers.json (no key in the environment, no harness.json) --
 
 

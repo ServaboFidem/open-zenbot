@@ -10,6 +10,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import base64
 import binascii
+import hashlib
 import json
 import re
 import secrets
@@ -34,6 +35,7 @@ from pydantic import BaseModel, Field
 from src.decider.fit import FitConfig, FitEngine
 from src.decider.interface import BandConfig, ConfirmState, Scorer
 from src.decider.router import CatalogRouter, RouterConfig
+from src.memory.dream import DreamMarks, Dreamer
 from src.memory.exclusion import ExclusionError, exclusion
 from src.memory.graph import SHARED, MemoryGraph, SessionCache, Tier, make_store
 from src.memory.import_dir import DirImporter, ScanStore, scan_dir, scan_file, unchanged_in
@@ -72,7 +74,8 @@ from src.vault_settings import settings_dir
 from src.providers import tracing as llm_tracing
 from .onboarding import ASSISTANT_ID, NEW_TOPICS, TOPICS, Interviewer
 from .config import HarnessConfig
-from .conversations import ConversationStore, Conversations
+from .conversations import Conversation, ConversationStore, Conversations
+from .dream_routes import dream_router
 from .loop import Session, SessionState, TaskLoop
 from .scheduler import Routine, RoutineError, RoutineStore, Schedule, Scheduler, next_run, parse_schedule
 from .media import MediaConsent, MediaProxy, MediaRefused, trusted_hosts
@@ -93,8 +96,8 @@ from src.providers.probe import ProbeJobs
 from src.providers.openrouter import OpenRouterHttp
 from src.providers.secrets import Secret
 from src.providers.store import KINDS as PROVIDER_KINDS, OPENROUTER_BASE, PRESETS as PROVIDER_PRESETS, ProviderStore, ProviderStoreError
-from .model_roles import ROLE_LABELS, ROLES, Choice, ModelRoles, load_bot_models, save_bot_models
-from .models_setup import build as build_models, check_choice, default_models, make_provider, roles_from_config
+from .model_roles import OPTIONAL_ROLES, ROLE_LABELS, ROLES, Choice, ModelRoles, load_bot_models, save_bot_models
+from .models_setup import build as build_models, check_choice, default_models, dream_provider, make_provider, roles_from_config
 from .stubs import InjectAllSelector
 from src.rooms.orchestrator import Orchestrator
 from src.rooms.room import Attachment, RoomConfig, RoomError, RoomService, workspace_file
@@ -189,6 +192,7 @@ class Harness:
     music: MusicService | None = None  # music discovery: settings, Discogs token, atlas, digests, the /music routes
     calendar: CalendarService | None = None  # the built-in calendar: its store, Google sync, the /calendar routes
     discover: Discovery | None = None  # event discovery: the Eventbrite pool, the scout's tools and routine, the digests
+    dreamer: Dreamer | None = None  # dreaming: learns facts from the user's own messages while idle; built once, a rebind keeps it
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
     provider_store: ProviderStore | None = None  # vault-settings/providers.json: providers, their keys, their enabled models
     model_lister: ModelLister = field(default_factory=ModelLister)
@@ -196,6 +200,7 @@ class Harness:
     openrouter_ref: str | None = None  # the key ref for what only OpenRouter serves (Hindsight's LLM); None: config.key_ref
     bot_models: dict[str, Choice] | None = None  # bot id -> its own model (Edit bot), from vault-settings/bot-models.json
     _bot_providers: dict[str, tuple[tuple, Provider]] = field(default_factory=dict, init=False, repr=False)  # provider id -> (its settings, a client)
+    _dream_gen: tuple[tuple, Generator] | None = field(default=None, init=False, repr=False)  # (the dream choice's settings, its generator)
     media: MediaProxy | None = None  # remote images, video and PDFs for the chat; trusted hosts at once, others on a click
     task_attachments: dict[str, list[Attachment]] = field(default_factory=dict)  # session id -> files attached in a one-to-one task
     part_turns: dict[str, PartTurn] = field(default_factory=dict)  # session id -> a helper's turn on a design: its worksheet and changes
@@ -344,6 +349,11 @@ class Harness:
             self.discover.tools, self.discover.catalog = self.tools, self.catalog
             self.discover.bot_lookup = lambda bot_id: self.bots.get(bot_id)
         self.discover.register()  # the scout's tools appear only while discovery is on with a place set
+        if self.dreamer is None:  # once: a rebind keeps it, and what it asks for is read from the harness at call time
+            self.dreamer = Dreamer(vault_root=c.vault_root, marks=DreamMarks(ledger_path_for(c.vault_root) / "dreams.json"),
+                                   ledger=self.ledger, conversations=self._dream_conversations,
+                                   generator=self._dream_generator, profile=lambda: self.profile,
+                                   queue=lambda: self.extract_queue, busy=self.busy)
         if self.scorer is not None:
             self.orchestrator = self.orchestrator or Orchestrator(
                 self.scorer, self.rooms, self.bots, self.ledger, Generator(summaries, model=c.summary_model).room_topic, ASSISTANT_ID)
@@ -471,6 +481,44 @@ class Harness:
             self._bot_providers[e.id] = hit
         return hit[1], choice.model
 
+    def _dream_generator(self) -> Generator | None:
+        """The dreaming model, or None with no Dreaming model chosen (never filled from another role); raises
+        ProviderStoreError when the choice cannot run. The dreamer asks for it often (its rules are checked every
+        few seconds during a call), so the client is built once and again only when the choice, its provider's
+        settings or its stored key change."""
+        roles = self.model_roles()
+        choice = roles.dream
+        if choice is None:
+            self._dream_gen = None
+            return None
+        e = check_choice(self.provider_store, choice, "text", ROLE_LABELS["dream"])
+        key = hashlib.sha256(e.key.encode()).hexdigest() if e.key else ""  # a changed key, without keeping it here
+        sig = (choice.provider, choice.model, e.kind, e.base_url, self.provider_store.key_ref(e.id), key, e.no_key)
+        if self._dream_gen is None or self._dream_gen[0] != sig:
+            provider, model = dream_provider(self.provider_store, roles)
+            self._dream_gen = (sig, Generator(provider, model=model))
+        return self._dream_gen[1]
+
+    def _dream_conversations(self) -> list[Conversation]:
+        """The one-to-one conversations dreaming may read."""
+        return [c for c in self.conversations.all() if c.kind == "bot"] if self.conversations is not None else []
+
+    def busy(self) -> bool:
+        """Something is under way that dreaming waits for: a task, room turn or routine run (each has a session),
+        a task still writing its exchange after its session ended, a room turn waiting for the floor, an import, a
+        delegation, or extraction work in the queue."""
+        if any(s.state not in _ENDED for s in self.sessions.values()):
+            return True
+        if any(not t.done() for t in self.tasks.values()):
+            return True
+        if self.rooms is not None and self.rooms.turns_running():
+            return True
+        if self.importer is not None and self.importer.running() is not None:
+            return True
+        if self.delegator is not None and self.delegator.runner.live:
+            return True
+        return self.extract_queue is not None and bool(self.extract_queue.pending())
+
     @property
     def bound(self) -> bool:
         return self.provider.kind != "unbound"
@@ -522,7 +570,9 @@ class Harness:
         the tools built here re-register onto it against the rebuilt services."""
         self.provider, self.scorer = provider, scorer
         self._bot_providers.clear()  # a cached bot provider holds the key it was built with
+        self._dream_gen = None  # and so does the dreaming client: a key replaced in the environment arrives here
         rooms, fits, pending = self.rooms.rooms, (self.fit._suggestions if self.fit else {}), self.recall.pending
+        room_tasks = self.rooms._tasks  # turns still running on the old service stay visible to busy()
         interviews, interview_bots = self.interviews.interviews, self.interviews._bots
         if self.importer is not None:
             self.importer.stop_all("provider rebound")
@@ -536,6 +586,7 @@ class Harness:
             store.rebind_key(self.openrouter_ref or self.config.key_ref)
         self._rewarm_after_bind()
         self.rooms.rooms, self.recall.pending = rooms, pending
+        self.rooms._tasks = room_tasks
         self.interviews.interviews, self.interviews._bots = interviews, interview_bots
         if self.fit:
             self.fit._suggestions = fits
@@ -777,7 +828,7 @@ class Harness:
         return f"Set [{slot_id}]."
 
     def start_helper(self, helper: Bot, owner: Bot, conv: Any, task: str, comments: list[dict[str, str]],
-                     addendum: str, protected: dict[str, Any] | None = None) -> Session | None:
+                     addendum: str, protected: dict[str, Any] | None = None, answers_to: str = "") -> Session | None:
         """Run `helper` on the newest design of the owner's conversation `conv`: it reads a worksheet of the
         slots it may change (the commented ones, or all of its kind) and places changes with the design tools;
         the harness applies them when the task ends well. None when there is no worksheet for this helper
@@ -790,7 +841,7 @@ class Harness:
         turn, sheet = found
         return self.start_task(helper, task, conversation_id=conv.id, owner=owner, comments=comments,
                                addendum=addendum, brief=f"{sheet}\n\n{studio_helpers.RULES}", part=turn,
-                               protected=protected)
+                               protected=protected, answers_to=answers_to)
 
     def _apply_part(self, bot: Bot, session: Session, turn: PartTurn | None) -> str:
         """At a helper turn's end: apply what it placed when the task ended well. Returns the sentence the
@@ -879,6 +930,7 @@ class Harness:
         protected: dict[str, Any] | None = None, pinned_skills: list[str] | None = None,
         comments: list[dict[str, str]] | None = None, addendum: str = "",
         owner: Bot | None = None, part: PartTurn | None = None, brief: str = "", recall_query: str = "",
+        answers_to: str = "",
     ) -> Session:
         """Run a task for a bot. `owner` is the conversation's owner when it is another bot: `bot` then acts
         in that conversation as a helper (no design folder or design system block, no turn note). It joins the bot's current conversation (or
@@ -894,7 +946,8 @@ class Harness:
         helper = owner is not None and owner.id != bot.id
         if in_conversation:
             conv, _ = self.conversations.begin((owner or bot).id, task, session_id=session.id, conv_id=conversation_id,
-                                               comments=comments, addendum=addendum, bot=bot.id if helper else "")
+                                               comments=comments, addendum=addendum, bot=bot.id if helper else "",
+                                               answers_to=answers_to)
             session.conversation_id = conv.id
             session.conversation_owner = conv.owner
             if not helper and self.turn_notes is not None and self.turn_notes.config.enabled:
@@ -1109,6 +1162,8 @@ class ModelRolesIn(BaseModel):
     chat: ChoiceIn | None = None
     summary: ChoiceIn | None = None
     decision: ChoiceIn | None = None
+    dream: ChoiceIn | None = None  # None keeps it
+    clear_dream: bool = False
     scorer: str | None = None  # "" for none
 
 
@@ -1440,7 +1495,7 @@ def create_app(h: Harness) -> FastAPI:
     scheduler.verifiers[EVENTS_MANAGED_BY] = h.discover.run_failure  # a scout run that saved no digest failed
     h.music.routines, h.music.scheduler = routines, scheduler
     h.discover.routines, h.discover.scheduler = routines, scheduler
-    app_routers = [music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h)]
+    app_routers = [music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h), dream_router(h)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -1480,6 +1535,7 @@ def create_app(h: Harness) -> FastAPI:
         h.calendar.spawn(h.calendar.start())  # a sync now and every 15 minutes, while Google is connected
         stop = asyncio.Event()
         extracting = asyncio.create_task(h.extract_queue.run(stop)) if h.extract_queue else None
+        dreaming = asyncio.create_task(h.dreamer.run(stop))  # a pass when the machine is idle and nothing is under way
         try:
             yield
         finally:
@@ -1488,8 +1544,11 @@ def create_app(h: Harness) -> FastAPI:
             await h.delegator.stop_all()  # every hand-off in flight ends, its tree killed and its end logged
             scheduler.stop()
             await scheduling
+            stop.set()
+            # a dream's model call in flight is cancelled and its conversation's mark stays; a write in flight finishes
+            await h.dreamer.close()
+            await dreaming
             if extracting is not None:  # the store in flight finishes; the rest of its job runs again at the next start
-                stop.set()
                 await h.extract_queue.shutdown(extracting)
             await h.mcps.close()
             await h.music.close()
@@ -1879,7 +1938,7 @@ def create_app(h: Harness) -> FastAPI:
     # which provider and model the harness uses for each job
 
     def models_out() -> dict[str, Any]:
-        return {**h.model_roles().to_dict(), "roles": ROLES, "labels": ROLE_LABELS, "scorer_kinds": scorers.kinds(),
+        return {**h.model_roles().to_dict(), "roles": ROLES, "labels": ROLE_LABELS, "optional": sorted(OPTIONAL_ROLES), "scorer_kinds": scorers.kinds(),
                 "bound": h.bound}
 
     @app.get("/settings/models")
@@ -1891,12 +1950,16 @@ def create_app(h: Harness) -> FastAPI:
         cur = h.model_roles()
         pick = lambda v, old: old if v is None else Choice(v.provider, v.model)  # noqa: E731
         roles = ModelRoles(chat=pick(body.chat, cur.chat), summary=pick(body.summary, cur.summary), decision=pick(body.decision, cur.decision),
+                           dream=None if body.clear_dream else pick(body.dream, cur.dream),
                            scorer=cur.scorer if body.scorer is None else body.scorer)
         try:
+            dream_provider(h.provider_store, roles)  # the dream model is checked, never bound into the harness
             h.apply_models(roles)
         except ProviderStoreError as ex:
             raise HTTPException(422, str(ex)) from None
         roles.save(h.config.vault_root)
+        if roles.dream != cur.dream and h.dreamer is not None:  # a new dreaming model (or none) deserves a fresh try
+            h.dreamer.reset_attempts()
         h.ledger.append(Kind.settings, "", "", event="models", **{k: v for k, v in roles.to_dict().items()})
         return models_out()
 
@@ -2728,7 +2791,7 @@ def create_app(h: Harness) -> FastAPI:
             att, (slug, version, name) = newest
             scope = asked.comments if asked.comments and all(c.get("attachment_id") == att["id"] for c in asked.comments) else []
             block = design_studio.comment_block(f"designs/{slug}/{name}", version, scope) if scope else ""
-            return h.start_helper(helper, bot, conv, task, scope, block, protected=protected)
+            return h.start_helper(helper, bot, conv, task, scope, block, protected=protected, answers_to=body.answers_to)
         if h.scorer is None or body.route != "auto" or body.redo_of:
             return None
         chosen = await studio_help.pick(h.scorer, h.ledger, bot, helpers, task, comments)
@@ -2774,7 +2837,7 @@ def create_app(h: Harness) -> FastAPI:
                                    in_conversation=body.conversation,
                                    protected=body.protected.model_dump() if body.protected else None,
                                    comments=comments,
-                                   addendum=addendum)
+                                   addendum=addendum, answers_to=body.answers_to or "")
         except KeyError:
             raise HTTPException(404, "no such conversation") from None
         return {"session_id": session.id, "state": str(session.state)}

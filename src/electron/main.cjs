@@ -1,9 +1,10 @@
-const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification, powerMonitor } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { saveMedia } = require('./save-media.cjs');
 const { loadEnvFile } = require('./env-file.cjs');
 const { createArrival } = require('./arrival.cjs');
+const { createIdleReport } = require('./idle-report.cjs');
 const { applySavedDsn } = require('./tracing-settings.cjs');
 const { allowFrameNavigation } = require('./frame-nav.cjs');
 const { createUpdateChecker } = require('./update-check.cjs');
@@ -142,6 +143,21 @@ function startArrivalPolling() {
   });
   arrival.poll();
   setInterval(() => arrival.poll(), 60_000);
+  startIdleReport();
+}
+// The computer's idle time goes to the harness every 60 s, and at once when the user comes back (checked every 5 s),
+// so it knows when it may dream (POST /dream/idle).
+let idleReport = null;
+function startIdleReport() {
+  if (idleReport) return;
+  const base = harnessBase();
+  idleReport = createIdleReport({
+    idleSeconds: () => powerMonitor.getSystemIdleTime(),
+    post: async (p, body) => {
+      await net.fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    },
+  });
+  idleReport.start();
 }
 app.whenReady().then(() => {
   protocol.handle('app', serveApp);
@@ -174,4 +190,5 @@ app.whenReady().then(() => {
   startArrivalPolling();
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
 });
+app.on('before-quit', () => { if (idleReport) idleReport.stop(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

@@ -57,6 +57,7 @@ class Exchange:
     addendum: str = ""  # the comment block the bot read after the user's text; the GUI never gets it
     bot: str = ""  # the bot that answered, when it is not the conversation's owner
     set_aside: bool = False  # a helper's change the user sent back to the owner
+    answers_to: str = ""  # the session id of the reply whose question form this message answers
 
 
 def reply_text(ex: Exchange) -> str:
@@ -203,6 +204,11 @@ class Conversations:
     def get(self, conv_id: str) -> Conversation | None:
         return self._by_id.get(conv_id)
 
+    def all(self) -> list[Conversation]:
+        """Every conversation, as a list of its own: a caller that awaits while it walks them is not upset by one
+        started meanwhile."""
+        return list(self._by_id.values())
+
     def for_owner(self, owner: str) -> list[Conversation]:
         # newest first; ties (same second) fall to the later-created one: reversed insertion order, sort is stable
         mine = [c for c in reversed(self._by_id.values()) if c.owner == owner]
@@ -240,6 +246,7 @@ class Conversations:
     def begin(
         self, owner: str, user_text: str, session_id: str = "", conv_id: str | None = None,
         comments: list[dict[str, str]] | None = None, addendum: str = "", bot: str = "",
+        answers_to: str = "",
     ) -> tuple[Conversation, Exchange]:
         c = self.get(conv_id) if conv_id else self.current(owner)
         if conv_id and (c is None or c.owner != owner):
@@ -249,7 +256,7 @@ class Conversations:
         if not c.title:
             c.title = title_of(user_text)
         ex = Exchange(user=user_text, session_id=session_id, comments=list(comments or []), addendum=addendum,
-                      bot=bot)
+                      bot=bot, answers_to=answers_to)
         c.exchanges.append(ex)
         self._touch(c)
         return c, ex

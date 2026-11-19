@@ -4,6 +4,7 @@
 // has no entry and reaches the search as `extra` instead.
 
 import { APP_STEPS } from './calendar-settings.js';
+import { PRIVACY } from './dream.js';
 
 export const PANELS = [
   { id: 'harness', name: 'Harness settings', description: 'The models your bots, summaries and the decider run on.' },
@@ -36,6 +37,11 @@ export const SECTIONS = [
     'Summary model: compacts long tasks, folds old conversation turns, and summarizes imported documents.',
     'Decider scorer: chooses skills and MCP servers per task, and watches long tasks. Without one, every skill and tool is offered.',
     "Decision model: the scorer's model. Decision models come from OpenRouter.",
+  ]),
+  section('harness', 'Dreaming', [
+    'Learn from my conversations while the computer is idle',
+    PRIVACY,
+    'Dreaming model', 'Start after', 'minutes idle', 'Dream now', 'What was learned', 'Forget', 'learn', 'memory', 'idle', 'conversations', 'local model',
   ]),
   section('providers', 'Model providers', ["Each provider's key lives in the harness's providers.json, readable by you only. Enable the models the harness may use; the Harness settings and Harness Tools pages pick from them.", 'Test a provider', 'Refresh the model list', 'OpenRouter', 'OpenAI-compatible']),
   section('providers', 'Add a provider', [

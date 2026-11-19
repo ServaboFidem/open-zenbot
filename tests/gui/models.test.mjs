@@ -1,7 +1,7 @@
 // Settings' model helpers: picker values, labels, grouping by kind, filtering a provider's list.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { KIND_LABELS, PROBE_LABELS, capabilityTags, probeReducer, probeStart, choiceKey, defaultModelLabel, enabledByKind, filterModels, keyLabel, modelLabel, parseChoice } from '../../src/gui/models.js';
+import { KIND_LABELS, PROBE_LABELS, capabilityTags, probeReducer, probeStart, choiceKey, defaultModelLabel, enabledByKind, filterModels, keepEdits, keyLabel, modelLabel, parseChoice } from '../../src/gui/models.js';
 
 const providers = [
   { id: 'openrouter', name: 'OpenRouter', kind: 'openrouter', models: [
@@ -108,4 +108,12 @@ test('a skipped test counts as finished on the progress bar', () => {
   st = probeReducer(st, { kind: 'step', step: 'embeddings', status: 'pass' });
   st = probeReducer(st, { kind: 'step', step: 'tools', status: 'skip' });
   assert.equal(st.done, 3); assert.equal(st.steps[2].status, 'skip');
+});
+
+test('a save elsewhere keeps the picks not yet saved and takes what the save changed', () => {
+  const saved = { chat: 'or::a', summary: 'or::b', scorer: 'x', dream: '' };
+  const form = { ...saved, chat: 'or::c' };  // chat picked, not saved
+  assert.deepEqual(keepEdits(form, saved, { ...saved, dream: 'local::q' }), { ...saved, chat: 'or::c', dream: 'local::q' });
+  assert.deepEqual(keepEdits(form, saved, { ...saved, chat: 'or::d' }), { ...saved, chat: 'or::d' });  // the saved value moved: it wins
+  assert.deepEqual(keepEdits({ chat: '', summary: '' }, { chat: '', summary: '' }, saved), saved);  // the first load, a new field included
 });
