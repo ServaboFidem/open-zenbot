@@ -1,22 +1,39 @@
-"""What a dream reads from a conversation: the user's own messages, and only those.
+"""Dreaming: learning lasting facts from the user's own messages while the computer is idle.
 
-Nothing but `Exchange.user` is ever returned here: not the reply, the addendum, comments, attachments,
-the summary or the note."""
+What a dream reads from a conversation is the user's own messages, and only those: nothing but
+`Exchange.user` is ever returned here, not the reply, the addendum, comments, attachments, the summary
+or the note. `Dreamer` runs a pass over the quiet conversations, one at a time, under the rules of
+"When it runs" in the design; a model call in flight may be cancelled, a store write never is."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
+import time
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import httpx
+
+from ..providers.interface import ProviderUnavailable
+from ..providers.store import ProviderStoreError
 from ..vault_settings import settings_dir
+from .exclusion import ExclusionError
+from .extract_queue import remember_shared
+from .graph import SHARED, Tier
+from .ledger import Kind
+from .profile import OwnerUnknown
 
 if TYPE_CHECKING:  # the harness imports this package, so the import is for types only
+    from ..generation.generator import Generator
     from ..harness.conversations import Conversation
+    from .extract_queue import ExtractQueue
+    from .profile import ProfileMemory
 
 MESSAGE_MAX = 4000
 BATCH_MAX = 12000
@@ -27,6 +44,11 @@ RETRY_WAITS = (600.0, 3600.0)  # seconds to wait after the 1st and 2nd failed at
 MAX_ATTEMPTS = 3
 FACTS_MAX = 8
 FACT_MAX = 300
+REPORT_FRESH_S = 150.0
+UNREACHABLE_WAIT_S = 600.0
+TICK_S = 30.0  # how often the loop looks
+GUARD_S = 2.0  # how often a model call in flight re-checks the rules
+BASE_STORES = (("personal", "facts about the person"), ("world", "general knowledge"))
 
 
 def _replace_file(path: Path, data: dict[str, Any]) -> None:
@@ -79,6 +101,22 @@ class Mark:
     seen: int = 0
 
 
+def _whole(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _mark_of(v: Any) -> Mark:
+    """A stored mark, every value of the right type, else TypeError."""
+    if not isinstance(v, dict):
+        raise TypeError("a mark is not an object")
+    m = Mark(**v)
+    if not (_whole(m.read) and _whole(m.attempts) and _whole(m.seen)
+            and isinstance(m.not_before, (int, float)) and not isinstance(m.not_before, bool)):
+        raise TypeError("a mark holds a value of the wrong type")
+    m.not_before = float(m.not_before)
+    return m
+
+
 class DreamMarks:
     """Per-conversation progress, kept in `<vault>-ledger/dreams.json` (tmp-then-replace on every change)."""
 
@@ -97,10 +135,15 @@ class DreamMarks:
             return
         try:
             d = json.loads(text)
-            marks = {k: Mark(**v) for k, v in d["conversations"].items()}
-            learned, at = int(d["learned"]), str(d["last_dream_at"])
+            marks = {k: _mark_of(v) for k, v in d["conversations"].items()}
+            learned, at = d["learned"], d["last_dream_at"]
+            if not _whole(learned) or not isinstance(at, str):
+                raise TypeError("learned or last_dream_at has the wrong type")
         except (ValueError, KeyError, TypeError, AttributeError):
-            self.path.replace(self.path.with_name(self.path.name + ".bad"))  # keep the damaged file recoverable
+            try:
+                self.path.replace(self.path.with_name(self.path.name + ".bad"))  # keep the damaged file recoverable
+            except OSError:
+                pass  # could not move it: start empty all the same; the next save replaces it
             return
         self._marks, self.learned, self.last_dream_at = marks, learned, at
 
@@ -219,3 +262,336 @@ def clean_facts(raw: Any, stores: set[str], known: set[str]) -> list[DreamFact]:
         if len(out) == FACTS_MAX:
             break
     return out
+
+
+def error_kind(exc: BaseException) -> str:
+    """`unreachable` when the provider could not be reached at all (a local model that is not running: the
+    adapter turns a refused connection or a timeout into `ProviderUnavailable` with that cause; a raw
+    transport or socket error counts too); anything else is `model`."""
+    if isinstance(exc, ProviderUnavailable):
+        return "unreachable" if exc.cause in ("network", "timeout") else "model"
+    if isinstance(exc, (httpx.TransportError, OSError)):
+        return "unreachable"
+    return "model"
+
+
+class Interrupted(Exception):
+    """A rule stopped holding (or the harness is closing): the pass ends and nothing counts as a failure."""
+
+
+class _Failed(Exception):
+    """A conversation's attempt failed: `kind` is `model`, `unreachable` or `store`; `name` the exception's class."""
+
+    def __init__(self, kind: str, exc: BaseException) -> None:
+        super().__init__(kind)
+        self.kind, self.name = kind, type(exc).__name__
+
+
+def _epoch(stamp: str) -> float | None:
+    try:
+        t = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t.timestamp()
+
+
+def _at(t: float) -> str:
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _empty() -> dict[str, int]:
+    return {"conversations": 0, "facts": 0, "dropped": 0, "refused": 0}
+
+
+class Dreamer:
+    """One dreaming pass at a time over the quiet one-to-one conversations, newest first.
+
+    The rules (`_may_go`) are checked before each conversation, each model call and each write, and every
+    GUARD_S while a model call is in flight: when one fails the call is cancelled, the conversation's mark
+    stays and the pass ends. A store write is awaited directly, so it always finishes."""
+
+    def __init__(self, *, vault_root: Path, marks: DreamMarks, ledger: Any,
+                 conversations: Callable[[], list[Conversation]],
+                 generator: Callable[[], Generator | None],
+                 profile: Callable[[], ProfileMemory | None], queue: Callable[[], ExtractQueue | None],
+                 busy: Callable[[], bool], clock: Callable[[], float] = time.time) -> None:
+        self.vault_root = Path(vault_root)
+        self.marks = marks
+        self.ledger = ledger
+        self._conversations = conversations
+        self._generator = generator
+        self._profile = profile
+        self._queue = queue
+        self._busy = busy
+        self._clock = clock
+        self.settings = DreamSettings.load(self.vault_root)
+        self._report: tuple[float, float] | None = None  # (when it arrived, idle seconds it said)
+        self._paused_until = 0.0
+        self._error = ""  # the last pass's error kind: model, unreachable or empty
+        self._running = False
+        self._closing = False
+        self._task: asyncio.Task[Any] | None = None
+        self._call: asyncio.Future[Any] | None = None
+
+    # -- settings and the rules -------------------------------------------------------------------------
+
+    def set_settings(self, s: DreamSettings) -> None:
+        s.save(self.vault_root)
+        self.settings = s
+
+    def report_idle(self, idle_s: float) -> None:
+        self._report = (self._clock(), float(idle_s))
+
+    def machine_idle(self) -> bool:
+        if self._report is None:
+            return False
+        at, idle_s = self._report
+        age = self._clock() - at
+        return 0 <= age < REPORT_FRESH_S and idle_s >= self.settings.idle_minutes * 60
+
+    def _model(self) -> tuple[Generator | None, bool]:
+        """The dreaming model, and whether its role names a provider that cannot be built."""
+        try:
+            return self._generator(), False
+        except ProviderStoreError:
+            return None, True
+
+    def ready(self) -> bool:
+        if not self.settings.enabled or self._model()[0] is None:
+            return False
+        profile = self._profile()
+        return profile is not None and profile.people.owner() is not None
+
+    def _may_go(self, manual: bool) -> bool:
+        return not self._closing and self.ready() and not self._busy() and (manual or self.machine_idle())
+
+    def _paused(self) -> bool:
+        """Waiting out an unreachable provider; a clock set back cannot stretch the wait."""
+        left = self._paused_until - self._clock()
+        return 0 < left <= UNREACHABLE_WAIT_S
+
+    # -- what is waiting ----------------------------------------------------------------------------------
+
+    def _quiet(self, now: float) -> list[Conversation]:
+        """Conversations untouched for QUIET_S, newest `updated_at` first."""
+        out: list[tuple[float, Conversation]] = []
+        for c in self._conversations():
+            t = _epoch(c.updated_at)
+            if t is not None and now - t >= QUIET_S:
+                out.append((t, c))
+        out.sort(key=lambda p: p[0], reverse=True)
+        return [c for _, c in out]
+
+    def _due(self, c: Conversation, now: float) -> bool:
+        """Something past the mark to read, not waiting out a retry, not skipped (unless it has grown)."""
+        m = self.marks.get(c.id)
+        n = len(c.exchanges)
+        if m.attempts >= MAX_ATTEMPTS:
+            if n <= m.seen:
+                return False
+        elif now < m.not_before <= now + RETRY_WAITS[-1]:
+            return False
+        return n > m.read and c.exchanges[m.read].outcome != "pending"
+
+    def waiting(self) -> int:
+        now = self._clock()
+        return sum(1 for c in self._quiet(now) if self._due(c, now))
+
+    def status(self) -> dict[str, Any]:
+        broken = self._model()[1]
+        return {
+            "enabled": self.settings.enabled,
+            "idle_minutes": self.settings.idle_minutes,
+            "ready": self.ready(),
+            "idle": self.machine_idle(),
+            "dreaming": self._running or (self._task is not None and not self._task.done()),
+            "waiting": self.waiting(),
+            "last_dream_at": self.marks.last_dream_at,
+            "learned": self.marks.learned,
+            "error": "model" if broken else "unreachable" if self._paused() else self._error,
+            "idle_reported": self._report is not None,
+        }
+
+    # -- a pass ------------------------------------------------------------------------------------------
+
+    async def dream(self, *, manual: bool = False) -> dict[str, int]:
+        """One pass over what is waiting. Returns the counts; does nothing while another pass runs, while
+        waiting out an unreachable provider, or when the rules do not hold."""
+        counts = _empty()
+        if self._running or self._paused() or not self._may_go(manual):
+            return counts
+        self._running = True
+        self.ledger.append(Kind.dream, "", "", event="pass_start", manual=manual)
+        error, interrupted, crashed = "", False, ""
+        try:
+            for conv in self._quiet(self._clock()):
+                if not self._may_go(manual):
+                    interrupted = True
+                    break
+                m = self.marks.get(conv.id)
+                if m.attempts >= MAX_ATTEMPTS and len(conv.exchanges) > m.seen:
+                    self.marks.grown(conv.id)
+                if not self._due(conv, self._clock()):
+                    continue
+                outcome = await self._conversation(conv, manual, counts)
+                if outcome == "interrupted":
+                    interrupted = True
+                    break
+                if outcome in ("unreachable", "store"):
+                    if outcome == "unreachable":
+                        error = "unreachable"
+                    break
+                if outcome == "model":
+                    error = "model"
+        except BaseException as e:  # a bug, or the task cancelled: logged by class name, then raised
+            crashed = type(e).__name__
+            raise
+        finally:
+            self._running = False
+            if error or not interrupted:
+                self._error = error
+            extra = {"exception": crashed} if crashed else {}
+            self.ledger.append(Kind.dream, "", "", event="pass_end", **counts, error=error, interrupted=interrupted,
+                               **extra)
+        return counts
+
+    async def _conversation(self, conv: Conversation, manual: bool, counts: dict[str, int]) -> str:
+        """Read one conversation. Returns `done`, `interrupted`, or the error kind of a failed attempt."""
+        start = self.marks.get(conv.id).read
+        seen = len(conv.exchanges)
+        got = {"messages": 0, "facts": 0, "dropped": 0, "refused": 0}
+        outcome, name = "done", ""
+        try:
+            await self._read(conv, start, manual, got)
+        except (Interrupted, OwnerUnknown):
+            outcome = "interrupted"
+        except _Failed as f:
+            outcome, name = f.kind, f.name
+            if f.kind == "unreachable":
+                self._paused_until = self._clock() + UNREACHABLE_WAIT_S
+            else:
+                self.marks.fail(conv.id, self._clock(), seen)
+        for k in ("facts", "dropped", "refused"):
+            counts[k] += got[k]
+        if outcome == "done":
+            counts["conversations"] += 1
+        if outcome == "done" or got["facts"]:
+            self.marks.add_learned(got["facts"], _at(self._clock()))
+        extra: dict[str, Any] = {"error": "" if outcome in ("done", "interrupted") else outcome}
+        if name:
+            extra["exception"] = name
+        if outcome == "interrupted":
+            extra["interrupted"] = True
+        self.ledger.append(Kind.dream, "", "", event="conversation", conversation=conv.id,
+                           exchanges=self.marks.get(conv.id).read - start, **got, **extra)
+        return outcome
+
+    async def _read(self, conv: Conversation, start: int, manual: bool, got: dict[str, int]) -> None:
+        generator, profile = self._model()[0], self._profile()
+        if generator is None or profile is None:
+            raise Interrupted()
+        graph = profile.graph
+
+        def clean(text: str) -> bool:
+            try:
+                graph.require_clean(text, SHARED)
+            except ExclusionError:
+                return False
+            return True
+
+        kept, end = unread_marked(conv, start, clean)
+        offered = [*BASE_STORES, *((f"org:{o.slug}", o.name) for o in profile.orgs.all())]
+        ids = {sid for sid, _ in offered}
+        done = 0
+        for group in batches([text for text, _ in kept]):
+            done += len(group)
+            mark = end if done == len(kept) else kept[done - 1][1]
+            if not self._may_go(manual):
+                raise Interrupted()
+            known = {f.text for f in graph.facts(SHARED)}
+            try:
+                raw = await self._guarded(generator.dream_facts(group, offered), manual)
+                facts = clean_facts(raw, ids, known)
+            except Interrupted:
+                raise
+            except Exception as e:  # noqa: BLE001 - a bad answer or a failed call is one failed attempt
+                raise _Failed(error_kind(e), e) from None
+            got["dropped"] += len(raw["facts"]) - len(facts)
+            for fact in facts:
+                if not self._may_go(manual):
+                    raise Interrupted()
+                try:  # awaited directly: a write in flight is never cancelled
+                    await remember_shared(profile, self._queue(), fact.text, bot_id="", source=f"dream:{conv.id}",
+                                          stores=[fact.store], tier=Tier.project)
+                except ExclusionError:
+                    got["refused"] += 1
+                    continue
+                except OwnerUnknown:
+                    raise
+                except Exception as e:  # noqa: BLE001 - the store failed: this conversation waits as after a bad answer
+                    raise _Failed("store", e) from None
+                got["facts"] += 1
+            self.marks.set_read(conv.id, mark)
+            got["messages"] += len(group)
+        if not kept:
+            self.marks.set_read(conv.id, end)
+
+    async def _guarded(self, coro: Awaitable[Any], manual: bool) -> Any:
+        """Await a model call, re-checking the rules every GUARD_S; cancel it when one fails."""
+        task = asyncio.ensure_future(coro)
+        self._call = task
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=GUARD_S)
+                if done:
+                    if task.cancelled():  # close() cancelled it
+                        raise Interrupted()
+                    return task.result()
+                if not self._may_go(manual):
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    raise Interrupted()
+        finally:
+            self._call = None
+            if not task.done():  # the pass itself was cancelled
+                task.cancel()
+
+    # -- running it ----------------------------------------------------------------------------------
+
+    def start(self, *, manual: bool) -> bool:
+        """A pass as a background task. False when one is under way or the harness is closing."""
+        if self._closing or self._running or (self._task is not None and not self._task.done()):
+            return False
+        self._task = asyncio.get_running_loop().create_task(self._background(manual))
+        return True
+
+    async def _background(self, manual: bool) -> None:
+        try:
+            await self.dream(manual=manual)
+        except Exception as e:  # noqa: BLE001 - a background pass must not die silently
+            self.ledger.append(Kind.error, "", "", where="dream", error=type(e).__name__)
+
+    async def run(self, stop: asyncio.Event) -> None:
+        """Every TICK_S: start a pass when the rules hold and something is waiting."""
+        while not stop.is_set():
+            try:
+                if (not self._paused() and self.ready() and self.machine_idle() and not self._busy()
+                        and self.waiting()):
+                    self.start(manual=False)
+            except Exception as e:  # noqa: BLE001 - the loop outlives any one look
+                self.ledger.append(Kind.error, "", "", where="dream", error=type(e).__name__)
+            try:
+                await asyncio.wait_for(stop.wait(), TICK_S)
+            except TimeoutError:
+                pass
+
+    async def close(self) -> None:
+        """A model call in flight is cancelled; a write in flight finishes; no pass starts after."""
+        self._closing = True
+        call = self._call
+        if call is not None and not call.done():
+            call.cancel()
+        if self._task is not None:
+            await asyncio.gather(self._task, return_exceptions=True)
