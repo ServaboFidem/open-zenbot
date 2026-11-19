@@ -570,7 +570,9 @@ class Harness:
         the tools built here re-register onto it against the rebuilt services."""
         self.provider, self.scorer = provider, scorer
         self._bot_providers.clear()  # a cached bot provider holds the key it was built with
+        self._dream_gen = None  # and so does the dreaming client: a key replaced in the environment arrives here
         rooms, fits, pending = self.rooms.rooms, (self.fit._suggestions if self.fit else {}), self.recall.pending
+        room_tasks = self.rooms._tasks  # turns still running on the old service stay visible to busy()
         interviews, interview_bots = self.interviews.interviews, self.interviews._bots
         if self.importer is not None:
             self.importer.stop_all("provider rebound")
@@ -584,6 +586,7 @@ class Harness:
             store.rebind_key(self.openrouter_ref or self.config.key_ref)
         self._rewarm_after_bind()
         self.rooms.rooms, self.recall.pending = rooms, pending
+        self.rooms._tasks = room_tasks
         self.interviews.interviews, self.interviews._bots = interviews, interview_bots
         if self.fit:
             self.fit._suggestions = fits

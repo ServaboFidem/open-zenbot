@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PRIVACY, canEnable, canRunNow, dreamApi, errorLine, needsDesktopNote, statusLine, validMinutes } from '../../src/gui/dream.js';
+import { PRIVACY, canEnable, canRunNow, dreamApi, errorLine, factsChanged, needsDesktopNote, statusLine, validMinutes } from '../../src/gui/dream.js';
 import { SECTIONS } from '../../src/gui/settings-index.js';
 
 test('the privacy sentence says where the messages and the facts go', () => {
@@ -60,4 +60,14 @@ test('dreamApi paths and bodies', async () => {
     ['GET', '/dream/facts'],
     ['DELETE', '/memory/a%2Fb'],
   ]);
+});
+
+test('the learned facts are read again when a pass ends or the totals move', () => {
+  const s = { dreaming: false, learned: 3, last_dream_at: '2026-11-19T03:12:00Z' };
+  assert.equal(factsChanged(null, s), false);  // the first status: the facts are loaded with it
+  assert.equal(factsChanged(s, { ...s }), false);
+  assert.equal(factsChanged({ ...s, dreaming: true }, s), true);
+  assert.equal(factsChanged(s, { ...s, dreaming: true }), false);
+  assert.equal(factsChanged(s, { ...s, learned: 4 }), true);  // a pass that began and ended between two looks
+  assert.equal(factsChanged(s, { ...s, last_dream_at: '2026-11-19T04:00:00Z' }), true);
 });

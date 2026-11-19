@@ -811,3 +811,49 @@ def test_waiting_ignores_marks_for_conversations_that_are_gone(d):
     s = d.dreamer.status()
     assert s["waiting"] == 1 and s["enabled"] is True and s["idle_minutes"] == 5 and s["ready"] is True
     assert s["idle"] is False and s["dreaming"] is False and s["learned"] == 0 and s["last_dream_at"] == ""
+
+
+async def test_a_pass_whose_first_ledger_entry_fails_does_not_block_later_passes(d, monkeypatch):
+    c = d.conv("I live in Columbus")
+    real, failed = d.ledger.append, []
+
+    def append(*a, **kw):
+        if kw.get("event") == "pass_start" and not failed:
+            failed.append(True)
+            raise OSError("disk full")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(d.ledger, "append", append)
+    with pytest.raises(OSError):
+        await d.dreamer.dream(manual=True)
+    assert d.dreamer.status()["dreaming"] is False
+    d.provider.answers = [answer(("Gordon lives in Columbus.", "personal"))]
+    got = await d.dreamer.dream(manual=True)
+    assert got["facts"] == 1 and d.marks.get(c.id).read == 1
+
+
+async def test_a_conversation_touched_during_the_pass_waits_for_a_later_one(d):
+    first = d.conv("I live in Columbus", age=3600)
+    later = d.conv("I prefer metric", age=3700)
+    real = d.provider.complete
+
+    async def complete(messages, **kw):
+        later.updated_at = iso(d.now)  # a turn there ended while the first conversation was being read
+        return await real(messages, **kw)
+
+    d.provider.complete = complete
+    got = await d.dreamer.dream(manual=True)
+    assert len(d.provider.calls) == 1 and got["conversations"] == 1
+    assert d.marks.get(first.id).read == 1 and d.marks.get(later.id) == Mark()
+
+
+async def test_reset_attempts_ends_the_old_models_call_so_it_cannot_pause_dreaming(d):
+    c = d.conv("I live in Columbus")
+    d.provider.answers = [FakeProvider.BLOCK]
+    run = asyncio.ensure_future(d.dreamer.dream(manual=True))
+    while not d.provider.calls:
+        await asyncio.sleep(0.01)
+    d.dreamer.reset_attempts()  # a new dreaming model was chosen while the old one was still answering
+    got = await asyncio.wait_for(run, 1.0)
+    assert d.provider.cancelled == 1 and got["conversations"] == 0
+    assert d.marks.get(c.id) == Mark() and not d.dreamer._paused() and d.dreamer.status()["error"] == ""

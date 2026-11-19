@@ -375,7 +375,11 @@ class Dreamer:
 
     def reset_attempts(self) -> None:
         """A fresh try for everything (a new dreaming model was chosen): every mark's attempts and retry wait, the
-        pause and the error are cleared."""
+        pause and the error are cleared. A call to the old model still in flight is cancelled first, so the pass
+        ends as interrupted and a late failure of that model cannot bring the pause back; a memory write in flight
+        is not a model call and finishes."""
+        if self._call is not None and not self._call.done():
+            self._call.cancel()
         self.marks.reset_attempts()
         self._paused_until = 0.0
         self._error = ""
@@ -405,13 +409,14 @@ class Dreamer:
 
     def _quiet(self, now: float) -> list[Conversation]:
         """Conversations untouched for QUIET_S, newest `updated_at` first."""
-        out: list[tuple[float, Conversation]] = []
-        for c in self._conversations():
-            t = _epoch(c.updated_at)
-            if t is not None and now - t >= QUIET_S:
-                out.append((t, c))
+        out = [(_epoch(c.updated_at), c) for c in self._conversations() if self._is_quiet(c, now)]
         out.sort(key=lambda p: p[0], reverse=True)
         return [c for _, c in out]
+
+    @staticmethod
+    def _is_quiet(c: Conversation, now: float) -> bool:
+        t = _epoch(c.updated_at)
+        return t is not None and now - t >= QUIET_S
 
     def _due(self, c: Conversation, now: float) -> bool:
         """Something past the mark to read, not waiting out a retry, not skipped (unless it has grown)."""
@@ -459,13 +464,15 @@ class Dreamer:
             self._paused_until = 0.0
             self.marks.reset_attempts()
         self._running = True
-        self.ledger.append(Kind.dream, "", "", event="pass_start", manual=manual)
         error, interrupted, crashed = "", False, ""
-        try:
+        try:  # the first ledger entry too: a failed write must not leave `_running` set
+            self.ledger.append(Kind.dream, "", "", event="pass_start", manual=manual)
             for conv in self._quiet(self._clock()):
                 if not self._may_go(manual):
                     interrupted = True
                     break
+                if not self._is_quiet(conv, self._clock()):  # touched since the pass listed it: a later pass reads it
+                    continue
                 m = self.marks.get(conv.id)
                 if m.attempts >= MAX_ATTEMPTS and len(conv.exchanges) > m.seen:
                     self.marks.grown(conv.id)
@@ -581,7 +588,7 @@ class Dreamer:
             while True:
                 done, _ = await asyncio.wait({task}, timeout=GUARD_S)
                 if done:
-                    if task.cancelled():  # close() cancelled it
+                    if task.cancelled():  # close() or reset_attempts() cancelled it
                         raise Interrupted()
                     return task.result()
                 if not self._may_go(manual):

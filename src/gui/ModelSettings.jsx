@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, ProgressBar, Spinner } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
 import { DreamSection } from './DreamSection.jsx';
-import { KIND_LABELS, capabilityTags, choiceKey, probeReducer, probeStart, enabledByKind, filterModels, fromPreset, keyLabel, modelLabel, parseChoice, presetOf } from './models.js';
+import { KIND_LABELS, capabilityTags, choiceKey, probeReducer, probeStart, enabledByKind, filterModels, keepEdits, fromPreset, keyLabel, modelLabel, parseChoice, presetOf } from './models.js';
 
 const SHOWN = 150;  // rows a model list renders at once; a search narrows the rest
 const BLANK = { preset: '', name: '', kind: 'openai-compatible', base_url: '', keyMode: 'paste', key: '', key_ref: '', no_key: false };
@@ -209,7 +209,8 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
     decision: choiceKey(r?.decision?.provider, r?.decision?.model), scorer: r?.scorer || '',
     ...Object.fromEntries((r?.optional || []).map(o => [o, choiceKey(r?.[o]?.provider, r?.[o]?.model)])) });
   const [form, setForm] = useState(initial(roles));
-  useEffect(() => setForm(initial(roles)), [roles]);
+  const shown = useRef(roles);  // the roles the form was last brought up to date with
+  useEffect(() => { const prev = initial(shown.current); shown.current = roles; setForm(f => keepEdits(f, prev, initial(roles))); }, [roles]);
   if (!roles || !providers) return <>{status}<div className="resource-row"><p>{online ? 'Loading…' : 'The harness is offline.'}</p></div></>;
   const dirty = JSON.stringify(form) !== JSON.stringify(initial(roles));
 
@@ -218,7 +219,7 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
     const r = await guard(() => api.setModelRoles({ chat: parseChoice(form.chat), summary: parseChoice(form.summary),
       decision: form.scorer ? parseChoice(form.decision) : null, scorer: form.scorer,
       ...Object.fromEntries((roles.optional || []).map(o => form[o] ? [o, parseChoice(form[o])] : [`clear_${o}`, true])) }));
-    if (r) { onSaved(r); notify('Harness settings saved'); log('Harness settings saved', `chat ${r.chat?.model} · summary ${r.summary?.model}${r.scorer ? ` · decision ${r.decision?.model}` : ''}`); }
+    if (r) { setForm(initial(r)); onSaved(r); notify('Harness settings saved'); log('Harness settings saved', `chat ${r.chat?.model} · summary ${r.summary?.model}${r.scorer ? ` · decision ${r.decision?.model}` : ''}`); }
   }
   const picker = (role, hint, disabled = false) => {
     const kind = roles.roles[role];

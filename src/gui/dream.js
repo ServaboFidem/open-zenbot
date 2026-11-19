@@ -28,6 +28,11 @@ export function dreamApi(fetchJson) {
   };
 }
 
+// Whether the learned facts must be read again, going from one status to the next: a pass ended, or the totals
+// moved (a pass that began and ended between two looks never shows as `dreaming`).
+export const factsChanged = (prev, next) => !!prev && !!next && ((!!prev.dreaming && !next.dreaming)
+  || prev.learned !== next.learned || prev.last_dream_at !== next.last_dream_at);
+
 // A dreaming model is chosen: only then may dreaming be switched on.
 export const canEnable = status => !!status?.model;
 export const canRunNow = (status, online) => !!status?.ready && !!online && !status?.dreaming;

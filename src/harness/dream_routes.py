@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt
 
 from src.events.routes import NothingIn
 from src.memory.dream import DreamSettings
+from src.memory.exclusion import exclusion
 from src.memory.graph import SHARED
 from src.memory.ledger import Kind
 
@@ -83,6 +84,8 @@ def dream_router(h) -> APIRouter:
             conv = h.conversations.get(conv_id) if h.conversations is not None else None
             out.append({"id": f.id, "text": f.text, "at": f.at, "conversation": conv_id,
                         "title": conv.title if conv is not None else ""})
-        return out
+        # a title is the start of the user's first message and is kept live as typed: masked here, as the
+        # conversation routes mask it. A fact's text passed the exclusion filter before it was stored.
+        return exclusion.redact_obj(out)[0]
 
     return r

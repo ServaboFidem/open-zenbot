@@ -266,3 +266,29 @@ def test_the_marks_live_in_the_ledger_folder(harness):
     from src.memory.ledger import ledger_path_for
 
     assert harness.dreamer.marks.path == ledger_path_for(harness.config.vault_root) / "dreams.json"
+
+
+async def test_facts_redact_the_conversation_title(client, harness):
+    conv = harness.conversations.start_new("bot1")
+    conv.title = "password=example123 for the router"
+    harness.memory.store.put(Fact("Gordon has a router.", SHARED, Tier.project, source=f"dream:{conv.id}"))
+    [got] = (await client.get("/dream/facts")).json()
+    assert "example123" not in got["title"] and got["text"] == "Gordon has a router."
+
+
+async def test_a_room_turn_still_counts_as_busy_after_a_rebind(harness):
+    gate = asyncio.Event()
+    task = asyncio.create_task(gate.wait())
+    harness.rooms._tasks.setdefault("room1", set()).add(task)  # a turn waiting for the floor
+    harness.rebind(ScriptedProvider(), None)
+    assert harness.busy() is True
+    gate.set()
+    await task
+    assert harness.busy() is False
+
+
+def test_a_rebind_builds_the_dream_generator_again(harness):
+    choose_dream_model(harness)
+    g = harness.dreamer._generator()
+    harness.rebind(ScriptedProvider(), None)  # a key replaced in the environment arrives with a rebind
+    assert harness.dreamer._generator() is not g

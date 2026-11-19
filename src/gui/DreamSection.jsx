@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button, Field, Input } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
 import { KIND_LABELS, choiceKey, enabledByKind, modelLabel, parseChoice } from './models.js';
-import { MAX_MINUTES, MIN_MINUTES, PRIVACY, canEnable, canRunNow, errorLine, needsDesktopNote, statusLine, validMinutes } from './dream.js';
+import { MAX_MINUTES, MIN_MINUTES, PRIVACY, canEnable, canRunNow, errorLine, factsChanged, needsDesktopNote, statusLine, validMinutes } from './dream.js';
 
 const POLL_MS = 5000;
 
@@ -15,15 +15,16 @@ export function DreamSection({ ctx, providers, roles, onSaved, openProviders }) 
   const [minutes, setMinutes] = useState('5');
   const [error, setError] = useState('');
 
-  const take = s => { setStatus(s); setMinutes(m => (document.activeElement?.id === 'dream-minutes' ? m : String(s.idle_minutes))); };
+  const last = useRef(null);  // the status before this one: a pass that ended, or new totals, reads the facts again
+  const take = s => { const stale = factsChanged(last.current, s); last.current = s; if (stale) loadFacts(); setStatus(s); setMinutes(m => (document.activeElement?.id === 'dream-minutes' ? m : String(s.idle_minutes))); };
   const loadStatus = () => guard(() => api.dream.status(), { quiet: true }).then(s => { if (s) take(s); return s; });
   const loadFacts = () => guard(() => api.dream.facts(), { quiet: true }).then(f => { if (Array.isArray(f)) setFacts(f); });
   useEffect(() => { if (online) { loadStatus(); loadFacts(); } }, [online]);
-  useEffect(() => {
-    if (!online || !status?.dreaming) return undefined;
+  useEffect(() => {  // between passes too: an automatic pass starts on its own while this page is open
+    if (!online) return undefined;
     const t = setInterval(loadStatus, POLL_MS);
-    return () => { clearInterval(t); loadFacts(); };
-  }, [online, status?.dreaming]);
+    return () => clearInterval(t);
+  }, [online]);
 
   async function run(fn, done) {
     setError('');

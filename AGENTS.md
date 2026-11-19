@@ -179,6 +179,8 @@ done on).
   the vault, where a bot could rewrite it. A damaged file is moved to `dreams.json.bad` and dreaming starts empty.
 - **What is read** (`unread_marked`). One-to-one conversations (`kind == "bot"`; rooms are not read), newest
   `updated_at` first, whose `updated_at` is at least 30 minutes old (`QUIET_S`) and that have exchanges past their mark.
+  The 30 minutes are checked again as each conversation's turn comes (`Dreamer._is_quiet`), so one touched since the
+  pass listed it waits for a later pass.
   From each exchange only `Exchange.user` goes anywhere: never `addendum`, `comments`, `reply`, attachments, the
   conversation's `summary` or `note`. An exchange still `pending` stops the read there. Skipped, but counted as read:
   outcome `routed` (a message sent through ZenBot is recorded again where it was handled), `set_aside`, a question
@@ -246,9 +248,13 @@ done on).
   attempts and retry wait before it tries (`DreamMarks.reset_attempts`, which keeps `read`, `seen`, `learned` and
   `last_dream_at`), so a skipped conversation is tried again. A change or clearing of the `dream` role through
   `PUT /settings/models` calls `Dreamer.reset_attempts()` (the marks' attempts, the pause and the status error): a new
-  model gets a fresh try. `remember_shared` handles `OwnerUnknown` itself, so the dreamer never sees it from a write;
+  model gets a fresh try. It first cancels a call to the old model still in flight, which ends that pass as
+  interrupted, so a late failure of the old model cannot bring the pause back; a memory write in flight finishes.
+  `Harness.rebind` drops the cached dreaming client, so a key replaced in the environment is picked up, and hands the
+  rooms' running-turn tracker to the new room service, so `busy()` still sees a turn under way. `remember_shared` handles `OwnerUnknown` itself, so the dreamer never sees it from a write;
   the owner is required by `ready()`, checked before every write.
-- **Routes** (`dream_routes.py`, under `/dream`; none returns message text, and only `GET /facts` returns fact text):
+- **Routes** (`dream_routes.py`, under `/dream`; none returns message text, and only `GET /facts` returns fact text;
+  its answer goes through `exclusion.redact_obj`, since a conversation's title is the start of the user's first message):
   `GET /status` (`enabled`, `idle_minutes`, `model` (the `dream` role or null), `ready`, `idle`, `dreaming`, `waiting`,
   `last_dream_at`, `learned`, `error` (`model`, `unreachable`, `provider`, `store`, `setup` or empty), `idle_reported`
   (a report under 150 s old)); `PUT /settings` (`{"enabled", "idle_minutes"}`, 422 outside the range, 409 "Choose a
@@ -259,7 +265,10 @@ done on).
   `DELETE /memory/{fact_id}`. Every POST takes a required JSON body (`NothingIn` where it needs nothing), so a
   cross-site page cannot send one without a preflight; `tests/test_dream_routes.py` walks every POST.
 - **The settings section** (`DreamSection.jsx`, decisions in `dream.js`, an entry in `settings-index.js` `SECTIONS`):
-  the switch, the model, minutes idle, a status line, Dream now, and the list of what was learned with Forget. Under
+  the switch, the model, minutes idle, a status line, Dream now, and the list of what was learned with Forget. While
+  the harness is online it reads the status every 5 s, between passes too, and reads the facts again when a pass ends
+  or the totals move (`factsChanged`). Saving the Dreaming model keeps the picks not yet saved in the form above it
+  (`models.js` `keepEdits`). Under
   the switch (`dream.js` `PRIVACY`, also in the search index): "Only the messages you typed are read, never a bot's
   reply. They are sent to the dreaming model you choose: a hosted model's provider receives them, a local model reads
   them on this computer. The facts it writes are then stored by the memory engine, which uses its own model." Each
