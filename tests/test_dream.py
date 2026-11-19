@@ -1,5 +1,8 @@
 from src.harness.conversations import Conversation, ConversationStore, Conversations, Exchange
-from src.memory.dream import batches, unread, unread_marked
+import pytest
+
+from src.memory.dream import DreamMarks, DreamSettings, Mark, batches, unread, unread_marked
+from src.vault_settings import settings_dir
 
 
 def ex(user, outcome="done", **kw):
@@ -57,3 +60,55 @@ def test_begin_saves_answers_to(tmp_path, ledger):
     convs.load()
     _, exch = convs.begin("bot", "- Size: large", session_id="s2", answers_to="s1")
     assert exch.answers_to == "s1"
+
+
+def test_settings_defaults_save_and_range(tmp_path):
+    assert DreamSettings.load(tmp_path) == DreamSettings(False, 5)
+    DreamSettings.checked(True, 120).save(tmp_path)
+    assert DreamSettings.load(tmp_path) == DreamSettings(True, 120)
+    for bad in [(True, 0), (True, 121), (True, 5.5), (True, True), ("yes", 5)]:
+        with pytest.raises(ValueError):
+            DreamSettings.checked(*bad)
+
+
+def test_settings_file_is_beside_the_vault(tmp_path):
+    DreamSettings(True, 5).save(tmp_path)
+    assert (settings_dir(tmp_path) / "dream.json").is_file() and not list(tmp_path.rglob("dream.json"))
+
+
+def test_damaged_settings_give_the_defaults(tmp_path):
+    d = settings_dir(tmp_path)
+    d.mkdir(parents=True)
+    (d / "dream.json").write_text('{"enabled": "yes", "idle_minutes": 999}', encoding="utf-8")
+    assert DreamSettings.load(tmp_path) == DreamSettings(False, 5)
+
+
+def test_marks_persist_and_retry_schedule(tmp_path):
+    m = DreamMarks(tmp_path / "dreams.json")
+    m.fail("c1", now=1000.0, seen=4)
+    assert m.get("c1").not_before == 1600.0
+    m.fail("c1", now=2000.0, seen=4)
+    assert m.get("c1").not_before == 5600.0
+    m.fail("c1", now=9000.0, seen=4)
+    assert m.skipped("c1")
+    m.set_read("c1", 4)
+    assert DreamMarks(tmp_path / "dreams.json").get("c1") == Mark(read=4, seen=4)
+    m.add_learned(3, "2026-11-19T03:12:00Z")
+    again = DreamMarks(tmp_path / "dreams.json")
+    assert again.learned == 3 and again.last_dream_at == "2026-11-19T03:12:00Z"
+
+
+def test_grown_unskips_and_keeps_read(tmp_path):
+    m = DreamMarks(tmp_path / "dreams.json")
+    m.set_read("c1", 2)
+    for t in (1.0, 2.0, 3.0):
+        m.fail("c1", now=t, seen=5)
+    assert m.skipped("c1") and m.get("c1").seen == 5
+    m.grown("c1")
+    assert not m.skipped("c1") and m.get("c1") == Mark(read=2, seen=5)
+
+
+def test_damaged_marks_file_is_kept_aside(tmp_path):
+    p = tmp_path / "dreams.json"
+    p.write_text("{not json", encoding="utf-8")
+    assert DreamMarks(p).get("c1") == Mark() and (tmp_path / "dreams.json.bad").is_file()

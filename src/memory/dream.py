@@ -5,8 +5,14 @@ the summary or the note."""
 
 from __future__ import annotations
 
+import json
+import threading
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from ..vault_settings import settings_dir
 
 if TYPE_CHECKING:  # the harness imports this package, so the import is for types only
     from ..harness.conversations import Conversation
@@ -15,6 +21,122 @@ MESSAGE_MAX = 4000
 BATCH_MAX = 12000
 QUIET_S = 1800
 FORM_PREFIX = "Form answers ("
+IDLE_MIN, IDLE_MAX, IDLE_DEFAULT = 1, 120, 5
+RETRY_WAITS = (600.0, 3600.0)  # seconds to wait after the 1st and 2nd failed attempt
+MAX_ATTEMPTS = 3
+
+
+def _replace_file(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _idle_ok(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and IDLE_MIN <= v <= IDLE_MAX
+
+
+@dataclass
+class DreamSettings:
+    """Dreaming's switch and how long the app must be idle first; `vault-settings/dream.json`, no secret."""
+    enabled: bool = False
+    idle_minutes: int = IDLE_DEFAULT
+
+    @staticmethod
+    def _path(vault_root: Path) -> Path:
+        return settings_dir(vault_root) / "dream.json"
+
+    @classmethod
+    def load(cls, vault_root: Path) -> DreamSettings:
+        try:
+            d = json.loads(cls._path(vault_root).read_text(encoding="utf-8"))
+            return cls.checked(d["enabled"], d["idle_minutes"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return cls()
+
+    @classmethod
+    def checked(cls, enabled: Any, idle_minutes: Any) -> DreamSettings:
+        if not isinstance(enabled, bool):
+            raise ValueError("enabled must be true or false")
+        if not _idle_ok(idle_minutes):
+            raise ValueError(f"idle_minutes must be a whole number from {IDLE_MIN} to {IDLE_MAX}")
+        return cls(enabled, idle_minutes)
+
+    def save(self, vault_root: Path) -> None:
+        _replace_file(self._path(vault_root), asdict(self))
+
+
+@dataclass
+class Mark:
+    """Progress in one conversation. `seen` is its exchange count when last read or last failed."""
+    read: int = 0
+    attempts: int = 0
+    not_before: float = 0.0
+    seen: int = 0
+
+
+class DreamMarks:
+    """Per-conversation progress, kept in `<vault>-ledger/dreams.json` (tmp-then-replace on every change)."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self._lock = threading.Lock()
+        self._marks: dict[str, Mark] = {}
+        self.learned = 0
+        self.last_dream_at = ""
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            text = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return
+        try:
+            d = json.loads(text)
+            marks = {k: Mark(**v) for k, v in d["conversations"].items()}
+            learned, at = int(d["learned"]), str(d["last_dream_at"])
+        except (ValueError, KeyError, TypeError, AttributeError):
+            self.path.replace(self.path.with_name(self.path.name + ".bad"))  # keep the damaged file recoverable
+            return
+        self._marks, self.learned, self.last_dream_at = marks, learned, at
+
+    def _save(self) -> None:  # caller holds the lock
+        _replace_file(self.path, {"conversations": {k: asdict(m) for k, m in self._marks.items()},
+                                  "learned": self.learned, "last_dream_at": self.last_dream_at})
+
+    def get(self, conv_id: str) -> Mark:
+        with self._lock:
+            return Mark(**asdict(self._marks.get(conv_id, Mark())))
+
+    def set_read(self, conv_id: str, n: int) -> None:
+        with self._lock:
+            self._marks[conv_id] = Mark(read=n, seen=n)
+            self._save()
+
+    def fail(self, conv_id: str, now: float, seen: int) -> None:
+        with self._lock:
+            m = self._marks.setdefault(conv_id, Mark())
+            m.attempts += 1
+            m.seen = seen
+            m.not_before = now + RETRY_WAITS[m.attempts - 1] if m.attempts < MAX_ATTEMPTS else 0.0
+            self._save()
+
+    def skipped(self, conv_id: str) -> bool:
+        return self.get(conv_id).attempts >= MAX_ATTEMPTS
+
+    def grown(self, conv_id: str) -> None:
+        """The conversation grew past `seen`: try it again. `read` and `seen` stay."""
+        with self._lock:
+            m = self._marks.setdefault(conv_id, Mark())
+            m.attempts, m.not_before = 0, 0.0
+            self._save()
+
+    def add_learned(self, n: int, at: str) -> None:
+        with self._lock:
+            self.learned += n
+            self.last_dream_at = at
+            self._save()
 
 
 def unread_marked(conv: Conversation, read: int, clean: Callable[[str], bool]) -> tuple[list[tuple[str, int]], int]:
