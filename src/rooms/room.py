@@ -548,6 +548,11 @@ class RoomService:
         self._tasks.setdefault(room.id, set()).add(task)
         task.add_done_callback(lambda t: self._tasks.get(room.id, set()).discard(t))
 
+    def turns_running(self) -> bool:
+        """Whether a scheduled turn in any room has not finished: waiting for the floor (no session yet), running,
+        or writing its note after its session ended."""
+        return any(not t.done() for tasks in self._tasks.values() for t in tasks)
+
     async def settle(self, room_id: str) -> None:
         """Wait until every scheduled turn in the room has finished."""
         while self._tasks.get(room_id):

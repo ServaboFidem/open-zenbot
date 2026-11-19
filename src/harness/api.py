@@ -10,6 +10,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import base64
 import binascii
+import hashlib
 import json
 import re
 import secrets
@@ -34,6 +35,7 @@ from pydantic import BaseModel, Field
 from src.decider.fit import FitConfig, FitEngine
 from src.decider.interface import BandConfig, ConfirmState, Scorer
 from src.decider.router import CatalogRouter, RouterConfig
+from src.memory.dream import DreamMarks, Dreamer
 from src.memory.exclusion import ExclusionError, exclusion
 from src.memory.graph import SHARED, MemoryGraph, SessionCache, Tier, make_store
 from src.memory.import_dir import DirImporter, ScanStore, scan_dir, scan_file, unchanged_in
@@ -72,7 +74,8 @@ from src.vault_settings import settings_dir
 from src.providers import tracing as llm_tracing
 from .onboarding import ASSISTANT_ID, NEW_TOPICS, TOPICS, Interviewer
 from .config import HarnessConfig
-from .conversations import ConversationStore, Conversations
+from .conversations import Conversation, ConversationStore, Conversations
+from .dream_routes import dream_router
 from .loop import Session, SessionState, TaskLoop
 from .scheduler import Routine, RoutineError, RoutineStore, Schedule, Scheduler, next_run, parse_schedule
 from .media import MediaConsent, MediaProxy, MediaRefused, trusted_hosts
@@ -189,6 +192,7 @@ class Harness:
     music: MusicService | None = None  # music discovery: settings, Discogs token, atlas, digests, the /music routes
     calendar: CalendarService | None = None  # the built-in calendar: its store, Google sync, the /calendar routes
     discover: Discovery | None = None  # event discovery: the Eventbrite pool, the scout's tools and routine, the digests
+    dreamer: Dreamer | None = None  # dreaming: learns facts from the user's own messages while idle; built once, a rebind keeps it
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
     provider_store: ProviderStore | None = None  # vault-settings/providers.json: providers, their keys, their enabled models
     model_lister: ModelLister = field(default_factory=ModelLister)
@@ -196,6 +200,7 @@ class Harness:
     openrouter_ref: str | None = None  # the key ref for what only OpenRouter serves (Hindsight's LLM); None: config.key_ref
     bot_models: dict[str, Choice] | None = None  # bot id -> its own model (Edit bot), from vault-settings/bot-models.json
     _bot_providers: dict[str, tuple[tuple, Provider]] = field(default_factory=dict, init=False, repr=False)  # provider id -> (its settings, a client)
+    _dream_gen: tuple[tuple, Generator] | None = field(default=None, init=False, repr=False)  # (the dream choice's settings, its generator)
     media: MediaProxy | None = None  # remote images, video and PDFs for the chat; trusted hosts at once, others on a click
     task_attachments: dict[str, list[Attachment]] = field(default_factory=dict)  # session id -> files attached in a one-to-one task
     part_turns: dict[str, PartTurn] = field(default_factory=dict)  # session id -> a helper's turn on a design: its worksheet and changes
@@ -344,6 +349,11 @@ class Harness:
             self.discover.tools, self.discover.catalog = self.tools, self.catalog
             self.discover.bot_lookup = lambda bot_id: self.bots.get(bot_id)
         self.discover.register()  # the scout's tools appear only while discovery is on with a place set
+        if self.dreamer is None:  # once: a rebind keeps it, and what it asks for is read from the harness at call time
+            self.dreamer = Dreamer(vault_root=c.vault_root, marks=DreamMarks(ledger_path_for(c.vault_root) / "dreams.json"),
+                                   ledger=self.ledger, conversations=self._dream_conversations,
+                                   generator=self._dream_generator, profile=lambda: self.profile,
+                                   queue=lambda: self.extract_queue, busy=self.busy)
         if self.scorer is not None:
             self.orchestrator = self.orchestrator or Orchestrator(
                 self.scorer, self.rooms, self.bots, self.ledger, Generator(summaries, model=c.summary_model).room_topic, ASSISTANT_ID)
@@ -470,6 +480,44 @@ class Harness:
             hit = (sig, make_provider(self.provider_store, e, choice.model))
             self._bot_providers[e.id] = hit
         return hit[1], choice.model
+
+    def _dream_generator(self) -> Generator | None:
+        """The dreaming model, or None with no Dreaming model chosen (never filled from another role); raises
+        ProviderStoreError when the choice cannot run. The dreamer asks for it often (its rules are checked every
+        few seconds during a call), so the client is built once and again only when the choice, its provider's
+        settings or its stored key change."""
+        roles = self.model_roles()
+        choice = roles.dream
+        if choice is None:
+            self._dream_gen = None
+            return None
+        e = check_choice(self.provider_store, choice, "text", ROLE_LABELS["dream"])
+        key = hashlib.sha256(e.key.encode()).hexdigest() if e.key else ""  # a changed key, without keeping it here
+        sig = (choice.provider, choice.model, e.kind, e.base_url, self.provider_store.key_ref(e.id), key, e.no_key)
+        if self._dream_gen is None or self._dream_gen[0] != sig:
+            provider, model = dream_provider(self.provider_store, roles)
+            self._dream_gen = (sig, Generator(provider, model=model))
+        return self._dream_gen[1]
+
+    def _dream_conversations(self) -> list[Conversation]:
+        """The one-to-one conversations dreaming may read."""
+        return [c for c in self.conversations.all() if c.kind == "bot"] if self.conversations is not None else []
+
+    def busy(self) -> bool:
+        """Something is under way that dreaming waits for: a task, room turn or routine run (each has a session),
+        a task still writing its exchange after its session ended, a room turn waiting for the floor, an import, a
+        delegation, or extraction work in the queue."""
+        if any(s.state not in _ENDED for s in self.sessions.values()):
+            return True
+        if any(not t.done() for t in self.tasks.values()):
+            return True
+        if self.rooms is not None and self.rooms.turns_running():
+            return True
+        if self.importer is not None and self.importer.running() is not None:
+            return True
+        if self.delegator is not None and self.delegator.runner.live:
+            return True
+        return self.extract_queue is not None and bool(self.extract_queue.pending())
 
     @property
     def bound(self) -> bool:
@@ -1433,7 +1481,7 @@ def create_app(h: Harness) -> FastAPI:
     scheduler.verifiers[EVENTS_MANAGED_BY] = h.discover.run_failure  # a scout run that saved no digest failed
     h.music.routines, h.music.scheduler = routines, scheduler
     h.discover.routines, h.discover.scheduler = routines, scheduler
-    app_routers = [music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h)]
+    app_routers = [music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h), dream_router(h)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -1473,6 +1521,7 @@ def create_app(h: Harness) -> FastAPI:
         h.calendar.spawn(h.calendar.start())  # a sync now and every 15 minutes, while Google is connected
         stop = asyncio.Event()
         extracting = asyncio.create_task(h.extract_queue.run(stop)) if h.extract_queue else None
+        dreaming = asyncio.create_task(h.dreamer.run(stop))  # a pass when the machine is idle and nothing is under way
         try:
             yield
         finally:
@@ -1481,8 +1530,11 @@ def create_app(h: Harness) -> FastAPI:
             await h.delegator.stop_all()  # every hand-off in flight ends, its tree killed and its end logged
             scheduler.stop()
             await scheduling
+            stop.set()
+            # a dream's model call in flight is cancelled and its conversation's mark stays; a write in flight finishes
+            await h.dreamer.close()
+            await dreaming
             if extracting is not None:  # the store in flight finishes; the rest of its job runs again at the next start
-                stop.set()
                 await h.extract_queue.shutdown(extracting)
             await h.mcps.close()
             await h.music.close()

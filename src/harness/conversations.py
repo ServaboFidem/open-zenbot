@@ -204,6 +204,11 @@ class Conversations:
     def get(self, conv_id: str) -> Conversation | None:
         return self._by_id.get(conv_id)
 
+    def all(self) -> list[Conversation]:
+        """Every conversation, as a list of its own: a caller that awaits while it walks them is not upset by one
+        started meanwhile."""
+        return list(self._by_id.values())
+
     def for_owner(self, owner: str) -> list[Conversation]:
         # newest first; ties (same second) fall to the later-created one: reversed insertion order, sort is stable
         mine = [c for c in reversed(self._by_id.values()) if c.owner == owner]
