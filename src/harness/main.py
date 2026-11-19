@@ -74,6 +74,8 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
             h.apply_models(saved)
         except ProviderStoreError as e:
             print(f"vault-settings/harness.json not applied: {e}", file=sys.stderr)
+    else:  # nothing saved and no key in the environment: a key saved on a provider (providers.json) still binds
+        h.bind_saved_key()
     folders = [config.bot_prompts_dir]
     if config.user_content:
         from src.vault_settings import user_bots_dir
@@ -131,7 +133,7 @@ def main() -> int:
     if not h.bots:
         print(f"no bots: add a file under {h.config.bot_prompts_dir}/ (name, role in frontmatter; instructions in the body) or create one in the app", file=sys.stderr)
     if not h.bound:
-        print("no key in the environment: the harness is unbound until Settings binds a provider (or set OPENROUTER_API_KEY / ZEN_KEY_REF)", file=sys.stderr)
+        print("no usable key in the environment or on a saved provider: the harness is unbound until Settings binds a provider (or set OPENROUTER_API_KEY / ZEN_KEY_REF)", file=sys.stderr)
     print(f"zen-agents harness on http://{h.config.host}:{h.config.port}  provider={h.provider.kind}  scorer={h.scorer.kind if h.scorer else None}  "
           f"bots={len(h.bots)}  skills={len(h.catalog.skills())}  ledger={h.ledger.file}")
     try:
