@@ -1,6 +1,6 @@
 {
   "name": "zen-agents-gui",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "OpenZenBot: the zen-agents workspace GUI (React, Fluent 2, Electron)",
   "license": "MIT",
