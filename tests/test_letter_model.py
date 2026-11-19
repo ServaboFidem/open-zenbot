@@ -145,7 +145,7 @@ def _store(vault: Path, monkeypatch) -> ProviderStore:
     store = ProviderStore(vault).load()
     store.seed("env:ZEN_TEST_OR_KEY", [ModelInfo("or/chat", "Chat", ["text"]), ModelInfo("or/decide", "Decide", ["decision"])])
     store.add("LM Studio", "openai-compatible", BASE, no_key=True)
-    store.set_models("lm-studio", [ModelInfo(MODEL, MODEL, ["text", "decision"]), ModelInfo("plain", "plain", ["text"])])
+    store.set_models("lm-studio", [ModelInfo(MODEL, MODEL, ["text", "decision"], supported_parameters=["letter_decisions"]), ModelInfo("plain", "plain", ["text"])])
     return store
 
 

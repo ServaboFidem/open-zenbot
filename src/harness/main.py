@@ -48,6 +48,7 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
     config.validate()
     import src.decider.adapters.decision_model  # noqa: F401 - registers the scorer
     import src.decider.adapters.letter_model  # noqa: F401 - registers the local scorer
+    import src.decider.adapters.systemone  # noqa: F401 - registers the typed local scorer
     import src.providers.openrouter  # noqa: F401 - registers the provider
     from src.decider import registry as scorers
 

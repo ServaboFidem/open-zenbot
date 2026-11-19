@@ -23,10 +23,10 @@ export function modelLabel(m) {
 }
 
 /** Enabled models of one kind, grouped by provider, for a picker: [{ provider, name, models }]. `only` limits the providers. */
-export function enabledByKind(providers, kind, only = null) {
+export function enabledByKind(providers, kind, only = null, needs = null) {
   return (providers || [])
     .filter(p => !only || only.includes(p.id))
-    .map(p => ({ provider: p.id, name: p.name, models: (p.models || []).filter(m => (m.kinds || []).includes(kind)) }))
+    .map(p => ({ provider: p.id, name: p.name, models: (p.models || []).filter(m => (m.kinds || []).includes(kind) && (!needs || (m.supported_parameters || []).includes(needs))) }))
     .filter(g => g.models.length);
 }
 
@@ -67,7 +67,7 @@ export function defaultModelLabel(providers, roles) {
 }
 
 // Testing a model as it is enabled (a provider that lists ids only): what the progress modal shows.
-export const PROBE_LABELS = { chat: 'Answers chat', tools: 'Calls tools', structured: 'Structured output', image: 'Image input', embeddings: 'Embeddings', decision: 'Decisions' };
+export const PROBE_LABELS = { chat: 'Answers chat', tools: 'Calls tools', structured: 'Structured output', image: 'Image input', embeddings: 'Embeddings', decision: 'Letter decisions', typed: 'Typed decisions' };
 
 export const probeStart = (model, steps) => ({
   model, total: steps.length, done: 0, end: null,
@@ -100,7 +100,14 @@ export const scorerProviderIds = (providers, roles, scorer) => {
   const kinds = roles?.scorer_providers?.[scorer] || ['openrouter'];
   return (providers || []).filter(p => kinds.includes(p.kind)).map(p => p.id);
 };
+// The mark a scorer needs on its model (GET /settings/models `scorer_needs`), left by the step of the model test
+// that scorer relies on; null when it needs none.
+export const scorerNeeds = (roles, scorer) => roles?.scorer_needs?.[scorer] || null;
+const NEEDS_STEP = { letter_decisions: 'Letter decisions', typed_decisions: 'Typed decisions' };
 // The line under the Decision model picker, and what an empty picker says is missing.
-export const decisionHint = (roles, scorer) => ((roles?.scorer_providers?.[scorer] || ['openrouter']).includes('openrouter')
-  ? { hint: "The scorer's model. Decision models come from OpenRouter.", where: ' on an OpenRouter provider' }
-  : { hint: "The scorer's model: a local decision model on an OpenAI-compatible server such as LM Studio. A model shows here once its test, run when you enable it, passes the Decisions step. Shell commands always wait for your approval with this scorer.", where: ' on an OpenAI-compatible provider' });
+export const decisionHint = (roles, scorer) => {
+  if ((roles?.scorer_providers?.[scorer] || ['openrouter']).includes('openrouter')) return { hint: "The scorer's model. Decision models come from OpenRouter.", where: ' on an OpenRouter provider' };
+  const step = NEEDS_STEP[scorerNeeds(roles, scorer)] || 'Decisions';
+  return { hint: `The scorer's model: a local decision model on an OpenAI-compatible server such as LM Studio. A model shows here once its test, run when you enable it, passes the ${step} step. Shell commands always wait for your approval with this scorer.`,
+    where: ` that passed the ${step} step on an OpenAI-compatible provider` };
+};

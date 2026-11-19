@@ -4,7 +4,14 @@ Such a provider lists model ids only, so a model's capabilities are found by ask
 (and whether it reasons), an embedding, a forced tool call, a JSON-schema reply, an image and a decision
 (three questions with a known answer, in the letter format of `letters.py`: a model passes when the server
 returns the first token's probabilities, most of them sit on the option letters and every answer is right;
-that shows it can be asked, not how well it judges). Its kind
+that shows it can be asked, not how well it judges). The last step, `typed`, asks the same three questions on
+the server's own decision route (`POST /systemone`: typed questions in, typed answers out), whether or not the
+model chats: LM Studio serves a model it lists as a decision model there and refuses it on chat, and does the
+reverse for every other model, so the two decision steps find different models. A server without the route
+refuses at once and the step fails. LM Studio, asked to chat with a decision model while a chat model is
+loaded, answers with that other model (the reply's `model` names it; seen 2026-11-19): so when the typed step
+passes and the chat reply named a different model, everything learned through chat is dropped (`_other_model`).
+Its kind
 comes from what it answers, never from its name: "embed" in an id says nothing reliable. A server often ignores
 `tools` or `response_format` silently, so each test checks what came back, not just that the request
 was accepted. A rate limit, a timeout, a server error or no connection ends the probe as `Unavailable`
@@ -57,7 +64,7 @@ class ProbeFailed(Exception):
         self.unusable = unusable
 
 
-STEPS = ["chat", "embeddings", "tools", "structured", "image", "decision"]  # every model, whatever its name: what passes decides its kind
+STEPS = ["chat", "embeddings", "tools", "structured", "image", "decision", "typed"]  # every model, whatever its name: what passes decides its kind
 CHAT_ONLY = {"tools", "structured", "image", "decision"}  # skipped when the model doesn't chat
 # (state, question, options, the index of the right one)
 DECISIONS = [
@@ -154,7 +161,8 @@ async def run_probe(http: OpenRouterHttp, model: ModelInfo, emit: Emit) -> Model
     params: list[str] = []
     inputs = ["text"]
     budget = {"tools": 128, "structured": 128, "image": 64}  # raised for a reasoning model, after the chat test
-    chats = embeds = decides = False
+    chats = embeds = decides = typed = False
+    answered_by: Any = None  # the `model` the chat reply named
     refusal: _Refused | None = None
 
     def step(name: str, status: str, detail: str | None = None) -> None:
@@ -162,15 +170,15 @@ async def run_probe(http: OpenRouterHttp, model: ModelInfo, emit: Emit) -> Model
 
     for name in STEPS:
         if name in CHAT_ONLY and not chats:
-            if not embeds:
-                break  # neither: nothing more to learn
-            step(name, "skip")
-            continue
+            if embeds:
+                step(name, "skip")
+            continue  # neither chat nor embeddings: only the typed decision route is left to try
         step(name, "running")
         if name == "chat":
             data = await _post(http, CHAT_PATH, _chat(model.id, "Reply with the word ok."))
             m = _message(_reply(data))
             chats = bool(m)
+            answered_by = _reply(data).get("model")
             refusal = data if isinstance(data, _Refused) else None
             if chats:
                 reasoning = bool(m.get("reasoning_content") or m.get("reasoning")) or "<think>" in _content(m)
@@ -207,10 +215,26 @@ async def run_probe(http: OpenRouterHttp, model: ModelInfo, emit: Emit) -> Model
             step(name, "pass" if ok else "fail")
         elif name == "decision":
             decides, why = await _decides(http, model.id)
+            if decides:
+                params.append("letter_decisions")
             step(name, "pass" if decides else "fail", why)
-    if not (chats or embeds):
+        elif name == "typed":
+            typed, why = await _decides_typed(http, model.id, alone=not (chats or embeds))
+            if typed:
+                params.append("typed_decisions")
+            step(name, "pass" if typed else "fail", why)
+    if typed and chats and _other_model(model.id, answered_by):
+        # the chat answers came from another model the server had loaded: nothing they showed is this model's
+        step("chat", "fail", f"another model answered: {str(answered_by)[:80]}")
+        for name in ("tools", "structured", "image", "decision"):
+            step(name, "skip")
+        chats = decides = False
+        params = [p for p in params if p in ("input_type", "typed_decisions")]
+        inputs = ["text"]
+    if not (chats or embeds or typed):
         why = f" ({refusal.message})" if refusal else ""
-        raise ProbeFailed(f"{model.id} answered neither a chat nor an embeddings request{why}")
+        raise ProbeFailed(f"{model.id} answered neither a chat, an embeddings nor a decision request{why}")
+    decides = decides or typed
     kinds = (["text"] if chats else []) + (["embedding"] if embeds else []) + (["decision"] if decides else [])
     outputs = (["text"] if chats else []) + (["embeddings"] if embeds else []) + (["decisions"] if decides else [])
     return replace(found, kinds=kinds, output_modalities=outputs, input_modalities=inputs, supported_parameters=params,
@@ -228,6 +252,42 @@ async def _decides(http: OpenRouterHttp, model_id: str) -> tuple[bool, str | Non
         if mass < letters.MIN_MASS:
             return False, "does not answer with an option letter"
         if max(range(len(probs)), key=probs.__getitem__) != right:
+            return False, "a wrong answer"
+    return True, None
+
+
+def _other_model(asked: str, answered: Any) -> bool:
+    """Whether a reply's `model` names a different model than the one asked for. A longer or shorter form of the
+    same id (a dated version, a tag) is the same model."""
+    if not isinstance(answered, str) or not answered.strip():
+        return False
+    a, b = asked.casefold().strip(), answered.casefold().strip()
+    return a not in b and b not in a
+
+
+async def _decides_typed(http: OpenRouterHttp, model_id: str, *, alone: bool) -> tuple[bool, str | None]:
+    """Whether the server answers typed decisions for this model on `/systemone` and gets the three right; with
+    why not. One question a request, one after another (see `systemone.py`). A server that cannot answer just
+    now fails the step rather than the whole test, unless this route is all the model has (`alone`)."""
+    from src.decider.adapters import systemone  # here, not at the top: the decider imports this package
+    from src.decider.interface import ChoiceQuestion, DecisionRefused, NoulQuestion
+
+    for state, question, options, right in DECISIONS:
+        yes_no = options == ["yes", "no"]
+        q = NoulQuestion(question) if yes_no else ChoiceQuestion(question, {o: o for o in options})
+        try:
+            answer = systemone.read(await http.post_json(systemone.PATH, systemone.payload(model_id, state, "q", q), what="model probe"), "q", q)
+            picked = (0 if answer.noul >= 0.5 else 1) if yes_no else options.index(answer.choice)
+        except ProviderUnavailable as e:
+            if alone:
+                raise Unavailable(reason_for(e)) from None
+            return False, "the server could not answer"
+        except ProviderError as e:
+            status = getattr(e, "status", None)
+            return False, None if status else "an answer that could not be read"  # a status: the route is not served
+        except (AttributeError, ValueError, DecisionRefused):
+            return False, "an answer that could not be read"
+        if picked != right:
             return False, "a wrong answer"
     return True, None
 

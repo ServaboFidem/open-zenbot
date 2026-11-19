@@ -61,12 +61,13 @@ class MockScorer:
 
 @pytest.fixture(autouse=True)
 def _isolate_registry():
-    saved, kinds = dict(registry._factories), dict(registry._provider_kinds)
+    saved, kinds, needs = dict(registry._factories), dict(registry._provider_kinds), dict(registry._needs)
     registry.clear()
     yield
     registry.clear()
     registry._factories.update(saved)
     registry._provider_kinds.update(kinds)
+    registry._needs.update(needs)
 
 
 # -- shapes -----------------------------------------------------------------

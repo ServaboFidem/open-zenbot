@@ -9,8 +9,7 @@ question, and the same numbers for the same input.
 `rm -rf ~/Documents` alike, so a shell command never runs on this scorer's word (`write_guard.ShellWriteCheck`).
 
 A server that answers in the typed shape itself (state and questions in, `noul` / `choice` / `score` out) needs
-none of this: it is a second adapter that posts the request and reads it with `decision_model.parse_answer`,
-registered with the provider kinds it runs on."""
+none of this: that is the `systemone` scorer (`systemone.py`)."""
 
 from __future__ import annotations
 
@@ -30,6 +29,7 @@ from ..interface import Answer, DecisionRequest, DecisionResult, DecisionUsage, 
 KIND = "letter-logprobs"
 CHAT_PATH = "/chat/completions"
 PROVIDER_KINDS = ("openai-compatible",)
+NEEDS = "letter_decisions"  # the capability test's mark on a model that answered in letters
 AT_ONCE = 4  # questions of one request sent together; a local server queues what it cannot run side by side
 
 
@@ -94,4 +94,4 @@ class LetterModelScorer(Scorer):
         await self.http.aclose()
 
 
-registry.register(KIND, LetterModelScorer.from_env, provider_kinds=PROVIDER_KINDS)
+registry.register(KIND, LetterModelScorer.from_env, provider_kinds=PROVIDER_KINDS, needs=NEEDS)

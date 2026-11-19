@@ -48,6 +48,7 @@ import os
 
 import src.decider.adapters.decision_model  # noqa: F401 - registers the built-in scorer kind
 import src.decider.adapters.letter_model  # noqa: F401 - registers the local scorer kind
+import src.decider.adapters.systemone  # noqa: F401 - registers the typed local scorer kind
 import src.providers.openrouter  # noqa: F401 - registers the built-in provider kind
 from src.providers import registry as providers
 from src.decider import registry as scorers
@@ -1941,6 +1942,7 @@ def create_app(h: Harness) -> FastAPI:
     def models_out() -> dict[str, Any]:
         return {**h.model_roles().to_dict(), "roles": ROLES, "labels": ROLE_LABELS, "optional": sorted(OPTIONAL_ROLES), "scorer_kinds": scorers.kinds(),
                 "scorer_providers": {k: list(scorers.provider_kinds(k)) for k in scorers.kinds()},
+                "scorer_needs": {k: scorers.needs(k) for k in scorers.kinds() if scorers.needs(k)},
                 "bound": h.bound}
 
     @app.get("/settings/models")

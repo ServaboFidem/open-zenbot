@@ -8,7 +8,10 @@ not change. Callers resolve by kind and never import an adapter module.
 A scorer also says which provider kinds its decision model may sit on
 (`provider_kinds`): "openrouter-decision-1" needs OpenRouter's Decisions
 API, "letter-logprobs" an OpenAI-compatible server. Settings offers a
-scorer only the models of those providers.
+scorer only the models of those providers. A scorer may also name the
+mark the capability test leaves on a model it can drive (`needs`, one of
+a model's `supported_parameters`): "letter-logprobs" needs
+"letter_decisions", "systemone" needs "typed_decisions".
 """
 
 from __future__ import annotations
@@ -23,13 +26,23 @@ DEFAULT_PROVIDER_KINDS = ("openrouter",)
 
 _factories: dict[str, Factory] = {}
 _provider_kinds: dict[str, tuple[str, ...]] = {}
+_needs: dict[str, str] = {}
 
 
-def register(kind: str, factory: Factory, *, provider_kinds: tuple[str, ...] = DEFAULT_PROVIDER_KINDS) -> None:
+def register(kind: str, factory: Factory, *, provider_kinds: tuple[str, ...] = DEFAULT_PROVIDER_KINDS,
+             needs: str | None = None) -> None:
     if not kind or not kind.strip():
         raise ValueError("scorer kind must be a non-empty string")
     _factories[kind] = factory
     _provider_kinds[kind] = tuple(provider_kinds)
+    _needs.pop(kind, None)
+    if needs:
+        _needs[kind] = needs
+
+
+def needs(kind: str) -> str | None:
+    """The mark a model must carry for this scorer to drive it; None: any decision model of its providers."""
+    return _needs.get(kind)
 
 
 def provider_kinds(kind: str) -> tuple[str, ...]:
@@ -60,3 +73,4 @@ def clear() -> None:
     """For tests."""
     _factories.clear()
     _provider_kinds.clear()
+    _needs.clear()

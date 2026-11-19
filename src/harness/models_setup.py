@@ -100,6 +100,9 @@ def make_provider(store: ProviderStore, e: ProviderEntry, model: str, *, timeout
         raise ProviderStoreError(f"{e.name}: {type(ex).__name__}: {ex}") from None
 
 
+MARKS = {"letter_decisions": "Letter decisions", "typed_decisions": "Typed decisions"}  # the test's step names
+
+
 def _kinds(kinds: tuple[str, ...]) -> str:
     names = {"openrouter": "an OpenRouter provider", "openai-compatible": "an OpenAI-compatible provider (LM Studio, llama.cpp)"}
     return " or ".join(names.get(k, k) for k in kinds)
@@ -108,6 +111,7 @@ def _kinds(kinds: tuple[str, ...]) -> str:
 def build(store: ProviderStore, roles: ModelRoles) -> Bound:
     import src.decider.adapters.decision_model  # noqa: F401 - registers the scorer
     import src.decider.adapters.letter_model  # noqa: F401 - registers the local scorer
+    import src.decider.adapters.systemone  # noqa: F401 - registers the typed local scorer
 
     chat_e = _entry(store, "chat", roles.chat)
     summary_e = _entry(store, "summary", roles.summary)
@@ -122,6 +126,12 @@ def build(store: ProviderStore, roles: ModelRoles) -> Bound:
         if decision_e.kind not in needs:
             raise ProviderStoreError(f"Decision model: the {roles.scorer} scorer runs on {_kinds(needs)}; "
                                      f"{decision_e.name} is not one. Pick a model on one, or another scorer")
+        mark = scorers.needs(roles.scorer)
+        chosen = decision_e.model(roles.decision.model)
+        if mark and chosen is not None and mark not in (chosen.supported_parameters or []):
+            raise ProviderStoreError(f"Decision model: {roles.decision.model} did not pass the test the {roles.scorer} scorer "
+                                     f"needs ({MARKS.get(mark, mark)}). Pick another model or scorer, or disable the model "
+                                     "and enable it again to test it")
         kwargs: dict[str, Any] = {"key_ref": store.key_ref(decision_e.id), "model": roles.decision.model}
         if decision_e.kind != "openrouter":
             kwargs["base_url"] = decision_e.base_url
