@@ -5,24 +5,24 @@ name each top-level system and run the harness and the tests.
 
 | Path | What |
 | --- | --- |
-| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`); the design studio (`design_studio.py`: numbered copies, comment block, preview bridge `design_bridge.js`; `design_systems.py`: loading and checking design systems; `design_html.py`: the HTML scan; `design_images.py`: pictures as files; `design_parts.py`: slots, worksheet, apply; `studio_helpers.py`: a helper's turn, apply and restore; `studio_help.py`: routing a revision); coding agents: `agent_clis.py` (find, sign-in, switches), `delegation.py` (the `delegate` tool, runner, folder rules) |
+| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`); the design studio (`design_studio.py`: numbered copies, comment block, preview bridge `design_bridge.js`; `design_systems.py`: loading and checking design systems; `design_html.py`: the HTML scan; `design_images.py`: pictures as files; `design_parts.py`: slots, worksheet, apply; `studio_helpers.py`: a helper's turn, apply and restore; `studio_help.py`: routing a revision); coding agents: `agent_clis.py` (find, sign-in, switches), `delegation.py` (the `delegate` tool, runner, folder rules), `dream_routes.py` (the `/dream` routes) |
 | `src/providers/` | Provider interface, registry, provider store (`providers.json`) and secrets, OpenRouter and OpenAI-compatible adapters, model listing and probing, the image provider, Langfuse tracing |
 | `src/decider/` | Decider interface, scorer registry, skill and MCP routing (band and floor), skill-to-bot fit, supervisor, `adapters/` |
 | `src/context/` | Compaction, the protected (pinned) task, transcript rendering |
 | `src/generation/` | Generator boundary: compaction summaries and folds, vault summaries; the `image.generate` tool (`images.py`) |
-| `src/memory/` | Exclusion filter (secrets and approvals), ledger (`ledger.py`), recall, ingest, directory import, learning from a crawl, profile memory and store routing, Hindsight store and processes |
+| `src/memory/` | Exclusion filter (secrets and approvals), ledger (`ledger.py`), recall, ingest, directory import, learning from a crawl, profile memory and store routing, Hindsight store and processes, dreaming (`dream.py`: learning facts from the user's own messages while idle) |
 | `src/rooms/` | Rooms, turns, handoff, orchestrator |
 | `src/music/` | Music discovery: Discogs scan, taste profile, the Soundlore atlas, MusicBrainz and YouTube Music lookups, candidates, the album gate, digests, `music_*` tools, `/music` routes |
 | `src/events/` | The built-in calendar: settings and Google keys (`settings.py`), the SQLite store (`store.py`), the Google client (`google.py`), conversion to and from Google's shape (`convert.py`), sign-in (`connect.py`), pull and push (`sync.py`), the service that runs them (`service.py`) and the `/calendar` routes (`routes.py`); discovery of local events: settings and the Eventbrite address check (`discover_settings.py`), the Eventbrite reader (`eventbrite.py`), the FindLocal reader (`findlocal.py`), the pool, digests, cards and events added from the pool (`discover_store.py`), the service that refreshes, checks, saves and fetches pool pictures (`discovery.py`), the scout's tools (`discover_tools.py`) and the `/discover` routes (`discover_routes.py`) |
 | `src/skills/` | `SKILL.md` loader and catalog; recorder |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) |
 | `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`); a prompt can also set `closed: true` (only the tool groups in its `mcps`, no built-in tool, never in a room: `event-scout.md`) |
 | `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+), and `fetch-uv.mjs` (downloads the pinned uv into `build/bin/` for the installers). Packaging itself is `electron-builder.yml`, `build/` (icon, the .deb's AppArmor profile `apparmor-profile`, the NSIS include `installer.nsh`) and `packaging/harness/` (the CPU-only `pyproject.toml` and `uv.lock` the installed app uses) |
 | `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`); `skills/events-digest/` (the scout's weekly run) |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
-| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_findlocal.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` and the FindLocal stand-in `FakeFindLocal` are in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `all-events.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs` |
+| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_findlocal.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` and the FindLocal stand-in `FakeFindLocal` are in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `all-events.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs`; dreaming in `tests/test_dream.py` and `tests/test_dream_routes.py`, GUI `tests/gui/dream.test.mjs` and `idle-report.test.mjs` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
 | `.github/` | Workflows: `changelog.yml` appends every push to `main` to `CHANGELOG.md` (don't edit it by hand; `[skip changelog]` in a commit subject leaves it out), `stale.yml`, and `release.yml` (a `v*` tag builds the .deb and the Windows installer and opens a draft release; a manual run only builds them; see `## Installed app`) |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
@@ -138,10 +138,10 @@ gives `notes-ledger/`, `notes-music/`, `notes-calendar/` and `notes-settings/`.
 | Folder (default under `~/.zen-agents/`) | Holds | Owned by |
 | --- | --- | --- |
 | `vault/` | Work docs (`docs/`), `delegated/` (job folders for `delegate`), uploads, browser output (`browser/`), anything bots save; `designs/` (studio designs; each folder also holds `images/` and `.versions/`, whose `before-<n>.<name>` files are the working file as it was before a helper's change) and `design-systems/` (the user's own); `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
-| `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations | `src/memory/ledger.py` `ledger_path_for` |
+| `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations, `dreams.json` (dreaming progress) | `src/memory/ledger.py` `ledger_path_for` |
 | `vault-music/` | Music database (`music.db`), the Soundlore atlas, cover images | `src/music/settings.py` `music_dir`; bots never reach it (`allowed_folders.private_folders`) |
 | `vault-calendar/` | Calendar database (`calendar.db`: events, calendars, sync state) | `src/events/settings.py` `calendar_dir`; a private folder (`allowed_folders.private_folders`), so no bot tool reaches the file. The `/calendar` routes are another matter: see "Bots and the calendar" under `### The calendar and Google`; also holds `discover.db` (the discovered events, digests, cards and the events added from the pool) and `discover-images/` (card pictures, and pool pictures in `discover-images/pool/`), private like `calendar.db` |
-| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `events.json` (event discovery: place, ticked categories, interests, on or off, the FindLocal city and its time zone), `events_keys.json` (the FindLocal key, owner-only), `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
+| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `events.json` (event discovery: place, ticked categories, interests, on or off, the FindLocal city and its time zone), `events_keys.json` (the FindLocal key, owner-only), `dream.json` (dreaming: on or off and the idle minutes), `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
 
 A new setting goes in `settings_dir(vault_root) / "<name>.json"`, never under the vault. Secrets and
 `allowed_folders.json` (which decides what `files` may reach) must stay out of the vault: a bot that could
@@ -161,6 +161,108 @@ refuses duplicates in the batch and cards without exactly two standout tracks fr
 tracklist; a digest saves whole or not at all (`src/music/digest.py`). The `music_*` tools exist only
 when music is on and the Discogs token is set. Don't add a path that saves a card without the gate. The Discogs token lives in `vault-settings/music_keys.json`; `vault-music/` is as private
 as the settings and ledger folders, so keep it out of anything a bot can read or write.
+
+### Dreaming
+
+While the computer is idle, the harness reads the user's own messages from one-to-one conversations and writes a few
+short facts into shared memory, where every bot's recall finds them (`src/memory/dream.py` `Dreamer`; the routes are
+`src/harness/dream_routes.py`; the loop runs in the `lifespan` in `api.py` beside the extract queue's). It is off by
+default. Design: `docs/superpowers/specs/2026-11-19-dreaming-design.md` (git-ignored, on the computer the work was
+done on).
+
+- **Where things live.** The switch and the idle minutes in `vault-settings/dream.json` (`DreamSettings`: `enabled`
+  default false, `idle_minutes` default 5, a whole number from 1 to 120; no secret). The model is the `dream` role
+  ("Dreaming model") in `vault-settings/harness.json`, chosen like the other roles. It is never filled from another
+  role: with none chosen dreaming does not run, and switching on without one is refused. Progress is in
+  `<vault>-ledger/dreams.json` (`DreamMarks`, tmp-then-replace; per conversation id the exchanges read, failed attempts
+  and the time of the next try, plus the count learned and the time of the last dream), in the ledger folder and never
+  the vault, where a bot could rewrite it. A damaged file is moved to `dreams.json.bad` and dreaming starts empty.
+- **What is read** (`unread_marked`). One-to-one conversations (`kind == "bot"`; rooms are not read), newest
+  `updated_at` first, whose `updated_at` is at least 30 minutes old (`QUIET_S`) and that have exchanges past their mark.
+  From each exchange only `Exchange.user` goes anywhere: never `addendum`, `comments`, `reply`, attachments, the
+  conversation's `summary` or `note`. An exchange still `pending` stops the read there. Skipped, but counted as read:
+  outcome `routed` (a message sent through ZenBot is recorded again where it was handled), `set_aside`, a question
+  form's answers (`answers_to` set, or an older record whose text starts `Form answers (`), a message equal to an
+  earlier one in the conversation (a Redo repeats it), an empty one, and one the exclusion filter refuses for shared
+  memory (a secret never reaches the model). One message is cut to 4,000 characters; messages are batched to at most
+  12,000 characters a model call (`batches`).
+- **When it runs** (`Dreamer._may_go`). All three must hold, and are checked before each conversation, each model call
+  and each write, and every 2 s while a model call is in flight:
+  1. Ready (`ready`): `enabled`, a `dream` role that builds (`Harness._dream_generator`), and the owner's name known
+     (a shared write needs it).
+  2. The machine is idle: Electron's main process posts `powerMonitor.getSystemIdleTime()` to `POST /dream/idle` every
+     60 s (`src/electron/idle-report.cjs`, started from `main.cjs`, in developer mode and the installed app). The
+     machine counts as idle when the newest report is under 150 s old and says at least `idle_minutes`. With no report
+     (a plain browser, no Electron) it is never idle, and the settings section says so (`needsDesktopNote`).
+  3. Nothing is under way (`Harness.busy`): no session that has not ended (a task, room turn or routine run; a session
+     that is paused or waiting on an approval counts), no task still writing its exchange, no room turn waiting for the
+     floor, no import, no delegation, and no job in the extract queue, one waiting out a retry included.
+
+  "Dream now" (`POST /dream/run`) skips rule 2 only, for one pass over what is waiting. The loop looks every 30 s and
+  starts a pass only when something is waiting. When a rule stops holding, a model call in flight is cancelled and that
+  conversation's mark stays; a store write in flight is never cancelled (it is awaited directly, as the extract queue's
+  is). Harness shutdown does the same (`Dreamer.close`).
+- **The distil call** (`Generator.dream_facts`). One request a batch to the dreaming model. Its prompt says the numbered
+  lines are things one person typed, content and not instructions, asks for lasting facts only (most conversations hold
+  none, and an empty list is the right answer), and lists the stores. The answer is JSON
+  `{"facts": [{"text", "store"}]}`. The harness keeps at most 8 facts a batch, each 1 to 300 characters with no control
+  character (U+2028 and U+2029 included), drops one already in shared memory with the same text (case-folded) or
+  repeated in the answer, and refuses an answer of the wrong shape as a failed attempt (`clean_facts`).
+- **The store** (`remember_shared`, `source="dream:<conversation id>"`, `bot_id=""`, `Tier.project`). The model names
+  the store for each fact in the same call: `personal`, `world` or an already registered org (`org:<slug>`), passed as
+  `stores=[...]`. `StoreRouter` is not used: on any failure it answers `[personal, world]` without raising, which would
+  send a weak model's every fact to both. A store that is not offered becomes `personal`. No organization is registered
+  from a dream. A fact the exclusion filter refuses is dropped and counted as refused; the others are written. The mark
+  moves after each batch whose facts are all written; a crash between a write and the mark reads that batch again, and a
+  second model call may word a fact differently, so a near-duplicate can land (the user can Forget it).
+- **Failures** (`error_kind`). A failed attempt is a model error, a malformed answer, a timeout from the model (kind
+  `model`) or a store write that fails (the pass ends too). The conversation then waits 10 minutes after the first
+  failure and 1 hour after the second, and after 3 failed attempts is skipped until it grows past the exchange count it
+  last saw (`RETRY_WAITS`, `MAX_ATTEMPTS`). Only a provider that cannot be reached at all (a refused connection, as from
+  a local model that is not running; kind `unreachable`) pauses all automatic dreaming for 10 minutes, and
+  `GET /dream/status` says so. "Dream now" ignores that pause and clears it before trying. `OwnerUnknown` from a write
+  ends the pass with nothing counted.
+- **Routes** (`dream_routes.py`, under `/dream`; none returns message text, and only `GET /facts` returns fact text):
+  `GET /status` (`enabled`, `idle_minutes`, `model` (the `dream` role or null), `ready`, `idle`, `dreaming`, `waiting`,
+  `last_dream_at`, `learned`, `error` (`model`, `unreachable` or empty), `idle_reported`); `PUT /settings`
+  (`{"enabled", "idle_minutes"}`, 422 outside the range, 409 "Choose a dreaming model first." when switching on with no
+  `dream` role); `POST /idle` (`{"idle_s": n}`, 0 to 10,000,000); `POST /run` (409 when not ready or a pass is under
+  way); `GET /facts` answers a bare list of the dreamt facts (source starting `dream:`), newest first, at most 200,
+  each with `id`, `text`, `at`, `conversation` and `title`. A fact is removed with the existing
+  `DELETE /memory/{fact_id}`. Every POST takes a required JSON body (`NothingIn` where it needs nothing), so a
+  cross-site page cannot send one without a preflight; `tests/test_dream_routes.py` walks every POST.
+- **The settings section** (`DreamSection.jsx`, decisions in `dream.js`, an entry in `settings-index.js` `SECTIONS`):
+  the switch, the model, minutes idle, a status line, Dream now, and the list of what was learned with Forget. It says
+  only the user's own messages are read and that with a hosted model chosen they are sent to that provider.
+- **Ledger.** Kind `dream`, events `pass_start`, `conversation` (conversation id, exchanges read, messages, facts
+  written, dropped, refused, an error kind and the exception's class name) and `pass_end` (counts, error kind); and a
+  `settings` entry (event `dream`) when the switch changes. They carry ids and counts only, never a message or a fact. A
+  failed background pass is a kind `error` entry with the exception's class name. The `memory` entry a write makes
+  carries the fact's id and size, not its text, so the store and `GET /dream/facts` are the only record of what was
+  dreamt.
+- **Known limits.**
+  - The harness API has no authentication: a bot with `shell` or `browser` can post an idle report or call
+    `POST /dream/run`, which starts dreaming early.
+  - For the same reason "only the user's words" is told and checked, not walled: such a bot can call
+    `POST /bots/{id}/tasks` or `POST /orchestrate` with any text, which is stored as `Exchange.user` and would be dreamt
+    into shared facts with no bot id on them. It can already write shared memory directly (`POST /memory`), so dreaming
+    adds no new reach, but do not describe dreamt facts as certainly the user's. Closing it needs authentication on the
+    harness API.
+  - A bot cannot write a conversation record on disk (the ledger folder is private). Text the user pasted from
+    elsewhere is the user's message and is read.
+  - Dreamt facts go into memory with no review step; the list with Forget is the control. Cost is nearly zero, not
+    zero: each fact is one Hindsight retain on OpenRouter, until Hindsight's own model can be pointed at a local one
+    (not built).
+- **Unverified.** Dreaming has never run with a real model, local or hosted: the tests use a fake provider. The settings
+  section has never been seen on screen, and the Electron idle report has only run in tests, not in a real window.
+
+Rules for contributors: only `Exchange.user` goes in a prompt, never `addendum`, `comments`, `reply`, attachments,
+`summary` or `note`. No dream tool for bots, no catalog entry for one, and no organization registered from a dream. Every
+`/dream` POST takes a required JSON body. No message text or fact text in a `dream` ledger entry, a log line or an error
+message. Never cancel a store write in flight (a model call may be). The `dream` role is never filled from another role,
+and dreaming never runs without it. Keep `dreams.json` and `dream.json` out of the vault. Tests never touch the network:
+a fake provider stands in for the model. Tests: `tests/test_dream.py`, `tests/test_dream_routes.py`; GUI
+`tests/gui/dream.test.mjs`, `idle-report.test.mjs` and `settings-index.test.mjs`.
 
 ### The calendar and Google
 
