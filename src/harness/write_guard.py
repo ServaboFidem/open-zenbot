@@ -151,6 +151,9 @@ class ShellWriteCheck:
         scorer = self.scorer()
         if scorer is None:
             return Verdict(True, f"No decider is set up to check shell commands, so every one waits for you. {ASK}")
+        if not getattr(scorer, "checks_commands", True):  # a scorer not shown to judge commands well: the user does
+            return Verdict(True, f"The decider in use ({scorer.kind}) is not relied on to check shell commands, "
+                                 f"so every one waits for you. {ASK}")
         request = DecisionRequest(state=self.state(command, f), questions={"reads": READS, "writes": QUESTION},
                                   purpose="shell-writes")
         try:

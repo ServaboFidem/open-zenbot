@@ -100,8 +100,14 @@ def make_provider(store: ProviderStore, e: ProviderEntry, model: str, *, timeout
         raise ProviderStoreError(f"{e.name}: {type(ex).__name__}: {ex}") from None
 
 
+def _kinds(kinds: tuple[str, ...]) -> str:
+    names = {"openrouter": "an OpenRouter provider", "openai-compatible": "an OpenAI-compatible provider (LM Studio, llama.cpp)"}
+    return " or ".join(names.get(k, k) for k in kinds)
+
+
 def build(store: ProviderStore, roles: ModelRoles) -> Bound:
     import src.decider.adapters.decision_model  # noqa: F401 - registers the scorer
+    import src.decider.adapters.letter_model  # noqa: F401 - registers the local scorer
 
     chat_e = _entry(store, "chat", roles.chat)
     summary_e = _entry(store, "summary", roles.summary)
@@ -112,10 +118,15 @@ def build(store: ProviderStore, roles: ModelRoles) -> Bound:
         if not scorers.is_registered(roles.scorer):
             raise ProviderStoreError(f"unknown scorer {roles.scorer!r}; known: {scorers.kinds()}")
         decision_e = _entry(store, "decision", roles.decision)
+        needs = scorers.provider_kinds(roles.scorer)
+        if decision_e.kind not in needs:
+            raise ProviderStoreError(f"Decision model: the {roles.scorer} scorer runs on {_kinds(needs)}; "
+                                     f"{decision_e.name} is not one. Pick a model on one, or another scorer")
+        kwargs: dict[str, Any] = {"key_ref": store.key_ref(decision_e.id), "model": roles.decision.model}
         if decision_e.kind != "openrouter":
-            raise ProviderStoreError("Decision model: the decisions API is OpenRouter's; pick a model on an OpenRouter provider")
+            kwargs["base_url"] = decision_e.base_url
         try:
-            scorer = scorers.get(roles.scorer, key_ref=store.key_ref(decision_e.id), model=roles.decision.model)
+            scorer = scorers.get(roles.scorer, **kwargs)
         except Exception as ex:  # noqa: BLE001
             raise ProviderStoreError(f"Decision model: {type(ex).__name__}: {ex}") from None
     openrouter = next((e for e in (decision_e, chat_e, summary_e) if e is not None and e.kind == "openrouter"), None)

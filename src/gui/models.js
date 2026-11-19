@@ -67,7 +67,7 @@ export function defaultModelLabel(providers, roles) {
 }
 
 // Testing a model as it is enabled (a provider that lists ids only): what the progress modal shows.
-export const PROBE_LABELS = { chat: 'Answers chat', tools: 'Calls tools', structured: 'Structured output', image: 'Image input', embeddings: 'Embeddings' };
+export const PROBE_LABELS = { chat: 'Answers chat', tools: 'Calls tools', structured: 'Structured output', image: 'Image input', embeddings: 'Embeddings', decision: 'Decisions' };
 
 export const probeStart = (model, steps) => ({
   model, total: steps.length, done: 0, end: null,
@@ -93,3 +93,14 @@ export function probeReducer(st, e) {
 // whose saved value moved takes the new one, every other field keeps what is in the form, saved or not. So a save
 // from another section (the Dreaming model) does not throw away picks the user has not saved yet.
 export const keepEdits = (form, prev, next) => Object.fromEntries(Object.keys(next).map(k => [k, next[k] !== prev?.[k] || !(k in form) ? next[k] : form[k]]));
+
+// The providers a scorer's decision model may be on (GET /settings/models `scorer_providers`: scorer kind -> provider
+// kinds), as provider ids for `enabledByKind`. A harness that does not say means OpenRouter, as before.
+export const scorerProviderIds = (providers, roles, scorer) => {
+  const kinds = roles?.scorer_providers?.[scorer] || ['openrouter'];
+  return (providers || []).filter(p => kinds.includes(p.kind)).map(p => p.id);
+};
+// The line under the Decision model picker, and what an empty picker says is missing.
+export const decisionHint = (roles, scorer) => ((roles?.scorer_providers?.[scorer] || ['openrouter']).includes('openrouter')
+  ? { hint: "The scorer's model. Decision models come from OpenRouter.", where: ' on an OpenRouter provider' }
+  : { hint: "The scorer's model: a local decision model on an OpenAI-compatible server such as LM Studio. A model shows here once its test, run when you enable it, passes the Decisions step. Shell commands always wait for your approval with this scorer.", where: ' on an OpenAI-compatible provider' });

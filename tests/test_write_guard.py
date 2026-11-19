@@ -107,6 +107,19 @@ async def test_a_rejection_tells_the_bot_where_to_save_instead(ledger, tmp_path)
     assert not ledger.tail(kind="tool_call", session_id=s.id)
 
 
+async def test_a_scorer_not_relied_on_for_commands_is_never_asked(ledger, tmp_path):
+    scorer = MockScorer(answer("inside", 0.99))
+    scorer.kind, scorer.checks_commands = "letter-logprobs", False
+    approvals = ApprovalStore()
+    provider = ScriptedProvider([completion(calls=[("c1", "shell", {"command": "dir"})]), completion("Listed.")])
+    task = asyncio.create_task(make_loop(ledger, tmp_path, provider, approvals, scorer).run(Bot(name="b", role="r"), "list"))
+    [req] = await pending(approvals)
+    assert req.rule == RULE and "letter-logprobs" in req.detail and "not relied on" in req.detail
+    assert scorer.requests == []
+    approvals.decide(req.id, approved=True)
+    assert (await task).state == SessionState.done
+
+
 async def test_no_decider_means_every_shell_call_waits(ledger, tmp_path):
     approvals = ApprovalStore()
     provider = ScriptedProvider([completion(calls=[("c1", "shell", {"command": "dir"})]), completion("Listed.")])

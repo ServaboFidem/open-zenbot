@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, Callable
 
 import httpx
@@ -25,6 +26,8 @@ def step_of(body: dict[str, Any]) -> str:
         return "tools"
     if body.get("response_format"):
         return "structured"
+    if body.get("logprobs"):
+        return "decision"
     content = body["messages"][-1]["content"]
     return "image" if isinstance(content, list) else "chat"
 
@@ -40,6 +43,7 @@ GOOD: dict[str, Callable[[], httpx.Response]] = {
     "structured": lambda: reply('{"color": "red"}'),
     "image": lambda: reply("red"),
     "embeddings": lambda: PAGE_404(),  # a chat model: the server has no embeddings route for it
+    "decision": lambda: reply("B"),  # an ordinary server: an answer, but no token probabilities
 }
 
 
@@ -88,7 +92,49 @@ async def test_a_capable_model_passes_every_step():
     assert m.input_modalities == ["text", "image"] and m.output_modalities == ["text"]
     assert m.tools and m.structured_output and m.image_input
     assert [(e["step"], e["status"]) for e in events if e["status"] != "running"] == [
-        ("chat", "pass"), ("embeddings", "fail"), ("tools", "pass"), ("structured", "pass"), ("image", "pass")]
+        ("chat", "pass"), ("embeddings", "fail"), ("tools", "pass"), ("structured", "pass"), ("image", "pass"), ("decision", "fail")]
+
+
+def letter(body: dict[str, Any], wrong: bool = False, mass: float = 0.9) -> httpx.Response:
+    """A one-token answer with probabilities: the right option's letter (or the first wrong one) holds `mass`."""
+    from src.providers.probe import DECISIONS
+    prompt = body["messages"][0]["content"]
+    right = next(r for state, _, _, r in DECISIONS if state in prompt)
+    pick = "ABC"[(right + 1) % 2 if wrong else right]
+    top = [{"token": f" {pick}", "logprob": math.log(mass)}, {"token": "The", "logprob": math.log(1 - mass)}]
+    return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": pick},
+                                                  "logprobs": {"content": [{"token": f" {pick}", "top_logprobs": top}]}}]})
+
+
+async def decision_probe(answer: Callable[[dict[str, Any]], httpx.Response], events: list) -> ModelInfo:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        step = step_of(body)
+        return answer(body) if step == "decision" else GOOD[step]()
+    http = OpenRouterHttp(Secret("nvapi-test-0123456789abcdef"), base_url=BASE, timeout=60.0, transport=httpx.MockTransport(handler))
+    try:
+        return await run_probe(http, TEXT, events.append)
+    finally:
+        await http.aclose()
+
+
+async def test_a_model_that_answers_decisions_in_letters_is_a_decision_model():
+    events: list = []
+    m = await decision_probe(letter, events)
+    assert m.kinds == ["text", "decision"] and m.output_modalities == ["text", "decisions"]
+    assert events[-1] == {"kind": "step", "step": "decision", "status": "pass"}
+
+
+@pytest.mark.parametrize("answer,why", [
+    (lambda body: reply("B"), "no token probabilities"),
+    (lambda body: letter(body, mass=0.2), "does not answer with an option letter"),
+    (lambda body: letter(body, wrong=True), "a wrong answer"),
+])
+async def test_a_model_that_cannot_be_asked_a_decision_stays_a_text_model(answer, why):
+    events: list = []
+    m = await decision_probe(answer, events)
+    assert m.kinds == ["text"] and m.output_modalities == ["text"]
+    assert events[-1] == {"kind": "step", "step": "decision", "status": "fail", "detail": why}
 
 
 async def test_ignored_tools_and_fenced_json_fail():
@@ -205,7 +251,7 @@ async def test_what_a_model_does_comes_from_the_tests_not_its_name():
     assert m.supported_parameters == ["input_type"] and m.reasoning is None and m.guessed is False and m.probed_at
     assert seen == [("chat", None), ("embeddings", None), ("embeddings", "query")]
     assert [(e["step"], e["status"]) for e in events if e["status"] != "running"] == [
-        ("chat", "fail"), ("embeddings", "pass"), ("tools", "skip"), ("structured", "skip"), ("image", "skip")]
+        ("chat", "fail"), ("embeddings", "pass"), ("tools", "skip"), ("structured", "skip"), ("image", "skip"), ("decision", "skip")]
 
 
 async def test_a_model_named_for_embeddings_that_chats_is_a_chat_model():
@@ -261,7 +307,7 @@ async def test_probe_enables_the_model_with_what_it_found(client, harness: Harne
     pid = nim(harness)
     r = await client.post(f"/settings/providers/{pid}/models/probe", json={"model": NIM_MODEL})
     assert r.status_code == 200, r.text
-    assert r.json()["steps"] == STEPS == ["chat", "embeddings", "tools", "structured", "image"]
+    assert r.json()["steps"] == STEPS == ["chat", "embeddings", "tools", "structured", "image", "decision"]
     evs = await events_of(client, pid, r.json()["probe_id"])
     end = evs[-1]
     assert end["kind"] == "end" and end["status"] == "done"
@@ -321,7 +367,7 @@ async def test_late_subscriber_gets_the_whole_run(client, harness: Harness):
     probe_id = (await client.post(f"/settings/providers/{pid}/models/probe", json={"model": NIM_MODEL})).json()["probe_id"]
     first = await events_of(client, pid, probe_id)
     late = await events_of(client, pid, probe_id)
-    assert late == first and late[-1]["kind"] == "end" and len(late) == 11
+    assert late == first and late[-1]["kind"] == "end" and len(late) == 13
 
 
 async def test_a_model_that_neither_chats_nor_embeds_is_not_enabled(client, harness: Harness):

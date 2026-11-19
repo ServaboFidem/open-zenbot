@@ -1,7 +1,10 @@
 """Testing an OpenAI-compatible model to learn what it can do, at the moment it is enabled.
 
 Such a provider lists model ids only, so a model's capabilities are found by asking it: a chat reply
-(and whether it reasons), an embedding, a forced tool call, a JSON-schema reply and an image. Its kind
+(and whether it reasons), an embedding, a forced tool call, a JSON-schema reply, an image and a decision
+(three questions with a known answer, in the letter format of `letters.py`: a model passes when the server
+returns the first token's probabilities, most of them sit on the option letters and every answer is right;
+that shows it can be asked, not how well it judges). Its kind
 comes from what it answers, never from its name: "embed" in an id says nothing reliable. A server often ignores
 `tools` or `response_format` silently, so each test checks what came back, not just that the request
 was accepted. A rate limit, a timeout, a server error or no connection ends the probe as `Unavailable`
@@ -16,6 +19,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from . import letters
 from .interface import ProviderError, ProviderUnavailable
 from .models import ModelInfo
 from .openrouter import OpenRouterHttp
@@ -53,8 +57,14 @@ class ProbeFailed(Exception):
         self.unusable = unusable
 
 
-STEPS = ["chat", "embeddings", "tools", "structured", "image"]  # every model, whatever its name: what passes decides its kind
-CHAT_ONLY = {"tools", "structured", "image"}  # skipped when the model doesn't chat
+STEPS = ["chat", "embeddings", "tools", "structured", "image", "decision"]  # every model, whatever its name: what passes decides its kind
+CHAT_ONLY = {"tools", "structured", "image", "decision"}  # skipped when the model doesn't chat
+# (state, question, options, the index of the right one)
+DECISIONS = [
+    ("The sky was clear and the sun shone all day.", "Did it rain that day?", ["yes", "no"], 1),
+    ("Maria paid the invoice on Monday.", "Has the invoice been paid?", ["yes", "no"], 0),
+    ("The home team won the match three goals to nil.", "What is this text about?", ["cooking", "sport", "weather"], 1),
+]
 
 
 def reason_for(e: ProviderUnavailable) -> str:
@@ -144,7 +154,7 @@ async def run_probe(http: OpenRouterHttp, model: ModelInfo, emit: Emit) -> Model
     params: list[str] = []
     inputs = ["text"]
     budget = {"tools": 128, "structured": 128, "image": 64}  # raised for a reasoning model, after the chat test
-    chats = embeds = False
+    chats = embeds = decides = False
     refusal: _Refused | None = None
 
     def step(name: str, status: str, detail: str | None = None) -> None:
@@ -195,13 +205,31 @@ async def run_probe(http: OpenRouterHttp, model: ModelInfo, emit: Emit) -> Model
             if ok:
                 inputs.append("image")
             step(name, "pass" if ok else "fail")
+        elif name == "decision":
+            decides, why = await _decides(http, model.id)
+            step(name, "pass" if decides else "fail", why)
     if not (chats or embeds):
         why = f" ({refusal.message})" if refusal else ""
         raise ProbeFailed(f"{model.id} answered neither a chat nor an embeddings request{why}")
-    kinds = (["text"] if chats else []) + (["embedding"] if embeds else [])
-    outputs = (["text"] if chats else []) + (["embeddings"] if embeds else [])
+    kinds = (["text"] if chats else []) + (["embedding"] if embeds else []) + (["decision"] if decides else [])
+    outputs = (["text"] if chats else []) + (["embeddings"] if embeds else []) + (["decisions"] if decides else [])
     return replace(found, kinds=kinds, output_modalities=outputs, input_modalities=inputs, supported_parameters=params,
                    reasoning=found.reasoning if chats else None)
+
+
+async def _decides(http: OpenRouterHttp, model_id: str) -> tuple[bool, str | None]:
+    """Whether the model answers a decision with one option letter whose probabilities the server returns, and
+    gets three easy ones right; with why not."""
+    for state, question, options, right in DECISIONS:
+        got = letters.read(_reply(await _post(http, CHAT_PATH, letters.payload(model_id, letters.prompt(state, question, options)))), len(options))
+        if got is None:
+            return False, "no token probabilities"
+        probs, mass = got
+        if mass < letters.MIN_MASS:
+            return False, "does not answer with an option letter"
+        if max(range(len(probs)), key=probs.__getitem__) != right:
+            return False, "a wrong answer"
+    return True, None
 
 
 async def _calls_tools(http: OpenRouterHttp, model_id: str, max_tokens: int) -> bool:

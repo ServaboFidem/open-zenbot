@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, ProgressBar, Spinner } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
 import { DreamSection } from './DreamSection.jsx';
-import { KIND_LABELS, capabilityTags, choiceKey, probeReducer, probeStart, enabledByKind, filterModels, keepEdits, fromPreset, keyLabel, modelLabel, parseChoice, presetOf } from './models.js';
+import { KIND_LABELS, capabilityTags, choiceKey, probeReducer, probeStart, enabledByKind, filterModels, keepEdits, decisionHint, scorerProviderIds, fromPreset, keyLabel, modelLabel, parseChoice, presetOf } from './models.js';
 
 const SHOWN = 150;  // rows a model list renders at once; a search narrows the rest
 const BLANK = { preset: '', name: '', kind: 'openai-compatible', base_url: '', keyMode: 'paste', key: '', key_ref: '', no_key: false };
@@ -223,7 +223,7 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
   }
   const picker = (role, hint, disabled = false) => {
     const kind = roles.roles[role];
-    const groups = enabledByKind(providers, kind, role === 'decision' ? providers.filter(p => p.kind === 'openrouter').map(p => p.id) : null);
+    const groups = enabledByKind(providers, kind, role === 'decision' ? scorerProviderIds(providers, roles, form.scorer) : null);
     const current = parseChoice(form[role]);
     const missing = current && !groups.some(g => g.provider === current.provider && g.models.some(m => m.id === current.model));
     const optional = (roles.optional || []).includes(role);
@@ -232,7 +232,7 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
         {optional && <option value="">None</option>}
         {(missing || (!optional && !form[role])) && <option value={form[role]}>{missing ? `${current.model} (not enabled)` : 'Pick a model'}</option>}
         {groups.map(g => <optgroup key={g.provider} label={g.name}>{g.models.map(m => <option key={m.id} value={choiceKey(g.provider, m.id)}>{modelLabel(m)}</option>)}</optgroup>)}
-      </select> : <p className="field-hint">No {KIND_LABELS[kind]?.toLowerCase() || kind} models enabled{role === 'decision' ? ' on an OpenRouter provider' : ''}. <button type="button" className="text-link" onClick={openProviders}>Enable one on the Model providers page</button>.</p>}
+      </select> : <p className="field-hint">No {KIND_LABELS[kind]?.toLowerCase() || kind} models enabled{role === 'decision' ? decisionHint(roles, form.scorer).where : ''}. <button type="button" className="text-link" onClick={openProviders}>Enable one on the Model providers page</button>.</p>}
     </Field>;
   };
   return <>
@@ -245,7 +245,7 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
       <Field label="Decider scorer" hint="Chooses skills and MCP servers per task, and watches long tasks. Without one, every skill and tool is offered.">
         <select aria-label="Decider scorer" value={form.scorer} disabled={!online} onChange={e => setForm(f => ({ ...f, scorer: e.target.value }))}><option value="">None</option>{roles.scorer_kinds.map(k => <option key={k} value={k}>{k}</option>)}</select>
       </Field>
-      {form.scorer && picker('decision', "The scorer's model. Decision models come from OpenRouter.")}
+      {form.scorer && picker('decision', decisionHint(roles, form.scorer).hint)}
       <div className="od-row"><div className="od-fill"/>{dirty && <Button appearance="subtle" onClick={() => setForm(initial(roles))}>Discard</Button>}<Button appearance="primary" type="submit" disabled={!online || !dirty || !form.chat || !form.summary || (form.scorer && !form.decision)}>Save</Button></div>
     </form>
     <DreamSection ctx={ctx} providers={providers} roles={roles} onSaved={onSaved} openProviders={openProviders}/>

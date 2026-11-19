@@ -7,7 +7,7 @@ name each top-level system and run the harness and the tests.
 | --- | --- |
 | `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`); the design studio (`design_studio.py`: numbered copies, comment block, preview bridge `design_bridge.js`; `design_systems.py`: loading and checking design systems; `design_html.py`: the HTML scan; `design_images.py`: pictures as files; `design_parts.py`: slots, worksheet, apply; `studio_helpers.py`: a helper's turn, apply and restore; `studio_help.py`: routing a revision); coding agents: `agent_clis.py` (find, sign-in, switches), `delegation.py` (the `delegate` tool, runner, folder rules), `dream_routes.py` (the `/dream` routes) |
 | `src/providers/` | Provider interface, registry, provider store (`providers.json`) and secrets, OpenRouter and OpenAI-compatible adapters, model listing and probing, the image provider, Langfuse tracing |
-| `src/decider/` | Decider interface, scorer registry, skill and MCP routing (band and floor), skill-to-bot fit, supervisor, `adapters/` |
+| `src/decider/` | Decider interface, scorer registry (each scorer names the provider kinds its model may be on, `registry.provider_kinds`), skill and MCP routing (band and floor), skill-to-bot fit, supervisor, `answers.py` (typed answers from a probability per option), `adapters/`: `decision_model.py` (`openrouter-decision-1`, OpenRouter's Decisions API) and `letter_model.py` (`letter-logprobs`, a local decision model on an OpenAI-compatible server; see `### Local decision models`) |
 | `src/context/` | Compaction, the protected (pinned) task, transcript rendering |
 | `src/generation/` | Generator boundary: compaction summaries and folds, vault summaries; the `image.generate` tool (`images.py`) |
 | `src/memory/` | Exclusion filter (secrets and approvals), ledger (`ledger.py`), recall, ingest, directory import, learning from a crawl, profile memory and store routing, Hindsight store and processes, dreaming (`dream.py`: learning facts from the user's own messages while idle) |
@@ -994,6 +994,43 @@ The `shell` tool runs any command line as the user's account, so it gets three g
   folder or the vault.
 
 These are judgments, not a sandbox: an approved or misjudged command still runs as the user's account.
+
+A scorer whose `checks_commands` is False (the local `letter-logprobs` scorer) is never asked about a command:
+every `shell` call opens the approval, as with no decider.
+
+### Local decision models
+
+The decider can run on a local model instead of OpenRouter's: scorer kind `letter-logprobs`
+(`src/decider/adapters/letter_model.py`), chosen with its model on Settings > Harness settings.
+
+- **The format** (`src/providers/letters.py`, shared by the scorer and the capability test). One request to
+  `/chat/completions` per question: the state, the question and the options as letters, ending `Answer:`; one token
+  with `top_logprobs` 20; the probability on the option letters, renormalised, is the answer. At most 20 options. It
+  is the format the Jev-Style v1 decision models were trained on (their model card gives it). Under half the token's
+  probability on the letters (`MIN_MASS`) is a refusal; an answer with no token probabilities is a `ProviderError`.
+- **Detecting one.** The capability test run when a model is enabled on an OpenAI-compatible provider has a sixth
+  step, `decision` (`probe._decides`): three questions with a known answer. A model passes when the server returns
+  token probabilities, most of them are on the letters and all three are right; it then has kind `decision` beside
+  `text`. That shows the model can be asked, not that it judges well: an ordinary chat model that answers with a
+  letter passes too. A model enabled before this step existed must be disabled and enabled again to be tested.
+- **Where a scorer may run.** `models_setup.build` refuses a decision model on a provider kind its scorer does not
+  name; `GET /settings/models` carries `scorer_providers`, and the Decision model picker lists only those providers
+  (`models.js` `scorerProviderIds`). `ZEN_SCORER=letter-logprobs` in the environment is not enough (it needs the
+  provider's address): the harness starts without a scorer and says to choose it in Settings.
+- **Shell commands always ask** with this scorer (`checks_commands = False`): do not switch that on without
+  evidence on the model in use.
+- **Checked by hand on 2026-11-19** against LM Studio with `jev-style-qwen3.5-2b-decision` (the v1 GGUF): the
+  capability test passed its decision step; about 200 ms a question, 5 to 6 s to route one task over 29 skills; the
+  same input gives the same numbers. Judgement was mixed. On three made-up tools it picked the right one at 0.88 to
+  0.97. On the harness's real skill questions the right skill came first (Presentations 0.93 for a slide deck) but
+  most skills scored above 0.5 (22 of 29 for that task), so it over-offers. On shell questions in a made-up wording
+  it gave about 0.7 "inside" to `ls` and to `rm -rf ~/Documents` alike. Nothing else has been tried: no other model,
+  no llama.cpp server, and no task run end to end in the app with this scorer.
+- **A second local scorer.** A server that answers typed decisions itself (`jev-style serve`, `POST /v1/systemone`:
+  state and questions in, `noul` / `choice` / `score` out) is a new adapter in `adapters/`: post the request, read
+  each answer with `decision_model.parse_answer`, and `registry.register(kind, factory, provider_kinds=...)`. Not
+  built. Tests: `tests/test_letter_model.py`, `tests/test_model_probe.py`, `tests/test_write_guard.py`, GUI
+  `tests/gui/models.test.mjs`.
 
 Other built-in tools that write go through their own checks (`files` server roots, the magick gate). A new
 built-in tool that writes files must keep to `allowed_folders.reachable` too.

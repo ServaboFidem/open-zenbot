@@ -1,7 +1,7 @@
 // Settings' model helpers: picker values, labels, grouping by kind, filtering a provider's list.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { KIND_LABELS, PROBE_LABELS, capabilityTags, probeReducer, probeStart, choiceKey, defaultModelLabel, enabledByKind, filterModels, keepEdits, keyLabel, modelLabel, parseChoice } from '../../src/gui/models.js';
+import { KIND_LABELS, PROBE_LABELS, capabilityTags, probeReducer, probeStart, choiceKey, defaultModelLabel, enabledByKind, decisionHint, filterModels, keepEdits, keyLabel, scorerProviderIds, modelLabel, parseChoice } from '../../src/gui/models.js';
 
 const providers = [
   { id: 'openrouter', name: 'OpenRouter', kind: 'openrouter', models: [
@@ -116,4 +116,17 @@ test('a save elsewhere keeps the picks not yet saved and takes what the save cha
   assert.deepEqual(keepEdits(form, saved, { ...saved, dream: 'local::q' }), { ...saved, chat: 'or::c', dream: 'local::q' });
   assert.deepEqual(keepEdits(form, saved, { ...saved, chat: 'or::d' }), { ...saved, chat: 'or::d' });  // the saved value moved: it wins
   assert.deepEqual(keepEdits({ chat: '', summary: '' }, { chat: '', summary: '' }, saved), saved);  // the first load, a new field included
+});
+
+test('the Decision model picker follows the scorer: OpenRouter for one, local servers for the other', () => {
+  const list = [{ id: 'openrouter', kind: 'openrouter' }, { id: 'lm-studio', kind: 'openai-compatible' }, { id: 'groq', kind: 'openai-compatible' }];
+  const roles = { scorer_providers: { 'openrouter-decision-1': ['openrouter'], 'letter-logprobs': ['openai-compatible'] } };
+  assert.deepEqual(scorerProviderIds(list, roles, 'openrouter-decision-1'), ['openrouter']);
+  assert.deepEqual(scorerProviderIds(list, roles, 'letter-logprobs'), ['lm-studio', 'groq']);
+  assert.deepEqual(scorerProviderIds(list, {}, 'anything'), ['openrouter']);  // an older harness does not say
+  assert.match(decisionHint(roles, 'openrouter-decision-1').hint, /come from OpenRouter/);
+  assert.equal(decisionHint(roles, 'openrouter-decision-1').where, ' on an OpenRouter provider');
+  assert.match(decisionHint(roles, 'letter-logprobs').hint, /Shell commands always wait for your approval/);
+  assert.equal(decisionHint(roles, 'letter-logprobs').where, ' on an OpenAI-compatible provider');
+  assert.equal(PROBE_LABELS.decision, 'Decisions');
 });
