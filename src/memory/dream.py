@@ -266,10 +266,13 @@ def clean_facts(raw: Any, stores: set[str], known: set[str]) -> list[DreamFact]:
 
 def error_kind(exc: BaseException) -> str:
     """`unreachable` when the provider could not be reached at all (a local model that is not running: the
-    adapter turns a refused connection or a timeout into `ProviderUnavailable` with that cause; a raw
-    transport or socket error counts too); anything else is `model`."""
+    adapter turns a refused connection into `ProviderUnavailable` with cause `network`; a raw transport or
+    socket error counts too); anything else is `model`. A timeout is `model`: a model that is too slow for
+    one batch must count attempts and be skipped after MAX_ATTEMPTS, not pause all dreaming for good."""
     if isinstance(exc, ProviderUnavailable):
-        return "unreachable" if exc.cause in ("network", "timeout") else "model"
+        return "unreachable" if exc.cause == "network" else "model"
+    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+        return "model"
     if isinstance(exc, (httpx.TransportError, OSError)):
         return "unreachable"
     return "model"
@@ -417,11 +420,14 @@ class Dreamer:
     # -- a pass ------------------------------------------------------------------------------------------
 
     async def dream(self, *, manual: bool = False) -> dict[str, int]:
-        """One pass over what is waiting. Returns the counts; does nothing while another pass runs, while
-        waiting out an unreachable provider, or when the rules do not hold."""
+        """One pass over what is waiting. Returns the counts; does nothing while another pass runs or when the
+        rules do not hold. An automatic pass also waits out an unreachable provider; a manual one ("Dream
+        now": the person has most likely just started their model) clears that pause and tries."""
         counts = _empty()
-        if self._running or self._paused() or not self._may_go(manual):
+        if self._running or (not manual and self._paused()) or not self._may_go(manual):
             return counts
+        if manual:
+            self._paused_until = 0.0
         self._running = True
         self.ledger.append(Kind.dream, "", "", event="pass_start", manual=manual)
         error, interrupted, crashed = "", False, ""

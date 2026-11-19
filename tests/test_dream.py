@@ -454,22 +454,64 @@ async def test_unreachable_provider_pauses_ten_minutes(d):
     c = d.conv("I live in Columbus", age=3600)
     other = d.conv("I prefer metric", age=3700)
     d.provider.answers = [httpx.ConnectError("refused")]
-    await d.dreamer.dream(manual=True)
+    d.dreamer.report_idle(600)
+    await d.dreamer.dream()
     assert len(d.provider.calls) == 1 and d.dreamer.status()["error"] == "unreachable"
     assert d.marks.get(c.id) == Mark() and d.marks.get(other.id) == Mark()  # the pass ended; no attempt counted
     d.now += 599
-    await d.dreamer.dream(manual=True)
+    d.dreamer.report_idle(600)
+    await d.dreamer.dream()
     assert len(d.provider.calls) == 1
     d.now += 1
+    d.dreamer.report_idle(600)
+    await d.dreamer.dream()
+    assert len(d.provider.calls) == 3 and d.dreamer.status()["error"] == ""
+
+
+async def test_dream_now_tries_the_model_inside_the_pause(d):
+    d.conv("I live in Columbus")
+    d.provider.answers = [ProviderUnavailable("down", cause="network")]
+    d.dreamer.report_idle(600)
+    await d.dreamer.dream()
+    assert len(d.provider.calls) == 1 and d.dreamer.status()["error"] == "unreachable"
+    d.now += 60
+    d.dreamer.report_idle(600)
+    await d.dreamer.dream()  # automatic: still waiting out the pause
+    assert len(d.provider.calls) == 1
+    d.provider.answers = [ProviderUnavailable("still down", cause="network")]
+    await d.dreamer.dream(manual=True)  # manual: clears the pause and tries
+    assert len(d.provider.calls) == 2 and d.dreamer.status()["error"] == "unreachable"
+    d.now += 60
+    d.dreamer.report_idle(600)
+    await d.dreamer.dream()  # that failure started the pause again
+    assert len(d.provider.calls) == 2
     await d.dreamer.dream(manual=True)
     assert len(d.provider.calls) == 3 and d.dreamer.status()["error"] == ""
+
+
+async def test_a_model_too_slow_for_a_batch_is_skipped_after_three_tries(d):
+    slow = d.conv("I live in Columbus", age=3600)
+    older = d.conv("I prefer metric", age=3700)
+    d.provider.answers = [ProviderUnavailable("slow", cause="timeout"), answer(),
+                          httpx.ReadTimeout("slow"), ProviderUnavailable("slow", cause="timeout")]
+    for wait in (0, 600, 3600):
+        d.now += wait
+        await d.dreamer.dream(manual=True)
+    assert d.marks.skipped(slow.id) and d.marks.get(slow.id).read == 0
+    assert d.marks.get(older.id).read == 1  # it did not wait behind the slow one
+    assert d.dreamer.status()["error"] == "model" and len(d.provider.calls) == 4
+    await d.dreamer.dream(manual=True)
+    assert len(d.provider.calls) == 4
 
 
 def test_error_kind_reads_what_a_refused_connection_raises():
     assert error_kind(httpx.ConnectError("refused")) == "unreachable"
     assert error_kind(ConnectionRefusedError()) == "unreachable"
     assert error_kind(ProviderUnavailable("down", cause="network")) == "unreachable"
-    assert error_kind(ProviderUnavailable("slow", cause="timeout")) == "unreachable"
+    assert error_kind(ProviderUnavailable("slow", cause="timeout")) == "model"
+    assert error_kind(httpx.ReadTimeout("slow")) == "model"
+    assert error_kind(httpx.ConnectTimeout("slow")) == "model"
+    assert error_kind(TimeoutError()) == "model"
     assert error_kind(ProviderUnavailable("busy", cause="rate_limit")) == "model"
     assert error_kind(ValueError("no JSON")) == "model"
 
