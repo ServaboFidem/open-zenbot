@@ -18,9 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
-from ..providers.interface import ProviderUnavailable
+from ..providers.interface import failure_kind
 from ..providers.store import ProviderStoreError
 from ..vault_settings import settings_dir
 from .exclusion import ExclusionError
@@ -178,6 +176,16 @@ class DreamMarks:
             m.attempts, m.not_before = 0, 0.0
             self._save()
 
+    def reset_attempts(self) -> None:
+        """Every conversation may be tried again at once: failed attempts and retry waits cleared. `read`, `seen`,
+        the count learned and the time of the last dream stay."""
+        with self._lock:
+            stale = [m for m in self._marks.values() if m.attempts or m.not_before]
+            for m in stale:
+                m.attempts, m.not_before = 0, 0.0
+            if stale:
+                self._save()
+
     def add_learned(self, n: int, at: str) -> None:
         with self._lock:
             self.learned += n
@@ -264,18 +272,22 @@ def clean_facts(raw: Any, stores: set[str], known: set[str]) -> list[DreamFact]:
     return out
 
 
+SYSTEMIC = ("unreachable", "provider", "store")  # no attempt counted: the pass ends and automatic dreaming pauses
+
+
 def error_kind(exc: BaseException) -> str:
-    """`unreachable` when the provider could not be reached at all (a local model that is not running: the
-    adapter turns a refused connection into `ProviderUnavailable` with cause `network`; a raw transport or
-    socket error counts too); anything else is `model`. A timeout is `model`: a model that is too slow for
-    one batch must count attempts and be skipped after MAX_ATTEMPTS, not pause all dreaming for good."""
-    if isinstance(exc, ProviderUnavailable):
-        return "unreachable" if exc.cause == "network" else "model"
-    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
-        return "model"
-    if isinstance(exc, (httpx.TransportError, OSError)):
+    """The kind of a failed model call (`failure_kind` reads the provider's errors, so no client is imported here).
+    `model` counts an attempt against the conversation: a timeout (a model too slow for one batch must be skipped
+    after MAX_ATTEMPTS, not pause all dreaming for good) and an answer that cannot be used (`ValueError`), or
+    anything else that is no provider failure. Systemic, counting nothing (SYSTEMIC): `unreachable` when the provider
+    could not be reached at all (a local model that is not running: a refused connection), and `provider` for an
+    auth failure (401, 402, 403), a rate limit (429), a server error (5xx) or any other provider error."""
+    kind = failure_kind(exc)
+    if kind == "network":
         return "unreachable"
-    return "model"
+    if kind in ("", "timeout"):
+        return "model"
+    return "provider"
 
 
 class Interrupted(Exception):
@@ -283,7 +295,8 @@ class Interrupted(Exception):
 
 
 class _Failed(Exception):
-    """A conversation's attempt failed: `kind` is `model`, `unreachable` or `store`; `name` the exception's class."""
+    """A conversation's attempt failed: `kind` is `model`, `unreachable`, `provider` or `store`; `name` the
+    exception's class."""
 
     def __init__(self, kind: str, exc: BaseException) -> None:
         super().__init__(kind)
@@ -332,7 +345,7 @@ class Dreamer:
         self.settings = DreamSettings.load(self.vault_root)
         self._report: tuple[float, float] | None = None  # (when it arrived, idle seconds it said)
         self._paused_until = 0.0
-        self._error = ""  # the last pass's error kind: model, unreachable or empty
+        self._error = ""  # the last pass's error kind: model, unreachable, provider, store or empty
         self._running = False
         self._closing = False
         self._task: asyncio.Task[Any] | None = None
@@ -347,12 +360,23 @@ class Dreamer:
     def report_idle(self, idle_s: float) -> None:
         self._report = (self._clock(), float(idle_s))
 
-    def machine_idle(self) -> bool:
+    def _fresh_report(self) -> float | None:
+        """The idle seconds of the newest report while it is under REPORT_FRESH_S old, else None."""
         if self._report is None:
-            return False
+            return None
         at, idle_s = self._report
-        age = self._clock() - at
-        return 0 <= age < REPORT_FRESH_S and idle_s >= self.settings.idle_minutes * 60
+        return idle_s if 0 <= self._clock() - at < REPORT_FRESH_S else None
+
+    def machine_idle(self) -> bool:
+        idle_s = self._fresh_report()
+        return idle_s is not None and idle_s >= self.settings.idle_minutes * 60
+
+    def reset_attempts(self) -> None:
+        """A fresh try for everything (a new dreaming model was chosen): every mark's attempts and retry wait, the
+        pause and the error are cleared."""
+        self.marks.reset_attempts()
+        self._paused_until = 0.0
+        self._error = ""
 
     def _model(self) -> tuple[Generator | None, bool]:
         """The dreaming model, and whether its role names a provider that cannot be built."""
@@ -371,7 +395,7 @@ class Dreamer:
         return not self._closing and self.ready() and not self._busy() and (manual or self.machine_idle())
 
     def _paused(self) -> bool:
-        """Waiting out an unreachable provider; a clock set back cannot stretch the wait."""
+        """Waiting out a systemic failure (SYSTEMIC); a clock set back cannot stretch the wait."""
         left = self._paused_until - self._clock()
         return 0 < left <= UNREACHABLE_WAIT_S
 
@@ -413,21 +437,25 @@ class Dreamer:
             "waiting": self.waiting(),
             "last_dream_at": self.marks.last_dream_at,
             "learned": self.marks.learned,
-            "error": "model" if broken else "unreachable" if self._paused() else self._error,
-            "idle_reported": self._report is not None,
+            # `setup`: the dream choice itself cannot run; else the last pass's error kind (a systemic one stays while
+            # its pause lasts, since no automatic pass runs meanwhile)
+            "error": "setup" if broken else self._error,
+            "idle_reported": self._fresh_report() is not None,
         }
 
     # -- a pass ------------------------------------------------------------------------------------------
 
     async def dream(self, *, manual: bool = False) -> dict[str, int]:
         """One pass over what is waiting. Returns the counts; does nothing while another pass runs or when the
-        rules do not hold. An automatic pass also waits out an unreachable provider; a manual one ("Dream
-        now": the person has most likely just started their model) clears that pause and tries."""
+        rules do not hold. An automatic pass also waits out the pause a systemic failure started; a manual one
+        ("Dream now": the person has most likely just started their model or fixed its key) clears that pause and
+        every conversation's failed attempts and retry wait, so a skipped one is tried again."""
         counts = _empty()
         if self._running or (not manual and self._paused()) or not self._may_go(manual):
             return counts
         if manual:
             self._paused_until = 0.0
+            self.marks.reset_attempts()
         self._running = True
         self.ledger.append(Kind.dream, "", "", event="pass_start", manual=manual)
         error, interrupted, crashed = "", False, ""
@@ -445,9 +473,8 @@ class Dreamer:
                 if outcome == "interrupted":
                     interrupted = True
                     break
-                if outcome in ("unreachable", "store"):
-                    if outcome == "unreachable":
-                        error = "unreachable"
+                if outcome in SYSTEMIC:
+                    error = outcome
                     break
                 if outcome == "model":
                     error = "model"
@@ -475,7 +502,7 @@ class Dreamer:
             outcome = "interrupted"
         except _Failed as f:
             outcome, name = f.kind, f.name
-            if f.kind == "unreachable":
+            if f.kind in SYSTEMIC:  # an outage, not this conversation's fault: nothing counted, all dreaming waits
                 self._paused_until = self._clock() + UNREACHABLE_WAIT_S
             else:
                 self.marks.fail(conv.id, self._clock(), seen)
@@ -536,7 +563,7 @@ class Dreamer:
                     continue
                 except OwnerUnknown:
                     raise
-                except Exception as e:  # noqa: BLE001 - the store failed: this conversation waits as after a bad answer
+                except Exception as e:  # noqa: BLE001 - the store failed: systemic, the pass ends and dreaming pauses
                     raise _Failed("store", e) from None
                 got["facts"] += 1
             self.marks.set_read(conv.id, mark)

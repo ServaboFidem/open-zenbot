@@ -569,3 +569,36 @@ async def test_put_models_sets_checks_and_clears_dream(client):
     assert ok.json()["dream"] == good and ok.json()["labels"]["dream"] == "Dreaming model" and ok.json()["optional"] == ["dream"]
     assert (await client.put("/settings/models", json={})).json()["dream"] == good  # kept
     assert (await client.put("/settings/models", json={"clear_dream": True})).json()["dream"] is None
+
+
+async def test_a_changed_dream_role_gives_every_conversation_a_fresh_try(client, harness: Harness):
+    import time
+
+    from src.memory.dream import Mark
+    other = harness.model_roles().chat.model  # another enabled text model
+    d = harness.dreamer
+    for t in (1.0, 2.0, 3.0):
+        d.marks.fail("c1", now=t, seen=2)
+    d._paused_until, d._error = time.time() + 300, "provider"
+    assert (await client.put("/settings/models", json={"dream": {"provider": "openrouter", "model": "scaledown/summarize"}})).status_code == 200
+    assert d.marks.get("c1") == Mark(seen=2) and not d._paused() and d.status()["error"] == ""
+    d.marks.fail("c1", now=time.time(), seen=2)
+    assert (await client.put("/settings/models", json={})).status_code == 200  # the same role: nothing reset
+    assert (await client.put("/settings/models", json={"dream": {"provider": "openrouter", "model": "scaledown/summarize"}})).status_code == 200
+    assert d.marks.get("c1").attempts == 1
+    assert (await client.put("/settings/models", json={"dream": {"provider": "openrouter", "model": other}})).status_code == 200
+    assert d.marks.get("c1").attempts == 0
+    d.marks.fail("c1", now=time.time(), seen=2)
+    assert (await client.put("/settings/models", json={"clear_dream": True})).status_code == 200
+    assert d.marks.get("c1").attempts == 0
+
+
+def test_the_dream_provider_waits_ten_minutes_and_chat_keeps_its_timeout(harness: Harness):
+    from src.harness.model_roles import Choice
+    from src.harness.models_setup import DREAM_TIMEOUT_S, build, dream_provider
+    roles = harness.model_roles()
+    roles.dream = Choice("openrouter", "scaledown/summarize")
+    p, _ = dream_provider(harness.provider_store, roles)
+    assert DREAM_TIMEOUT_S == 600.0 and p.http._client.timeout.read == 600.0
+    bound = build(harness.provider_store, roles)
+    assert bound.provider.http._client.timeout.read == 120.0

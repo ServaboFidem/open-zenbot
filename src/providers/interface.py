@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+import httpx
+
 
 @dataclass
 class ToolSpec:
@@ -87,6 +89,27 @@ class ProviderUnavailable(ProviderError):
 
 class ProviderAuthError(ProviderError):
     """Bad or missing key. The user must act."""
+
+
+FAILURE_KINDS = ("timeout", "network", "auth", "rate_limit", "server", "other")
+
+
+def failure_kind(exc: BaseException) -> str:
+    """What kind of provider failure `exc` is, for callers outside `src/providers/` that must not import an HTTP
+    client: `timeout`, `network` (could not connect), `auth` (401, 402 or 403), `rate_limit` (429), `server` (5xx),
+    `other` (any other provider error: another HTTP status, a malformed answer from the API), or `""` when it is no
+    provider or transport failure at all (a bad answer of the caller's own reading, a bug)."""
+    if isinstance(exc, ProviderUnavailable):
+        return exc.cause if exc.cause in FAILURE_KINDS else "other"
+    if isinstance(exc, ProviderAuthError):
+        return "auth"
+    if isinstance(exc, ProviderError):
+        return "other"
+    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+        return "timeout"
+    if isinstance(exc, (httpx.TransportError, OSError)):
+        return "network"
+    return ""
 
 
 @runtime_checkable

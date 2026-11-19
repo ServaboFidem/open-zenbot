@@ -20,6 +20,7 @@ FACTS_MAX = 200
 NEED_MODEL = "Choose a dreaming model first."
 NOT_SET_UP = "Dreaming is not set up."
 UNDER_WAY = "A dream is already under way."
+BUSY = "ZenBot is busy. Try again when it is idle."
 
 
 class DreamSettingsIn(BaseModel):
@@ -65,6 +66,8 @@ def dream_router(h) -> APIRouter:
         """One pass now, the idle rule skipped. Always through `start`: `close` waits only for a pass it began."""
         if not h.dreamer.ready():
             raise HTTPException(409, NOT_SET_UP)
+        if h.busy():  # the pass would end before its first conversation: say why instead
+            raise HTTPException(409, BUSY)
         if not h.dreamer.start(manual=True):
             raise HTTPException(409, UNDER_WAY)
         return status()

@@ -1942,6 +1942,8 @@ def create_app(h: Harness) -> FastAPI:
         except ProviderStoreError as ex:
             raise HTTPException(422, str(ex)) from None
         roles.save(h.config.vault_root)
+        if roles.dream != cur.dream and h.dreamer is not None:  # a new dreaming model (or none) deserves a fresh try
+            h.dreamer.reset_attempts()
         h.ledger.append(Kind.settings, "", "", event="models", **{k: v for k, v in roles.to_dict().items()})
         return models_out()
 

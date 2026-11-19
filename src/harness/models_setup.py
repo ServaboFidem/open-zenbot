@@ -20,6 +20,9 @@ from .model_roles import ROLE_LABELS, ROLES, Choice, ModelRoles
 
 DEFAULT_CHAT = "meta/muse-spark-1.3-contributor"  # the OpenRouter adapter's default
 DEFAULT_DECISION = "microsoft/microsoft-decision-1"  # the decision scorer's default
+# the dreaming model's request timeout: a local model on a modest computer may take minutes over one 12,000-character
+# batch, and nobody waits on a dream; every other role keeps the adapters' own default
+DREAM_TIMEOUT_S = 600.0
 
 
 def default_models(c: HarnessConfig) -> list[ModelInfo]:
@@ -44,7 +47,7 @@ def dream_provider(store: ProviderStore, roles: ModelRoles) -> tuple[Provider, s
     if roles.dream is None:
         return None
     e = check_choice(store, roles.dream, "text", ROLE_LABELS["dream"])
-    return make_provider(store, e, roles.dream.model), roles.dream.model
+    return make_provider(store, e, roles.dream.model, timeout=DREAM_TIMEOUT_S), roles.dream.model
 
 
 @dataclass
@@ -81,13 +84,16 @@ def check_choice(store: ProviderStore, choice: Choice | None, kind: str, label: 
     return e
 
 
-def make_provider(store: ProviderStore, e: ProviderEntry, model: str) -> Provider:
+def make_provider(store: ProviderStore, e: ProviderEntry, model: str, *, timeout: float | None = None) -> Provider:
+    """`timeout` (seconds a request may take) is passed only when given; otherwise the adapter keeps its default."""
     import src.providers.openai_compatible  # noqa: F401 - registers the provider
     import src.providers.openrouter  # noqa: F401 - registers the provider
 
     kwargs: dict[str, Any] = {"key_ref": store.key_ref(e.id), "model": model}
     if e.kind != "openrouter":
         kwargs["base_url"] = e.base_url
+    if timeout is not None:
+        kwargs["timeout"] = timeout
     try:
         return providers.get(e.kind, **kwargs)
     except Exception as ex:  # noqa: BLE001 - a factory refused; the store keeps keys out of messages

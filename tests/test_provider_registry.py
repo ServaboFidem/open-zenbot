@@ -72,3 +72,19 @@ def test_no_module_outside_providers_imports_a_provider_client():
         if CLIENT_IMPORTS.search(path.read_text(encoding="utf-8")):
             offenders.append(str(path.relative_to(REPO)))
     assert offenders == [], f"provider clients must stay behind src/providers/: {offenders}"
+
+
+def test_failure_kind_reads_provider_and_transport_errors():
+    import httpx
+
+    from src.providers.interface import ProviderAuthError, ProviderError, ProviderUnavailable, failure_kind
+    assert failure_kind(ProviderUnavailable("x", cause="timeout")) == "timeout"
+    assert failure_kind(ProviderUnavailable("x", cause="network")) == "network"
+    assert failure_kind(ProviderUnavailable("x", cause="rate_limit", status=429)) == "rate_limit"
+    assert failure_kind(ProviderUnavailable("x", cause="server", status=503)) == "server"
+    assert failure_kind(ProviderUnavailable("x", cause="odd")) == "other"
+    assert failure_kind(ProviderAuthError("401")) == "auth"
+    assert failure_kind(ProviderError("HTTP 400", status=400)) == "other"
+    assert failure_kind(httpx.ReadTimeout("slow")) == failure_kind(TimeoutError()) == "timeout"
+    assert failure_kind(httpx.ConnectError("refused")) == failure_kind(ConnectionRefusedError()) == "network"
+    assert failure_kind(ValueError("no JSON")) == failure_kind(RuntimeError()) == ""

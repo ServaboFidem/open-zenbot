@@ -15,7 +15,7 @@ from src.memory.graph import SHARED, LocalGraph, MemoryGraph, Tier
 from src.memory.ledger import Ledger, ledger_path_for
 from src.memory.profile import ProfileMemory
 from src.memory.registry import OrgRegistry, PeopleRegistry
-from src.providers.interface import Completion, Message, ProviderUnavailable
+from src.providers.interface import Completion, Message, ProviderAuthError, ProviderError, ProviderUnavailable
 from src.providers.store import ProviderStoreError
 from src.vault_settings import settings_dir
 
@@ -324,9 +324,21 @@ async def test_not_enabled_no_role_or_no_owner_does_nothing(d, vault, tmp_path):
     assert DreamSettings.load(vault) == DreamSettings(True, 5)  # set_settings saves
 
 
-def test_a_broken_role_is_not_ready_and_reads_as_a_model_error(d):
+def test_a_broken_role_is_not_ready_and_reads_as_a_setup_error(d):
     d.role_broken = True
-    assert not d.dreamer.ready() and d.dreamer.status()["error"] == "model"
+    assert not d.dreamer.ready() and d.dreamer.status()["error"] == "setup"
+
+
+def test_idle_reported_only_while_the_newest_report_is_fresh(d):
+    d.dreamer.report_idle(0)  # any idle value counts as a report
+    assert d.dreamer.status()["idle_reported"] is True
+    d.now += 149
+    assert d.dreamer.status()["idle_reported"] is True
+    d.now += 1  # the app closed: no report for 150 s
+    assert d.dreamer.status()["idle_reported"] is False
+    d.dreamer.report_idle(10)
+    d.now -= 10  # a clock set back does not make a report fresh
+    assert d.dreamer.status()["idle_reported"] is False
 
 
 async def test_idle_needs_a_fresh_long_enough_report(d):
@@ -389,7 +401,7 @@ async def test_user_returning_cancels_the_model_call_and_keeps_the_mark(d, monke
     while not d.provider.calls:
         await asyncio.sleep(0.01)
     d.is_busy = True
-    got = await asyncio.wait_for(run, 2 * dream_mod.GUARD_S)
+    got = await asyncio.wait_for(run, 1.0)
     assert d.provider.cancelled == 1 and got["conversations"] == 0
     assert d.marks.get(c.id) == Mark() and d.dreamer.status()["error"] == ""
 
@@ -422,7 +434,8 @@ async def test_bad_answer_counts_one_attempt_and_the_pass_goes_on(d):
     assert got["conversations"] == 1 and got["facts"] == 1
     assert d.marks.get(bad.id) == Mark(read=0, attempts=1, not_before=NOW + 600, seen=1)
     assert d.marks.get(good.id).read == 1 and d.dreamer.status()["error"] == "model"
-    await d.dreamer.dream(manual=True)  # still waiting out its retry
+    d.dreamer.report_idle(600)
+    await d.dreamer.dream()  # still waiting out its retry
     assert len(d.provider.calls) == 2
 
 
@@ -433,21 +446,64 @@ async def test_wrong_shape_counts_as_a_failed_attempt(d):
     assert d.marks.get(c.id).attempts == 1 and d.marks.get(c.id).read == 0
 
 
+async def idle_pass(d):
+    """An automatic pass, the machine reported idle just now."""
+    d.dreamer.report_idle(600)
+    return await d.dreamer.dream()
+
+
 async def test_three_failures_skip_until_the_conversation_grows(d):
     c = d.conv("I live in Columbus")
     d.provider.answers = ["no json"] * 3
     for wait in (0, 600, 3600):
         d.now += wait
-        await d.dreamer.dream(manual=True)
+        await idle_pass(d)
     assert d.marks.skipped(c.id) and len(d.provider.calls) == 3
     d.now += 10_000
     assert d.dreamer.waiting() == 0
-    await d.dreamer.dream(manual=True)
+    await idle_pass(d)
     assert len(d.provider.calls) == 3
     c.exchanges.append(ex("I prefer metric"))
     assert d.dreamer.waiting() == 1
-    await d.dreamer.dream(manual=True)
+    await idle_pass(d)
     assert len(d.provider.calls) == 4 and d.marks.get(c.id) == Mark(read=2, seen=2)
+
+
+async def test_dream_now_tries_a_skipped_conversation_again(d):
+    c = d.conv("I live in Columbus")
+    d.provider.answers = ["no json"] * 3
+    for wait in (0, 600, 3600):
+        d.now += wait
+        await idle_pass(d)
+    assert d.marks.skipped(c.id) and len(d.provider.calls) == 3
+    retry = d.conv("I prefer metric", age=4000)
+    d.marks.fail(retry.id, d.now, 1)  # waiting out its first retry
+    assert d.dreamer.waiting() == 0
+    d.provider.answers = [answer(("Gordon lives in Columbus.", "personal")), answer()]
+    await d.dreamer.dream(manual=True)  # every mark's attempts and wait are cleared first
+    assert len(d.provider.calls) == 5 and "Gordon lives in Columbus." in d.dreamt()
+    assert d.marks.get(c.id) == Mark(read=1, seen=1) and d.marks.get(retry.id) == Mark(read=1, seen=1)
+
+
+def test_reset_attempts_keeps_read_seen_and_the_totals(tmp_path):
+    m = DreamMarks(tmp_path / "dreams.json")
+    m.set_read("c1", 2)
+    for t in (1.0, 2.0, 3.0):
+        m.fail("c1", now=t, seen=5)
+    m.fail("c2", now=10.0, seen=1)
+    m.add_learned(4, "2026-11-19T03:12:00Z")
+    m.reset_attempts()
+    again = DreamMarks(tmp_path / "dreams.json")
+    assert again.get("c1") == Mark(read=2, seen=5) and again.get("c2") == Mark(seen=1)
+    assert again.learned == 4 and again.last_dream_at == "2026-11-19T03:12:00Z"
+
+
+def test_dreamer_reset_attempts_clears_the_marks_the_pause_and_the_error(d):
+    c = d.conv("I live in Columbus")
+    d.marks.fail(c.id, NOW, 1)
+    d.dreamer._paused_until, d.dreamer._error = NOW + 300, "provider"
+    d.dreamer.reset_attempts()
+    assert d.marks.get(c.id) == Mark(seen=1) and not d.dreamer._paused() and d.dreamer.status()["error"] == ""
 
 
 async def test_unreachable_provider_pauses_ten_minutes(d):
@@ -496,15 +552,15 @@ async def test_a_model_too_slow_for_a_batch_is_skipped_after_three_tries(d):
                           httpx.ReadTimeout("slow"), ProviderUnavailable("slow", cause="timeout")]
     for wait in (0, 600, 3600):
         d.now += wait
-        await d.dreamer.dream(manual=True)
+        await idle_pass(d)
     assert d.marks.skipped(slow.id) and d.marks.get(slow.id).read == 0
     assert d.marks.get(older.id).read == 1  # it did not wait behind the slow one
     assert d.dreamer.status()["error"] == "model" and len(d.provider.calls) == 4
-    await d.dreamer.dream(manual=True)
+    await idle_pass(d)
     assert len(d.provider.calls) == 4
 
 
-def test_error_kind_reads_what_a_refused_connection_raises():
+def test_error_kind_tells_the_conversation_from_an_outage():
     assert error_kind(httpx.ConnectError("refused")) == "unreachable"
     assert error_kind(ConnectionRefusedError()) == "unreachable"
     assert error_kind(ProviderUnavailable("down", cause="network")) == "unreachable"
@@ -512,8 +568,74 @@ def test_error_kind_reads_what_a_refused_connection_raises():
     assert error_kind(httpx.ReadTimeout("slow")) == "model"
     assert error_kind(httpx.ConnectTimeout("slow")) == "model"
     assert error_kind(TimeoutError()) == "model"
-    assert error_kind(ProviderUnavailable("busy", cause="rate_limit")) == "model"
     assert error_kind(ValueError("no JSON")) == "model"
+    assert error_kind(ProviderUnavailable("busy", cause="rate_limit", status=429)) == "provider"
+    assert error_kind(ProviderUnavailable("down", cause="server", status=503)) == "provider"
+    assert error_kind(ProviderAuthError("rejected the key (HTTP 401)")) == "provider"
+    assert error_kind(ProviderAuthError("rejected the key (HTTP 403)")) == "provider"
+    assert error_kind(ProviderError("HTTP 400: bad model", status=400)) == "provider"
+
+
+OUTAGES = [
+    pytest.param(ProviderAuthError("rejected the key (HTTP 401)"), "provider", id="auth"),
+    pytest.param(ProviderUnavailable("HTTP 429", cause="rate_limit", status=429), "provider", id="rate-limit"),
+    pytest.param(ProviderUnavailable("HTTP 502", cause="server", status=502), "provider", id="server"),
+    pytest.param(ProviderError("HTTP 404: no such model", status=404), "provider", id="other"),
+    pytest.param(httpx.ConnectError("refused"), "unreachable", id="unreachable"),
+]
+
+
+@pytest.mark.parametrize("exc, kind", OUTAGES)
+async def test_an_outage_counts_no_attempt_and_pauses_automatic_dreaming(d, exc, kind):
+    convs = [d.conv("I live in Columbus", age=3600), d.conv("I prefer metric", age=3700)]
+    for _ in range(8):  # well past the time three counted failures would take: the backlog is never burnt out
+        d.provider.answers = [exc]
+        calls = len(d.provider.calls)
+        await idle_pass(d)
+        assert len(d.provider.calls) == calls + 1  # the pass ended at the first conversation
+        assert d.dreamer.status()["error"] == kind
+        assert all(d.marks.get(c.id) == Mark() for c in convs)
+        d.now += 599
+        await idle_pass(d)  # paused: no call
+        assert len(d.provider.calls) == calls + 1
+        d.now += 1
+    end = [e.data for e in d.entries() if e.data["event"] == "pass_end"][-1]
+    assert end["error"] == kind and end["conversations"] == 0
+
+
+async def test_a_failing_store_counts_no_attempt_and_shows_as_store(d, monkeypatch):
+    c = d.conv("I live in Columbus", age=3600)
+    other = d.conv("I prefer metric", age=3700)
+    d.marks.fail(other.id, NOW - 10_000, 1)  # an earlier failure, due again now
+
+    async def broken(*a, **kw):
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(dream_mod, "remember_shared", broken)
+    d.provider.answers = [answer(("Gordon lives in Columbus.", "personal"))]
+    await idle_pass(d)
+    assert len(d.provider.calls) == 1 and d.dreamer.status()["error"] == "store"
+    assert d.marks.get(c.id) == Mark() and d.marks.get(other.id).attempts == 1  # nothing counted, nothing moved
+    end = [e.data for e in d.entries() if e.data["event"] == "pass_end"][-1]
+    assert end["error"] == "store"
+    conv_entry = [e.data for e in d.entries() if e.data["event"] == "conversation"][-1]
+    assert conv_entry["error"] == "store" and conv_entry["exception"] == "RuntimeError"
+    d.now += 300
+    await idle_pass(d)  # paused like an unreachable provider
+    assert len(d.provider.calls) == 1
+
+
+async def test_a_store_failure_after_a_model_error_keeps_an_error(d, monkeypatch):
+    d.conv("I live in Columbus", age=3600)
+    d.conv("I prefer metric", age=3700)
+
+    async def broken(*a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(dream_mod, "remember_shared", broken)
+    d.provider.answers = ["no json", answer(("Gordon prefers metric units.", "personal"))]
+    await d.dreamer.dream(manual=True)
+    assert d.dreamer.status()["error"] == "store"
 
 
 async def test_unknown_store_goes_to_personal_and_no_org_is_registered(d):

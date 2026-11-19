@@ -136,6 +136,21 @@ async def test_run_starts_a_pass_and_a_second_is_refused(client, harness, monkey
     assert calls == [True]  # a manual pass, started once
 
 
+async def test_run_refused_while_zenbot_is_busy(client, harness):
+    choose_dream_model(harness)
+    harness.profile.people.set_owner("Gordon", [])
+    assert (await client.put("/dream/settings", json={"enabled": True, "idle_minutes": 5})).status_code == 200
+    s = Session(bot_id="bot1", task="t")
+    s.state = SessionState.running
+    harness.sessions[s.id] = s
+    r = await client.post("/dream/run", json={})
+    assert r.status_code == 409 and r.json()["detail"] == "ZenBot is busy. Try again when it is idle."
+    assert (await client.get("/dream/status")).json()["dreaming"] is False
+    s.state = SessionState.done
+    r = await client.post("/dream/run", json={})
+    assert r.status_code == 200
+
+
 async def test_facts_lists_only_dreamt_facts_newest_first(client, harness):
     conv = harness.conversations.start_new("bot1")
     conv.title = "Moving house"
@@ -233,7 +248,7 @@ def test_a_broken_dream_choice_raises_for_the_dreamer(harness):
     harness.provider_store.set_models("local", [])  # the model is no longer enabled
     with pytest.raises(ProviderStoreError):
         harness.dreamer._generator()
-    assert harness.dreamer.status()["error"] == "model"
+    assert harness.dreamer.status()["error"] == "setup"
 
 
 def test_the_dreamer_survives_a_rebind_and_reads_the_harness_now(harness):
