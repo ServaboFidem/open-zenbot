@@ -277,17 +277,19 @@ SYSTEMIC = ("unreachable", "provider", "store")  # no attempt counted: the pass 
 
 def error_kind(exc: BaseException) -> str:
     """The kind of a failed model call (`failure_kind` reads the provider's errors, so no client is imported here).
-    `model` counts an attempt against the conversation: a timeout (a model too slow for one batch must be skipped
-    after MAX_ATTEMPTS, not pause all dreaming for good) and an answer that cannot be used (`ValueError`), or
-    anything else that is no provider failure. Systemic, counting nothing (SYSTEMIC): `unreachable` when the provider
-    could not be reached at all (a local model that is not running: a refused connection), and `provider` for an
-    auth failure (401, 402, 403), a rate limit (429), a server error (5xx) or any other provider error."""
+    Systemic, counting nothing (SYSTEMIC): `unreachable` when the provider could not be reached at all (a local model
+    that is not running: a refused connection), and `provider` for a rejected key (401, 402, 403), a rate limit (429)
+    or a server error (5xx). Everything else is `model` and counts an attempt against the conversation: a timeout (a
+    model too slow for one batch), an answer that cannot be used (`ValueError`, or an API answer with no `choices`),
+    a client error about this request (400, 404, 413, 422...: one conversation the model can never take must be
+    skipped after MAX_ATTEMPTS, not hold every older one back for good), and any failure that cannot be told, since
+    the per-conversation rule is bounded and the systemic one is not."""
     kind = failure_kind(exc)
     if kind == "network":
         return "unreachable"
-    if kind in ("", "timeout"):
-        return "model"
-    return "provider"
+    if kind in ("auth", "rate_limit", "server"):
+        return "provider"
+    return "model"
 
 
 class Interrupted(Exception):

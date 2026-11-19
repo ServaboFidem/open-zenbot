@@ -91,19 +91,29 @@ class ProviderAuthError(ProviderError):
     """Bad or missing key. The user must act."""
 
 
-FAILURE_KINDS = ("timeout", "network", "auth", "rate_limit", "server", "other")
+FAILURE_KINDS = ("timeout", "network", "auth", "rate_limit", "server", "request", "other")
 
 
 def failure_kind(exc: BaseException) -> str:
     """What kind of provider failure `exc` is, for callers outside `src/providers/` that must not import an HTTP
-    client: `timeout`, `network` (could not connect), `auth` (401, 402 or 403), `rate_limit` (429), `server` (5xx),
-    `other` (any other provider error: another HTTP status, a malformed answer from the API), or `""` when it is no
+    client. About the service: `network` (could not connect), `auth` (a rejected key: 401, 402 or 403), `rate_limit`
+    (429), `server` (5xx). About this request: `timeout`, and `request` (any other 4xx: 400, 404, 413, 422...). `other`
+    is a provider error whose status or cause cannot be told (a malformed answer from the API, say), and `""` no
     provider or transport failure at all (a bad answer of the caller's own reading, a bug)."""
     if isinstance(exc, ProviderUnavailable):
-        return exc.cause if exc.cause in FAILURE_KINDS else "other"
+        return exc.cause if exc.cause in ("timeout", "network", "rate_limit", "server") else "other"
     if isinstance(exc, ProviderAuthError):
         return "auth"
     if isinstance(exc, ProviderError):
+        s = exc.status
+        if s in (401, 402, 403):
+            return "auth"
+        if s == 429:
+            return "rate_limit"
+        if isinstance(s, int) and 500 <= s <= 599:
+            return "server"
+        if isinstance(s, int) and 400 <= s <= 499:
+            return "request"
         return "other"
     if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
         return "timeout"

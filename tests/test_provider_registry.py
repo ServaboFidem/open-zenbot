@@ -84,7 +84,12 @@ def test_failure_kind_reads_provider_and_transport_errors():
     assert failure_kind(ProviderUnavailable("x", cause="server", status=503)) == "server"
     assert failure_kind(ProviderUnavailable("x", cause="odd")) == "other"
     assert failure_kind(ProviderAuthError("401")) == "auth"
-    assert failure_kind(ProviderError("HTTP 400", status=400)) == "other"
+    for status in (400, 404, 413, 422, 409):  # about this request, not the service
+        assert failure_kind(ProviderError(f"HTTP {status}", status=status)) == "request"
+    assert failure_kind(ProviderError("HTTP 401", status=401)) == failure_kind(ProviderError("x", status=403)) == "auth"
+    assert failure_kind(ProviderError("HTTP 429", status=429)) == "rate_limit"
+    assert failure_kind(ProviderError("HTTP 502", status=502)) == "server"
+    assert failure_kind(ProviderError("malformed completion: KeyError")) == "other"  # no status: cannot be told
     assert failure_kind(httpx.ReadTimeout("slow")) == failure_kind(TimeoutError()) == "timeout"
     assert failure_kind(httpx.ConnectError("refused")) == failure_kind(ConnectionRefusedError()) == "network"
     assert failure_kind(ValueError("no JSON")) == failure_kind(RuntimeError()) == ""

@@ -224,15 +224,20 @@ done on).
   moves after each batch whose facts are all written; a crash between a write and the mark reads that batch again, and a
   second model call may word a fact differently, so a near-duplicate can land (the user can Forget it).
 - **Failures** (`error_kind`, which reads the provider's errors through `src/providers/interface.py` `failure_kind`,
-  so `dream.py` imports no HTTP client). Two sorts:
-  - Counted against the conversation (kind `model`): a timeout from the model, and an answer that cannot be used (a
-    `ValueError` from `dream_facts` or `clean_facts`: no JSON, the wrong shape). The conversation then waits 10 minutes
+  so `dream.py` imports no HTTP client; `failure_kind` maps an error's class, cause and HTTP status to `timeout`,
+  `network`, `auth`, `rate_limit`, `server`, `request` or `other`). Two sorts:
+  - Counted against the conversation (kind `model`): a timeout from the model; an answer that cannot be used (a
+    `ValueError` from `dream_facts` or `clean_facts`: no JSON, the wrong shape; or an API answer with no `choices`); a
+    client error about the request itself (`failure_kind` `request`: 400, 404, 413, 422 and any other 4xx but 401, 402,
+    403 and 429), so one conversation the model can never take (a context too small for the batch) is skipped rather
+    than holding every older one back; and any provider failure whose status or cause cannot be told, since this rule
+    is bounded and the systemic one is not. The conversation then waits 10 minutes
     after the first failure and 1 hour after the second, and after 3 failed attempts is skipped until it grows past the
     exchange count it last saw (`RETRY_WAITS`, `MAX_ATTEMPTS`). The pass goes on to the next conversation.
   - Systemic (`SYSTEMIC`), counted against nothing: the pass ends and automatic dreaming pauses 10 minutes
     (`UNREACHABLE_WAIT_S`). Kind `unreachable` (the provider could not be reached at all: a refused connection, as from
-    a local model that is not running), `provider` (an auth failure, 401, 402 or 403; a rate limit, 429; a server
-    error, 5xx; or any other provider error that is not a timeout) and `store` (a store write that fails with anything
+    a local model that is not running), `provider` (a rejected key, 401 or 403, and OpenRouter's 402 for credits run
+    out; a rate limit, 429; a server error, 5xx) and `store` (a store write that fails with anything
     but `ExclusionError`). So an outage, a lapsed key or a failing memory store never burns out the backlog.
 
   `GET /dream/status` `error` and the `pass_end` entry's `error` carry the kind (`model`, `unreachable`, `provider`,

@@ -573,16 +573,39 @@ def test_error_kind_tells_the_conversation_from_an_outage():
     assert error_kind(ProviderUnavailable("down", cause="server", status=503)) == "provider"
     assert error_kind(ProviderAuthError("rejected the key (HTTP 401)")) == "provider"
     assert error_kind(ProviderAuthError("rejected the key (HTTP 403)")) == "provider"
-    assert error_kind(ProviderError("HTTP 400: bad model", status=400)) == "provider"
+    # about this request (a client error, or a provider error that cannot be told): counted against the conversation
+    for status in (400, 404, 413, 422):
+        assert error_kind(ProviderError(f"HTTP {status}", status=status)) == "model"
+    assert error_kind(ProviderError("malformed completion: KeyError")) == "model"
+    assert error_kind(ProviderUnavailable("odd", cause="something new")) == "model"
 
 
 OUTAGES = [
-    pytest.param(ProviderAuthError("rejected the key (HTTP 401)"), "provider", id="auth"),
+    pytest.param(ProviderAuthError("rejected the key (HTTP 401)"), "provider", id="auth-401"),
+    pytest.param(ProviderAuthError("rejected the key (HTTP 403)"), "provider", id="auth-403"),
     pytest.param(ProviderUnavailable("HTTP 429", cause="rate_limit", status=429), "provider", id="rate-limit"),
     pytest.param(ProviderUnavailable("HTTP 502", cause="server", status=502), "provider", id="server"),
-    pytest.param(ProviderError("HTTP 404: no such model", status=404), "provider", id="other"),
     pytest.param(httpx.ConnectError("refused"), "unreachable", id="unreachable"),
 ]
+
+
+async def test_a_request_the_model_refuses_counts_and_the_older_conversation_still_dreams(d):
+    newest = d.conv("a message too long for this model", age=3600)
+    older = d.conv("I prefer metric", age=3700)
+    too_big = ProviderError("HTTP 400: context length exceeded", status=400)
+    d.provider.answers = [too_big, answer(("Gordon prefers metric units.", "personal"))]
+    await idle_pass(d)
+    assert d.marks.get(newest.id).attempts == 1 and d.marks.get(newest.id).read == 0
+    assert d.marks.get(older.id).read == 1 and "Gordon prefers metric units." in d.dreamt()  # the pass went on
+    assert d.dreamer.status()["error"] == "model" and not d.dreamer._paused()
+    for wait in (600, 3600):
+        d.now += wait
+        d.provider.answers = [too_big]
+        await idle_pass(d)
+    assert d.marks.skipped(newest.id) and len(d.provider.calls) == 4
+    d.now += 10_000
+    await idle_pass(d)  # skipped until it grows: dreaming is not held behind it
+    assert len(d.provider.calls) == 4 and d.dreamer.waiting() == 0
 
 
 @pytest.mark.parametrize("exc, kind", OUTAGES)
