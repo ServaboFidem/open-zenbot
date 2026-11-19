@@ -4,20 +4,28 @@
   <img src="src/assets/zenbot-logo.png" alt="OpenZenBot logo" width="240">
 </p>
 
-An open-source AI harness that runs on your desktop, remembers what it learns, and helps you get real work done. Bring your own keys.
+An open-source AI workspace for your desktop: local-first, self-learning, and actually useful for daily life. Bring your own keys.
 
-> **Just want to use it? [Download the installer (0.1.0 beta)](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.1.0)** for Windows or Ubuntu/Debian, then follow [Install](#install). No Python, Node.js or developer tools needed. To run it from the source code, see [Run from source](#run-from-source-development-builds).
+> **Just want to use it? [Download the installer (0.1.1 beta)](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.1.1)** for Windows or Ubuntu/Debian, then follow [Install](#install). No Python, Node.js or developer tools needed. To run it from the source code, see [Run from source](#run-from-source-development-builds).
 
 > **Status: experimental.** open-zenbot is a passion project, not a product. Expect rough edges, breaking changes and features that are half-built. For more information, see the [wiki](https://github.com/ServaboFidem/open-zenbot/wiki). It is a work in progress: a few pages so far, with more on the way. Where it has no answer yet, this README, `AGENTS.md` and `.env.example` are the best guides.
 
 Inspired by grokbot, open-zenbot is a team of bots that live on your machine. They work in a folder you can see, with tools you choose, and they know a little more each time you use them. It isn't a chat window over a model. Bots run commands, read and write documents, call MCP servers, hand work to each other in rooms, and run routines on a schedule, and every step lands in a ledger you can read.
 
+The goal is three things at once:
+
+- **Local-first.** The app, your data and your settings stay on your computer. A model can run there too.
+- **Self-learning.** It remembers what you tell it and what it finds out, and uses that the next time.
+- **Actually useful for daily life.** Not only for work: it finds records you'd like, events near you worth going to, and keeps your calendar.
+
+![The Overview page: your bots, your routines and what is waiting for your approval](docs/screenshots/overview.png)
+
 ## Why run it
 
-- **It's yours.** The harness and the desktop app run locally, bound to `127.0.0.1`. Your memory, files, conversations and settings live under `~/.zen-agents/` on your own disk. You pick the models and pay the provider directly, or nothing at all: alongside OpenRouter it runs on NVIDIA NIM, vLLM, LM Studio, Ollama or any OpenAI-compatible server (see [Models and providers](#models-and-providers)).
-- **It learns with Hindsight.** Memory is a [Hindsight](https://github.com/vectorize-io/hindsight) knowledge graph the harness runs for you. It learns from a short first-run interview, the files you import, the web pages bots read for you, and facts that come up while you work. A bot recalls only what bears on the task in front of it, and nothing moves into memory every bot can see until you confirm it.
-- **It does the work, not just the talking.** Bots come with a shell, the filesystem, Office and PDF skills, image tools, web search and whatever MCP servers you add. Ask ZenBot for something and it either answers itself or opens a room with the specialist bots that fit the job. Routines run the jobs you repeat. You can record a task in the browser once and keep it as a skill.
-- **It designs with you.** Ask for a web page, a screen or a layout and the Designer bot builds it as a live preview beside the chat. Click any part of the preview to comment on it, and the bot revises the same design (see [Design studio](#design-studio)).
+- **Local-first: it's yours.** The harness and the desktop app run locally, bound to `127.0.0.1`. Your memory, files, conversations, calendar and settings live under `~/.zen-agents/` on your own disk. You pick the models and pay the provider directly, or nothing at all: alongside OpenRouter it runs on NVIDIA NIM, vLLM, LM Studio, Ollama or any OpenAI-compatible server (see [Models and providers](#models-and-providers)). One thing still needs the internet: the decider model runs on OpenRouter.
+- **Self-learning: it remembers.** Memory is a [Hindsight](https://github.com/vectorize-io/hindsight) knowledge graph the harness runs for you. It learns from a short first-run interview, the files you import, the web pages bots read for you, and facts that come up while you work. A bot recalls only what bears on the task in front of it, and nothing moves into memory every bot can see until you confirm it. Work you repeat can be kept too: record a task in the browser once and it becomes a skill, and a skill plus a schedule is a routine.
+- **Useful for daily life.** Each week a bot picks a few albums you don't own from what your record collection says you like (see [Music discovery](#music-discovery)), and another picks local events that fit your interests, which go on the built-in calendar when you say you're going (see [Events and calendar](#events-and-calendar)). Ask for a web page and the Designer builds it beside the chat while you point at what to change (see [Design studio](#design-studio)).
+- **It does the work, not just the talking.** Bots come with a shell, the filesystem, Office and PDF skills, image tools, web search and whatever MCP servers you add. Ask ZenBot for something and it either answers itself or opens a room with the specialist bots that fit the job. A bot can also hand a coding job to Claude Code on your own subscription, in a folder it cannot leave (see [Coding agents](#coding-agents)).
 - **You stay in charge.** Risky actions wait in Approvals: a shell command that writes outside your allowed folders, touches the harness's private folders, or brings a new person into memory. Bots can reach only the vault and the folders you grant them, as Full Access or Read-Only. Keys and settings sit beside the vault, where no bot can read them.
 
 ## Design philosophy
@@ -53,7 +61,7 @@ Routing is a scoring job, not a writing job. Before each task, the router asks t
 
 For people who just want to use OpenZenBot. You do not need Python, Node.js or any developer tools.
 
-1. Open the [0.1.0 beta release](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.1.0) and download the installer for your computer from its Assets list: the `.exe` for Windows, the `.deb` for Ubuntu or Debian. Later versions appear on the [Releases page](https://github.com/ServaboFidem/open-zenbot/releases).
+1. Open the [0.1.1 beta release](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.1.1) and download the installer for your computer from its Assets list: the `.exe` for Windows, the `.deb` for Ubuntu or Debian. Later versions appear on the [Releases page](https://github.com/ServaboFidem/open-zenbot/releases).
 2. **Windows:** run `OpenZenBot-Setup-<version>.exe`. The installer is not signed yet, so Windows SmartScreen warns about an unknown publisher: click "More info", then "Run anyway". **Ubuntu or Debian:** open a terminal in the download folder and run `sudo apt install ./OpenZenBot_<version>_amd64.deb`, then start OpenZenBot from your applications menu (or run `openzenbot`).
 3. The first time you start it, OpenZenBot sets itself up. It needs a connection to the internet and about 5 GB of free disk space: it checks first and does not start with less (an update over an existing install needs about 1 GB). The Python environment takes about 2 GB of that on Linux, and roughly 2 GB more is fetched the first time the app starts (models and tool servers). This can take several minutes. You see each step as it happens. This happens once, and again after an update that changes what it needs.
 4. It then asks for an [OpenRouter](https://openrouter.ai/) key. OpenZenBot needs an OpenRouter account for one thing: the decider model, which picks the right skills and tools for each task and checks shell commands before they run. Everything else can run on your own computer or through NVIDIA NIM: the models your bots talk with are your choice, in Settings. The key is kept in your OpenZenBot settings, not in the app.
@@ -156,6 +164,10 @@ Describe a web page, an app screen or a layout, and the Designer bot builds it w
 - **One file you own.** A design is a single HTML file with everything inside it, saved under `~/.zen-agents/vault/designs/`. It opens in any browser, works offline and needs nothing else to go with it.
 - **All your designs in one place.** The Design page shows a card for each design; click one to go back to its conversation.
 
+![The design studio: the conversation with the Designer on the left, the live preview of the page beside it](docs/screenshots/design-studio.png)
+
+![The Design page with a card for each design](docs/screenshots/design-page.png)
+
 The preview is locked down: a bot-made page runs in a sandbox with no access to the network, so nothing in it can load from or send to anywhere.
 
 ## Music discovery
@@ -166,15 +178,52 @@ Music is off until you turn it on. Open Music > Settings, switch it on and enter
 
 The weekly digest also needs a Discogs personal access token (Discogs > Settings > Developers > Generate new token), pasted in the same place. It is saved to `vault-settings/music_keys.json`, owner-only, never to `.env` or the repo. With the token, the Weekly album digest routine (Routines page, or Run now) has the music-librarian bot pick albums you do not own, have not been shown and have not wanted, and each card links to YouTube Music and can be added to your Discogs wantlist. By default it runs on Fridays at 09:00 and picks 4 albums; change the day, time and count in Music > Settings. Without it you still get the Taste map, but no digest and no wantlist.
 
-![A weekly digest: album cards with why each one fits your collection, tracks to start with, and Listen, Want it, Pass and I own this](docs/screenshots/music-suggestions.png)
+![A weekly digest: album cards with why each one fits your collection, and the tracks to start with](docs/screenshots/music-suggestions.png)
 
 The digest is an ordinary routine, so it sits on the Routines page beside any you create, where you can switch it off, edit it or run it now.
 
-![The Routines page with the Weekly album digest routine](docs/screenshots/routines.png)
+![The Routines page with the weekly album digest and the weekly events digest](docs/screenshots/routines.png)
 
 Music data (database, genre atlas, covers) lives in `~/.zen-agents/vault-music/`, beside the vault and out of bots' reach. The atlas is the [Soundlore](https://github.com/aydearcas/Soundlore) genre data, downloaded on first use from a pinned commit and checked against a hash. Most of it is CC0, but the artist-genre links come from MusicBrainz genre votes and are CC BY-NC-SA 3.0, so this feature is for non-commercial use (see [Credits](#data)).
 
+## Events and calendar
+
+The Events page has three tabs: My Calendar, Your Recommendations and All Events. It is new in 0.1.1.
+
+**Your Recommendations.** Event discovery is off until you turn it on. Open Settings > Calendar > Event discovery, switch it on and paste the address of your city's Eventbrite page (for example `https://www.eventbrite.com/d/oh--columbus/events/`), then tick the categories you care about and write a line about your interests. The harness reads that city's public Eventbrite listings for this month and next. Each week the event scout bot picks six to eight of them and says why each one fits you. "Find events now" runs it on the spot. A card links to the event's own page; when you come back and say you signed up, or press Add, the event goes on your calendar.
+
+![Your Recommendations: event cards, each with its date, its place and why it was picked for you](docs/screenshots/events-recommendations.png)
+
+**All Events.** Everything the last read found, as a list you can search, filter by category and date, and sort. Open a row for the details and add it to your calendar from there.
+
+![All Events: the whole list of local events with search, category and date filters](docs/screenshots/events-all.png)
+
+**My Calendar.** A calendar the harness keeps on your computer. It works with no account. You can also connect Google Calendar: you make your own Google app (the steps are on Settings > Calendar) and sign in, and your Google calendars are read into the page. Sending events made here back to Google is a separate switch, off by default, and asks for write access only when you turn it on.
+
+Like the music digest, the weekly events digest is a routine (Thursdays at 09:00 by default), so it sits on the Routines page. The scout reads listings written by strangers, so it is a closed bot: it has no shell, no browser and no file tools, only the three tools that list events and save its picks.
+
+Good to know:
+
+- **This part is the least tested.** Reading Eventbrite, the scout and reading from Google have each run for real, on one computer. Sending events to Google has only run against a test stand-in. A second source, FindLocal (optional, needs your own key), has never been run against the real service.
+- **Eventbrite is read from its public pages**, one request a second, at most 40 pages a refresh, at most twice a day. That is for personal use; Eventbrite's terms on automated access were not checked.
+- **Where it lives.** Calendar and event data are in `~/.zen-agents/vault-calendar/`, beside the vault and outside the folders bots' file tools can reach.
+
+## Coding agents
+
+A bot can hand a coding job to [Claude Code](https://claude.com/claude-code) on your own subscription with the `delegate` tool. It is off until you switch it on at Settings > Coding agents, which shows whether the program was found, its version and whether it is signed in.
+
+- **One folder.** The job runs in a new folder under `~/.zen-agents/vault/delegated/`, or in a folder you allow. The agent gets only the file tools (read, write, edit, search): no commands, no web, none of your own MCP servers, hooks or plugins.
+- **You are asked first.** By default each run waits in Approvals with the agent, the folder and the whole task. A run in a folder the bot named always asks.
+- **Checked as it runs.** The harness stops a run that starts with anything more than those tools, or that names a file outside its folder, and reports what the agent added, changed and removed.
+- **Codex is detected only.** It shows in Settings but cannot be switched on: its sandbox left network access open in testing.
+
+The folder's contents go to Anthropic under your account, and the run spends your subscription.
+
 ## Using the app
+
+Settings opens on a page of tiles with a search box over every setting: models and providers, MCP servers and their keys, skills, coding agents, Allowed Folders, the calendar and the rest.
+
+![The Settings home page: a search box and a tile for each group of settings](docs/screenshots/settings.png)
 
 Images, video, PDFs, diagrams and files in a bot's reply show under it as preview cards, in rooms and in one-to-one chat. Each card has Save…, which opens the system save dialog in the last folder you saved to (Pictures or Downloads the first time); images and video also have Open and Copy link, and PDFs and diagrams open larger with View. Remote media loads through the harness: hosts on the trusted list (Pexels, plus `ZEN_MEDIA_TRUSTED_HOSTS`) load at once, and any other host waits until you click Load. A bot shares a file it made with `attach_file`.
 
@@ -207,16 +256,19 @@ OPENROUTER_API_KEY=... uv run pytest -k live   # opt-in live check
 
 | Path | What |
 | --- | --- |
-| `src/providers/` | Provider interface, registry, secrets, OpenRouter adapter |
+| `src/providers/` | Provider interface, registry, secrets, OpenRouter and OpenAI-compatible adapters, model fingerprinting |
 | `src/music/` | Music discovery: Discogs scan, taste profile, album gate, digests |
+| `src/events/` | The built-in calendar and Google sync; event discovery: the Eventbrite and FindLocal readers, the event pool, digests |
+| `src/rooms/` | Rooms, turns, handoff, the orchestrator that picks bots for a job |
+| `src/context/` | Compaction and the protected (pinned) task |
 | `src/skills/` | `SKILL.md` loader and the catalog |
 | `src/decider/` | Decider interface, scorer registry, band and supervisor logic, `adapters/` (microsoft-decision-1 on the OpenRouter Decisions API) |
 | `src/generation/` | Generator boundary: summaries, compaction folds, vault summaries. The only place prose is written |
-| `src/memory/` | Exclusion filter (secrets and approvals), ledger |
-| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API, entry point |
+| `src/memory/` | Exclusion filter (secrets and approvals), ledger, recall, imports, the Hindsight store |
+| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API, entry point; the folder and shell guards, the design studio, delegation to coding agents |
 | `skills/` | Shipped skills: a few of our own, plus vendored third-party skills (see [Credits](#credits)) |
 | `mcp.json` | MCP servers to connect at start (Claude Desktop shape); each tool registers as `<server>.<tool>` and the server is routed like a skill |
-| `bot-prompts/` | One markdown file per bot identity (ships `personal-assistant`, the onboarding bot): `name` and `role` in frontmatter, optional `skills` refs, instructions in the body. The file stem is the bot id. The harness loads it at start and writes it when a bot is created or edited in the app |
+| `bot-prompts/` | One markdown file per bot identity (nine ship, among them `personal-assistant`, `designer`, `music-librarian` and `event-scout`): `name` and `role` in frontmatter, optional `skills` refs, instructions in the body. The file stem is the bot id. The harness loads it at start and writes it when a bot is created or edited in the app |
 | `src/gui/` | OpenZenBot workspace GUI: React + Fluent 2 renderer, built by `npm run build` into `dist/` |
 | `src/electron/` | Electron main and preload; serves `dist/` from the `app://openzenbot` origin |
 | `tests/gui/` | Node tests for the GUI client, adapters, and shell (`npm test`) |
