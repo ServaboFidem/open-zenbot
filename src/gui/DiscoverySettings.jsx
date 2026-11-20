@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Dropdown, Field, Input, Label, Option, Spinner, Switch, Textarea } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
-import { KEY_HINT, MAX_INTERESTS, URL_HINT, ZONE_HINT, bodyFrom, canSave, changed, cityName, cityOptions, draftFrom, findLocalLine, keyFieldEnter, nextRunLine, pickCity, refusalField, toggleCategory, validZone } from './discovery-settings';
+import { FACEBOOK_LOGIN_LOSS, KEY_HINT, MAX_INTERESTS, URL_HINT, ZONE_HINT, bodyFrom, canSave, changed, cityName, cityOptions, draftFrom, findLocalLine, keyFieldEnter, nextRunLine, pickCity, refusalField, toggleCategory, validZone } from './discovery-settings';
 
 // Settings > Calendar > Event discovery: where the user lives, their city's Eventbrite page, which kinds of events,
 // their interests, and the on/off switch. The harness checks the address and answers 422 with the sentence to show.
@@ -120,6 +120,10 @@ export function DiscoverySettings({ api, online, notify }) {
       <Input value={draft.timezone} spellCheck={false} placeholder="America/Chicago" disabled={busy} onChange={(e, d) => set({ timezone: d.value })}/>
     </Field>}
     {flLine && <p className="field-hint cal-wrap">{flLine}</p>}
+    <h4 id={anchorId('calendar', 'Facebook helper')}>Facebook helper</h4>
+    <p className="field-hint">The browser helper watches your Facebook events, invites and birthdays on this computer. Invites and events from friends wait under the Facebook tab on the Events page until you approve them, and birthdays get a nudge in both chat and feed a week before. Nothing is added to your calendar until you say so.</p>
+    <h4 id={anchorId('calendar', 'Facebook sign-in')}>Facebook sign-in</h4>
+    <p className="field-hint">{FACEBOOK_LOGIN_LOSS}</p>
     {!check.ok && dirty && <p className="form-error cal-wrap" role="alert">{check.why}</p>}
     <div className="cal-actions">
       <Button appearance="primary" type="submit" disabled={pending || !dirty || !check.ok}>{busy ? 'Saving…' : 'Save'}</Button>

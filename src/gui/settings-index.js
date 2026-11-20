@@ -5,6 +5,7 @@
 
 import { APP_STEPS } from './calendar-settings.js';
 import { PRIVACY } from './dream.js';
+import { FACEBOOK_LOGIN_LOSS } from './discovery-settings.js';
 
 export const PANELS = [
   { id: 'harness', name: 'Harness settings', description: 'The models your bots, summaries and the decider run on.' },
@@ -83,6 +84,16 @@ export const SECTIONS = [
     'Finds events near you on Eventbrite, once a week, and offers the best ones under Your Recommendations. Nothing is added to your calendar until you say so.',
     'Look for events near me', 'City', 'State', 'Your city’s Eventbrite page', 'Kinds of events', 'Your interests', 'Eventbrite', 'Discover', 'Your Recommendations', 'All Events',
     'FindLocal', 'FindLocal key', 'FindLocal city',
+  ]),
+  section('calendar', 'Facebook helper', [
+    'The browser helper watches your Facebook events, invites and birthdays on this computer and hands what it sees to OpenZenBot.',
+    'Invites and events from friends wait under the Facebook tab on the Events page until you approve them. Nothing is added to your calendar until you say so.',
+    'Birthdays get a nudge in both chat and feed a week before.',
+    'Facebook', 'Facebook helper', 'Chrome helper', 'Events page', 'Facebook tab', 'invites', 'birthdays', 'nudge',
+  ]),
+  section('calendar', 'Facebook sign-in', [
+    FACEBOOK_LOGIN_LOSS,
+    'Facebook sign-in', 'signed out', 'login', 'sign back in', 'helper is not ready',
   ]),
   section('tracing', 'Tracing', ['Where the harness sends errors and traces. Saved here, a setting wins over .env and is kept in vault-settings/tracing.json.']),
   section('tracing', 'Sentry (GlitchTip)', [
