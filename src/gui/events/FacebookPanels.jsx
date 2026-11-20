@@ -50,9 +50,9 @@ export function InviteRow({ invite, adding, onAdd }) {
   </article>;
 }
 
-// One approval card: an RSVP or personal event held for approval. Approve adds
-// through the existing card add route (discover.add); dismiss uses the existing
-// card dismiss route (discover.dismiss). Every string is drawn as text.
+// One approval card: an RSVP or personal event held for approval. A Facebook row
+// has no card, so Approve adds through the pool add route (discover.addEvent) and
+// Dismiss hides the row (discover.facebookDismiss). Every string is drawn as text.
 // props: card, adding, dismissing, onApprove(card), onDismiss(card)
 export function ApprovalRow({ card, adding, dismissing, onApprove, onDismiss }) {
   const added = card.state === 'added';
@@ -123,7 +123,7 @@ export function ApprovalsPanel({ approvals, api, notify, onChanged }) {
     if (!times) { notify(NO_DATE); return; }
     setAdding(s => new Set(s).add(card.id));
     try {
-      await discover.add(card.id, times);
+      await discover.addEvent(card.id, times);
       notify('Added to your calendar.');
       if (onChanged) onChanged({ ...card, state: 'added' });
     } catch (err) {
@@ -135,7 +135,7 @@ export function ApprovalsPanel({ approvals, api, notify, onChanged }) {
   const dismiss = async card => {
     setDismissing(s => new Set(s).add(card.id));
     try {
-      await discover.dismiss(card.id);
+      await discover.facebookDismiss(card.id);
       if (onChanged) onChanged({ ...card, state: 'dismissed' });
     } catch (err) {
       notify(err?.message || 'Something went wrong.');
@@ -158,9 +158,9 @@ export function BirthdaysPanel({ birthdays }) {
 }
 
 // The Facebook dashboard: invites, approval cards, birthdays, and helper status.
-// All reads come through props (invites, approvals, birthdays, status); all writes
-// go through the existing card and pool add routes (discover.add, discover.addEvent)
-// and the existing card dismiss route (discover.dismiss). Nothing here shows a disk
+// All reads come through props (invites, approvals, birthdays, status); the writes
+// are the pool add route (discover.addEvent) and the Facebook dismiss route
+// (discover.facebookDismiss). Nothing here shows a disk
 // path or a key.
 // props: invites, approvals, birthdays, status { lastRead, error, ready, refreshing },
 // online, api (createApi), notify(text), now (ms), onChanged(item)

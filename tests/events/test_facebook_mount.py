@@ -102,3 +102,32 @@ async def test_existing_routers_stay_put(client):
     assert r.status_code == 200
     r = await client.get("/calendar/status")
     assert r.status_code == 200
+
+
+async def test_lists_show_a_report_and_an_add_through_the_pool_route(client, harness):
+    # the tab's whole path on the real app: the helper's report with the machine's zone, the lists, Add
+    # through the existing pool route, Dismiss through the Facebook one
+    zoned = {**EVENT_REPORT, "timezone": "America/New_York"}
+    r = await client.post("/intake/facebook", json=zoned)
+    assert r.status_code == 200, r.text
+    body = (await client.get("/intake/facebook/lists")).json()
+    assert [(e["id"], e["state"], e["timezone"]) for e in body["invites"]] == [("fb-123456", "", "America/New_York")]
+    assert body["approvals"] == [] and body["birthdays"] == []
+    times = {"start": "2026-11-26T00:00:00Z", "end": "2026-11-26T01:00:00Z"}  # 19:00 in New York
+    first = await client.post("/discover/events/fb-123456/add", json=times)
+    assert first.status_code == 200, first.text
+    assert first.json()["calendar_event"]["tz"] == "America/New_York"
+    again = await client.post("/discover/events/fb-123456/add", json=times)
+    assert again.json()["calendar_event"]["id"] == first.json()["calendar_event"]["id"]
+    body = (await client.get("/intake/facebook/lists")).json()
+    assert [(e["id"], e["state"]) for e in body["invites"]] == [("fb-123456", "added")]
+    r = await client.post("/intake/facebook/events/fb-123456/dismiss", json={})
+    assert r.status_code == 200, r.text
+    assert (await client.get("/intake/facebook/lists")).json()["invites"] == []
+
+
+async def test_a_timed_row_read_with_no_zone_cannot_be_added(client):
+    assert (await client.post("/intake/facebook", json=EVENT_REPORT)).status_code == 200
+    r = await client.post("/discover/events/fb-123456/add",
+                          json={"start": "2026-11-26T00:00:00Z", "end": "2026-11-26T01:00:00Z"})
+    assert r.status_code == 422 and "time zone" in r.json()["detail"]

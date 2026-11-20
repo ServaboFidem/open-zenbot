@@ -325,3 +325,204 @@ def test_helper_and_harness_agree_on_the_contract():
     assert fr.validate_report(report("events_dashboard", DASHBOARD, [GOOD_EVENT])) is not None
     assert fr.validate_report(report("invites", INVITES, [GOOD_INVITE])) is not None
     assert fr.validate_report(report("birthdays", BIRTHDAYS, [GOOD_BIRTHDAY])) is not None
+
+
+# ---- lists: what the Facebook tab shows --------------------------------------
+
+
+class People:
+    """A stand-in registry: the named people are close friends."""
+
+    def __init__(self, *close):
+        self.close = {n.casefold() for n in close}
+
+    def find(self, name):
+        if name.casefold() not in self.close:
+            return None
+        return SimpleNamespace(is_owner=False, tier="close")
+
+
+class Calendar:
+    def __init__(self, events):
+        self.store = SimpleNamespace(event=lambda id: events.get(id))
+
+
+async def lists_client(discovery, harness=None):
+    app = FastAPI()
+    app.include_router(fr.facebook_router(discovery, harness))
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost")
+
+
+async def fill(client):
+    for corner, url, item in (("events_dashboard", DASHBOARD, GOOD_EVENT), ("invites", INVITES, GOOD_INVITE),
+                              ("birthdays", BIRTHDAYS, GOOD_BIRTHDAY)):
+        r = await client.post("/intake/facebook", json=report(corner, url, [item]))
+        assert r.status_code == 200, r.text
+
+
+async def test_lists_are_empty_before_any_report(client):
+    r = await client.get("/intake/facebook/lists")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["invites"], body["approvals"], body["birthdays"]) == ([], [], [])
+    assert body["status"] == (await client.get("/intake/facebook/status")).json()
+
+
+async def test_lists_answer_the_pool_rows_the_helper_read(client):
+    await fill(client)
+    body = (await client.get("/intake/facebook/lists")).json()
+    assert [e["id"] for e in body["invites"]] == ["fb-123456789", "fb-987654321"]  # date order
+    first = body["invites"][0]
+    assert set(first) == set(fr.ROW) | {"state"}
+    assert (first["name"], first["start_date"], first["start_time"], first["state"]) == (
+        "Neighborhood cleanup", "2026-11-29", "10:00", "")
+    assert first["url"] == "https://www.facebook.com/events/123456789/"
+    assert body["approvals"] == []
+    assert body["birthdays"] == [{"id": "fb-bday-100042", "name": "Sam Rivera", "date": "2026-11-21",
+                                  "start_date": "2026-11-21", "daysUntil": 1}]
+    assert body["status"]["ready"] is True and body["status"]["last_read"] == "2026-11-20T12:00:00Z"
+
+
+async def test_lists_keep_to_the_facebook_sources_and_to_rows_not_past(client, discovery):
+    await fill(client)
+    base = {"start_time": "", "end_date": "", "end_time": "", "url": ""}
+    discovery.store.upsert_pool([
+        {**base, "id": "111", "source": "eventbrite", "name": "Elsewhere", "start_date": "2026-11-30"},
+        {**base, "id": "fb-1", "source": "facebook", "name": "Gone by", "start_date": "2026-11-19"},
+        {**base, "id": "fb-bday-far", "source": "facebook-birthday", "name": "Far Off",
+         "start_date": "2026-11-28", "end_date": "2026-11-28"},
+        {**base, "id": "fb-bday-week", "source": "facebook-birthday", "name": "Week Out",
+         "start_date": "2026-11-27", "end_date": "2026-11-27"}], "2026-11-20T12:00:00Z")
+    body = (await client.get("/intake/facebook/lists")).json()
+    assert [e["id"] for e in body["invites"]] == ["fb-123456789", "fb-987654321"]
+    assert [(b["id"], b["daysUntil"]) for b in body["birthdays"]] == [("fb-bday-100042", 1), ("fb-bday-week", 7)]
+
+
+async def test_an_invite_from_a_close_friend_waits_for_approval(discovery, ledger):
+    harness = SimpleNamespace(profile=SimpleNamespace(people=People("Sam Rivera")))
+    async with await lists_client(discovery, harness) as c:
+        await fill(c)
+        r = await c.get("/intake/facebook/lists")
+    body = r.json()
+    assert [e["id"] for e in body["invites"]] == ["fb-123456789"]
+    assert [(e["id"], e["why"]) for e in body["approvals"]] == [("fb-987654321", fr.WHY["personal"])]
+    # the inviter is read for the friend check and goes nowhere else
+    assert "Sam Rivera" not in json.dumps(body["approvals"]) and "inviter" not in r.text
+    assert "Sam Rivera" not in json.dumps(ledger.entries)
+    assert "inviter" not in discovery.store.pool_row("fb-987654321")
+
+
+async def test_an_invite_from_anyone_else_stays_an_invite(discovery):
+    for harness in (SimpleNamespace(profile=SimpleNamespace(people=People("Pat Lee"))),
+                    SimpleNamespace(profile=None), None):
+        async with await lists_client(discovery, harness) as c:
+            await fill(c)
+            body = (await c.get("/intake/facebook/lists")).json()
+        assert body["approvals"] == [] and len(body["invites"]) == 2
+
+
+async def test_a_repeat_invite_keeps_its_inviter_up_to_date(client, discovery):
+    await fill(client)
+    again = {**GOOD_INVITE, "inviter": "Pat Lee"}
+    r = await client.post("/intake/facebook", json=report("invites", INVITES, [again]))
+    assert r.json()["kept"] == 0  # the row is a duplicate, the inviter is still read
+    assert discovery.store.fb_marks()["fb-987654321"]["inviter"] == "Pat Lee"
+    # an event that is no Facebook pool row gets no mark
+    other = {**GOOD_INVITE, "id": "555", "title": "", "url": "https://www.facebook.com/events/555/"}
+    assert (await client.post("/intake/facebook", json=report("invites", INVITES, [other]))).status_code == 422
+    assert set(discovery.store.fb_marks()) == {"fb-987654321"}
+
+
+# ---- dismiss: a Facebook row leaves the tab's lists ---------------------------
+
+
+async def test_dismiss_hides_a_row_and_changes_nothing_else(discovery):
+    harness = SimpleNamespace(profile=SimpleNamespace(people=People("Sam Rivera")))
+    async with await lists_client(discovery, harness) as c:
+        await fill(c)
+        r = await c.post("/intake/facebook/events/fb-987654321/dismiss", json={})
+        assert r.status_code == 200 and r.json() == {"id": "fb-987654321", "state": "dismissed"}
+        body = (await c.get("/intake/facebook/lists")).json()
+        assert body["approvals"] == [] and [e["id"] for e in body["invites"]] == ["fb-123456789"]
+        assert discovery.store.pool_row("fb-987654321") is not None
+        # a later report of the same invite does not bring it back
+        await c.post("/intake/facebook", json=report("invites", INVITES, [GOOD_INVITE]))
+        assert (await c.get("/intake/facebook/lists")).json()["approvals"] == []
+
+
+async def test_dismiss_is_only_for_a_facebook_event_row(client, discovery):
+    await fill(client)
+    discovery.store.upsert_pool([{"id": "111", "source": "eventbrite", "name": "Elsewhere",
+                                  "start_date": "2026-11-30"}], "2026-11-20T12:00:00Z")
+    for event_id in ("111", "fb-bday-100042", "fb-0", "nope"):
+        r = await client.post(f"/intake/facebook/events/{event_id}/dismiss", json={})
+        assert r.status_code == 404 and r.json()["detail"] == "No such event.", event_id
+    assert discovery.store.fb_marks() == {"fb-987654321": {"inviter": "Sam Rivera", "dismissed": False}}
+
+
+async def test_refresh_forgets_the_marks_of_rows_that_left_the_pool(client, discovery):
+    await fill(client)
+    discovery.today = lambda: "2026-12-10"
+    app = FastAPI()
+    app.include_router(fr.facebook_router(discovery))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as c:
+        assert (await c.post("/intake/facebook/refresh", json={})).status_code == 200
+    assert discovery.store.fb_marks() == {}
+
+
+# ---- the machine's time zone ---------------------------------------------------
+
+
+async def test_a_report_with_a_zone_puts_it_on_the_facebook_event_rows(client, discovery):
+    await fill(client)  # read with no zone
+    discovery.store.upsert_pool([{"id": "111", "source": "eventbrite", "name": "Elsewhere",
+                                  "start_date": "2026-11-30", "timezone": "Europe/Dublin"}], "2026-11-20T12:00:00Z")
+    assert discovery.store.pool_row("fb-123456789")["timezone"] == ""
+    new = {**GOOD_EVENT, "id": "42", "title": "Late show", "url": "https://www.facebook.com/events/42/"}
+    r = await client.post("/intake/facebook", json=report("events_dashboard", DASHBOARD, [new],
+                                                          timezone="America/New_York"))
+    assert r.status_code == 200, r.text
+    for event_id in ("fb-42", "fb-123456789", "fb-987654321"):  # the new row and the ones read before
+        assert discovery.store.pool_row(event_id)["timezone"] == "America/New_York", event_id
+    assert discovery.store.pool_row("111")["timezone"] == "Europe/Dublin"
+    assert discovery.store.pool_row("fb-bday-100042")["timezone"] == ""
+    # a report with none changes no zone
+    await client.post("/intake/facebook", json=report("events_dashboard", DASHBOARD, []))
+    assert discovery.store.pool_row("fb-42")["timezone"] == "America/New_York"
+
+
+@pytest.mark.parametrize("zone", ["", "not a zone", "x" * 65, 5, ["UTC"], "America/New_York\n"])
+async def test_a_zone_of_the_wrong_shape_is_refused(client, discovery, zone):
+    r = await client.post("/intake/facebook", json=report("events_dashboard", DASHBOARD, [GOOD_EVENT], timezone=zone))
+    assert r.status_code == 422 and "timezone" in r.json()["detail"]
+    assert discovery.store.pool_size("facebook") == 0
+
+
+def test_the_helper_sends_the_browsers_zone():
+    schema, background = _helper_src("schema.js"), _helper_src("background.js")
+    assert '"timezone"' in schema and "resolvedOptions().timeZone" in schema
+    assert "timezone: zone" in background and "machineZone()" in background
+
+
+async def test_a_row_with_a_live_calendar_event_is_added(client, discovery):
+    await fill(client)
+    discovery.store.mark_event_added("fb-987654321", "cal-1", "2026-11-20T12:00:00Z")
+    discovery.store.mark_event_added("fb-123456789", "cal-2", "2026-11-20T12:00:00Z")
+    discovery.calendar = Calendar({"cal-1": {"id": "cal-1", "deleted": 0}, "cal-2": {"id": "cal-2", "deleted": 1}})
+    body = (await client.get("/intake/facebook/lists")).json()
+    assert {e["id"]: e["state"] for e in body["invites"]} == {"fb-987654321": "added", "fb-123456789": ""}
+
+
+async def test_lists_write_nothing_and_carry_no_disk_path(client, discovery, ledger, tmp_path):
+    await fill(client)
+    before = (len(ledger.entries), discovery.store.pool_size(), discovery.store.meta(fr.FB_LAST_READ))
+    text = (await client.get("/intake/facebook/lists")).text
+    assert (len(ledger.entries), discovery.store.pool_size(), discovery.store.meta(fr.FB_LAST_READ)) == before
+    assert str(tmp_path) not in text and "discover.db" not in text and "etag" not in text
+
+
+async def test_the_lists_route_is_a_get(discovery):
+    assert facebook_posts(discovery) == ["/intake/facebook", "/intake/facebook/events/{event_id}/dismiss",
+                                         "/intake/facebook/refresh"]
+    router = fr.facebook_router(discovery)
+    assert [sorted(r.methods) for r in router.routes if r.path == "/intake/facebook/lists"] == [["GET"]]

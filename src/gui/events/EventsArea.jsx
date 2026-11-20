@@ -4,15 +4,18 @@ import CalendarView from './CalendarView.jsx';
 import DiscoverView from './DiscoverView.jsx';
 import AllEventsView from './AllEventsView.jsx';
 import FacebookPanels from './FacebookPanels.jsx';
+import useFacebook from './useFacebook.js';
 import './events.css';
 
 // The Events area: My Calendar (the calendar the harness keeps, with Google when connected), Your
 // Recommendations (DiscoverView: the scout's digests), All Events (every event read, as a grid) and
-// Facebook (FacebookPanels: invites, approvals and birthdays from the browser helper).
+// Facebook (FacebookPanels: invites, approvals and birthdays from the browser helper; useFacebook reads them
+// while that tab is open, and the panels stay props-only).
 // props: api (createApi), online, notify(text), openSettings() opens the Calendar settings panel
 export default function EventsArea({ api, online, notify, openSettings }) {
   const [tab, setTab] = useState('calendar');
   const props = { api, online, notify, openSettings };
+  const facebook = useFacebook(api, { online, active: tab === 'facebook' });
   return <div className="events-area">
     <section className="page-heading od-row-top"><div className="od-fill"><h1>Events</h1></div></section>
     <TabList selectedValue={tab} className="events-tabs" aria-label="Events sections" onTabSelect={(_, d) => setTab(d.value)}>
@@ -24,6 +27,6 @@ export default function EventsArea({ api, online, notify, openSettings }) {
     {tab === 'calendar' && <CalendarView {...props}/>}
     {tab === 'discover' && <DiscoverView {...props}/>}
     {tab === 'all' && <AllEventsView {...props}/>}
-    {tab === 'facebook' && <FacebookPanels api={api} online={online} notify={notify}/>}
+    {tab === 'facebook' && <FacebookPanels api={api} online={online} notify={notify} {...facebook}/>}
   </div>;
 }

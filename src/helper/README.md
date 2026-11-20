@@ -35,7 +35,9 @@ the readers and pinned by the tests.
 ## Intake contract (for the intake slice)
 
 POST JSON to `/intake/facebook`:
-`{helper: "fb-events-v1", observed_at, corner, url, items}` where `corner`
+`{helper: "fb-events-v1", observed_at, corner, url, items, timezone}` where
+`timezone` is the browser's own zone (added by `background.js`; the harness
+takes every timed Facebook event to be in it), `corner`
 is `events_dashboard` | `invites` | `birthdays`, `url` is that corner's page,
 and each item carries `kind: "event" | "invite" | "birthday"` with the fields
 in `schema.js`. Unknown keys are refused. Text arrives cleaned and capped;

@@ -15,6 +15,18 @@ export const MAX_ITEMS = 200;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const CLOCK = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/;
 const DIGITS = /^[0-9]{1,30}$/;
+// A time zone name by shape (the harness's own check): the browser's zone, sent with every report.
+export const ZONE = /^[A-Za-z0-9_+\-/]{1,64}$/;
+
+/** The browser's own time zone, or "" when it gives none of the expected shape. */
+export function machineZone() {
+  try {
+    const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof zone === "string" && ZONE.test(zone) ? zone : "";
+  } catch {
+    return "";
+  }
+}
 
 function isRealDate(value) {
   if (!ISO_DATE.test(value)) return false;
@@ -119,7 +131,7 @@ export function validateReport(report) {
   if (typeof report !== "object" || report === null || Array.isArray(report)) {
     fail("not an object");
   }
-  const topKeys = new Set(["helper", "observed_at", "corner", "url", "items"]);
+  const topKeys = new Set(["helper", "observed_at", "corner", "url", "items", "timezone"]);
   for (const key of Object.keys(report)) {
     if (!topKeys.has(key)) fail(`unknown key ${key}`);
   }
@@ -127,6 +139,9 @@ export function validateReport(report) {
   if (typeof report.observed_at !== "string") fail("observed_at is not a string");
   if (Number.isNaN(Date.parse(report.observed_at))) {
     fail("observed_at is not a time");
+  }
+  if (report.timezone !== undefined && !(typeof report.timezone === "string" && ZONE.test(report.timezone))) {
+    fail("timezone is not a zone name");
   }
   if (!CORNER_IDS.includes(report.corner)) fail("unknown corner");
   if (typeof report.url !== "string") fail("url is not a string");

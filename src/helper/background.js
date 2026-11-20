@@ -13,7 +13,7 @@
 // Both use the same CHECK_INTERVAL_MIN, enforced by the slice tests.
 
 import { cornerForUrl } from "./corners.js";
-import { validateReport } from "./schema.js";
+import { machineZone, validateReport } from "./schema.js";
 import { postReport } from "./sender.js";
 
 export const ALARM_NAME = "fb-helper-sweep";
@@ -63,7 +63,9 @@ export async function handleMessage(message, senderUrl, fetchImpl) {
   if (seenAt !== undefined && now - seenAt < DEDUPE_TTL_MS) {
     return { forwarded: false, duplicate: true };
   }
-  await postReport(report, fetchImpl);
+  // Facebook pages give times with no zone: the harness takes them to be in this machine's zone
+  const zone = machineZone();
+  await postReport(zone ? { ...report, timezone: zone } : report, fetchImpl);
   seenDigests.set(digest, Date.now());
   return { forwarded: true, duplicate: false };
 }

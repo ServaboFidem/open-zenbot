@@ -16,9 +16,32 @@ split and birthday slices read.
   "id"}``: ids and counts only, never listing text).
 - ``GET /intake/facebook/status`` answers the last read, the last error and
   whether the intake is ready, plus the pool sizes per Facebook source.
+- A report may carry ``timezone``, the browser's own zone (an IANA name by
+  shape). The helper reads no zone from a page, so every timed Facebook
+  event is taken to be in the machine's zone: the report's zone goes on its
+  rows and on every Facebook event row already in the pool
+  (``DiscoverStore.set_zone``, scoped to source ``facebook``). A report
+  without one changes no zone, and a timed row with none cannot be added.
+- An invite's ``inviter`` is kept beside its pool row
+  (``DiscoverStore.fb_set_inviter``), never in the pool, a route answer, a
+  ledger entry or a log line: it is what the friend check reads.
+- ``GET /intake/facebook/lists`` answers what the Facebook tab shows, read
+  from the pool and written nowhere: ``invites`` (Facebook event rows from
+  today on that are not held for approval), ``approvals`` (the rows
+  :func:`src.events.facebook_cards.split` holds, today those a close friend
+  invited the user to, each with a fixed ``why`` sentence, never a person's
+  name), ``birthdays`` (birthday rows at most
+  :data:`src.events.birthdays.NUDGE_DAYS_OUT` days out, with ``daysUntil``)
+  and ``status``. Rows carry the listing fields the grid's routes answer
+  (``ROW``) plus ``state``; never a disk path.
 - ``POST /intake/facebook/refresh`` (``NothingIn``) prunes pool rows whose
   start date has passed and answers the status: the on-demand refresh beside
   the helper's own rhythm (about four sweeps through the day).
+- ``POST /intake/facebook/events/{id}/dismiss`` (``NothingIn``) hides one
+  Facebook event row from the tab's lists (``DiscoverStore.fb_dismiss``). It
+  changes no pool row, card or calendar event. A Facebook row has no card,
+  so the card dismiss route cannot do this; approving one is the existing
+  pool add route (``POST /discover/events/{id}/add``).
 
 Every POST takes a required JSON body (``NothingIn`` where it needs
 nothing), so a cross-site page cannot send one without a preflight. Ledger
@@ -43,6 +66,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.events import facebook_pool as pool
+from src.events.birthdays import NUDGE_DAYS_OUT
+from src.events.discover_settings import ZONE
+from src.events.eventbrite import _clean
+from src.events.facebook_cards import split
 from src.events.routes import NothingIn
 from src.memory.ledger import Kind
 
@@ -61,6 +88,16 @@ FB_LAST_ERROR = "facebook_last_error"
 
 REPORT_REFUSED = "The helper report was refused."
 NOT_SAVED = "The report could not be saved."
+NOT_READ = "The Facebook lists could not be read."
+NO_EVENT = "No such event."
+
+# what a list answers of a pool row (the grid's slim fields plus what an add needs), beside ``state``
+ROW = ("id", "name", "start_date", "start_time", "end_date", "end_time", "timezone", "venue", "city",
+       "region", "url", "source")
+# why a row waits for approval, by the split's reason: fixed sentences, never listing text or a name
+WHY = {"rsvp": "You marked this event Interested or Going on Facebook.",
+       "personal": "A close friend is part of this event.",
+       "rsvp_personal": "You marked this event Interested or Going, and a close friend is part of it."}
 
 CORNERS = (
     {"id": "events_dashboard", "paths": ("/events", "/events/")},
@@ -74,7 +111,7 @@ _KINDS = {"events_dashboard": ("event",), "invites": ("invite",), "birthdays": (
 _EVENT_KEYS = frozenset({"kind", "id", "title", "start_date", "start_time", "url", "venue"})
 _INVITE_KEYS = frozenset({"kind", "id", "title", "start_date", "start_time", "url", "inviter"})
 _BIRTHDAY_KEYS = frozenset({"kind", "name", "profile_url", "date_text"})
-_TOP_KEYS = frozenset({"helper", "observed_at", "corner", "url", "items"})
+_TOP_KEYS = frozenset({"helper", "observed_at", "corner", "url", "items", "timezone"})
 _DIGITS = re.compile(r"[0-9]{1,30}")
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _CLOCK = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
@@ -227,6 +264,9 @@ def validate_report(report: object) -> dict:
         datetime.fromisoformat(observed_at)
     except ValueError:
         raise ReportRefused("observed_at is not a time") from None
+    zone = report.get("timezone")
+    if zone is not None and not (isinstance(zone, str) and ZONE.fullmatch(zone)):
+        raise ReportRefused("timezone is not a zone name")
     corner = report.get("corner")
     if corner not in CORNER_IDS:
         raise ReportRefused("unknown corner")
@@ -333,11 +373,19 @@ class FacebookIntake:
         body = validate_report(report)
         today = self._today()
         existing_ids, existing_keys = self._existing()
+        zone = body.get("timezone") or ""
         raws = [to_raw(item) for item in body["items"]]
+        if zone:  # the machine's zone, for the timed rows: the helper reads none from a page
+            for raw in raws:
+                if raw["type"] == "event":
+                    raw["timezone"] = zone
         batch = pool.map_batch(raws, today=today, existing_ids=existing_ids,
                                existing_keys=existing_keys)
         try:
             kept = self.store.upsert_pool(batch.kept, self._now())
+            if zone:  # rows read before, which a repeat report never rewrites, take it too
+                self.store.set_zone(pool.SOURCE, zone)
+            self._keep_inviters(body["items"])
         except Exception as e:
             log.warning("facebook intake not saved: %s", type(e).__name__)
             self.store.set_meta(FB_LAST_ERROR, "provider")
@@ -347,6 +395,22 @@ class FacebookIntake:
         self.ledger.append(Kind.calendar, "", "", event="facebook_intake",
                            kept=kept, dropped=len(batch.dropped), error="")
         return {"kept": kept, "dropped": batch.dropped, "pool": self._pool_counts()}
+
+    def _keep_inviters(self, items: list[dict]) -> None:
+        """Keep each invite's inviter beside its pool row (a repeat report's too: the row dropped as a
+        duplicate is still that event). Only for a Facebook event row that is in the pool."""
+        ids = self.store.pool_ids(pool.SOURCE)
+        for item in items:
+            event_id = f"fb-{item.get('id')}"
+            if item.get("kind") == "invite" and event_id in ids:
+                self.store.fb_set_inviter(event_id, _clean(item.get("inviter"), NAME_MAX))
+
+    def dismiss(self, event_id: str) -> bool:
+        """Hide one Facebook event row from the tab's lists; False when it is not one."""
+        if event_id not in self.store.pool_ids(pool.SOURCE):
+            return False
+        self.store.fb_dismiss(event_id)
+        return True
 
     def status(self) -> dict[str, Any]:
         """The intake status: the last read, the last error and readiness."""
@@ -360,17 +424,68 @@ class FacebookIntake:
         rows whose start date has passed (birthdays re-arrive with their
         next occurrence) and answer the status."""
         self.store.drop_past(self._today())
+        self.store.fb_prune()
         return self.status()
 
 
 def facebook_router(discovery, harness=None) -> APIRouter:
     """The ``/intake`` routes over ``discovery``'s store and ledger. The
-    harness argument is accepted for mount parity and unused: the intake
-    never needs more than the store, the ledger and the clocks."""
+    intake never needs more than the store, the ledger and the clocks; the
+    lists read the harness's people registry (``harness.profile.people``,
+    read-only) for the friend check, and without one nothing is personal."""
     r = APIRouter(prefix="/intake")
     intake = FacebookIntake(discovery.store, discovery.ledger,
                             today=getattr(discovery, "today", None),
                             now=getattr(discovery, "now", None))
+    store = discovery.store
+
+    def live(calendar_event_id: str) -> bool:
+        """Whether a calendar event made from a pool row still exists, not deleted."""
+        calendar = getattr(discovery, "calendar", None)
+        if calendar is None or not calendar_event_id:
+            return False
+        event = calendar.store.event(calendar_event_id)
+        return event is not None and not event["deleted"]
+
+    def rows_of(source: str, today: str) -> list[dict]:
+        """One Facebook source's pool rows that have not passed, in date order. Read by source, so no
+        other source's row is ever listed here."""
+        rows = [row for row in map(store.pool_row, store.pool_ids(source))
+                if row is not None and (row["end_date"] or row["start_date"]) >= today]
+        return sorted(rows, key=lambda r: (r["start_date"], r["start_time"], r["id"]))
+
+    def view(row: dict) -> dict:
+        """A row as the tab draws it: the ``/discover/events`` state rule over the same marks."""
+        marks = store.marks(row["id"])
+        state = ("added" if any(map(live, marks["calendar_ids"]))
+                 else "recommended" if marks["recommended"] else "")
+        return {**{k: row[k] for k in ROW}, "state": state}
+
+    def days_until(day: str, today: str) -> int | None:
+        try:
+            return (date.fromisoformat(day) - date.fromisoformat(today)).days
+        except ValueError:
+            return None
+
+    def lists() -> dict[str, Any]:
+        today = intake._today()
+        people = getattr(getattr(harness, "profile", None), "people", None)
+        marks = store.fb_marks()
+        # the inviter rides along for the friend check only: ``view`` answers the ``ROW`` fields, never it
+        shown = [{**row, "inviter": marks.get(row["id"], {}).get("inviter", "")}
+                 for row in rows_of(pool.SOURCE, today)
+                 if not marks.get(row["id"], {}).get("dismissed")]
+        held = split(shown, people)
+        birthdays = []
+        for row in rows_of(pool.BIRTHDAY_SOURCE, today):
+            days = days_until(row["start_date"], today)
+            if days is not None and 0 <= days <= NUDGE_DAYS_OUT:
+                birthdays.append({"id": row["id"], "name": row["name"], "date": row["start_date"],
+                                  "start_date": row["start_date"], "daysUntil": days})
+        return {"invites": [view(card["row"]) for card in held.feed],
+                "approvals": [{**view(card["row"]), "why": WHY[card["reason"]]} for card in held.approval],
+                "birthdays": birthdays,
+                "status": intake.status()}
 
     @r.post("/facebook")
     async def report(body: ReportIn) -> dict[str, Any]:
@@ -386,6 +501,26 @@ def facebook_router(discovery, harness=None) -> APIRouter:
     @r.get("/facebook/status")
     async def get_status() -> dict[str, Any]:
         return intake.status()
+
+    @r.get("/facebook/lists")
+    async def get_lists() -> dict[str, Any]:
+        """What the Facebook tab shows. Reads the pool only: no source is read and nothing is written."""
+        try:
+            return lists()
+        except Exception as e:
+            log.warning("facebook lists failed: %s", type(e).__name__)
+            raise HTTPException(500, NOT_READ) from None
+
+    @r.post("/facebook/events/{event_id}/dismiss")
+    async def dismiss(event_id: str, body: NothingIn) -> dict[str, Any]:
+        try:
+            done = intake.dismiss(event_id)
+        except Exception as e:
+            log.warning("facebook dismiss failed: %s", type(e).__name__)
+            raise HTTPException(500, NOT_SAVED) from None
+        if not done:
+            raise HTTPException(404, NO_EVENT)
+        return {"id": event_id, "state": "dismissed"}
 
     @r.post("/facebook/refresh")
     async def refresh(body: NothingIn) -> dict[str, Any]:

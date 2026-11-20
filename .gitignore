@@ -26,3 +26,4 @@ research/artifacts/
 /build/bin/
 /release/
 *audit*.md
+/facebook-data-wiring-handoff.md

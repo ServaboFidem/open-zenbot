@@ -26,5 +26,11 @@ export function createDiscoverApi(call) {
     addEvent: (id, times) => call('POST', `/discover/events/${enc(id)}/add`, { start: times.start, end: times.end }),
     refresh: () => call('POST', '/discover/refresh', {}),
     eventImageSrc: pictureSrc,
+    // the Facebook tab: what the browser helper read (invites, approvals, birthdays, status). A Facebook row
+    // has no card: it is added through addEvent above and hidden through facebookDismiss.
+    facebookLists: () => call('GET', '/intake/facebook/lists'),
+    facebookStatus: () => call('GET', '/intake/facebook/status'),
+    facebookRefresh: () => call('POST', '/intake/facebook/refresh', {}),
+    facebookDismiss: id => call('POST', `/intake/facebook/events/${enc(id)}/dismiss`, {}),
   };
 }

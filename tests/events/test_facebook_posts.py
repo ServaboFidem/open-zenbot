@@ -78,8 +78,8 @@ def facebook_posts(harness) -> list[str]:
 
 async def test_no_facebook_post_can_be_sent_as_a_simple_cross_site_request(client, harness):
     paths = facebook_posts(harness)
-    assert {"/intake/facebook", "/intake/facebook/refresh"} <= set(paths)
-    assert len(paths) == 2
+    assert paths == ["/intake/facebook", "/intake/facebook/events/{event_id}/dismiss",
+                     "/intake/facebook/refresh"]
     foreign = {"Origin": "https://evil.example"}
     full = json.dumps({"helper": "fb-events-v1"}).encode()
     for path in paths:

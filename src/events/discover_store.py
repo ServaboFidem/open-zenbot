@@ -42,6 +42,7 @@ CREATE INDEX IF NOT EXISTS cards_digest ON cards(digest_id, position);
 CREATE INDEX IF NOT EXISTS cards_event ON cards(event_id);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS added(event_id TEXT PRIMARY KEY, calendar_event_id TEXT, added_at TEXT);
+CREATE TABLE IF NOT EXISTS facebook_marks(event_id TEXT PRIMARY KEY, inviter TEXT DEFAULT '', dismissed INTEGER DEFAULT 0);
 """
 
 
@@ -288,6 +289,31 @@ class DiscoverStore:
         with self._lock, self._db:
             self._db.execute("INSERT OR REPLACE INTO added(event_id, calendar_event_id, added_at) VALUES(?,?,?)",
                              (event_id, calendar_event_id, added_at))
+
+    # what the Facebook helper said about an event beside its pool row: who invited the user, and whether the
+    # user dismissed it on the Facebook tab. Kept apart from the pool so no other source's row ever has one.
+
+    def fb_set_inviter(self, event_id: str, inviter: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("INSERT INTO facebook_marks(event_id, inviter) VALUES(?,?)"
+                             " ON CONFLICT(event_id) DO UPDATE SET inviter=excluded.inviter", (event_id, inviter))
+
+    def fb_dismiss(self, event_id: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("INSERT INTO facebook_marks(event_id, dismissed) VALUES(?,1)"
+                             " ON CONFLICT(event_id) DO UPDATE SET dismissed=1", (event_id,))
+
+    def fb_marks(self) -> dict[str, dict]:
+        """Event id -> ``{"inviter", "dismissed"}`` for every Facebook event that has either."""
+        with self._lock:
+            return {r["event_id"]: {"inviter": r["inviter"] or "", "dismissed": bool(r["dismissed"])}
+                    for r in self._db.execute("SELECT * FROM facebook_marks")}
+
+    def fb_prune(self) -> int:
+        """Forget the marks of events no longer in the pool. Returns how many went."""
+        with self._lock, self._db:
+            return self._db.execute(
+                "DELETE FROM facebook_marks WHERE event_id NOT IN (SELECT id FROM pool)").rowcount
 
     def added_event(self, event_id: str) -> str:
         """The calendar event id recorded for an event added from the pool, else an empty string."""

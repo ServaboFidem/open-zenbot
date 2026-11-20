@@ -625,3 +625,21 @@ test("readers scrape read-only and clean every field", () => {
   assert.ok(birthdays.includes("querySelectorAll"), "birthdays reads the list");
   assert.ok(!codeOnly(birthdays).includes("fetch("), "birthdays posts nothing itself");
 });
+
+test("background adds the browser's time zone to what it forwards", async () => {
+  const { machineZone } = await import("./schema.js");
+  seenDigests.clear();
+  resetSendClock();
+  const bodies = [];
+  const stub = async (url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return { ok: true, status: 200 };
+  };
+  const report = goodReport("birthdays", "https://www.facebook.com/birthdays/", [goodBirthday]);
+  await handleMessage({ type: "fb-helper-report", report }, "https://www.facebook.com/birthdays/", stub);
+  assert.ok(machineZone(), "node gives a zone, as the browser does");
+  assert.deepEqual(bodies[0], { ...report, timezone: machineZone() });
+  assert.equal(validateReport({ ...report, timezone: "America/New_York" }), true);
+  assert.throws(() => validateReport({ ...report, timezone: "not a zone" }), /timezone is not a zone name/);
+  assert.throws(() => validateReport({ ...report, timezone: 5 }), /timezone is not a zone name/);
+});

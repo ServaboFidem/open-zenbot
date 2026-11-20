@@ -86,9 +86,9 @@ test('status offline and not-ready sentences exist', () => {
 
 // --- add: same behavior as today, through the existing routes ---
 
-test('add uses the existing card and pool add routes only', () => {
-  assert.ok(src.includes('discover.add('), 'card add route for approvals');
-  assert.ok(src.includes('discover.addEvent('), 'pool add route for invites');
+test('add uses the existing pool add route only', () => {
+  assert.ok(!src.includes('discover.add('), 'a Facebook row has no card: the card add route would answer 404');
+  assert.equal(src.split('discover.addEvent(').length - 1, 2, 'pool add route for invites and approvals');
   assert.ok(!src.includes('/facebook'), 'no new add path');
   assert.ok(!src.includes('discover.run('), 'panels do not start runs');
   assert.ok(!src.includes('discover.refresh('), 'panels do not refresh sources');
@@ -118,8 +118,9 @@ test('invite and approval rows time and place read as the cards write them', () 
 
 // --- dismiss: same behavior as today, through the existing route ---
 
-test('dismiss uses the existing card dismiss route', () => {
-  assert.ok(src.includes('discover.dismiss('), 'card dismiss route for approvals');
+test('dismiss uses the Facebook dismiss route', () => {
+  assert.ok(!src.includes('discover.dismiss('), 'a Facebook row has no card to dismiss');
+  assert.ok(src.includes('discover.facebookDismiss('), 'the Facebook dismiss route for approvals');
   assert.ok(src.includes('Dismiss'), 'dismiss button on approvals only');
   assert.ok(src.includes("state: 'dismissed'"), 'dismissed mark kept for the mount');
 });
@@ -132,8 +133,8 @@ test('dismissed approvals leave the list like dismissed cards do', () => {
 
 // --- invariant: props in, existing routes out; no paths or keys ---
 
-test('invariant: the GUI writes only through the existing add and dismiss routes', () => {
-  const writes = ['discover.add(', 'discover.addEvent(', 'discover.dismiss('];
+test('invariant: the GUI writes only through the pool add and Facebook dismiss routes', () => {
+  const writes = ['discover.addEvent(', 'discover.facebookDismiss('];
   for (const w of writes) assert.ok(src.includes(w), w);
   assert.ok(!src.includes('fetch('), 'no direct network write');
   assert.ok(!src.includes('localStorage'), 'no stored write');
