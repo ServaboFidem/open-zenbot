@@ -604,6 +604,71 @@ def test_the_dream_provider_waits_ten_minutes_and_chat_keeps_its_timeout(harness
     assert bound.provider.http._client.timeout.read == 120.0
 
 
+def test_dream_extras_follow_what_is_known_of_the_model():
+    from src.harness.models_setup import DREAM_FORMAT, dream_extras
+
+    def m(params, reasoning):
+        return ModelInfo(id="m", name="m", kinds=["text"], supported_parameters=params, reasoning=reasoning)
+    assert dream_extras("openrouter", m(["response_format", "reasoning"], True)) == {
+        "response_format": DREAM_FORMAT, "reasoning": {"enabled": False}}
+    assert dream_extras("openai-compatible", m(["structured_outputs", "reasoning"], True)) == {
+        "response_format": DREAM_FORMAT, "reasoning_effort": "none"}
+    assert dream_extras("openai-compatible", m(["tools"], False)) == {}
+    assert dream_extras("openrouter", m(None, None)) == {} and dream_extras("openrouter", None) == {}  # unknown: nothing sent
+    assert DREAM_FORMAT["type"] == "json_schema" and DREAM_FORMAT["json_schema"]["schema"]["required"] == ["facts"]
+
+
+def test_the_dream_provider_carries_the_extras_and_chat_none(harness: Harness):
+    from src.harness.model_roles import Choice
+    from src.harness.models_setup import DREAM_FORMAT, build, dream_provider
+    roles = harness.model_roles()
+    roles.dream = Choice("openrouter", "scaledown/summarize")
+    info = harness.provider_store.entries["openrouter"].model("scaledown/summarize")
+    info.supported_parameters, info.reasoning = ["response_format", "reasoning"], True
+    p, _ = dream_provider(harness.provider_store, roles)
+    assert p.extras == {"response_format": DREAM_FORMAT, "reasoning": {"enabled": False}}
+    assert build(harness.provider_store, roles).provider.extras == {}
+
+
+def _chat_handler(seen: list, refuse: int | None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        if refuse is not None and len(seen) == 1:
+            return httpx.Response(refuse, json={"error": {"message": "unsupported"}})
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "{}"}}]})
+    return handler
+
+
+async def test_extras_go_in_the_request_and_a_refusal_is_asked_again_without_them():
+    extras = {"response_format": {"type": "json_schema"}, "reasoning_effort": "none"}
+    for refuse in (None, 400, 404, 422):
+        seen: list = []
+        p = OpenAICompatibleProvider(None, model="qwen", base_url="http://127.0.0.1:1234/v1", extras=extras,
+                                     transport=httpx.MockTransport(_chat_handler(seen, refuse)))
+        out = await p.complete([Message(role="user", content="hello")])
+        assert out.message.content == "{}" and seen[0]["reasoning_effort"] == "none" and "response_format" in seen[0]
+        assert len(seen) == (1 if refuse is None else 2)
+        if refuse is not None:
+            assert set(seen[1]) == {"model", "messages"}
+
+
+async def test_a_failure_that_is_not_about_the_request_is_not_asked_again():
+    from src.providers.interface import ProviderError
+    for status in (401, 429, 500):
+        seen: list = []
+        p = OpenAICompatibleProvider(None, model="qwen", base_url="http://127.0.0.1:1234/v1", extras={"reasoning_effort": "none"},
+                                     transport=httpx.MockTransport(_chat_handler(seen, status)))
+        with pytest.raises(ProviderError):
+            await p.complete([Message(role="user", content="hello")])
+        assert len(seen) == 1
+    seen = []  # and with no extras a refusal is simply the error
+    p = OpenAICompatibleProvider(None, model="qwen", base_url="http://127.0.0.1:1234/v1",
+                                 transport=httpx.MockTransport(_chat_handler(seen, 400)))
+    with pytest.raises(ProviderError):
+        await p.complete([Message(role="user", content="hello")])
+    assert len(seen) == 1
+
+
 # -- a key kept only in providers.json (no key in the environment, no harness.json) --
 
 

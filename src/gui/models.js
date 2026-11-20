@@ -30,6 +30,17 @@ export function enabledByKind(providers, kind, only = null, needs = null) {
     .filter(g => g.models.length);
 }
 
+// The Summary model picker lists only models named for the job: "summary", "summarize", "summarizer"... in the
+// id or the name. The model chosen now stays listed whatever its name, and with no such model enabled every model
+// is listed, so the picker is never empty for want of a name.
+const SUMMARY_NAME = /summar(y|i)/i;
+export function summaryModels(groups, current = null) {
+  const named = m => SUMMARY_NAME.test(m.id) || SUMMARY_NAME.test(m.name || '');
+  const chosen = (g, m) => !!current && g.provider === current.provider && m.id === current.model;
+  if (!groups.some(g => g.models.some(named))) return groups;
+  return groups.map(g => ({ ...g, models: g.models.filter(m => named(m) || chosen(g, m)) })).filter(g => g.models.length);
+}
+
 /** The provider list's models narrowed by a search, a kind, and enabled-only, enabled ones first. */
 export function filterModels(models, { q = '', kind = '', enabledOnly = false, enabled = new Set(), showUnusable = false } = {}) {
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);

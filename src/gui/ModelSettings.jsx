@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, ProgressBar, Spinner } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
 import { DreamSection } from './DreamSection.jsx';
-import { KIND_LABELS, capabilityTags, choiceKey, probeReducer, probeStart, enabledByKind, filterModels, keepEdits, decisionHint, scorerNeeds, scorerProviderIds, fromPreset, keyLabel, modelLabel, parseChoice, presetOf } from './models.js';
+import { KIND_LABELS, capabilityTags, choiceKey, probeReducer, probeStart, enabledByKind, filterModels, keepEdits, decisionHint, scorerNeeds, scorerProviderIds, summaryModels, fromPreset, keyLabel, modelLabel, parseChoice, presetOf } from './models.js';
 
 const SHOWN = 150;  // rows a model list renders at once; a search narrows the rest
 const BLANK = { preset: '', name: '', kind: 'openai-compatible', base_url: '', keyMode: 'paste', key: '', key_ref: '', no_key: false };
@@ -223,8 +223,9 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
   }
   const picker = (role, hint, disabled = false) => {
     const kind = roles.roles[role];
-    const groups = enabledByKind(providers, kind, role === 'decision' ? scorerProviderIds(providers, roles, form.scorer) : null, role === 'decision' ? scorerNeeds(roles, form.scorer) : null);
     const current = parseChoice(form[role]);
+    const ofKind = enabledByKind(providers, kind, role === 'decision' ? scorerProviderIds(providers, roles, form.scorer) : null, role === 'decision' ? scorerNeeds(roles, form.scorer) : null);
+    const groups = role === 'summary' ? summaryModels(ofKind, roles.summary ? { provider: roles.summary.provider, model: roles.summary.model } : null) : ofKind;
     const missing = current && !groups.some(g => g.provider === current.provider && g.models.some(m => m.id === current.model));
     const optional = (roles.optional || []).includes(role);
     return <Field label={roles.labels[role]} hint={groups.length ? hint : undefined}>

@@ -23,6 +23,26 @@ DEFAULT_DECISION = "microsoft/microsoft-decision-1"  # the decision scorer's def
 # the dreaming model's request timeout: a local model on a modest computer may take minutes over one 12,000-character
 # batch, and nobody waits on a dream; every other role keeps the adapters' own default
 DREAM_TIMEOUT_S = 600.0
+# the shape `Generator.dream_facts` asks for, as a schema: LM Studio refuses the plain `json_object` form
+DREAM_FORMAT: dict[str, Any] = {"type": "json_schema", "json_schema": {"name": "dream_facts", "strict": True, "schema": {
+    "type": "object", "additionalProperties": False, "required": ["facts"],
+    "properties": {"facts": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["text", "store"],
+        "properties": {"text": {"type": "string"}, "store": {"type": "string"}}}}}}}}
+
+
+def dream_extras(kind: str, m: ModelInfo | None) -> dict[str, Any]:
+    """The optional request fields of a dream call, from what is known of the model: a JSON answer for a model
+    that takes `response_format`, and thinking off for one that reasons (OpenRouter's `reasoning` object there,
+    OpenAI's `reasoning_effort` on any other server). Nothing is sent for a model whose abilities are unknown."""
+    out: dict[str, Any] = {}
+    if m is None:
+        return out
+    if m.structured_output:
+        out["response_format"] = DREAM_FORMAT
+    if m.reasoning:
+        out.update({"reasoning": {"enabled": False}} if kind == "openrouter" else {"reasoning_effort": "none"})
+    return out
 
 
 def default_models(c: HarnessConfig) -> list[ModelInfo]:
@@ -50,7 +70,8 @@ def dream_provider(store: ProviderStore, roles: ModelRoles) -> tuple[Provider, s
     if roles.dream is None:
         return None
     e = check_choice(store, roles.dream, "text", ROLE_LABELS["dream"])
-    return make_provider(store, e, roles.dream.model, timeout=DREAM_TIMEOUT_S), roles.dream.model
+    extras = dream_extras(e.kind, e.model(roles.dream.model))
+    return make_provider(store, e, roles.dream.model, timeout=DREAM_TIMEOUT_S, extras=extras), roles.dream.model
 
 
 @dataclass
@@ -87,8 +108,10 @@ def check_choice(store: ProviderStore, choice: Choice | None, kind: str, label: 
     return e
 
 
-def make_provider(store: ProviderStore, e: ProviderEntry, model: str, *, timeout: float | None = None) -> Provider:
-    """`timeout` (seconds a request may take) is passed only when given; otherwise the adapter keeps its default."""
+def make_provider(store: ProviderStore, e: ProviderEntry, model: str, *, timeout: float | None = None,
+                  extras: dict[str, Any] | None = None) -> Provider:
+    """`timeout` (seconds a request may take) is passed only when given; otherwise the adapter keeps its default.
+    `extras` are optional request fields for every call of this client (see `OpenRouterProvider.extras`)."""
     import src.providers.openai_compatible  # noqa: F401 - registers the provider
     import src.providers.openrouter  # noqa: F401 - registers the provider
 
@@ -97,6 +120,8 @@ def make_provider(store: ProviderStore, e: ProviderEntry, model: str, *, timeout
         kwargs["base_url"] = e.base_url
     if timeout is not None:
         kwargs["timeout"] = timeout
+    if extras:
+        kwargs["extras"] = extras
     try:
         return providers.get(e.kind, **kwargs)
     except Exception as ex:  # noqa: BLE001 - a factory refused; the store keeps keys out of messages

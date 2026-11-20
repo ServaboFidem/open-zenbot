@@ -153,6 +153,11 @@ def _safe_error(r: httpx.Response) -> str:
         return r.text[:300]
 
 
+# How a server says it will not take a request field: 400 or 422, and OpenRouter's 404 "No endpoints found that
+# support the requested parameters".
+EXTRAS_REFUSED = (400, 404, 422)
+
+
 class OpenRouterProvider(Provider):
     kind = KIND
     chat_path = CHAT_PATH  # relative to the http client's base url
@@ -167,6 +172,7 @@ class OpenRouterProvider(Provider):
         base_url: str = BASE_URL,
         timeout: float = 120.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        extras: dict[str, Any] | None = None,
     ) -> None:
         if http is None:
             if key is None:
@@ -174,6 +180,9 @@ class OpenRouterProvider(Provider):
             http = OpenRouterHttp(key, base_url=base_url, timeout=timeout, transport=transport)
         self.http = http
         self.model = model or DEFAULT_MODEL
+        # Optional request fields sent with every call (`response_format`, a thinking switch). Servers differ
+        # on which they take, so a request refused with them is sent once more without them (`_post`).
+        self.extras = dict(extras or {})
 
     @classmethod
     def from_env(cls, *, key_ref: str = DEFAULT_KEY_REF, **kwargs: Any) -> "OpenRouterProvider":
@@ -209,7 +218,7 @@ class OpenRouterProvider(Provider):
         meta = {"provider": self.kind, "tools": [t.name for t in tools or []]}
         with tracing.observe(tracing.step_name("generate-response"), as_type="generation", model=payload["model"],
                              input=payload["messages"], metadata=meta) as gen:
-            data = await self.http.post_json(self.chat_path, payload, what=self.kind)
+            data = await self._post(payload)
             try:
                 choice = data["choices"][0]
                 raw = choice["message"]
@@ -235,6 +244,18 @@ class OpenRouterProvider(Provider):
                        cost_details={"total": float(u.cost)} if isinstance(u.cost, (int, float)) else None,
                        metadata={**meta, "finish_reason": completion.finish_reason})
         return completion
+
+    async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """The chat request, with the extras. A refusal of the request itself (`EXTRAS_REFUSED`) is taken as
+        being about the extras and the request is sent once more without them; any other failure is raised."""
+        if not self.extras:
+            return await self.http.post_json(self.chat_path, payload, what=self.kind)
+        try:
+            return await self.http.post_json(self.chat_path, {**payload, **self.extras}, what=self.kind)
+        except ProviderError as e:
+            if e.status not in EXTRAS_REFUSED:
+                raise
+        return await self.http.post_json(self.chat_path, payload, what=self.kind)
 
     async def probe(self) -> bool:
         return await self.http.probe()
