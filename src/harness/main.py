@@ -47,12 +47,19 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
     config = config or HarnessConfig()
     config.validate()
     import src.decider.adapters.decision_model  # noqa: F401 - registers the scorer
+    import src.decider.adapters.letter_model  # noqa: F401 - registers the local scorer
+    import src.decider.adapters.systemone  # noqa: F401 - registers the typed local scorer
     import src.providers.openrouter  # noqa: F401 - registers the provider
     from src.decider import registry as scorers
 
+    # a scorer on another provider needs that provider's address: it is chosen in Settings (harness.json)
+    from_env = "openrouter" in scorers.provider_kinds(config.scorer_kind)
+    if not from_env:  # said whether or not a key is in the environment: a saved key binds chat without it too
+        print(f"ZEN_SCORER={config.scorer_kind} is not set up from the environment: choose it on Settings > Harness settings",
+              file=sys.stderr)
     try:
         provider = registry.get(config.provider_kind, key_ref=config.key_ref, model=config.model)
-        scorer = scorers.get(config.scorer_kind, key_ref=config.key_ref, model=config.decision_model)
+        scorer = scorers.get(config.scorer_kind, key_ref=config.key_ref, model=config.decision_model) if from_env else None
     except SecretNotFound:  # no key in the environment: start unbound, the GUI's Settings page binds one
         provider, scorer = None, None
     ledger = Ledger(config.vault_root)

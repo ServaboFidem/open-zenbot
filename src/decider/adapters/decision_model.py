@@ -65,7 +65,7 @@ class DecisionModelScorer(Scorer):
             raw = raw_answers.get(key)
             if raw is None:
                 raise ProviderError(f"decisions response lacks an answer for {key!r}")
-            answers[key] = _parse_answer(raw, request.questions[key].type)
+            answers[key] = parse_answer(raw, request.questions[key].type)
         usage = data.get("usage") or {}
         return DecisionResult(
             answers=answers,
@@ -87,7 +87,7 @@ class DecisionModelScorer(Scorer):
         await self.http.aclose()
 
 
-def _parse_answer(raw: dict[str, Any], expected: str) -> Answer:
+def parse_answer(raw: dict[str, Any], expected: str) -> Answer:
     t = raw.get("type")
     if t == "refusal":
         return RefusalAnswer()

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.decider.interface import BandConfig, NoulAnswer, Outcome
+from src.decider.interface import BandConfig, DecisionRefused, NoulAnswer, Outcome, RefusalAnswer
 from src.decider.router import CatalogRouter, RouterConfig
 from src.harness.approvals import ApprovalStore
 from src.harness.bot import Bot
@@ -184,6 +184,18 @@ async def test_fail_open_injects_all_and_logs(bot: Bot, ledger: Ledger):
     assert res.outcome == Outcome.review and "ProviderUnavailable" in res.fallback
     err = ledger.tail(kind="error", session_id="s1")[0]
     assert err.data["where"] == "router" and "fail open" in err.data["action"]
+
+
+async def test_a_refused_question_fails_open_like_a_scorer_that_is_down(bot: Bot, ledger: Ledger):
+    def one_refused(request):
+        return {qid: (RefusalAnswer() if qid == "skill:update" else NoulAnswer(0.9)) for qid in request.questions}
+
+    res = await CatalogRouter(MockScorer(one_refused), Catalog(), ledger).route(bot, "t", "s1")
+    assert [s.slug for s in res.skills] == ["brief", "update", "plan", "recipe"]
+    assert res.outcome == Outcome.review and "DecisionRefused" in res.fallback
+    assert ledger.tail(kind="error", session_id="s1")[0].data["where"] == "router"
+    with pytest.raises(DecisionRefused):
+        await CatalogRouter(MockScorer(one_refused), Catalog(), ledger, RouterConfig(fail_open=False)).route(bot, "t")
 
 
 async def test_fail_closed_when_configured(bot: Bot, ledger: Ledger):

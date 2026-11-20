@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.decider.interface import NoulAnswer
+from src.decider.interface import NoulAnswer, RefusalAnswer
 from src.generation.generator import Generator
 from src.harness.approvals import ApprovalStore
 from src.harness.bot import Bot
@@ -120,6 +120,14 @@ async def test_scorer_error_fails_open(ledger: Ledger, tmp_path: Path):
     o = orch(MockScorer(lambda r: ProviderUnavailable("down")), svc, ledger)
     out = await o.route("hi")
     assert out.outcome == "task" and out.fallback and "down" in out.fallback
+    assert [e for e in ledger.tail(kind="error") if e.data.get("where") == "orchestrator"]
+
+
+async def test_a_refused_question_answers_directly(ledger: Ledger, tmp_path: Path):
+    svc = make(provider(), ledger, tmp_path)
+    o = orch(MockScorer(lambda r: {k: RefusalAnswer() for k in r.questions}), svc, ledger)
+    out = await o.route("hi")
+    assert out.outcome == "task" and "DecisionRefused" in out.fallback and svc.list() == []
     assert [e for e in ledger.tail(kind="error") if e.data.get("where") == "orchestrator"]
 
 

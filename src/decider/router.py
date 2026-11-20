@@ -32,6 +32,7 @@ from .interface import (
     NoulQuestion,
     Outcome,
     Scorer,
+    DecisionRefused,
     decide_and_log,
     select_band,
     select_floor,
@@ -128,7 +129,8 @@ class CatalogRouter:
         try:
             self.calls += 1
             decision = await decide_and_log(self.scorer, request, self.ledger, bot.id, session_id)
-        except ProviderError as e:
+            scores = {_qid(e): decision.noul(_qid(e)).noul for e in entries}
+        except (ProviderError, DecisionRefused) as e:  # a refused question is no answer either
             if not self.config.fail_open:
                 raise
             self.ledger.append(Kind.error, bot.id, session_id, where="router", error=f"{type(e).__name__}: {e}", action="fail open: inject all")
@@ -137,7 +139,7 @@ class CatalogRouter:
         by_kind: dict[str, dict[str, float]] = {}
         widths: dict[str, float] = {}
         for e in entries:
-            p = decision.noul(_qid(e)).noul
+            p = scores[_qid(e)]
             by_kind.setdefault(e.kind, {})[e.ref] = p
             if e.band_width is not None:
                 widths[e.ref] = e.band_width

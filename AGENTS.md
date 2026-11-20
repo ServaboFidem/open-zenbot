@@ -7,7 +7,7 @@ name each top-level system and run the harness and the tests.
 | --- | --- |
 | `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`); the design studio (`design_studio.py`: numbered copies, comment block, preview bridge `design_bridge.js`; `design_systems.py`: loading and checking design systems; `design_html.py`: the HTML scan; `design_images.py`: pictures as files; `design_parts.py`: slots, worksheet, apply; `studio_helpers.py`: a helper's turn, apply and restore; `studio_help.py`: routing a revision); coding agents: `agent_clis.py` (find, sign-in, switches), `delegation.py` (the `delegate` tool, runner, folder rules), `dream_routes.py` (the `/dream` routes) |
 | `src/providers/` | Provider interface, registry, provider store (`providers.json`) and secrets, OpenRouter and OpenAI-compatible adapters, model listing and probing, the image provider, Langfuse tracing |
-| `src/decider/` | Decider interface, scorer registry, skill and MCP routing (band and floor), skill-to-bot fit, supervisor, `adapters/` |
+| `src/decider/` | Decider interface, scorer registry (each scorer names the provider kinds its model may be on, `registry.provider_kinds`), skill and MCP routing (band and floor), skill-to-bot fit, supervisor, `answers.py` (typed answers from a probability per option), `adapters/`: `decision_model.py` (`openrouter-decision-1`, OpenRouter's Decisions API), `letter_model.py` (`letter-logprobs`, a local decision model asked through chat) and `systemone.py` (`systemone`, a local server's own decision route); see `### Local decision models` |
 | `src/context/` | Compaction, the protected (pinned) task, transcript rendering |
 | `src/generation/` | Generator boundary: compaction summaries and folds, vault summaries; the `image.generate` tool (`images.py`) |
 | `src/memory/` | Exclusion filter (secrets and approvals), ledger (`ledger.py`), recall, ingest, directory import, learning from a crawl, profile memory and store routing, Hindsight store and processes, dreaming (`dream.py`: learning facts from the user's own messages while idle) |
@@ -994,6 +994,81 @@ The `shell` tool runs any command line as the user's account, so it gets three g
   folder or the vault.
 
 These are judgments, not a sandbox: an approved or misjudged command still runs as the user's account.
+
+A scorer whose `checks_commands` is False (the local `letter-logprobs` and `systemone` scorers) is never asked about a command:
+every `shell` call opens the approval, as with no decider.
+
+### Local decision models
+
+The decider can run on a local model instead of OpenRouter's, through one of two scorers chosen with the model on
+Settings > Harness settings: `letter-logprobs` (`src/decider/adapters/letter_model.py`) asks a model through chat,
+and `systemone` (`adapters/systemone.py`) uses a server's own decision route. On LM Studio they reach different
+models: a model it lists with type `decision` is served only on the decision route, every other model only on chat.
+
+- **The format** (`src/providers/letters.py`, shared by the scorer and the capability test). One request to
+  `/chat/completions` per question: the state, the question and the options as letters, ending `Answer:`; one token
+  with `top_logprobs` 20; the probability on the option letters, renormalised, is the answer. Two to 20 options (any other count is a `ProviderError`). It
+  is the format the Jev-Style v1 decision models were trained on (their model card gives it). Under half the token's
+  probability on the letters (`MIN_MASS`) is a refusal; an answer with no token probabilities is a `ProviderError`.
+  Up to four questions of a request are out together (`AT_ONCE`); when one fails the others are cancelled, so none is
+  still sent after the caller has its error. A refused question fails the router open and makes the orchestrator
+  answer directly, as a scorer that is down does (`DecisionRefused` beside `ProviderError`).
+- **The typed route** (`systemone.py`). `POST <base>/systemone` with `{"model", "state", "questions": {key:
+  question}}` answers `{"answers": {key: answer}, "usage"}` in the shape of OpenRouter's Decisions API, read with
+  `decision_model.parse_answer`. LM Studio serves it for its `decision` models; `jev-style serve` has the same route
+  (not tried). The scorer sends one question a request, one request at a time (`AT_ONCE` 1): see the hand check. A lock on the
+  scorer holds that across its callers too (the router, the supervisor and the guards share one scorer). It does not
+  cover the capability test, which asks the same route through its own client: a model tested while the scorer is
+  answering can still put two requests out.
+- **Detecting one.** The capability test run when a model is enabled on an OpenAI-compatible provider has two
+  decision steps, each three questions with a known answer (`probe.DECISIONS`). `decision` ("Letter decisions",
+  `probe._decides`), through chat: a model passes when the server returns token probabilities, most of them are on
+  the letters and all three are right; it gets the mark `letter_decisions` in `supported_parameters`. `typed` ("Typed
+  decisions", `probe._decides_typed`), on `/systemone`, run whether or not the model chats: all three right gives
+  `typed_decisions`; a server without the route refuses at once and the step fails. Either gives kind `decision`. A
+  model that only passes `typed` has kind `decision` alone. Passing shows the model can be asked, not that it judges
+  well: an ordinary chat model that answers with a letter passes too. LM Studio's own model type is not read: it
+  does not tag every decision model. A model enabled before a step existed must be disabled and enabled again.
+- **Chat answered by another model.** LM Studio, asked to chat with a `decision` model while a chat model is loaded,
+  answers with that other model (the reply's `model` names it). So when `typed` passes and the chat reply named a
+  different model (`probe._other_model`; a longer or shorter form of the same id counts as the same, but only where
+  the shorter one stands alone in the longer: `model-1` is not `model-10`, `gpt-4` not `gpt-4.1`), everything
+  learned through chat is dropped and those steps are shown again as failed or skipped. A chat model that is not on
+  the typed route is not checked this way: providers rename models too freely to refuse on a name alone.
+- **Where a scorer may run.** `models_setup.build` refuses a decision model on a provider kind its scorer does not
+  name (`registry.provider_kinds`) and one without the mark its scorer needs (`registry.needs`);
+  `GET /settings/models` carries `scorer_providers` and `scorer_needs`, and the Decision model picker lists only
+  those models (`models.js` `scorerProviderIds`, `scorerNeeds`). `ZEN_SCORER=letter-logprobs` or `systemone` in the
+  environment is not enough (it needs the provider's address): the harness starts without a scorer and says to
+  choose it in Settings, with a key from the environment or one saved on the provider (`roles_from_config` leaves
+  such a scorer out). `POST /settings/provider` (one key for provider and scorer) cannot build one either: it
+  answers 422 when asked for one, and keeps one already bound.
+- **What the test found stays with the model.** Saving the enabled set (`PUT /settings/providers/{id}/models`) keeps
+  a tested model's saved entry rather than the provider's id-only listing (which would drop its `decision` kind and
+  marks), and keeps a model whose test ended while the save was fetching the list. A test's result is dropped
+  ("was changed while ... was being tested; test it again") when the provider's address or key changed during it.
+- **Shell commands always ask** with both scorers (`checks_commands = False`): do not switch that on without
+  evidence on the model in use.
+- **Checked by hand on 2026-11-19** against LM Studio with `jev-style-qwen3.5-2b-decision` (the v1 GGUF): the
+  capability test passed its decision step; about 200 ms a question, 5 to 6 s to route one task over 29 skills; the
+  same input gives the same numbers. Judgement was mixed. On three made-up tools it picked the right one at 0.88 to
+  0.97. On the harness's real skill questions the right skill came first (Presentations 0.93 for a slide deck) but
+  most skills scored above 0.5 (22 of 29 for that task), so it over-offers. On shell questions in a made-up wording
+  it gave about 0.7 "inside" to `ls` and to `rm -rf ~/Documents` alike. With `opendecider-small-td` (listed as an
+  ordinary model, Q4_K_M) through the same scorer: 9, 2 and 1 skills at or above 0.5 for three tasks with the right
+  one first, about 3 s a task, and 19 of 24 shell labels right on twelve commands, none at or above the 0.8 bar.
+- **The typed route, checked by hand the same day** against LM Studio with `pplx-decider-flash-v1.3` (type
+  `decision`, Q4_K_M): the test tagged it `decision` only, with `typed_decisions`; 2, 1 and 0 skills at or above 0.5
+  for the same three tasks (it gave Word documents 0.04 for a PDF-to-Word task), about 2.4 s a task; 24 of 24 shell
+  labels right on the twelve commands, with the four safe ones the only ones at or above 0.8. Twelve commands is
+  why shell commands still always ask. **The engine failed under load:** three skill questions in one request
+  (about 750 tokens; two, about 500, and five tiny ones worked) and four single-question requests sent together
+  each got HTTP 502 "Engine protocol systemOne request failed: fetch failed" and unloaded the model, which loaded
+  again on the next request (about 10 s). The cause was not found; 123 requests one after another all answered.
+- **Not tried.** Any other model, a llama.cpp server, `jev-style serve`, and a task run end to end in the app with
+  either scorer. `jev-style-0.8b-decision-v3` works with neither on LM Studio (it needs its publisher's server).
+- Tests: `tests/test_letter_model.py`, `tests/test_systemone.py`, `tests/test_model_probe.py`,
+  `tests/test_write_guard.py`, GUI `tests/gui/models.test.mjs`.
 
 Other built-in tools that write go through their own checks (`files` server roots, the magick gate). A new
 built-in tool that writes files must keep to `allowed_folders.reachable` too.

@@ -47,6 +47,8 @@ from src.memory.warmup import Warmup
 import os
 
 import src.decider.adapters.decision_model  # noqa: F401 - registers the built-in scorer kind
+import src.decider.adapters.letter_model  # noqa: F401 - registers the local scorer kind
+import src.decider.adapters.systemone  # noqa: F401 - registers the typed local scorer kind
 import src.providers.openrouter  # noqa: F401 - registers the built-in provider kind
 from src.providers import registry as providers
 from src.decider import registry as scorers
@@ -92,7 +94,7 @@ from src.music.routes import music_router
 from src.music.service import MANAGED_BY as MUSIC_MANAGED_BY, MusicService
 from src.generation.images import DEFAULT_MODEL as DEFAULT_IMAGE_MODEL, ImageConfig, ImageGenerator
 from src.providers.models import ModelInfo, ModelLister, guess_kinds
-from src.providers.probe import ProbeJobs
+from src.providers.probe import ProbeFailed, ProbeJobs
 from src.providers.openrouter import OpenRouterHttp
 from src.providers.secrets import Secret
 from src.providers.store import KINDS as PROVIDER_KINDS, OPENROUTER_BASE, PRESETS as PROVIDER_PRESETS, ProviderStore, ProviderStoreError
@@ -1853,12 +1855,24 @@ def create_app(h: Harness) -> FastAPI:
         dropped = [m.id for m in e.models if m.id not in wanted]
         if blocked := [f"{mid} ({', '.join(u)})" for mid in dropped if (u := in_use(provider_id, mid))]:
             raise HTTPException(409, f"in use: {'; '.join(blocked)}; pick other models on the Harness settings page first")
+        before = {m.id for m in e.models}
         try:
             listed = {m.id: m for m in await h.model_lister.list(e.id, e.kind, e.base_url, h.provider_store.secret(e.id))}
         except ProviderError:
             listed = {}
+        try:
+            e = h.provider_store.get(provider_id)  # as it is now: a model test may have ended while the list was fetched
+        except ProviderStoreError as ex:
+            raise HTTPException(404, str(ex)) from None
         known = {m.id: m for m in e.models}
-        models = [listed.get(mid) or known.get(mid) or ModelInfo(id=mid, name=mid, kinds=guess_kinds(mid), guessed=True) for mid in wanted]
+
+        def snapshot(mid: str) -> ModelInfo:
+            if mid in known and known[mid].probed_at:  # an id-only list knows less than the test found (as refresh_snapshots)
+                return known[mid]
+            return listed.get(mid) or known.get(mid) or ModelInfo(id=mid, name=mid, kinds=guess_kinds(mid), guessed=True)
+
+        # a model enabled since this request read the set was not in what the user saw, so the save does not drop it
+        models = [snapshot(mid) for mid in wanted] + [m for m in e.models if m.id not in before and m.id not in wanted]
         h.provider_store.set_models(provider_id, models)
         h.bind_saved_key()
         h.ledger.append(Kind.settings, "", "", event="models_enabled", provider=provider_id, enabled=len(models), dropped=dropped)
@@ -1883,9 +1897,14 @@ def create_app(h: Harness) -> FastAPI:
         except ProviderError:
             listed = {}
         model = listed.get(mid) or ModelInfo(id=mid, name=mid, kinds=guess_kinds(mid), guessed=True)
+        base_url, key = e.base_url, h.provider_store.secret(e.id)
+        tested = (base_url, key.reveal() if key else None)
 
         def enable(probed: ModelInfo) -> dict[str, Any]:
             cur = h.provider_store.get(provider_id)
+            now = h.provider_store.secret(provider_id)
+            if (cur.base_url, now.reveal() if now else None) != tested:  # what was learned is about the old address or key
+                raise ProbeFailed(f"{cur.name} was changed while {probed.id} was being tested; test it again")
             h.provider_store.set_models(provider_id, [*cur.models, probed])
             h.ledger.append(Kind.settings, "", "", event="models_enabled", provider=provider_id, enabled=len(cur.models),
                             dropped=[], probed=True, model=probed.id)
@@ -1896,7 +1915,7 @@ def create_app(h: Harness) -> FastAPI:
             return provider_out(h.provider_store.mark_unusable(provider_id, model_id))
 
         try:
-            job = h.probes.start(e.id, e.base_url, h.provider_store.secret(e.id), model, enable, hide)
+            job = h.probes.start(e.id, base_url, key, model, enable, hide)
         except RuntimeError as ex:
             raise HTTPException(409, str(ex)) from None
         return {"probe_id": job.id, "model": mid, "steps": job.steps}
@@ -1939,6 +1958,8 @@ def create_app(h: Harness) -> FastAPI:
 
     def models_out() -> dict[str, Any]:
         return {**h.model_roles().to_dict(), "roles": ROLES, "labels": ROLE_LABELS, "optional": sorted(OPTIONAL_ROLES), "scorer_kinds": scorers.kinds(),
+                "scorer_providers": {k: list(scorers.provider_kinds(k)) for k in scorers.kinds()},
+                "scorer_needs": {k: scorers.needs(k) for k in scorers.kinds() if scorers.needs(k)},
                 "bound": h.bound}
 
     @app.get("/settings/models")
@@ -1973,16 +1994,24 @@ def create_app(h: Harness) -> FastAPI:
         scorer_kind = h.scorer.kind if (body.scorer is None and h.scorer) else (body.scorer or None)
         if scorer_kind and not scorers.is_registered(scorer_kind):
             raise HTTPException(422, f"unknown scorer kind {scorer_kind!r}; known: {scorers.kinds()}")
+        # a scorer on another provider needs that provider's address, which this route does not have: the one
+        # already bound stays as it is, and a new one is chosen on Harness settings
+        local = bool(scorer_kind) and "openrouter" not in scorers.provider_kinds(scorer_kind)
+        kept = h.scorer if local else None
+        if local and body.scorer is not None:
+            raise HTTPException(422, f"the {scorer_kind} scorer is chosen on Settings > Harness settings: it needs its provider")
         c = h.config
         exclusion.register_secret_value(key)  # before anything can log it
         os.environ[c.gui_key_env] = key
         ref = f"env:{c.gui_key_env}"
         try:
             provider = providers.get(body.kind, key_ref=ref, model=body.model)
-            scorer = scorers.get(scorer_kind, key_ref=ref, model=body.decision_model) if scorer_kind else None
+            scorer = kept or (scorers.get(scorer_kind, key_ref=ref, model=body.decision_model) if scorer_kind else None)
         except Exception as e:  # noqa: BLE001 - a factory refused; say why, without the key
             raise HTTPException(422, exclusion.redact(f"{type(e).__name__}: {e}")[0]) from None
-        c.provider_kind, c.key_ref, c.model, c.decision_model = body.kind, ref, body.model, body.decision_model
+        c.provider_kind, c.key_ref, c.model = body.kind, ref, body.model
+        if kept is None:
+            c.decision_model = body.decision_model
         c.scorer_kind = scorer_kind or c.scorer_kind
         h.summary_provider, h.openrouter_ref = None, None
         h.rebind(provider, scorer)

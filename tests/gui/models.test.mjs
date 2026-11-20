@@ -1,7 +1,7 @@
 // Settings' model helpers: picker values, labels, grouping by kind, filtering a provider's list.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { KIND_LABELS, PROBE_LABELS, capabilityTags, probeReducer, probeStart, choiceKey, defaultModelLabel, enabledByKind, filterModels, keepEdits, keyLabel, modelLabel, parseChoice } from '../../src/gui/models.js';
+import { KIND_LABELS, PROBE_LABELS, capabilityTags, probeReducer, probeStart, choiceKey, defaultModelLabel, enabledByKind, decisionHint, filterModels, keepEdits, keyLabel, scorerNeeds, scorerProviderIds, modelLabel, parseChoice } from '../../src/gui/models.js';
 
 const providers = [
   { id: 'openrouter', name: 'OpenRouter', kind: 'openrouter', models: [
@@ -116,4 +116,34 @@ test('a save elsewhere keeps the picks not yet saved and takes what the save cha
   assert.deepEqual(keepEdits(form, saved, { ...saved, dream: 'local::q' }), { ...saved, chat: 'or::c', dream: 'local::q' });
   assert.deepEqual(keepEdits(form, saved, { ...saved, chat: 'or::d' }), { ...saved, chat: 'or::d' });  // the saved value moved: it wins
   assert.deepEqual(keepEdits({ chat: '', summary: '' }, { chat: '', summary: '' }, saved), saved);  // the first load, a new field included
+});
+
+test('the Decision model picker follows the scorer: OpenRouter for one, local servers for the other', () => {
+  const list = [{ id: 'openrouter', kind: 'openrouter' }, { id: 'lm-studio', kind: 'openai-compatible' }, { id: 'groq', kind: 'openai-compatible' }];
+  const roles = { scorer_providers: { 'openrouter-decision-1': ['openrouter'], 'letter-logprobs': ['openai-compatible'] } };
+  assert.deepEqual(scorerProviderIds(list, roles, 'openrouter-decision-1'), ['openrouter']);
+  assert.deepEqual(scorerProviderIds(list, roles, 'letter-logprobs'), ['lm-studio', 'groq']);
+  assert.deepEqual(scorerProviderIds(list, {}, 'anything'), ['openrouter']);  // an older harness does not say
+  assert.match(decisionHint(roles, 'openrouter-decision-1').hint, /come from OpenRouter/);
+  assert.equal(decisionHint(roles, 'openrouter-decision-1').where, ' on an OpenRouter provider');
+  assert.match(decisionHint(roles, 'letter-logprobs').hint, /Shell commands always wait for your approval/);
+  assert.equal(decisionHint(roles, 'letter-logprobs').where, ' that passed the Decisions step on an OpenAI-compatible provider');
+  assert.equal(PROBE_LABELS.decision, 'Letter decisions');
+  assert.equal(PROBE_LABELS.typed, 'Typed decisions');
+});
+
+test('a local scorer is offered only the models that passed its own step of the test', () => {
+  const roles = { scorer_providers: { 'letter-logprobs': ['openai-compatible'], systemone: ['openai-compatible'] },
+    scorer_needs: { 'letter-logprobs': 'letter_decisions', systemone: 'typed_decisions' } };
+  const list = [{ id: 'lm', name: 'LM Studio', kind: 'openai-compatible', models: [
+    { id: 'typed', kinds: ['decision'], supported_parameters: ['typed_decisions'] },
+    { id: 'letters', kinds: ['text', 'decision'], supported_parameters: ['tools', 'letter_decisions'] },
+    { id: 'chat', kinds: ['text'], supported_parameters: ['tools'] }] }];
+  const ids = scorer => enabledByKind(list, 'decision', scorerProviderIds(list, roles, scorer), scorerNeeds(roles, scorer)).flatMap(g => g.models.map(m => m.id));
+  assert.deepEqual(ids('systemone'), ['typed']);
+  assert.deepEqual(ids('letter-logprobs'), ['letters']);
+  assert.equal(scorerNeeds(roles, 'openrouter-decision-1'), null);
+  assert.deepEqual(enabledByKind(list, 'decision').flatMap(g => g.models.map(m => m.id)), ['typed', 'letters']);
+  assert.match(decisionHint(roles, 'systemone').hint, /passes the Typed decisions step/);
+  assert.equal(decisionHint(roles, 'letter-logprobs').where, ' that passed the Letter decisions step on an OpenAI-compatible provider');
 });

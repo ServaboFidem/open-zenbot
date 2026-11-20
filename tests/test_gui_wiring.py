@@ -281,3 +281,23 @@ async def test_a_recall_query_replaces_the_task_for_recall_and_empty_changes_not
     given = bound.start_task(bot, "task two", in_conversation=False, recall_query="likes jazz and markets")
     assert plain.recall_query == "" and given.recall_query == "likes jazz and markets"
     await asyncio.gather(*bound.tasks.values(), return_exceptions=True)
+
+
+async def test_the_one_key_route_keeps_a_bound_local_scorer_and_cannot_choose_one(client, unbound: Harness, monkeypatch):
+    import os
+
+    from src.decider.adapters.letter_model import KIND, NEEDS, PROVIDER_KINDS, LetterModelScorer
+    from src.providers.openrouter import OpenRouterHttp
+
+    scorers.register(KIND, LetterModelScorer.from_env, provider_kinds=PROVIDER_KINDS, needs=NEEDS)
+    monkeypatch.setenv(unbound.config.gui_key_env, "")  # so the key the route exports is undone after the test
+    monkeypatch.delenv(unbound.config.gui_key_env)
+    r = await client.post("/settings/provider", json={"kind": TestProvider.kind, "key": GUI_KEY, "scorer": KIND})
+    assert r.status_code == 422 and "Harness settings" in r.json()["detail"]
+    assert unbound.config.gui_key_env not in os.environ and not unbound.bound  # refused before the key went anywhere
+    local = LetterModelScorer(OpenRouterHttp(None, base_url="http://localhost:1234/v1", transport=httpx.MockTransport(lambda q: httpx.Response(500))),
+                              model="local-decider")
+    unbound.scorer, unbound.config.decision_model = local, "local-decider"
+    r = await client.post("/settings/provider", json={"kind": TestProvider.kind, "key": GUI_KEY, "model": "m1"})
+    assert r.status_code == 200, r.text
+    assert unbound.scorer is local and r.json()["scorer"] == KIND and unbound.config.decision_model == "local-decider"

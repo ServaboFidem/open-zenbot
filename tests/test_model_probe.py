@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, Callable
 
 import httpx
@@ -21,10 +22,14 @@ def step_of(body: dict[str, Any]) -> str:
     """Which test a request belongs to, read from its body."""
     if "input" in body:
         return "embeddings"
+    if "questions" in body:
+        return "typed"
     if body.get("tools"):
         return "tools"
     if body.get("response_format"):
         return "structured"
+    if body.get("logprobs"):
+        return "decision"
     content = body["messages"][-1]["content"]
     return "image" if isinstance(content, list) else "chat"
 
@@ -40,6 +45,8 @@ GOOD: dict[str, Callable[[], httpx.Response]] = {
     "structured": lambda: reply('{"color": "red"}'),
     "image": lambda: reply("red"),
     "embeddings": lambda: PAGE_404(),  # a chat model: the server has no embeddings route for it
+    "decision": lambda: reply("B"),  # an ordinary server: an answer, but no token probabilities
+    "typed": lambda: PAGE_404(),  # and no decision route of its own
 }
 
 
@@ -88,7 +95,148 @@ async def test_a_capable_model_passes_every_step():
     assert m.input_modalities == ["text", "image"] and m.output_modalities == ["text"]
     assert m.tools and m.structured_output and m.image_input
     assert [(e["step"], e["status"]) for e in events if e["status"] != "running"] == [
-        ("chat", "pass"), ("embeddings", "fail"), ("tools", "pass"), ("structured", "pass"), ("image", "pass")]
+        ("chat", "pass"), ("embeddings", "fail"), ("tools", "pass"), ("structured", "pass"), ("image", "pass"), ("decision", "fail"), ("typed", "fail")]
+
+
+def letter(body: dict[str, Any], wrong: bool = False, mass: float = 0.9) -> httpx.Response:
+    """A one-token answer with probabilities: the right option's letter (or the first wrong one) holds `mass`."""
+    from src.providers.probe import DECISIONS
+    prompt = body["messages"][0]["content"]
+    right = next(r for state, _, _, r in DECISIONS if state in prompt)
+    pick = "ABC"[(right + 1) % 2 if wrong else right]
+    top = [{"token": f" {pick}", "logprob": math.log(mass)}, {"token": "The", "logprob": math.log(1 - mass)}]
+    return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": pick},
+                                                  "logprobs": {"content": [{"token": f" {pick}", "top_logprobs": top}]}}]})
+
+
+async def decision_probe(answer: Callable[[dict[str, Any]], httpx.Response], events: list) -> ModelInfo:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        step = step_of(body)
+        return answer(body) if step == "decision" else GOOD[step]()
+    http = OpenRouterHttp(Secret("nvapi-test-0123456789abcdef"), base_url=BASE, timeout=60.0, transport=httpx.MockTransport(handler))
+    try:
+        return await run_probe(http, TEXT, events.append)
+    finally:
+        await http.aclose()
+
+
+async def test_a_model_that_answers_decisions_in_letters_is_a_decision_model():
+    events: list = []
+    m = await decision_probe(letter, events)
+    assert m.kinds == ["text", "decision"] and m.output_modalities == ["text", "decisions"]
+    assert "letter_decisions" in m.supported_parameters and "typed_decisions" not in m.supported_parameters
+    assert events[-3] == {"kind": "step", "step": "decision", "status": "pass"}
+
+
+@pytest.mark.parametrize("answer,why", [
+    (lambda body: reply("B"), "no token probabilities"),
+    (lambda body: letter(body, mass=0.2), "does not answer with an option letter"),
+    (lambda body: letter(body, wrong=True), "a wrong answer"),
+])
+async def test_a_model_that_cannot_be_asked_a_decision_stays_a_text_model(answer, why):
+    events: list = []
+    m = await decision_probe(answer, events)
+    assert m.kinds == ["text"] and m.output_modalities == ["text"]
+    assert events[-3] == {"kind": "step", "step": "decision", "status": "fail", "detail": why}
+
+
+def typed_answer(body: dict[str, Any], wrong: bool = False) -> httpx.Response:
+    """What a decision server answers to one typed question of the probe: right, or wrong."""
+    from src.providers.probe import DECISIONS
+    [(key, q)] = body["questions"].items()
+    _, _, options, right = next(d for d in DECISIONS if d[1] == q["instructions"])
+    pick = (right + 1) % 2 if wrong else right
+    if q["type"] == "noul":
+        answer = {"type": "noul", "noul": 0.97 if pick == 0 else 0.02}
+    else:
+        answer = {"type": "choice", "choice": options[pick], "probabilities": {o: 0.9 if o == options[pick] else 0.05 for o in options}}
+    return httpx.Response(200, json={"model": body["model"], "answers": {key: answer}, "usage": {"input_tokens": 80, "output_tokens": 0}})
+
+
+NOT_A_CHAT_MODEL = lambda: httpx.Response(400, json={"error": {"message": "Invalid model identifier"}})  # noqa: E731
+
+
+async def typed_probe(answer: Callable[[dict[str, Any]], httpx.Response], events: list, chats: bool = False) -> ModelInfo:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        step = step_of(body)
+        if step == "typed":
+            assert request.url.path == "/v1/systemone" and len(body["questions"]) == 1
+            seen.append(body)
+            return answer(body)
+        return GOOD[step]() if chats else NOT_A_CHAT_MODEL()
+    http = OpenRouterHttp(Secret("nvapi-test-0123456789abcdef"), base_url=BASE, timeout=60.0, transport=httpx.MockTransport(handler))
+    try:
+        return await run_probe(http, TEXT, events.append)
+    finally:
+        await http.aclose()
+        events.append(seen)
+
+
+async def test_a_model_served_only_on_the_decision_route_is_a_decision_model():
+    events: list = []
+    m = await typed_probe(typed_answer, events)
+    assert m.kinds == ["decision"] and m.output_modalities == ["decisions"] and m.reasoning is None
+    assert m.supported_parameters == ["typed_decisions"] and m.guessed is False and m.probed_at
+    assert [(e["step"], e["status"]) for e in events[:-1] if e["status"] != "running"] == [
+        ("chat", "fail"), ("embeddings", "fail"), ("typed", "pass")]
+    assert [q["state"] for q in events[-1]] == [d[0] for d in __import__("src.providers.probe", fromlist=["x"]).DECISIONS]
+
+
+@pytest.mark.parametrize("answer,why", [
+    (lambda body: typed_answer(body, wrong=True), "a wrong answer"),
+    (lambda body: httpx.Response(200, json={"answers": {}}), "an answer that could not be read"),
+    (lambda body: httpx.Response(200, json={"answers": {"q": {"type": "refusal"}}}), "an answer that could not be read"),
+    (lambda body: PAGE_404(), None),
+])
+async def test_a_chat_model_keeps_its_kinds_when_the_decision_route_does_not_answer_rightly(answer, why):
+    events: list = []
+    m = await typed_probe(answer, events, chats=True)
+    assert m.kinds == ["text"] and "typed_decisions" not in m.supported_parameters
+    assert events[-2] == {"kind": "step", "step": "typed", "status": "fail", **({"detail": why} if why else {})}
+
+
+async def test_chat_answers_from_another_loaded_model_do_not_count_for_a_decision_model():
+    """LM Studio answers a chat request for a decision model with whichever chat model is loaded."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        step = step_of(body)
+        if step == "typed":
+            return typed_answer(body)
+        r = GOOD[step]()
+        return r if r.status_code != 200 else httpx.Response(200, json={**r.json(), "model": "mythos-9b"})
+
+    async def run(model: ModelInfo, events: list) -> ModelInfo:
+        http = OpenRouterHttp(Secret("nvapi-test-0123456789abcdef"), base_url=BASE, timeout=60.0, transport=httpx.MockTransport(handler))
+        try:
+            return await run_probe(http, model, events.append)
+        finally:
+            await http.aclose()
+
+    events: list = []
+    m = await run(TEXT, events)
+    assert m.kinds == ["decision"] and m.supported_parameters == ["typed_decisions"]
+    assert m.reasoning is None and m.input_modalities == ["text"] and m.output_modalities == ["decisions"]
+    final = {e["step"]: (e["status"], e.get("detail")) for e in events}
+    assert final == {"chat": ("fail", "another model answered: mythos-9b"), "embeddings": ("fail", None), "tools": ("skip", None),
+                     "structured": ("skip", None), "image": ("skip", None), "decision": ("skip", None), "typed": ("pass", None)}
+    # a longer form of the same id is the same model, and its chat findings stay
+    same = await run(ModelInfo(id="mythos", name="mythos", kinds=["text"], guessed=True), [])
+    assert same.kinds == ["text", "decision"] and "tools" in same.supported_parameters and "typed_decisions" in same.supported_parameters
+
+
+async def test_a_decision_route_that_is_down_fails_the_step_for_a_chat_model_and_the_test_for_any_other():
+    down = lambda body: httpx.Response(502, json={"error": {"message": "engine failure"}})  # noqa: E731
+    events: list = []
+    m = await typed_probe(down, events, chats=True)
+    assert m.kinds == ["text"] and events[-2] == {"kind": "step", "step": "typed", "status": "fail", "detail": "the server could not answer"}
+    with pytest.raises(Unavailable):
+        await typed_probe(down, [])
+    with pytest.raises(ProbeFailed, match="neither a chat, an embeddings nor a decision request"):
+        await typed_probe(lambda body: PAGE_404(), [])
 
 
 async def test_ignored_tools_and_fenced_json_fail():
@@ -140,6 +288,8 @@ async def test_a_reasoning_model_gets_room_to_think_before_answering():
             return PAGE_404()
         if step == "chat":
             return reply(None, reasoning_content="thinking")
+        if step == "typed":
+            return PAGE_404()
         if body["max_tokens"] < 1024:
             return httpx.Response(200, json={"choices": [{"finish_reason": "length",
                                                           "message": {"role": "assistant", "content": None, "reasoning_content": "hmm"}}]})
@@ -191,7 +341,7 @@ async def test_what_a_model_does_comes_from_the_tests_not_its_name():
         body = json.loads(request.content)
         step = step_of(body)
         seen.append((step, body.get("input_type")))
-        if step == "chat":
+        if step in ("chat", "typed"):
             return PAGE_404()
         return EMBEDS() if body.get("input_type") == "query" else asymmetric()
 
@@ -203,9 +353,9 @@ async def test_what_a_model_does_comes_from_the_tests_not_its_name():
         await http.aclose()
     assert m.kinds == ["embedding"] and m.output_modalities == ["embeddings"] and m.input_modalities == ["text"]
     assert m.supported_parameters == ["input_type"] and m.reasoning is None and m.guessed is False and m.probed_at
-    assert seen == [("chat", None), ("embeddings", None), ("embeddings", "query")]
+    assert seen == [("chat", None), ("embeddings", None), ("embeddings", "query"), ("typed", None)]
     assert [(e["step"], e["status"]) for e in events if e["status"] != "running"] == [
-        ("chat", "fail"), ("embeddings", "pass"), ("tools", "skip"), ("structured", "skip"), ("image", "skip")]
+        ("chat", "fail"), ("embeddings", "pass"), ("tools", "skip"), ("structured", "skip"), ("image", "skip"), ("decision", "skip"), ("typed", "fail")]
 
 
 async def test_a_model_named_for_embeddings_that_chats_is_a_chat_model():
@@ -261,7 +411,7 @@ async def test_probe_enables_the_model_with_what_it_found(client, harness: Harne
     pid = nim(harness)
     r = await client.post(f"/settings/providers/{pid}/models/probe", json={"model": NIM_MODEL})
     assert r.status_code == 200, r.text
-    assert r.json()["steps"] == STEPS == ["chat", "embeddings", "tools", "structured", "image"]
+    assert r.json()["steps"] == STEPS == ["chat", "embeddings", "tools", "structured", "image", "decision", "typed"]
     evs = await events_of(client, pid, r.json()["probe_id"])
     end = evs[-1]
     assert end["kind"] == "end" and end["status"] == "done"
@@ -321,7 +471,7 @@ async def test_late_subscriber_gets_the_whole_run(client, harness: Harness):
     probe_id = (await client.post(f"/settings/providers/{pid}/models/probe", json={"model": NIM_MODEL})).json()["probe_id"]
     first = await events_of(client, pid, probe_id)
     late = await events_of(client, pid, probe_id)
-    assert late == first and late[-1]["kind"] == "end" and len(late) == 11
+    assert late == first and late[-1]["kind"] == "end" and len(late) == 15
 
 
 async def test_a_model_that_neither_chats_nor_embeds_is_not_enabled(client, harness: Harness):
@@ -366,3 +516,62 @@ async def test_a_model_the_key_cannot_use_is_hidden_until_it_passes(client, harn
     assert harness.provider_store.get(pid).unusable == []
     harness.provider_store.load()  # survives a restart
     assert harness.provider_store.get(pid).unusable == []
+
+
+def test_only_a_longer_form_of_the_same_id_is_the_same_model():
+    from src.providers.probe import _other_model
+
+    same = [("mythos", "mythos-9b"), ("qwen3", "qwen3:latest"), ("qwen3", "Org/Qwen3"), ("org/qwen3@q4", "qwen3"), ("m", "m"), ("m", None), ("m", " ")]
+    other = [("model-1", "model-10"), ("gpt-4", "gpt-4.1"), ("qwen3", "myqwen3"), ("llama", "mythos-9b"), ("a1", "a1b-a12")]
+    assert [_other_model(a, b) for a, b in same] == [False] * len(same)
+    assert [_other_model(a, b) for a, b in other] == [True] * len(other)
+    assert _other_model("a1", "a12-a1") is False  # a later place where it stands alone counts
+
+
+async def test_saving_the_enabled_set_keeps_what_the_test_found(client, harness: Harness):
+    pid = nim(harness)
+    r = await client.post(f"/settings/providers/{pid}/models/probe", json={"model": NIM_MODEL})
+    await events_of(client, pid, r.json()["probe_id"])
+    found = harness.provider_store.get(pid).model(NIM_MODEL).to_dict()
+    r = await client.put(f"/settings/providers/{pid}/models", json={"enabled": [NIM_MODEL]})  # the provider's id-only list names it too
+    assert r.status_code == 200, r.text
+    assert harness.provider_store.get(pid).model(NIM_MODEL).to_dict() == found and found["probed_at"]
+
+
+async def test_a_model_enabled_while_a_save_fetched_the_list_is_not_dropped(client, harness: Harness):
+    pid = nim(harness)
+    store = harness.provider_store
+    store.set_models(pid, [ModelInfo(id=NIM_MODEL, name=NIM_MODEL, kinds=["text"])])
+    late = ModelInfo(id="late", name="late", kinds=["text", "decision"], probed_at="2026-11-20T10:00:00+00:00")
+
+    async def slow_list(*args: Any, **kwargs: Any) -> list[ModelInfo]:  # a model test ends while the list is on its way
+        if store.get(pid).model("late") is None:
+            store.set_models(pid, [*store.get(pid).models, late])
+        return [ModelInfo(id=NIM_MODEL, name=NIM_MODEL, kinds=["text"], guessed=True)]
+
+    harness.model_lister.list = slow_list
+    r = await client.put(f"/settings/providers/{pid}/models", json={"enabled": [NIM_MODEL]})
+    assert r.status_code == 200, r.text
+    assert [m.id for m in store.get(pid).models] == [NIM_MODEL, "late"] and store.get(pid).model("late").kinds == ["text", "decision"]
+    r = await client.put(f"/settings/providers/{pid}/models", json={"enabled": [NIM_MODEL]})  # now it was there when the save began
+    assert r.status_code == 200 and [m.id for m in store.get(pid).models] == [NIM_MODEL]
+
+
+async def test_a_provider_changed_during_the_test_does_not_get_its_result(client, harness: Harness):
+    reached, go = asyncio.Event(), asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        step = step_of(json.loads(request.content))
+        if step == "tools":
+            reached.set()
+            await go.wait()
+        return GOOD[step]()
+
+    pid = nim(harness, handler=handler)
+    r = await client.post(f"/settings/providers/{pid}/models/probe", json={"model": NIM_MODEL})
+    await asyncio.wait_for(reached.wait(), 5)
+    harness.provider_store.update(pid, base_url="https://other.example/v1")
+    go.set()
+    end = (await events_of(client, pid, r.json()["probe_id"]))[-1]
+    assert end["status"] == "failed" and "was changed while" in end["error"] and "test it again" in end["error"]
+    assert harness.provider_store.get(pid).model(NIM_MODEL) is None
