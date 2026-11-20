@@ -1,7 +1,7 @@
 // Settings' model helpers: picker values, labels, grouping by kind, filtering a provider's list.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { KIND_LABELS, PROBE_LABELS, capabilityTags, probeReducer, probeStart, choiceKey, defaultModelLabel, enabledByKind, decisionHint, filterModels, keepEdits, keyLabel, scorerNeeds, scorerProviderIds, modelLabel, parseChoice } from '../../src/gui/models.js';
+import { KIND_LABELS, PROBE_LABELS, capabilityTags, probeReducer, probeStart, choiceKey, defaultModelLabel, enabledByKind, decisionHint, filterModels, keepEdits, keyLabel, scorerNeeds, scorerProviderIds, summaryModels, modelLabel, parseChoice } from '../../src/gui/models.js';
 
 const providers = [
   { id: 'openrouter', name: 'OpenRouter', kind: 'openrouter', models: [
@@ -26,6 +26,22 @@ test('enabled models group by provider per kind, optionally limited to some prov
   assert.deepEqual(enabledByKind(providers, 'text').map(g => [g.provider, g.models.map(m => m.id)]), [['openrouter', ['meta/muse']], ['groq', ['llama-3.3-70b']]]);
   assert.deepEqual(enabledByKind(providers, 'image', ['groq']), []);
   assert.deepEqual(enabledByKind(null, 'text'), []);
+});
+
+test('the summary picker lists models named for summarizing, plus the one chosen now', () => {
+  const groups = [
+    { provider: 'lm', name: 'LM Studio', models: [{ id: 'qwen-chat', name: 'Qwen' }, { id: 'acme/Summarizer-2b', name: 'Acme 2b' }, { id: 'x1', name: 'Fast Summary' }] },
+    { provider: 'groq', name: 'Groq', models: [{ id: 'llama-3.3-70b', name: 'llama-3.3-70b' }] },
+  ];
+  const ids = gs => gs.map(g => [g.provider, g.models.map(m => m.id)]);
+  assert.deepEqual(ids(summaryModels(groups)), [['lm', ['acme/Summarizer-2b', 'x1']]]);
+  assert.deepEqual(ids(summaryModels(groups, { provider: 'groq', model: 'llama-3.3-70b' })), [['lm', ['acme/Summarizer-2b', 'x1']], ['groq', ['llama-3.3-70b']]]);
+  // same id on another provider is not the chosen one
+  assert.deepEqual(ids(summaryModels(groups, { provider: 'groq', model: 'qwen-chat' })), [['lm', ['acme/Summarizer-2b', 'x1']]]);
+  // no model named for it: every model is listed
+  const plain = [groups[1]];
+  assert.equal(summaryModels(plain), plain);
+  assert.deepEqual(summaryModels([]), []);
 });
 
 test('filtering searches name and id, keeps a kind, and lists enabled models first', () => {

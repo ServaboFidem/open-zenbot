@@ -495,7 +495,9 @@ class Harness:
             return None
         e = check_choice(self.provider_store, choice, "text", ROLE_LABELS["dream"])
         key = hashlib.sha256(e.key.encode()).hexdigest() if e.key else ""  # a changed key, without keeping it here
-        sig = (choice.provider, choice.model, e.kind, e.base_url, self.provider_store.key_ref(e.id), key, e.no_key)
+        m = e.model(choice.model)  # what a later test of the model found changes the request's optional fields
+        sig = (choice.provider, choice.model, e.kind, e.base_url, self.provider_store.key_ref(e.id), key, e.no_key,
+               m is not None and m.structured_output, m is not None and m.reasoning)
         if self._dream_gen is None or self._dream_gen[0] != sig:
             provider, model = dream_provider(self.provider_store, roles)
             self._dream_gen = (sig, Generator(provider, model=model))

@@ -20,14 +20,14 @@ class OpenAICompatibleProvider(OpenRouterProvider):
     openrouter_fields = False
 
     def __init__(self, key: Any = None, *, model: str | None = None, base_url: str = "", timeout: float = 120.0,
-                 transport: Any = None, http: OpenRouterHttp | None = None) -> None:
+                 transport: Any = None, http: OpenRouterHttp | None = None, extras: dict[str, Any] | None = None) -> None:
         if not base_url and http is None:
             raise ValueError("an OpenAI-compatible provider needs a base URL")
         if not model:
             raise ValueError("an OpenAI-compatible provider needs a model")
         # key None: a server that takes no key (LM Studio, Ollama, a local vLLM)
         http = http or OpenRouterHttp(key, base_url=base_url.rstrip("/"), timeout=timeout, transport=transport)
-        super().__init__(model=model, http=http)
+        super().__init__(model=model, http=http, extras=extras)
 
     @classmethod
     def from_env(cls, *, key_ref: str | None = None, **kwargs: Any) -> "OpenAICompatibleProvider":

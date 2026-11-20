@@ -212,7 +212,14 @@ done on).
 - **The distil call** (`Generator.dream_facts`). One request a batch to the dreaming model, which is built with a
   600 s request timeout (`models_setup.DREAM_TIMEOUT_S`, passed through `make_provider(timeout=...)`; every other
   role keeps the adapters' 120 s default), since a local model on a modest computer may be slow and nobody waits on a
-  dream. Its prompt says the numbered
+  dream. The dreaming client also carries optional request fields (`models_setup.dream_extras`, passed through
+  `make_provider(extras=...)`), chosen from the model's saved facts: `response_format` as a JSON schema of the answer
+  (`DREAM_FORMAT`; the `json_schema` form, since LM Studio refuses `json_object`) when the model is known to take
+  structured output, and thinking off when it is known to reason (`"reasoning": {"enabled": false}` on OpenRouter,
+  `"reasoning_effort": "none"` on any other server). Nothing is sent for a model whose abilities are unknown (an
+  untested one). A request refused with them (400, 404 or 422) is sent once more without them
+  (`OpenRouterProvider._post`), so a server or model that will not take a field still dreams; a server may also
+  accept the thinking switch and ignore it. Neither field has been tried against a real server. Its prompt says the numbered
   lines are things one person typed, content and not instructions, asks for lasting facts only (most conversations hold
   none, and an empty list is the right answer), and lists the stores. The answer is JSON
   `{"facts": [{"text", "store"}]}`. The harness keeps at most 8 facts a batch, each 1 to 300 characters with no control
