@@ -112,7 +112,7 @@ async def test_no_token_probabilities_or_too_many_options_is_a_provider_error():
     s = scorer(lambda body: httpx.Response(200, json={"choices": [{"message": {"content": "A"}}]}))
     with pytest.raises(ProviderError, match="no token probabilities"):
         await s.decide(DecisionRequest("state", {"q": NoulQuestion("Is it?")}))
-    with pytest.raises(ProviderError, match="at most 20"):
+    with pytest.raises(ProviderError, match="21 options; this scorer reads 2 to 20"):
         await s.decide(DecisionRequest("state", {"q": ChoiceQuestion("Which?", {f"o{i}": "x" for i in range(21)})}))
 
 
@@ -180,3 +180,50 @@ def test_a_scorer_from_the_environment_that_needs_settings_starts_without_one(va
                         skills_dir=tmp_path / "none", bot_prompts_dir=tmp_path / "none")
     h = build_harness(cfg)
     assert h.bound and h.scorer is None and "choose it on Settings" in capsys.readouterr().err
+
+
+async def test_a_question_with_one_option_is_a_provider_error_and_nothing_is_asked():
+    seen: list[httpx.Request] = []
+    with pytest.raises(ProviderError, match="1 options; this scorer reads 2 to 20"):
+        await scorer(lambda body: tokens(A=0.9), seen).decide(DecisionRequest("s", {"q": ChoiceQuestion("Which?", {"only": "the one"})}))
+    assert seen == []
+
+
+async def test_a_failed_question_stops_the_ones_still_waiting():
+    import asyncio
+
+    started = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal started
+        started += 1
+        if "Question 0?" in json.loads(request.content)["messages"][0]["content"]:
+            return httpx.Response(400, json={"error": {"message": "bad request"}})
+        await asyncio.sleep(0.05)
+        return tokens(A=0.9, B=0.1)
+
+    s = LetterModelScorer(OpenRouterHttp(None, base_url=BASE, transport=httpx.MockTransport(handler)), model=MODEL)
+    with pytest.raises(ProviderError):
+        await s.decide(DecisionRequest("s", {f"q{i}": NoulQuestion(f"Question {i}?") for i in range(8)}))
+    at_failure = started
+    await asyncio.sleep(0.3)  # long enough for every question still waiting on the gate to have been sent
+    assert started == at_failure < 8
+    await s.aclose()
+
+
+def test_a_saved_key_binds_chat_when_the_environment_names_a_local_scorer(vault: Path, tmp_path: Path, monkeypatch, capsys):
+    from src.harness.config import HarnessConfig
+    from src.harness.main import build_harness
+
+    monkeypatch.delenv("ZEN_TEST_OR_KEY", raising=False)
+    monkeypatch.setenv("ZEN_PROVIDER_OPENROUTER_API_KEY", "")  # so the stored key's export is undone after the test
+    monkeypatch.delenv("ZEN_PROVIDER_OPENROUTER_API_KEY")
+    cfg = HarnessConfig(vault_root=vault, shell_cwd=tmp_path, key_ref="env:ZEN_TEST_OR_KEY", scorer_kind=KIND,
+                        skills_dir=tmp_path / "none", bot_prompts_dir=tmp_path / "none")
+    first = build_harness(cfg)  # seeds the OpenRouter provider, with no key anywhere
+    assert not first.bound
+    first.provider_store.update("openrouter", key="sk-or-stored0123456789")
+    capsys.readouterr()
+    h = build_harness(cfg)
+    assert h.bound and h.provider.kind == "openrouter" and h.scorer is None
+    assert "choose it on Settings" in capsys.readouterr().err

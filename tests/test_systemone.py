@@ -3,6 +3,8 @@ and the mark a model needs before Settings lets a scorer drive it. Offline: the 
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 from pathlib import Path
 
@@ -30,10 +32,11 @@ QUESTIONS = {"help": NoulQuestion("Does it help?"), "tool": ChoiceQuestion("Whic
 
 
 def scorer(handler, seen: list | None = None) -> SystemOneScorer:
-    def wrapped(request: httpx.Request) -> httpx.Response:
+    async def wrapped(request: httpx.Request) -> httpx.Response:
         if seen is not None:
             seen.append(request)
-        return handler(json.loads(request.content))
+        answer = handler(json.loads(request.content))
+        return await answer if inspect.isawaitable(answer) else answer
     return SystemOneScorer(OpenRouterHttp(None, base_url=BASE, transport=httpx.MockTransport(wrapped)), model=MODEL)
 
 
@@ -46,11 +49,12 @@ async def test_one_question_a_request_one_after_another_and_typed_answers():
     seen: list[httpx.Request] = []
     busy = 0
 
-    def handler(body: dict) -> httpx.Response:
+    async def handler(body: dict) -> httpx.Response:
         nonlocal busy
         busy += 1
         assert busy == 1  # never two at once
         try:
+            await asyncio.sleep(0)  # a request takes time: a second one sent meanwhile would be seen here
             return good(body)
         finally:
             busy -= 1
@@ -67,6 +71,26 @@ async def test_one_question_a_request_one_after_another_and_typed_answers():
     assert all(r.url.path == f"/v1{PATH}" and "authorization" not in r.headers for r in seen)
     assert bodies[0] == {"model": MODEL, "state": {"task": "resize photos"}, "questions": {"help": {"type": "noul", "instructions": "Does it help?"}}}
     assert bodies[1]["questions"]["tool"]["criteria"] == {"editor": "edits", "search": "searches"}
+    await s.aclose()
+
+
+async def test_callers_sharing_one_scorer_never_have_two_requests_out():
+    busy = most = 0
+
+    async def handler(body: dict) -> httpx.Response:
+        nonlocal busy, most
+        busy += 1
+        most = max(most, busy)
+        try:
+            await asyncio.sleep(0.01)
+            return good(body)
+        finally:
+            busy -= 1
+
+    s = scorer(handler)
+    ask = DecisionRequest(state="s", questions=QUESTIONS)
+    results = await asyncio.gather(s.decide(ask), s.decide(ask), s.decide(ask))
+    assert most == 1 and all(r.noul("help").noul == 0.91 for r in results)
     await s.aclose()
 
 

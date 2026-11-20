@@ -516,3 +516,62 @@ async def test_a_model_the_key_cannot_use_is_hidden_until_it_passes(client, harn
     assert harness.provider_store.get(pid).unusable == []
     harness.provider_store.load()  # survives a restart
     assert harness.provider_store.get(pid).unusable == []
+
+
+def test_only_a_longer_form_of_the_same_id_is_the_same_model():
+    from src.providers.probe import _other_model
+
+    same = [("mythos", "mythos-9b"), ("qwen3", "qwen3:latest"), ("qwen3", "Org/Qwen3"), ("org/qwen3@q4", "qwen3"), ("m", "m"), ("m", None), ("m", " ")]
+    other = [("model-1", "model-10"), ("gpt-4", "gpt-4.1"), ("qwen3", "myqwen3"), ("llama", "mythos-9b"), ("a1", "a1b-a12")]
+    assert [_other_model(a, b) for a, b in same] == [False] * len(same)
+    assert [_other_model(a, b) for a, b in other] == [True] * len(other)
+    assert _other_model("a1", "a12-a1") is False  # a later place where it stands alone counts
+
+
+async def test_saving_the_enabled_set_keeps_what_the_test_found(client, harness: Harness):
+    pid = nim(harness)
+    r = await client.post(f"/settings/providers/{pid}/models/probe", json={"model": NIM_MODEL})
+    await events_of(client, pid, r.json()["probe_id"])
+    found = harness.provider_store.get(pid).model(NIM_MODEL).to_dict()
+    r = await client.put(f"/settings/providers/{pid}/models", json={"enabled": [NIM_MODEL]})  # the provider's id-only list names it too
+    assert r.status_code == 200, r.text
+    assert harness.provider_store.get(pid).model(NIM_MODEL).to_dict() == found and found["probed_at"]
+
+
+async def test_a_model_enabled_while_a_save_fetched_the_list_is_not_dropped(client, harness: Harness):
+    pid = nim(harness)
+    store = harness.provider_store
+    store.set_models(pid, [ModelInfo(id=NIM_MODEL, name=NIM_MODEL, kinds=["text"])])
+    late = ModelInfo(id="late", name="late", kinds=["text", "decision"], probed_at="2026-11-20T10:00:00+00:00")
+
+    async def slow_list(*args: Any, **kwargs: Any) -> list[ModelInfo]:  # a model test ends while the list is on its way
+        if store.get(pid).model("late") is None:
+            store.set_models(pid, [*store.get(pid).models, late])
+        return [ModelInfo(id=NIM_MODEL, name=NIM_MODEL, kinds=["text"], guessed=True)]
+
+    harness.model_lister.list = slow_list
+    r = await client.put(f"/settings/providers/{pid}/models", json={"enabled": [NIM_MODEL]})
+    assert r.status_code == 200, r.text
+    assert [m.id for m in store.get(pid).models] == [NIM_MODEL, "late"] and store.get(pid).model("late").kinds == ["text", "decision"]
+    r = await client.put(f"/settings/providers/{pid}/models", json={"enabled": [NIM_MODEL]})  # now it was there when the save began
+    assert r.status_code == 200 and [m.id for m in store.get(pid).models] == [NIM_MODEL]
+
+
+async def test_a_provider_changed_during_the_test_does_not_get_its_result(client, harness: Harness):
+    reached, go = asyncio.Event(), asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        step = step_of(json.loads(request.content))
+        if step == "tools":
+            reached.set()
+            await go.wait()
+        return GOOD[step]()
+
+    pid = nim(harness, handler=handler)
+    r = await client.post(f"/settings/providers/{pid}/models/probe", json={"model": NIM_MODEL})
+    await asyncio.wait_for(reached.wait(), 5)
+    harness.provider_store.update(pid, base_url="https://other.example/v1")
+    go.set()
+    end = (await events_of(client, pid, r.json()["probe_id"]))[-1]
+    assert end["status"] == "failed" and "was changed while" in end["error"] and "test it again" in end["error"]
+    assert harness.provider_store.get(pid).model(NIM_MODEL) is None

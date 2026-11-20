@@ -1007,13 +1007,19 @@ models: a model it lists with type `decision` is served only on the decision rou
 
 - **The format** (`src/providers/letters.py`, shared by the scorer and the capability test). One request to
   `/chat/completions` per question: the state, the question and the options as letters, ending `Answer:`; one token
-  with `top_logprobs` 20; the probability on the option letters, renormalised, is the answer. At most 20 options. It
+  with `top_logprobs` 20; the probability on the option letters, renormalised, is the answer. Two to 20 options (any other count is a `ProviderError`). It
   is the format the Jev-Style v1 decision models were trained on (their model card gives it). Under half the token's
   probability on the letters (`MIN_MASS`) is a refusal; an answer with no token probabilities is a `ProviderError`.
+  Up to four questions of a request are out together (`AT_ONCE`); when one fails the others are cancelled, so none is
+  still sent after the caller has its error. A refused question fails the router open and makes the orchestrator
+  answer directly, as a scorer that is down does (`DecisionRefused` beside `ProviderError`).
 - **The typed route** (`systemone.py`). `POST <base>/systemone` with `{"model", "state", "questions": {key:
   question}}` answers `{"answers": {key: answer}, "usage"}` in the shape of OpenRouter's Decisions API, read with
   `decision_model.parse_answer`. LM Studio serves it for its `decision` models; `jev-style serve` has the same route
-  (not tried). The scorer sends one question a request, one request at a time (`AT_ONCE` 1): see the hand check.
+  (not tried). The scorer sends one question a request, one request at a time (`AT_ONCE` 1): see the hand check. A lock on the
+  scorer holds that across its callers too (the router, the supervisor and the guards share one scorer). It does not
+  cover the capability test, which asks the same route through its own client: a model tested while the scorer is
+  answering can still put two requests out.
 - **Detecting one.** The capability test run when a model is enabled on an OpenAI-compatible provider has two
   decision steps, each three questions with a known answer (`probe.DECISIONS`). `decision` ("Letter decisions",
   `probe._decides`), through chat: a model passes when the server returns token probabilities, most of them are on
@@ -1025,7 +1031,8 @@ models: a model it lists with type `decision` is served only on the decision rou
   does not tag every decision model. A model enabled before a step existed must be disabled and enabled again.
 - **Chat answered by another model.** LM Studio, asked to chat with a `decision` model while a chat model is loaded,
   answers with that other model (the reply's `model` names it). So when `typed` passes and the chat reply named a
-  different model (`probe._other_model`; a longer or shorter form of the same id counts as the same), everything
+  different model (`probe._other_model`; a longer or shorter form of the same id counts as the same, but only where
+  the shorter one stands alone in the longer: `model-1` is not `model-10`, `gpt-4` not `gpt-4.1`), everything
   learned through chat is dropped and those steps are shown again as failed or skipped. A chat model that is not on
   the typed route is not checked this way: providers rename models too freely to refuse on a name alone.
 - **Where a scorer may run.** `models_setup.build` refuses a decision model on a provider kind its scorer does not
@@ -1033,7 +1040,13 @@ models: a model it lists with type `decision` is served only on the decision rou
   `GET /settings/models` carries `scorer_providers` and `scorer_needs`, and the Decision model picker lists only
   those models (`models.js` `scorerProviderIds`, `scorerNeeds`). `ZEN_SCORER=letter-logprobs` or `systemone` in the
   environment is not enough (it needs the provider's address): the harness starts without a scorer and says to
-  choose it in Settings.
+  choose it in Settings, with a key from the environment or one saved on the provider (`roles_from_config` leaves
+  such a scorer out). `POST /settings/provider` (one key for provider and scorer) cannot build one either: it
+  answers 422 when asked for one, and keeps one already bound.
+- **What the test found stays with the model.** Saving the enabled set (`PUT /settings/providers/{id}/models`) keeps
+  a tested model's saved entry rather than the provider's id-only listing (which would drop its `decision` kind and
+  marks), and keeps a model whose test ended while the save was fetching the list. A test's result is dropped
+  ("was changed while ... was being tested; test it again") when the provider's address or key changed during it.
 - **Shell commands always ask** with both scorers (`checks_commands = False`): do not switch that on without
   evidence on the model in use.
 - **Checked by hand on 2026-11-19** against LM Studio with `jev-style-qwen3.5-2b-decision` (the v1 GGUF): the

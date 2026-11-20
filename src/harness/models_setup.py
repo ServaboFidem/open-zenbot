@@ -37,8 +37,11 @@ def default_models(c: HarnessConfig) -> list[ModelInfo]:
 
 def roles_from_config(c: HarnessConfig, provider_id: str = "openrouter") -> ModelRoles:
     """The choices the harness is running on when no harness.json exists yet."""
+    kind = c.scorer_kind or ""
+    if "openrouter" not in scorers.provider_kinds(kind):  # a local scorer needs its provider: it is chosen in Settings
+        kind = ""
     return ModelRoles(chat=Choice(provider_id, c.model or DEFAULT_CHAT), summary=Choice(provider_id, c.summary_model),
-                      decision=Choice(provider_id, c.decision_model or DEFAULT_DECISION), scorer=c.scorer_kind or "")
+                      decision=Choice(provider_id, c.decision_model or DEFAULT_DECISION), scorer=kind)
 
 
 def dream_provider(store: ProviderStore, roles: ModelRoles) -> tuple[Provider, str] | None:

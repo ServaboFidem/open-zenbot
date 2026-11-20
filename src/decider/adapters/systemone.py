@@ -15,6 +15,7 @@ let a command run on this scorer's word (`write_guard.ShellWriteCheck`)."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from src.providers.interface import ProviderError
@@ -54,6 +55,7 @@ class SystemOneScorer(Scorer):
             raise ValueError("the systemone scorer needs a model")
         self.http = http
         self.model = model
+        self._gate = asyncio.Lock()  # the router, the supervisor and the guards share one scorer: see AT_ONCE
 
     @classmethod
     def from_env(cls, *, key_ref: str | None = None, model: str | None = None, base_url: str = "",
@@ -72,7 +74,8 @@ class SystemOneScorer(Scorer):
         usage = DecisionUsage()
         answers: dict[str, Answer] = {}
         for key, q in request.questions.items():  # one after another: see AT_ONCE
-            data = await self.http.post_json(PATH, payload(self.model, request.state, key, q), what="decisions")
+            async with self._gate:  # held a request, not a call: another caller's question may go in between
+                data = await self.http.post_json(PATH, payload(self.model, request.state, key, q), what="decisions")
             answers[key] = read(data, key, q)
             used = data.get("usage") if isinstance(data.get("usage"), dict) else {}
             usage.input_tokens += int(used.get("input_tokens") or 0)
@@ -84,7 +87,9 @@ class SystemOneScorer(Scorer):
 
         q = NoulQuestion("Is it raining?")
         try:
-            read(await self.http.post_json(PATH, payload(self.model, "It is raining.", "q", q), what="decisions"), "q", q)
+            async with self._gate:
+                data = await self.http.post_json(PATH, payload(self.model, "It is raining.", "q", q), what="decisions")
+            read(data, "q", q)
         except ProviderError:
             return False
         return True

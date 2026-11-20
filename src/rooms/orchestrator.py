@@ -12,7 +12,7 @@ import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from src.decider.interface import BandConfig, DecisionRequest, NoulQuestion, Outcome, decide_and_log, select_band
+from src.decider.interface import BandConfig, DecisionRefused, DecisionRequest, NoulQuestion, Outcome, decide_and_log, select_band
 from src.providers.interface import ProviderError
 
 from .room import Post, Room, RoomService, refusal
@@ -100,12 +100,12 @@ class Orchestrator:
         request = DecisionRequest(state={"message": text, "recent": context}, questions=questions, purpose="orchestration")
         try:
             decision = await decide_and_log(self.scorer, request, self.ledger, self.lead_id, "")
-        except ProviderError as e:
+            scores = {qid: decision.noul(qid).noul for qid in questions}
+        except (ProviderError, DecisionRefused) as e:  # a refused question is no answer either
             err = f"{type(e).__name__}: {e}"
             self.ledger.append("error", self.lead_id, "", where="orchestrator", error=err, action="answer directly")
             return self._done(RouteOutcome("task", fallback=err))
 
-        scores = {qid: decision.noul(qid).noul for qid in questions}
         room_scores = {r.id: scores[f"room:{r.id}"] for r in candidates}
         if room_scores:
             best = max(room_scores, key=lambda k: room_scores[k])

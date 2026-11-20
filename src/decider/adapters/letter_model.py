@@ -63,8 +63,8 @@ class LetterModelScorer(Scorer):
 
         async def one(q: Question) -> Answer:
             shown = options(q)
-            if len(shown) > letters.MAX_OPTIONS:
-                raise ProviderError(f"a question has {len(shown)} options; this scorer reads at most {letters.MAX_OPTIONS}")
+            if not 2 <= len(shown) <= letters.MAX_OPTIONS:
+                raise ProviderError(f"a question has {len(shown)} options; this scorer reads 2 to {letters.MAX_OPTIONS}")
             async with gate:
                 data = await self.http.post_json(CHAT_PATH, letters.payload(self.model, letters.prompt(state, text(q.instructions), shown)),
                                                  what="decisions")
@@ -79,7 +79,14 @@ class LetterModelScorer(Scorer):
             return RefusalAnswer() if mass < letters.MIN_MASS else from_probabilities(q, probs)
 
         keys = list(request.questions)
-        answers = await asyncio.gather(*(one(request.questions[k]) for k in keys))
+        tasks = [asyncio.ensure_future(one(request.questions[k])) for k in keys]
+        try:
+            answers = await asyncio.gather(*tasks)
+        except BaseException:  # one failed (or this call was cancelled): the rest must not go on asking the server
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         return DecisionResult(answers=dict(zip(keys, answers)), model=self.model, kind=self.kind, usage=usage)
 
     async def probe(self) -> bool:

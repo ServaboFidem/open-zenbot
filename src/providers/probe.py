@@ -258,11 +258,18 @@ async def _decides(http: OpenRouterHttp, model_id: str) -> tuple[bool, str | Non
 
 def _other_model(asked: str, answered: Any) -> bool:
     """Whether a reply's `model` names a different model than the one asked for. A longer or shorter form of the
-    same id (a dated version, a tag) is the same model."""
+    same id (a publisher in front, a tag or a dated version behind) is the same model; an id that merely holds
+    the other's characters (`model-1` in `model-10`, `gpt-4` in `gpt-4.1`) is not."""
     if not isinstance(answered, str) or not answered.strip():
         return False
-    a, b = asked.casefold().strip(), answered.casefold().strip()
-    return a not in b and b not in a
+    short, long = sorted((asked.casefold().strip(), answered.casefold().strip()), key=len)
+    at = long.find(short)
+    while at >= 0:
+        before, after = long[:at][-1:], long[at + len(short):][:1]
+        if not (before.isalnum() or before == ".") and not (after.isalnum() or after == "."):
+            return False
+        at = long.find(short, at + 1)
+    return True
 
 
 async def _decides_typed(http: OpenRouterHttp, model_id: str, *, alone: bool) -> tuple[bool, str | None]:
