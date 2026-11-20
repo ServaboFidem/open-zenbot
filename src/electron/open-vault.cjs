@@ -5,8 +5,8 @@ const fs = require('node:fs');
 const { vaultRoot } = require('./tracing-settings.cjs');
 
 /** Opens the vault's root. Answers '' when it opened, else a sentence to show (never a path). */
-async function openVault({ env = process.env, shell } = {}) {
-  const dir = vaultRoot(env);
+async function openVault({ env = process.env, shell, base = process.cwd() } = {}) {
+  const dir = vaultRoot(env, base);
   let found = false;
   try { found = fs.statSync(dir).isDirectory(); } catch { /* missing or unreadable */ }
   if (!found) return 'Your vault folder was not found.';

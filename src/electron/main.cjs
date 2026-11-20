@@ -25,7 +25,9 @@ const envLoaded = loadEnvFile(managed ? paths.envFile : path.join(__dirname, '..
 if (envLoaded.length) console.log(`.env: ${envLoaded.length} ${envLoaded.length === 1 ? 'setting' : 'settings'} (${envLoaded.sort().join(', ')})`);
 
 // Settings > Tracing's saved DSN wins over .env (and '' saved turns it off); the preload reads the same env
-const dsnSource = applySavedDsn();
+// a relative ZEN_VAULT counts from the folder the harness runs in: the installed app's own harness runs in paths.harness
+const vaultBase = managed ? paths.harness : process.cwd();
+const dsnSource = applySavedDsn(process.env, vaultBase);
 if (dsnSource === 'saved') console.log('sentry: DSN from vault-settings/tracing.json');
 
 // The installed app runs its own harness, always on 127.0.0.1: ZEN_HARNESS_URL can only move its port. The URL is
@@ -175,7 +177,7 @@ app.whenReady().then(() => {
   // Browse your vault: the vault's root in the OS file manager. The page sends no path (open-vault.cjs)
   ipcMain.handle('open-vault', event => {
     if (!fromApp(event)) throw new Error('not allowed');
-    return require('./open-vault.cjs').openVault({ shell });
+    return require('./open-vault.cjs').openVault({ shell, base: vaultBase });
   });
   // Save…: the page names a harness URL and a file name; the dialog names the path; nothing else is written
   ipcMain.handle('save-media', (event, args) => saveMedia(args, {

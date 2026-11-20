@@ -29,6 +29,15 @@ test('a vault that is missing, or is a file, is not opened', async () => {
   assert.deepEqual(shell.opened, []);
 });
 
+test('a relative ZEN_VAULT counts from the folder the harness runs in, not this process\'s own', async () => {
+  const base = mkdtempSync(path.join(tmpdir(), 'zen-'));
+  mkdirSync(path.join(base, 'vault'));
+  const shell = shellStub();
+  assert.equal(await openVault({ env: { ZEN_VAULT: './vault' }, shell, base }), '');
+  assert.deepEqual(shell.opened, [path.join(base, 'vault')]);
+  assert.equal(await openVault({ env: { ZEN_VAULT: './vault' }, shell }), 'Your vault folder was not found.');
+});
+
 test('a file manager that fails gives a sentence without the path', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'zen-'));
   assert.equal(await openVault({ env: { ZEN_VAULT: root }, shell: shellStub(`Failed to open ${root}`) }), 'Your vault could not be opened.');

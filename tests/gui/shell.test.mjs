@@ -93,10 +93,10 @@ test('main starts sentry only from ZEN_GLITCHTIP_DSN, over classic ipc', () => {
 });
 
 test('main registers the directory and file pickers, save, and the update check\'s five channels, from the app\'s own pages', () => {
-  const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');  // checked out with CRLF on Windows
   assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 5);  // four, and the updates:* helper
   assert.match(src, /ipcMain\.handle\('open-vault', event => \{\n    if \(!fromApp\(event\)\) throw/);
-  assert.match(src, /openVault\(\{ shell \}\)/);  // no argument from the page reaches it
+  assert.match(src, /openVault\(\{ shell, base: vaultBase \}\)/);  // no argument from the page reaches it
   assert.deepEqual(src.match(/handle\('updates:[a-z-]+'/g), ["handle('updates:get'", "handle('updates:check'", "handle('updates:skip'", "handle('updates:set-auto'", "handle('updates:open'"]);
   assert.match(src, /if \(!fromApp\(event\)\) throw/);
   assert.match(src, /ipcMain\.handle\('save-media'/);
