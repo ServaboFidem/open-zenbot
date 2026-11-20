@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "116",
+  "name": "OpenZenBot Facebook Helper",
+  "version": "0.1.0",
+  "description": "Observes the Facebook events dashboard, invites and birthdays pages and reports them to the harness on this machine. Observe-only: it never clicks, RSVPs, posts or messages.",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["alarms"],
+  "host_permissions": ["http://127.0.0.1:8765/*"],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.facebook.com/events",
+        "https://www.facebook.com/events/"
+      ],
+      "js": ["corner-events.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.facebook.com/events/invites/",
+        "https://www.facebook.com/events/invites/*",
+        "https://www.facebook.com/events/invitation_box/",
+        "https://www.facebook.com/events/invitation_box/*"
+      ],
+      "js": ["corner-invites.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.facebook.com/birthdays",
+        "https://www.facebook.com/birthdays/",
+        "https://www.facebook.com/birthdays/*"
+      ],
+      "js": ["corner-birthdays.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}
