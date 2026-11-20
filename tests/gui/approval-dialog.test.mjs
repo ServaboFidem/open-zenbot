@@ -1,6 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyDecided, botLabel, countLine, keepDeferred, nextApproval, waiting } from '../../src/gui/approval-dialog.js';
+import { applyDecided, botLabel, countLine, keepDeferred, nextApproval, readOrder, waiting } from '../../src/gui/approval-dialog.js';
+
+test('a list read that answers after a newer one is not used', () => {
+  const reads = readOrder();
+  const old = reads.start(), newer = reads.start();
+  assert.equal(reads.accept(newer), true);
+  assert.equal(reads.accept(old), false);  // it would drop a deferral or bring back a decided approval
+  assert.equal(reads.accept(newer), false);  // an answer is used once
+  assert.equal(reads.accept(reads.start()), true);
+});
+
+test('reads sent before a decision are not used after it', () => {
+  const reads = readOrder();
+  const before = reads.start();
+  reads.drop();
+  assert.equal(reads.accept(before), false);
+  assert.equal(reads.accept(reads.start()), true);
+});
+
+test('reads answering in the order they were sent are all used', () => {
+  const reads = readOrder();
+  const one = reads.start(), two = reads.start();
+  assert.equal(reads.accept(one), true);
+  assert.equal(reads.accept(two), true);
+});
 
 test('a list read before a decision cannot bring the decided approval back as pending', () => {
   const stale = [{ id: 'one', state: 'pending' }, { id: 'two', state: 'pending' }];

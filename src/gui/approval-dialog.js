@@ -17,6 +17,18 @@ export function applyDecided(approvals, decided) {
   return list.some(a => a.state === 'pending' && made[a.id]) ? list.map(a => a.state === 'pending' && made[a.id] ? { ...a, state: made[a.id] } : a) : list;
 }
 
+// List reads can answer out of order, and an old answer would drop a deferral or show a decided approval
+// as pending again. start() numbers a read as it is sent; accept(n) says whether its answer may be used:
+// only when no read sent later was used first. drop() refuses every read already sent (after a decision).
+export function readOrder() {
+  let sent = 0, used = 0;
+  return {
+    start() { return ++sent; },
+    accept(n) { if (n <= used) return false; used = n; return true; },
+    drop() { used = sent; },
+  };
+}
+
 export function nextApproval(approvals, deferred) {
   return waiting(approvals, deferred)[0] || null;
 }

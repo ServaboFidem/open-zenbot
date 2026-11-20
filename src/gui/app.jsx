@@ -28,7 +28,7 @@ import MusicArea from './music/MusicArea';
 import EventsArea from './events/EventsArea';
 import RoutineDialog from './RoutineSchedule';
 import ApprovalDialog from './ApprovalDialog';
-import { applyDecided, botLabel, countLine, keepDeferred, nextApproval } from './approval-dialog.js';
+import { applyDecided, botLabel, countLine, keepDeferred, nextApproval, readOrder } from './approval-dialog.js';
 import { importLegacyRoutines, persistWorkspace, dropLegacyRoutines, importNotice } from './routines-import.js';
 import { describeOutcome, formatWhen } from './routine-schedule.js';
 import { arrivalText, scheduleLabel, weeklyArrival } from './music/helpers.js';
@@ -111,10 +111,11 @@ function App() {
   const [harness, setHarness] = useState({ status: 'connecting', settings: null, health: null });
   const [bots, setBots] = useState([]);
   const [skills, setSkills] = useState([]);
-  const [approvalsRead, setApprovals] = useState([]);  // as GET /approvals last answered
-  const [decided, setDecided] = useState({});  // id -> state, for the decisions made in this page
-  // a list request sent before a decision may answer after it: it must not show that approval as pending again
-  const approvals = useMemo(() => applyDecided(approvalsRead, decided), [approvalsRead, decided]);
+  const [approvals, setApprovals] = useState([]);
+  // list reads can answer out of order; an answer older than one already used, or sent before a decision, is dropped
+  const approvalReads = useRef(null);
+  if (!approvalReads.current) approvalReads.current = readOrder();
+  const readApprovals = () => { const n = approvalReads.current.start(); return api.approvals().then(list => { if (approvalReads.current.accept(n)) setApprovals(list); }); };
   const [deferred, setDeferred] = useState([]);  // approval ids the user put off: not shown again until a reload
   const [deciding, setDeciding] = useState(false);
   const decidingRef = useRef(false);
@@ -246,12 +247,11 @@ function App() {
   }
   async function refreshAll() {
     refreshMusic(); refreshRoutines();
-    const [b, s, a, f, ss, r, rec, m, mem] = await Promise.allSettled([api.bots(), api.skills(), api.approvals(), api.fits(), api.sessions(), api.rooms(), api.recorderStatus(), api.mcps(), api.memory('shared')]);
+    const [b, s, , f, ss, r, rec, m, mem] = await Promise.allSettled([api.bots(), api.skills(), readApprovals(), api.fits(), api.sessions(), api.rooms(), api.recorderStatus(), api.mcps(), api.memory('shared')]);
     if (m.status === 'fulfilled') setMcps(m.value);
     if (mem.status === 'fulfilled') setFacts(mem.value);
     if (b.status === 'fulfilled') { setBots(b.value); setSelected(id => id || b.value[0]?.id || ''); }
     if (s.status === 'fulfilled') setSkills(s.value);
-    if (a.status === 'fulfilled') setApprovals(a.value);
     if (f.status === 'fulfilled') setFits(f.value);
     if (ss.status === 'fulfilled') {
       setSessions(ss.value);
@@ -290,7 +290,7 @@ function App() {
   // every 5 s so the dialog opens wherever the user is
   useEffect(() => {
     if (harness.status !== 'online') return;
-    const t = setInterval(() => { api.approvals().then(setApprovals).catch(() => {}); }, 5000);
+    const t = setInterval(() => { readApprovals().catch(() => {}); }, 5000);
     return () => clearInterval(t);
   }, [harness.status]);
   useEffect(() => { setDeferred(d => keepDeferred(d, approvals)); }, [approvals]);
@@ -343,7 +343,7 @@ function App() {
   useEffect(() => { if (memoryKey && online) guard(async () => setFacts(await api.memory('shared')), { quiet: true }); }, [memoryKey, online]);
   useEffect(() => { if (page === 'Ledger' && online) guard(async () => setLedger(await api.ledger({ n: 100, kind: ledgerKind || undefined })), { quiet: true }); }, [page, ledgerKind, online]);
   useEffect(() => { if (page === 'Settings' && online) { refreshTools(); refreshModels(); } }, [page, online]);
-  useEffect(() => { if (page === 'Approvals' && online) guard(async () => setApprovals(await api.approvals()), { quiet: true }); }, [page, online]);
+  useEffect(() => { if (page === 'Approvals' && online) guard(() => readApprovals(), { quiet: true }); }, [page, online]);
   useEffect(() => {
     if (page !== 'Design' || !online) return;
     api.designs().then(r => setDesigns(r.designs || []), () => setDesigns([]));
@@ -528,7 +528,7 @@ function App() {
       setLive(l => l && l.sessionId === r.session_id ? { ...l, events: [...l.events, e].slice(-200) } : l);
       if (e.kind === 'end') { stopEvents.current = null; await finishLive(r.session_id, e.state); if (conversation) loadConversation(botId); }
       else if (['pause', 'resume', 'approval_request', 'supervisor', 'session'].includes(e.kind)) {
-        if (e.kind === 'approval_request') api.approvals().then(setApprovals).catch(() => {});  // the dialog opens at once
+        if (e.kind === 'approval_request') readApprovals().catch(() => {});  // the dialog opens at once
         const all = await api.sessions().catch(() => null); if (all) setSessions(all);
       }
     });
@@ -724,11 +724,13 @@ function App() {
     try {
       const r = await guard(() => api.decide(item.id, approved));
       // refused (already decided in another window, say): read the list again so the dialog lets go of it
-      if (!r) { api.approvals().then(setApprovals).catch(() => {}); return; }
-      setDecided(d => ({ ...d, [item.id]: approved ? 'approved' : 'rejected' }));
-      const [list, all] = await Promise.all([api.approvals().catch(() => null), api.sessions().catch(() => null)]);
-      if (list) setApprovals(list);
-      if (all) setSessions(all);
+      if (!r) { readApprovals().catch(() => {}); return; }
+      // a read sent before the decision may still say "pending": drop those, mark the row here, and read again.
+      // Nothing below is waited for, so a slow read never holds the next approval's buttons.
+      approvalReads.current.drop();
+      setApprovals(list => applyDecided(list, { [item.id]: approved ? 'approved' : 'rejected' }));
+      readApprovals().catch(() => {});
+      api.sessions().then(setSessions).catch(() => {});
       log(approved ? 'Request approved' : 'Request rejected', item.title, 'approval');
       setNotice(approved ? 'Approved. The bot continues with that action.' : 'Rejected. The bot continues without it.');
     } finally { decidingRef.current = false; setDeciding(false); }
