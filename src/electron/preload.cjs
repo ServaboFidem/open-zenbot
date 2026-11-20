@@ -1,5 +1,5 @@
 // The bridge between the renderer and the shell: where the harness listens,
-// two calls that open the OS directory or file picker, Save… for a
+// two calls that open the OS directory or file picker, one that opens the vault's root in the file manager, Save… for a
 // preview (the OS save dialog picks the path), and one subscription for the
 // new-digest notice click. No key, no filesystem beyond
 // those dialogs. The renderer talks to the harness itself over fetch
@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('openzenbot', Object.freeze({
   managed: zenArg('managed') === '1',
   pickDirectory: () => ipcRenderer.invoke('pick-directory'),
   pickFile: () => ipcRenderer.invoke('pick-file'),
+  // Browse your vault: no path is sent; answers '' or a sentence to show
+  openVault: () => ipcRenderer.invoke('open-vault'),
   saveMedia: (url, name) => ipcRenderer.invoke('save-media', { url, name }),
   // the main process tells the page to open Music > This week (the user clicked the new-digest notice); returns an unsubscribe
   onOpenMusic: cb => {

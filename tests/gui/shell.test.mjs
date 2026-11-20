@@ -34,7 +34,7 @@ function loadPreload(env, argv = []) {
   return { exposed, invoked, listeners };
 }
 
-const KEYS = ['harnessUrl', 'managed', 'onOpenMusic', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'updates', 'version'];
+const KEYS = ['harnessUrl', 'managed', 'onOpenMusic', 'openVault', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'updates', 'version'];
 
 test('preload exposes the harness url, the directory and file pickers, save, the version and two narrow groups, nothing else', async () => {
   const { exposed, invoked } = loadPreload({ ZEN_HARNESS_URL: '' });
@@ -93,8 +93,10 @@ test('main starts sentry only from ZEN_GLITCHTIP_DSN, over classic ipc', () => {
 });
 
 test('main registers the directory and file pickers, save, and the update check\'s five channels, from the app\'s own pages', () => {
-  const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8');
-  assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 4);  // three, and the updates:* helper
+  const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');  // checked out with CRLF on Windows
+  assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 5);  // four, and the updates:* helper
+  assert.match(src, /ipcMain\.handle\('open-vault', event => \{\n    if \(!fromApp\(event\)\) throw/);
+  assert.match(src, /openVault\(\{ shell, base: vaultBase \}\)/);  // no argument from the page reaches it
   assert.deepEqual(src.match(/handle\('updates:[a-z-]+'/g), ["handle('updates:get'", "handle('updates:check'", "handle('updates:skip'", "handle('updates:set-auto'", "handle('updates:open'"]);
   assert.match(src, /if \(!fromApp\(event\)\) throw/);
   assert.match(src, /ipcMain\.handle\('save-media'/);

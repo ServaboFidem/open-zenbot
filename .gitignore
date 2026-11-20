@@ -25,3 +25,4 @@ research/artifacts/
 # electron-builder: downloaded uv (scripts/fetch-uv.mjs) and the built installers
 /build/bin/
 /release/
+*audit*.md
