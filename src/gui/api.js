@@ -27,8 +27,8 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     const clean = Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null && v !== '');
     return clean.length ? '?' + new URLSearchParams(clean.map(([k, v]) => [k, String(v)])).toString() : '';
   };
-  async function call(method, path, body, params) {
-    const init = { method, headers: { Accept: 'application/json' } };
+  async function send(method, path, body, params, accept = 'application/json') {
+    const init = { method, headers: { Accept: accept } };
     if (body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
     let res;
     try { res = await doFetch(base + path + qs(params), init); }
@@ -38,6 +38,10 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
       try { const j = await res.json(); detail = typeof j?.detail === 'string' ? j.detail : JSON.stringify(j?.detail ?? j); } catch { detail = await res.text().catch(() => ''); }
       throw new HarnessError(res.status, detail || `HTTP ${res.status}`);
     }
+    return res;
+  }
+  async function call(method, path, body, params) {
+    const res = await send(method, path, body, params);
     if (res.status === 204) return null;
     return res.json();
   }
@@ -101,6 +105,8 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     modelRoles: () => get('/settings/models'),
     setModelRoles: roles => put('/settings/models', roles),
     setTool: (id, patch) => put(`/settings/tools/${enc(id)}`, patch),
+    // a reply read aloud: the Narrator rewrites it and the speech model speaks it; answers a WAV blob
+    speak: async text => (await send('POST', '/speech', { text }, undefined, 'audio/wav')).blob(),
     programPath: key => get(`/settings/tools/programs/${enc(key)}`),
     setProgramPath: (key, path) => put(`/settings/tools/programs/${enc(key)}`, { path }),
     clearProgramPath: key => del(`/settings/tools/programs/${enc(key)}`),

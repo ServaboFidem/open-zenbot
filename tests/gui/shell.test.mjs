@@ -131,7 +131,7 @@ test('csp lets media and frames come from the harness only, with no wildcard', (
   const directive = name => csp.split(';').map(s => s.trim()).find(s => s.startsWith(name + ' '));
   const harness = 'http://127.0.0.1:8765 http://localhost:8765';
   assert.equal(directive('img-src'), `img-src 'self' data: ${harness}`);
-  assert.equal(directive('media-src'), `media-src ${harness}`);
+  assert.equal(directive('media-src'), `media-src blob: ${harness}`);  // blob: plays a reply read aloud (speech.js)
   assert.equal(directive('frame-src'), `frame-src http://127.0.0.1:9999 http://localhost:9999 ${harness}`);
   assert.equal(directive('worker-src'), "worker-src 'self'");
   assert.ok(!csp.includes('*'));
