@@ -21,6 +21,7 @@ dependencies = [
     "python-dotenv>=1.2",
     "langfuse==5.2.0",
     "ytmusicapi==1.12.3",
+    "soco==0.32.2",
     "torch>=2.15.0",
 ]
 

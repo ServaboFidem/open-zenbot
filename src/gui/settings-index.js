@@ -7,6 +7,7 @@ import { APP_STEPS } from './calendar-settings.js';
 import { PRIVACY } from './dream.js';
 import { FACEBOOK_LOGIN_LOSS } from './discovery-settings.js';
 import { MAIL_LINE } from './mail.js';
+import { HELP_LINE as SONOS_LINE } from './sonos.js';
 
 export const PANELS = [
   { id: 'harness', name: 'Harness settings', description: 'The models your bots, summaries and the decider run on.' },
@@ -19,7 +20,7 @@ export const PANELS = [
   { id: 'calendar', name: 'Calendar', description: 'Google Calendar: your own Google app, which calendars to bring in, and sending events made here to Google.' },
   { id: 'tracing', name: 'Tracing', description: 'Where errors and traces go: Sentry, GlitchTip and Langfuse.' },
   { id: 'memory', name: 'Memory', description: 'Your name in memory, and rebuilding what the bots have learned.' },
-  { id: 'apps', name: 'Connected apps', description: "AgentMail, ZenBot's own email address; other app connections are a mockup for now." },
+  { id: 'apps', name: 'Connected apps', description: "AgentMail, ZenBot's own email address, and Sonos speakers; other app connections are a mockup for now." },
   { id: 'about', name: 'About', description: 'What this app does, and its license.' },
 ];
 
@@ -110,6 +111,7 @@ export const SECTIONS = [
   section('memory', 'About you', ['Your name', 'Also called: nicknames, separated by commas', 'Owner']),
   section('memory', 'Rebuild memory', ["Re-learn everything shared under the current knowledge model: people, organizations, and how they relate. Your facts and each bot's private memory stay."]),
   section('apps', 'AgentMail', ['AgentMail', 'email', 'inbox', 'address', 'API key', 'newsletter', MAIL_LINE]),
+  section('apps', 'Sonos', ['Sonos', 'speakers', 'play music', 'Favorites', 'playlists', 'volume', 'Highest volume ZenBot may set', 'Look again', SONOS_LINE]),
   whole('apps', ["Mockup: connected apps don't work yet. Connect only marks an app as connected in this window.", 'Connect app', 'Disconnect']),
   section('about', 'Version and updates', ['Version', 'Check for updates', 'Check for updates automatically', 'Update to the newest release, or skip a version.']),
   section('about', 'What this app does', ['Bots, skills, approvals, rooms, memory, and the ledger come from the zen-agents harness on localhost.']),

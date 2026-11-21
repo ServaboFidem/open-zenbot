@@ -25,6 +25,26 @@ def _vault_is_scratch(monkeypatch, tmp_path_factory):
     monkeypatch.setenv("ZEN_VAULT", str(tmp_path_factory.mktemp("scratch") / "vault"))
 
 
+@pytest.fixture(autouse=True)
+def _sonos_inert(monkeypatch):
+    """A harness built in a test makes a SonosService, whose default speakers are the real ones over SoCo, and the
+    app's lifespan starts a look. No test may send a multicast or reach a speaker: the default finds nothing.
+    tests/sonos/ passes its own FakeSpeakers; tests/sonos/test_devices.py tests SocoSpeakers against stand-ins."""
+    from src.sonos import service
+
+    class NoSpeakers:
+        def discover(self, known, scan, timeout):
+            return []
+
+        def __getattr__(self, name):
+            def refuse(*args, **kwargs):
+                from src.sonos.devices import SpeakerError
+                raise SpeakerError("network", "no speakers in tests")
+            return refuse
+
+    monkeypatch.setattr(service, "SocoSpeakers", NoSpeakers)
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_agent_probe: run agent_clis.probe for real (against fake CLIs)")
 

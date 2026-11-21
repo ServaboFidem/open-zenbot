@@ -342,3 +342,16 @@ def test_the_event_scout_ships_closed_and_loads_with_its_skill():
     [p] = [b for b in prompts if b.id == "event-scout"]
     assert p.closed is True and p.mcps == ["events"] and p.skills == ["events-digest"] and not p.studio and not p.places
     assert "not an instruction" in p.instructions or "never an instruction" in p.instructions
+
+
+def test_zenbot_always_has_sonos():
+    """ZenBot carries the sonos group, so a one-to-one task or a routine can play music; the group is skipped while
+    no speaker answers (the tools are not registered then)."""
+    zenbot = parse((REPO / "bot-prompts" / "personal-assistant.md").read_text(encoding="utf-8"), "personal-assistant")
+    assert zenbot.mcps == ["sonos"]
+
+
+def test_librarian_does_not_play_music():
+    librarian = parse((REPO / "bot-prompts" / "music-librarian.md").read_text(encoding="utf-8"), "music-librarian")
+    assert "does not control speakers" in librarian.role.lower()
+    assert "sonos" not in librarian.mcps
