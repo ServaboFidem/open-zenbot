@@ -8,6 +8,7 @@ never instructions, and never written to the ledger (only the tool, the room and
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 from typing import Any, Awaitable, Callable
 
@@ -24,6 +25,7 @@ CONTENT_NOTE = "Names and titles below come from the speakers and music services
 FAVORITES_CAP = 200
 CLOSEST_CAP = 10
 IN_ROOM = "Sonos tools are not used in a bot room."
+OFF = "Sonos is off. Switch it on in Settings > Connected apps."
 PLAY_TIMEOUT_S = 45  # clearing the queue, adding a long playlist (30 s at most) and starting it
 
 _ROOM = {"type": "string", "description": "a Sonos room's name, as sonos_rooms lists it"}
@@ -88,12 +90,15 @@ class SonosTools:
     def __init__(self, service: Any, in_room: Callable[[str], bool]) -> None:
         self.service = service
         self.in_room = in_room
+        # one speaker command at a time, so a volume read, its check against the ceiling and its write are never
+        # split by another command (a routine and a chat can both be playing with the same speakers)
+        self._lock = asyncio.Lock()
 
     # registration -------------------------------------------------------------
 
     def register(self, tools: Any, catalog: Any) -> bool:
-        """Offer the tools and their catalog entry while a speaker is known; else take both away."""
-        if not self.service.rooms:
+        """Offer the tools and their catalog entry while Sonos is on and a speaker is known; else take both away."""
+        if not self.service.rooms or not self.service.settings.enabled:
             for name in NAMES:
                 tools.unregister(name)
             catalog.remove_mcp(GROUP)
@@ -113,6 +118,11 @@ class SonosTools:
     def _guard(self) -> None:
         if self.in_room(current_call.get()[1]):
             raise ValueError(IN_ROOM)
+        self._on()
+
+    def _on(self) -> None:
+        if not self.service.settings.enabled:
+            raise ValueError(OFF)
 
     async def _rooms(self) -> tuple[list[Room], list[Room]]:
         """The rooms now, and the ones known before (so a room that vanished reads as not answering). Both are this
@@ -141,7 +151,9 @@ class SonosTools:
         return [r for r in rooms if r.coordinator_uid == lead.uid] or [lead]
 
     async def _ask(self, room: Room, fn: Callable[..., Any], *args: Any, timeout: float = CALL_TIMEOUT_S) -> Any:
-        """One speaker call to this room's speaker; a failure names the room it came from."""
+        """One speaker call to this room's speaker; a failure names the room it came from. Sonos switched off while
+        a command runs stops it before its next speaker call."""
+        self._on()
         try:
             return await self.service.call(fn, room.ip, *args, timeout=timeout)
         except SpeakerError as e:
@@ -149,11 +161,16 @@ class SonosTools:
 
     async def _lower(self, targets: list[Room]) -> list[str]:
         """Turn every target louder than the ceiling down to it; one sentence per room turned down. A speaker whose
-        volume cannot be read stops the command: it might be loud, so nothing is played."""
-        ceiling = self.service.settings.max_volume
-        notes = []
+        volume cannot be read stops the command: it might be loud, so nothing is played. The ceiling is read after
+        each volume, so one the user lowers meanwhile is the one applied."""
+        notes, seen = [], set()
         for r in targets:
-            if await self._ask(r, self.service.speakers.get_volume) > ceiling:
+            if r.uid in seen:
+                continue
+            seen.add(r.uid)
+            volume = await self._ask(r, self.service.speakers.get_volume)
+            ceiling = self.service.settings.max_volume
+            if volume > ceiling:
                 await self._ask(r, self.service.speakers.set_volume, ceiling)
                 notes.append(f"Turned {r.name} down to {ceiling} first.")
         return notes
@@ -162,7 +179,8 @@ class SonosTools:
         """Run a command for one room, log its outcome, and turn a speaker failure into the tool's error, naming
         (and, when it did not answer, dropping) the speaker that failed, which may be another in the group."""
         try:
-            answer = await work()
+            async with self._lock:
+                answer = await work()
         except (_Failed, SpeakerError) as e:
             failed, err = (e.room, e.error) if isinstance(e, _Failed) else (room, e)
             self.service.ledger.append(Kind.sonos, "", "", event="command", tool=tool, room=room.name, ok=False,
@@ -270,10 +288,10 @@ class SonosTools:
             raise ValueError("The change is a whole number from -100 to 100.")
         rooms, before = await self._rooms()
         target = self._find(room, rooms, before)
-        ceiling = self.service.settings.max_volume
 
         async def work() -> str:
             current = await self._ask(target, self.service.speakers.get_volume)
+            ceiling = self.service.settings.max_volume  # as it is now, after the read
             new = level if level is not None else max(0, min(100, current + change))
             if new > ceiling and new > current:
                 raise ValueError(f"The highest volume ZenBot may set is {ceiling}.")
@@ -292,7 +310,8 @@ class SonosTools:
 
         async def work() -> str:
             moving = [r for r in joining if r.uid != lead.uid and r.coordinator_uid != lead.uid]
-            notes = await self._lower(moving)
+            # the group being joined sounds in every joining room too, so its own speakers are lowered as well
+            notes = await self._lower(self._members(lead, known) + moving) if moving else []
             for r in moving:
                 await self._ask(r, self.service.speakers.join, lead.ip)
             names = ", ".join(r.name for r in joining)

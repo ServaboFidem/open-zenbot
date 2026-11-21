@@ -226,3 +226,88 @@ async def test_play_gives_queueing_a_long_timeout(sonos, svc, monkeypatch):
     monkeypatch.setattr(svc, "call", call)
     await sonos.play("Kitchen", "Dinner")
     assert ("play", PLAY_TIMEOUT_S) in seen and PLAY_TIMEOUT_S > 30
+
+
+def test_register_needs_sonos_on(sonos, svc, runner):
+    svc.settings.enabled = False
+    assert sonos.register(runner, Catalog()) is False
+    assert sonos_names(runner) == []
+
+
+async def test_tools_refuse_while_sonos_is_off(sonos, svc):
+    await svc.set_settings(False, 60)
+    with pytest.raises(ValueError, match="Sonos is off"):
+        await sonos.volume("Kitchen", level=10)
+
+
+async def test_switching_off_mid_command_stops_it(sonos, svc, speakers, monkeypatch):
+    real = speakers.get_volume
+
+    def get_volume(ip):
+        svc.settings.enabled = False  # the user switches Sonos off while the command reads a volume
+        return real(ip)
+
+    monkeypatch.setattr(speakers, "get_volume", get_volume)
+    with pytest.raises(ValueError, match="Sonos is off"):
+        await sonos.play("Kitchen", "Dinner")
+    assert not any(c[0] == "play" for c in speakers.calls)
+
+
+async def test_a_lowered_ceiling_applies_to_a_command_under_way(sonos, svc, speakers, monkeypatch):
+    speakers.volumes[KITCHEN] = 80
+    real = speakers.get_volume
+
+    def get_volume(ip):
+        svc.settings.max_volume = 20  # the user lowers the ceiling while the command reads the volume
+        return real(ip)
+
+    monkeypatch.setattr(speakers, "get_volume", get_volume)
+    await sonos.play("Kitchen", "Dinner")
+    assert ("set_volume", KITCHEN, 20) in speakers.calls and ("set_volume", KITCHEN, 60) not in speakers.calls
+
+
+async def test_volume_checks_the_ceiling_as_it_is_now(sonos, svc, speakers, monkeypatch):
+    real = speakers.get_volume
+
+    def get_volume(ip):
+        svc.settings.max_volume = 20
+        return real(ip)
+
+    monkeypatch.setattr(speakers, "get_volume", get_volume)
+    with pytest.raises(ValueError, match="20"):
+        await sonos.volume("Kitchen", level=50)
+
+
+async def test_volume_commands_do_not_interleave(sonos, speakers, monkeypatch):
+    # A reads 80 and may lower to 70; B lowers to 30 meanwhile. A's write must not land after B's and raise it.
+    import asyncio
+    import threading
+    speakers.volumes[KITCHEN] = 80
+    lowered, reads = threading.Event(), []
+    real_get, real_set = speakers.get_volume, speakers.set_volume
+
+    def get_volume(ip):
+        value = real_get(ip)
+        reads.append(value)
+        if len(reads) == 1:
+            lowered.wait(0.5)  # hold the first command between its read and its write
+        return value
+
+    def set_volume(ip, level):
+        real_set(ip, level)
+        if level == 30:
+            lowered.set()
+
+    monkeypatch.setattr(speakers, "get_volume", get_volume)
+    monkeypatch.setattr(speakers, "set_volume", set_volume)
+    first = asyncio.ensure_future(sonos.volume("Kitchen", level=70))
+    while not reads:
+        await asyncio.sleep(0.005)
+    await asyncio.gather(first, sonos.volume("Kitchen", level=30))
+    assert speakers.volumes[KITCHEN] == 30
+
+
+async def test_group_lowers_the_group_being_joined(sonos, speakers):
+    speakers.volumes[KITCHEN] = 85
+    await sonos.group(["Kitchen", "Patio"])
+    assert speakers.calls.index(("set_volume", KITCHEN, 60)) < speakers.calls.index(("join", PATIO, KITCHEN))

@@ -29,3 +29,13 @@ export function volumeError(text) {
 export const canLookAgain = (status, online) => !!online && status?.enabled === true && status?.looking !== true;
 
 export const shouldPoll = status => status?.looking === true;
+
+// After a failed status read: wait this long, then read again (only while there is no status at all).
+export const RETRY_MS = 5000;
+
+/** How long until the next status read: while a look runs, POLL_MS; after a failed first read, RETRY_MS; else none. */
+export const nextRead = (status, failed) => (shouldPoll(status) ? POLL_MS : failed && !status ? RETRY_MS : null);
+
+/** A status read is applied only when no save finished while it was out (the counts of saves at its start and now):
+ * an older read would put back the volume limit the user just saved. */
+export const freshRead = (savesAtStart, savesNow) => savesAtStart === savesNow;

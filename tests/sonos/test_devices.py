@@ -195,3 +195,24 @@ def test_queueing_a_container_gets_a_long_request_timeout(monkeypatch):
     stub_soco(monkeypatch, [zone])
     SocoSpeakers().play("192.0.2.10", Favorite("Dinner", "playlist", Ref("object.container.playlistContainer")))
     assert zone.queue_timeouts == [devices.QUEUE_TIMEOUT_S] and devices.QUEUE_TIMEOUT_S >= 30
+
+
+def test_model_name_request_is_bounded(monkeypatch):
+    zone = StubZone("RINCON_A", "Kitchen", "192.0.2.10")
+    timeouts = []
+    zone.get_speaker_info = lambda refresh=False, timeout=None: timeouts.append(timeout) or {"model_name": "One"}
+    stub_soco(monkeypatch, [zone])
+    SocoSpeakers().rooms("192.0.2.10")
+    assert timeouts == [devices.REQUEST_TIMEOUT_S]
+
+
+def test_a_failing_multicast_keeps_what_the_saved_address_found(monkeypatch):
+    zone = StubZone("RINCON_A", "Kitchen", "192.0.2.10")
+
+    def discover(**kw):
+        raise requests.exceptions.ConnectionError("the responder went away")
+
+    monkeypatch.setattr(devices, "soco", SimpleNamespace(SoCo=lambda ip: zone, discover=discover))
+    assert [r.name for r in SocoSpeakers().discover(["192.0.2.10"], False, 5)] == ["Kitchen"]
+    with pytest.raises(SpeakerError):
+        SocoSpeakers().discover([], False, 5)

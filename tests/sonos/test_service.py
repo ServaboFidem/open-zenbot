@@ -197,3 +197,34 @@ async def test_switch_off_and_on_during_a_look_looks_again(svc, speakers):
     await svc.settle()
     assert len(speakers.discovers) == 2
     assert [r.name for r in svc.rooms] == sorted(r.name for r in speakers.found)
+
+
+async def test_a_failed_save_changes_nothing(svc, monkeypatch):
+    await svc.look()
+    from src.sonos import settings as sonos_settings
+    real, broken = sonos_settings.SonosSettings.save, [True]
+
+    def save(self, root):
+        if broken[0]:
+            raise OSError("disk full")
+        return real(self, root)
+
+    monkeypatch.setattr(sonos_settings.SonosSettings, "save", save)
+    with pytest.raises(OSError):
+        await svc.set_settings(False, 40)
+    assert (svc.settings.enabled, svc.settings.max_volume) == (True, 60) and svc.rooms
+    broken[0] = False
+    await svc.set_settings(False, 40)  # the same request again, once the disk is back, does switch off
+    assert svc.settings.enabled is False and svc.rooms == [] and svc.changes[-1] is False
+
+
+async def test_switch_off_during_refresh_keeps_rooms_empty(svc, speakers):
+    await svc.look()
+    assert svc.rooms
+    speakers.rooms_gate = threading.Event()
+    task = asyncio.ensure_future(svc.refresh())
+    await asyncio.sleep(0.02)
+    await svc.set_settings(False, 60)
+    speakers.rooms_gate.set()
+    assert await task == []
+    assert svc.rooms == []

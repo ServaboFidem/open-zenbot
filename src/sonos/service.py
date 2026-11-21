@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -141,14 +142,19 @@ class SonosService:
         every room is forgotten."""
         if not self.rooms:
             return []
+        gen = self._gen
         for r in list(self.rooms):
             try:
                 topology = await self.call(self.speakers.rooms, r.ip)
             except SpeakerError:
                 continue
+            if gen != self._gen or not self.settings.enabled:
+                return []  # switched off (or off and on) while it asked: the answer must not bring speakers back
             if topology:
                 self.rooms = list(topology)
                 return list(self.rooms)
+        if gen != self._gen or not self.settings.enabled:
+            return []
         self.rooms = []
         self._changed()
         return []
@@ -164,8 +170,9 @@ class SonosService:
     async def set_settings(self, enabled: bool, max_volume: int) -> dict[str, Any]:
         max_volume = check_volume(max_volume)
         was = self.settings.enabled
-        self.settings.enabled, self.settings.max_volume = bool(enabled), max_volume
-        self.settings.save(self.vault_root)
+        candidate = replace(self.settings, enabled=bool(enabled), max_volume=max_volume, known=list(self.settings.known))
+        candidate.save(self.vault_root)  # a failed save changes nothing, so the same request can simply be sent again
+        self.settings = candidate
         self.ledger.append(Kind.sonos, "", "", event="settings", enabled=self.settings.enabled, max_volume=max_volume)
         if was and not self.settings.enabled:
             self._new_generation()

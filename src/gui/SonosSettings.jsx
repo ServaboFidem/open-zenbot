@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button, Field, Input, Spinner, Switch } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
 import { errorLine } from './mail.js';
-import { HELP_LINE, POLL_MS, canLookAgain, shouldPoll, statusLine, volumeError } from './sonos.js';
+import { HELP_LINE, canLookAgain, freshRead, nextRead, statusLine, volumeError } from './sonos.js';
 
 // Settings > Connected apps > Sonos: whether ZenBot looks for Sonos speakers on this network, what it found, Look
 // again (which also scans the network, slower), and the highest volume ZenBot may set. Room names come from the
@@ -14,26 +14,32 @@ export function SonosSettings({ api, online, notify }) {
   const [volume, setVolume] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [fails, setFails] = useState(0);  // failed status reads in a row; a change re-arms the next read
+  const saves = useRef(0);  // saves finished; a status read that was out across one is stale
 
   async function load() {
+    const at = saves.current;
     try {
       const st = await sonos.status();
+      if (!freshRead(at, saves.current)) return;
       setStatus(st);
       setVolume(v => (v === '' ? String(st.max_volume) : v));
-      setError('');
-    } catch (e) { setError(errorLine(e)); }
+      setError(''); setFails(0);
+    } catch (e) { setError(errorLine(e)); setFails(n => n + 1); }
   }
   useEffect(() => { if (online) load(); }, [online]);  // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {  // while a look is under way, read the status again until it ends
-    if (!online || !shouldPoll(status)) return undefined;
-    const id = setTimeout(load, POLL_MS);
+  useEffect(() => {  // while a look is under way read the status again until it ends; retry a failed first read
+    const wait = online ? nextRead(status, fails > 0) : null;
+    if (wait === null) return undefined;
+    const id = setTimeout(load, wait);
     return () => clearTimeout(id);
-  }, [online, status]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [online, status, fails]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function run(label, call, done) {
     setBusy(label); setError('');
     try {
       const st = await call();
+      saves.current += 1;
       setStatus(st);
       if (done) notify(done);
       return st;

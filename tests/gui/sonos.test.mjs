@@ -40,3 +40,19 @@ test('the section polls only while a look is under way', () => {
   assert.equal(shouldPoll(st({})), false);
   assert.equal(shouldPoll(null), false);
 });
+
+test('nextRead keeps polling a look, retries a failed first read, and otherwise waits', async () => {
+  const { nextRead, RETRY_MS } = await import('../../src/gui/sonos.js');
+  assert.equal(nextRead(st({ looking: true }), false), POLL_MS);
+  assert.equal(nextRead(st({ looking: true }), true), POLL_MS);  // a failed poll does not end the polling
+  assert.equal(nextRead(null, true), RETRY_MS);                  // the first read failed: try again
+  assert.equal(nextRead(null, false), null);
+  assert.equal(nextRead(st({}), true), null);                    // a settled status stays until something changes
+  assert.ok(RETRY_MS >= POLL_MS);
+});
+
+test('a status read that started before a save finished is thrown away', async () => {
+  const { freshRead } = await import('../../src/gui/sonos.js');
+  assert.equal(freshRead(2, 2), true);
+  assert.equal(freshRead(1, 2), false);
+});

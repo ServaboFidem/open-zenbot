@@ -26,6 +26,7 @@ class FakeSpeakers:
         self.discovers: list[tuple[list[str], bool]] = []
         self.gate: threading.Event | None = None
         self.discover_error: SpeakerError | None = None
+        self.rooms_gate: threading.Event | None = None  # blocks rooms() until set
 
     def _check(self, ip: str) -> None:
         if ip in self.down:
@@ -40,6 +41,8 @@ class FakeSpeakers:
         return [r for r in self.found if r.ip not in self.down]
 
     def rooms(self, ip: str) -> list[Room]:
+        if self.rooms_gate is not None:
+            self.rooms_gate.wait(5)
         self._check(ip)
         return list(self.found)
 

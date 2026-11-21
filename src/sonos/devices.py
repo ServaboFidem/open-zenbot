@@ -16,7 +16,8 @@ T = TypeVar("T")
 
 # SoCo waits 20 s on a speaker by default; on a home network 5 s is plenty, and a look that first asks the speakers
 # last found must not spend its whole time on one that is switched off
-soco.config.REQUEST_TIMEOUT = 5.0
+REQUEST_TIMEOUT_S = 5.0
+soco.config.REQUEST_TIMEOUT = REQUEST_TIMEOUT_S
 QUEUE_TIMEOUT_S = 30.0  # adding a playlist or album to the queue: the one request that may take the speaker long
 
 TRANSPORT_STATES = {"PLAYING": "playing", "PAUSED_PLAYBACK": "paused", "STOPPED": "stopped"}
@@ -89,7 +90,8 @@ def _room(zone: Any) -> Room:
     group = zone.group
     coordinator = group.coordinator if group is not None and group.coordinator is not None else zone
     try:
-        model = str(zone.get_speaker_info().get("model_name") or "")
+        # SoCo sends this request with no timeout of its own unless given one
+        model = str(zone.get_speaker_info(timeout=REQUEST_TIMEOUT_S).get("model_name") or "")
     except Exception:  # noqa: BLE001 - a model name is nice to have, not worth failing a look over
         model = ""
     return Room(uid=zone.uid, name=str(zone.player_name), ip=str(zone.ip_address), model=model,
@@ -131,7 +133,13 @@ class SocoSpeakers:
                 break  # one answering speaker gives its whole household
             except SpeakerError:
                 continue
-        for r in _answering(soco.discover(timeout=timeout, allow_network_scan=scan) or ()):
+        try:
+            multicast = soco.discover(timeout=timeout, allow_network_scan=scan) or ()
+        except Exception:  # noqa: BLE001 - the responder can fail as SoCo reads its topology
+            if not found:
+                raise
+            multicast = ()  # what a saved address found still stands
+        for r in _answering(multicast):
             found.setdefault(r.uid, r)
         return sorted(found.values(), key=lambda r: r.name.casefold())
 

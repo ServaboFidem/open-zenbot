@@ -909,8 +909,14 @@ Settings > Connected apps has a Sonos section (`SonosSettings.jsx`). Design:
 - **The volume ceiling** (`max_volume`). Before `sonos_play`, `sonos_control` `resume` and `sonos_group`, every
   speaker that will sound and is louder than the ceiling is turned down to it, and the answer says so ("Turned
   Living Room down to 60 first."). `sonos_volume` refuses to set a level above the ceiling that is louder than the
-  current one; turning down always works. Pause, skip and stop never change the volume. The ceiling binds ZenBot
-  only: the Sonos app and anything else on the network can still go higher.
+  current one; turning down always works. Pause, skip and stop never change the volume. For `sonos_group` the
+  speakers of the group being joined are lowered too, since they sound in the joining rooms. The ceiling is read
+  after each volume read, so one the user lowers while a command runs is the one applied, and the tools run one
+  speaker command at a time (`SonosTools._lock`), so a read, its check and its write are never split by another
+  command. Switching Sonos off stops a command under way before its next speaker call ("Sonos is off."), the tools
+  are registered only while Sonos is on, and a topology read that was out across the switch is thrown away
+  (`refresh` checks the generation). A settings save that fails changes nothing, so the same request can be sent
+  again. The ceiling binds ZenBot only: the Sonos app and anything else on the network can still go higher.
 - **Who gets the tools.** ZenBot (`bot-prompts/personal-assistant.md`) has `mcps: [sonos]`, so its one-to-one tasks
   and its routines (a pinned routine gets the bot's own `mcps`) are offered them while a speaker answers; other bots
   reach them through the router like any group. They are never offered in a bot room's turn
@@ -947,7 +953,8 @@ Settings > Connected apps has a Sonos section (`SonosSettings.jsx`). Design:
   sets (stereo pairs, home-theatre subs), the known-address path on a later look, and the settings section on screen.
 
 Rules for contributors: SoCo only behind `devices.py`, every call through `SonosService.call` (a thread and a
-timeout). No favorite title, track or artist in a ledger entry or a log line. Keep `sonos.json` in `vault-settings/`.
+timeout). No favorite title, track or artist in a ledger entry the Sonos code writes or a log line (the loop's own
+`tool_start` and `tool_call` entries hold every tool's arguments and answer, these included: see Ledger above). Keep `sonos.json` in `vault-settings/`.
 Never offer the tools in a bot room's turn, and keep the handler's own check. Never play, resume or group without
 first lowering every speaker above the ceiling. Every `/sonos` POST takes a required JSON body. Say "Sonos room" or
 "speaker" where a bare "room" could be read as a bot room. Tests never touch the network: `tests/conftest.py`
