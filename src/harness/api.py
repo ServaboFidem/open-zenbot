@@ -78,6 +78,7 @@ from .onboarding import ASSISTANT_ID, NEW_TOPICS, TOPICS, Interviewer
 from .config import HarnessConfig
 from .conversations import Conversation, ConversationStore, Conversations
 from .dream_routes import dream_router
+from .speech_routes import speech_providers, speech_router
 from .loop import Session, SessionState, TaskLoop
 from .scheduler import Routine, RoutineError, RoutineStore, Schedule, Scheduler, next_run, parse_schedule
 from .media import MediaConsent, MediaProxy, MediaRefused, trusted_hosts
@@ -99,6 +100,7 @@ from src.sonos.tools import SonosTools
 from src.music.routes import music_router
 from src.music.service import MANAGED_BY as MUSIC_MANAGED_BY, MusicService
 from src.generation.images import DEFAULT_MODEL as DEFAULT_IMAGE_MODEL, ImageConfig, ImageGenerator
+from src.generation.speech import Speech, SpeechConfig
 from src.providers.models import ModelInfo, ModelLister, guess_kinds
 from src.providers.probe import ProbeFailed, ProbeJobs
 from src.providers.openrouter import OpenRouterHttp
@@ -195,6 +197,7 @@ class Harness:
     extract_queue: ExtractQueue | None = None
     learner: Learner | None = None  # the learn_page tool: a fetched page teaches memory what touches a known org, person, or product
     images: ImageGenerator | None = None  # the image.generate tool; the decider offers it like an MCP server
+    speech: Speech | None = None  # reading replies aloud: the Narrator, then the speech model (POST /speech)
     agents: Agents | None = None  # Claude Code and Codex: where they are, sign-in, switches (agent_clis.py)
     delegator: Delegator | None = None  # the delegate tool: hands a job to an agent that is on; a rebind keeps it
     music: MusicService | None = None  # music discovery: settings, Discogs token, atlas, digests, the /music routes
@@ -304,6 +307,9 @@ class Harness:
                                          provider_kind=self._provider_kind)
             if self.images.config.enabled and self.images.provider is None:
                 print(f"image generation off: unknown image provider {self.images.config.provider!r}", flush=True)
+        if self.speech is None:
+            self.speech = Speech(SpeechConfig.load(c.vault_root), key_ref=self._speech_key_ref,
+                                 provider_kind=self._provider_kind, ledger=self.ledger)
         self.images.workspace = self.tools.cwd
         self.images.attach = self.tools.fn("attach_file")
         self.images.register(self.tools, self.catalog)  # idempotent, like the room tools
@@ -552,6 +558,12 @@ class Harness:
         if self.images is None or self.provider_store is None or self.images.config.provider not in self.provider_store.entries:
             return None
         return self.provider_store.key_ref(self.images.config.provider)
+
+    def _speech_key_ref(self) -> str | None:
+        """Reading aloud's key: its provider's, from providers.json."""
+        if self.speech is None or self.provider_store is None or self.speech.config.provider not in self.provider_store.entries:
+            return None
+        return self.provider_store.key_ref(self.speech.config.provider)
 
     def model_roles(self) -> ModelRoles:
         return ModelRoles.load(self.config.vault_root) or roles_from_config(self.config)
@@ -1521,7 +1533,7 @@ def create_app(h: Harness) -> FastAPI:
     h.music.routines, h.music.scheduler = routines, scheduler
     h.discover.routines, h.discover.scheduler = routines, scheduler
     app_routers = [music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h),
-                   facebook_router(h.discover, h), dream_router(h), mail_router(h.mail),
+                   facebook_router(h.discover, h), dream_router(h), speech_router(h), mail_router(h.mail),
                    sonos_router(h.sonos, h.sonos_tools)]
 
     @asynccontextmanager
@@ -1639,7 +1651,8 @@ def create_app(h: Harness) -> FastAPI:
     @app.get("/settings/tools")
     async def get_tool_settings() -> dict[str, Any]:
         """Harness tools the Settings page can turn on and off and configure: today, image generation."""
-        return {"tools": [h.images.status(image_providers())] if h.images else []}
+        tools = [{**h.images.status(image_providers()), "kind": "image"}] if h.images else []
+        return {"tools": tools + ([h.speech.status(speech_providers(h))] if h.speech else [])}
 
     @app.put("/settings/tools/image")
     async def set_image_tool(body: ImageToolIn) -> dict[str, Any]:

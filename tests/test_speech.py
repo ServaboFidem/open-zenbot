@@ -196,3 +196,74 @@ async def test_a_speech_failure_is_502(tmp_path):
     assert e.value.status == 502
     [entry] = [x for x in ledger.iter() if x.kind == "speech"]
     assert entry.data["error"] == "auth" and entry.data["stage"] == "speak"
+
+
+# -- routes --------------------------------------------------------------------------------------
+
+from src.harness.api import Harness, create_app  # noqa: E402
+from src.harness.config import HarnessConfig  # noqa: E402
+from src.skills.catalog import Catalog  # noqa: E402
+
+
+def _app(vault, tmp_path, narration=("Spoken words.",), tts=None, narrator=True):
+    cfg = HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=tmp_path / "none", shell_cwd=tmp_path)
+    cfg.validate()
+    h = Harness(config=cfg, provider=ScriptedProvider([completion(t) for t in narration]), ledger=Ledger(vault), catalog=Catalog())
+    if narrator:
+        h.add_bot(Bot(name="Narrator", role="Reads aloud.", instructions="Speak.", id="narrator", narrates=True))
+    app = create_app(h)
+    h.speech = Speech(SpeechConfig.load(vault), key_ref=lambda: "ref", ledger=h.ledger, resolve=lambda ref: Secret(KEY),
+                      transport=httpx.MockTransport(tts or _ok_tts([])))
+    return h, httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost")
+
+
+async def test_post_speech_answers_wav_closed(vault, tmp_path):
+    h, c = _app(vault, tmp_path)
+    async with c:
+        r = await c.post("/speech", json={"text": "Hello **there**."})
+    assert r.status_code == 200 and r.content == pcm_to_wav(PCM)
+    assert r.headers["content-type"] == "audio/wav"
+    assert r.headers["x-content-type-options"] == "nosniff" and r.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("text", ["", "   ", "x" * 20001])
+async def test_post_speech_refuses_empty_or_too_long_text(vault, tmp_path, text):
+    _, c = _app(vault, tmp_path)
+    async with c:
+        assert (await c.post("/speech", json={"text": text})).status_code == 422
+
+
+async def test_post_speech_needs_a_json_body(vault, tmp_path):
+    _, c = _app(vault, tmp_path)
+    async with c:
+        assert (await c.post("/speech", content="text=hi", headers={"content-type": "application/x-www-form-urlencoded"})).status_code == 422
+
+
+async def test_post_speech_without_a_narrator_is_409_with_a_sentence(vault, tmp_path):
+    _, c = _app(vault, tmp_path, narrator=False)
+    async with c:
+        r = await c.post("/speech", json={"text": "hi"})
+    assert r.status_code == 409 and r.json()["detail"] == "No Narrator bot is loaded, so replies cannot be read aloud."
+
+
+async def test_settings_list_both_tools_and_save_the_voice(vault, tmp_path):
+    h, c = _app(vault, tmp_path)
+    async with c:
+        tools = (await c.get("/settings/tools")).json()["tools"]
+        assert [t["id"] for t in tools] == ["image", "speech"] and tools[0]["kind"] == "image" and tools[1]["kind"] == "tts"
+        r = await c.put("/settings/tools/speech", json={"voice": "Puck"})
+        assert r.status_code == 200 and r.json()["voice"] == "Puck"
+        assert (await c.put("/settings/tools/speech", json={"voice": "Bad voice!"})).status_code == 422
+        r = await c.put("/settings/tools/speech", json={"enabled": False})
+        assert r.json()["enabled"] is False
+        assert (await c.post("/speech", json={"text": "hi"})).status_code == 409
+    saved = json.loads((settings_dir(vault) / "tools.json").read_text(encoding="utf-8"))["speech"]
+    assert saved["voice"] == "Puck" and saved["enabled"] is False
+
+
+def test_the_harness_builds_speech_from_saved_settings(vault, tmp_path):
+    SpeechConfig(voice="Kore").save(vault)
+    cfg = HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=tmp_path / "none", shell_cwd=tmp_path)
+    cfg.validate()
+    h = Harness(config=cfg, provider=None, ledger=Ledger(vault), catalog=Catalog())
+    assert isinstance(h.speech, Speech) and h.speech.config.voice == "Kore" and h.speech.ledger is h.ledger
