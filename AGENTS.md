@@ -933,10 +933,15 @@ Settings > Connected apps has a Sonos section (`SonosSettings.jsx`). Design:
   own control port (UPnP on 1400): a bot with `shell` (curl) or the `browser` server can call the `/sonos` routes or
   drive the speakers directly, at any volume, in a bot room too. Anything on the home network can already do the
   latter. Do not describe Sonos as out of bots' reach.
-- **Unverified.** Nothing here has reached a real speaker: the tests use `FakeSpeakers` (`tests/sonos/conftest.py`)
-  and stand-ins for SoCo. Not tried: the SoCo calls for each favorite kind (a radio station, a service playlist, an
-  album, a Sonos playlist), discovery through Windows Firewall (and whether the first look raises a prompt), grouping
-  with bonded sets (stereo pairs, home-theatre subs), and the settings section on screen.
+- **Partly verified (2026-11-21): reading only, by hand, on the owner's network** (Windows, three IKEA SYMFONISK
+  speakers grouped under one coordinator): `SocoSpeakers.discover` (multicast, no firewall prompt seen), `favorites`
+  (8 items: favorites of item class `object.container`, `musicAlbum`, `audioBook`, `audioBroadcast` and
+  `podcast`, and one Sonos playlist), `now_playing` and `get_volume`. That check found SoCo 0.32 keeps
+  `get_sonos_playlists` on the speaker, not the music library, which the stand-ins had hidden. Nothing has been played,
+  paused, grouped or had its volume changed on a real speaker: `play` for each favorite kind (a service
+  `object.container` may not take `add_to_queue`), transport, `set_volume`, `join` and `unjoin` have run only
+  against `FakeSpeakers` (`tests/sonos/conftest.py`) and stand-ins for SoCo. Also not tried: grouping with bonded
+  sets (stereo pairs, home-theatre subs), the known-address path on a later look, and the settings section on screen.
 
 Rules for contributors: SoCo only behind `devices.py`, every call through `SonosService.call` (a thread and a
 timeout). No favorite title, track or artist in a ledger entry or a log line. Keep `sonos.json` in `vault-settings/`.

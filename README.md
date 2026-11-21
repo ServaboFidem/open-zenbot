@@ -268,8 +268,9 @@ before it plays, and it will not turn one up past it. The Sonos app itself is no
 
 Good to know:
 
-- **Not tried on real speakers yet.** The tests use a stand-in; the first look on your network is the first real
-  check. On Windows the firewall may ask whether the harness may use the network the first time it looks.
+- **Playing is not tried on real speakers yet.** Finding speakers and reading Favorites have worked on one home
+  network; playing, pausing, grouping and volume changes have only run against a stand-in. On Windows the firewall
+  may ask whether the harness may use the network the first time it looks.
 - **Bots in a room never get the Sonos tools.** Talk to ZenBot one to one, or set up a routine for it.
 - **No login on the speakers.** Anything on your home network can control Sonos speakers, and the harness's local
   API has no login either, so a bot allowed to run shell commands or drive the browser could play music or change the
