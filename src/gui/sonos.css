@@ -1,0 +1,25 @@
+/* Music > Sonos (SonosPage.jsx) */
+.sonos-morning{gap:var(--s4);flex-wrap:wrap;background:#eef5fb;border:1px solid #c9dff0;border-radius:var(--radius);padding:var(--s4) var(--s5);margin-bottom:var(--s5)}
+.sonos-morning .od-field{min-width:240px}
+.sonos-morning .od-field span{color:var(--muted);font-size:var(--small)}
+.sonos-morning-icon{display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:#fff;color:var(--brand);flex:none}
+.sonos-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--s5);align-items:start}
+@media(max-width:1023px){.sonos-layout{grid-template-columns:minmax(0,1fr)}}
+.sonos-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--s5);display:grid;gap:var(--s4);align-content:start;min-width:0}
+.sonos-card h2{margin:0}
+.sonos-favs{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:var(--small-radius);display:grid}
+.sonos-fav{display:flex;align-items:center;gap:var(--s3);padding:var(--s2) var(--s3);border-bottom:1px solid var(--line);cursor:pointer;font-size:var(--small)}
+.sonos-fav:last-child{border-bottom:0}
+.sonos-fav.selected{background:#dce9f4}
+.sonos-fav-title{flex:1;min-width:0;overflow-wrap:anywhere}
+.sonos-none{padding:var(--s3)}
+.sonos-speakers{border:0;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:0 var(--s4)}
+.sonos-speakers legend{font-weight:600;font-size:var(--small);margin-bottom:var(--s1);padding:0}
+.sonos-group{display:grid;gap:var(--s2);padding-top:var(--s4);border-top:1px solid var(--line)}
+.sonos-group:first-of-type{padding-top:0;border-top:0}
+.sonos-track{margin:0;font-size:var(--small);overflow-wrap:anywhere}
+.sonos-transport{display:flex;gap:var(--s1)}
+.sonos-volume{display:grid;grid-template-columns:minmax(72px,140px) minmax(0,1fr) 3ch;align-items:center;gap:var(--s3);font-size:var(--small)}
+.sonos-volume>span:first-child{overflow-wrap:anywhere}
+.sonos-level{text-align:right;font-variant-numeric:tabular-nums}
+.sonos-muted{color:var(--muted)}

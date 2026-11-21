@@ -11,6 +11,7 @@ from src.harness.config import HarnessConfig
 from src.harness.loop import Session
 from src.memory.ledger import Ledger
 from src.skills.catalog import Catalog
+from src.sonos.devices import Favorite
 from src.sonos.routes import sonos_router
 from src.sonos.service import SonosService
 from src.sonos.settings import BAD_VOLUME, SonosSettings
@@ -89,13 +90,57 @@ async def test_discover_scans(client, harness, speakers):
     assert r.status_code == 409 and r.json()["detail"] == "Sonos is off."
 
 
-def _post_paths(service):
-    return sorted(r.path for r in sonos_router(service).routes if "POST" in (getattr(r, "methods", None) or ()))
+async def test_rooms_and_favorites(client, harness, speakers):
+    speakers.favs = [Favorite("Morning Jazz", "favorite"), Favorite("Dinner", "playlist")]
+    await harness.sonos.look()
+    r = await client.get("/sonos/rooms")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["max_volume"] == 60 and [x["name"] for x in body["rooms"]] == ["Kitchen", "Living Room", "Patio"]
+    assert body["rooms"][2]["group"] == "Living Room" and body["rooms"][2]["volume"] == 20
+    r = await client.get("/sonos/favorites")
+    assert r.status_code == 200
+    assert r.json() == {"favorites": [{"title": "Dinner", "kind": "playlist"},
+                                      {"title": "Morning Jazz", "kind": "favorite"}]}
+
+
+async def test_play_control_and_volume(client, harness, speakers):
+    speakers.favs = [Favorite("Dinner", "playlist")]
+    await harness.sonos.look()
+    r = await client.post("/sonos/play", json={"rooms": ["Kitchen", "Living Room"], "name": "Dinner"})
+    assert r.status_code == 200 and r.json() == {"message": "Playing Dinner in Kitchen and Living Room."}
+    assert speakers.calls[-1] == ("play", "192.0.2.10", "Dinner", "playlist")
+    r = await client.post("/sonos/control", json={"room": "Kitchen", "action": "pause"})
+    assert r.status_code == 200 and r.json() == {"message": "Done: pause in Kitchen."}
+    r = await client.post("/sonos/volume", json={"room": "Kitchen", "level": 35})
+    assert r.status_code == 200 and speakers.volumes["192.0.2.10"] == 35
+
+
+async def test_panel_refusals(client, harness, speakers):
+    await harness.sonos.look()
+    r = await client.post("/sonos/play", json={"rooms": ["Kitchen"], "name": "Nothing"})
+    assert r.status_code == 409 and r.json()["detail"].startswith("No Sonos Favorite or playlist named 'Nothing'.")
+    r = await client.post("/sonos/volume", json={"room": "Kitchen", "level": 90})
+    assert r.status_code == 409 and r.json()["detail"] == "The highest volume ZenBot may set is 60."
+    assert (await client.post("/sonos/control", json={"room": "Kitchen", "action": "shuffle"})).status_code == 422
+    assert (await client.post("/sonos/volume", json={"room": "Kitchen", "level": 101})).status_code == 422
+    assert (await client.post("/sonos/play", json={"rooms": [], "name": "Dinner"})).status_code == 422
+    await client.put("/sonos/settings", json={"enabled": False, "max_volume": 60})
+    for path in ("/sonos/rooms", "/sonos/favorites"):
+        r = await client.get(path)
+        assert r.status_code == 409 and r.json()["detail"] == "Sonos is off."
+    r = await client.post("/sonos/control", json={"room": "Kitchen", "action": "pause"})
+    assert r.status_code == 409 and r.json()["detail"] == "Sonos is off."
+
+
+def _post_paths(harness):
+    router = sonos_router(harness.sonos, harness.sonos_tools)
+    return sorted(r.path for r in router.routes if "POST" in (getattr(r, "methods", None) or ()))
 
 
 async def test_every_post_needs_a_json_body(client, harness):
-    paths = _post_paths(harness.sonos)
-    assert paths == ["/sonos/discover"]
+    paths = _post_paths(harness)
+    assert paths == ["/sonos/control", "/sonos/discover", "/sonos/play", "/sonos/volume"]
     for path in paths:
         assert (await client.post(path)).status_code == 422
         assert (await client.post(path, content="x", headers={"content-type": "text/plain"})).status_code == 422
