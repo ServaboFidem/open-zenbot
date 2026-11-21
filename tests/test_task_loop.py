@@ -473,3 +473,17 @@ async def test_a_closed_bot_cannot_run_a_tool_it_was_not_offered(ledger: Ledger,
     assert "ok" in results["events_x"]
     assert ran == ["events"]
     assert not [e for e in ledger.tail(kind="tool_start", session_id=s.id) if e.data["tool"] != "events_x"]
+
+
+async def test_pinned_routine_gets_bot_mcps_sonos(bot: Bot, ledger: Ledger, tmp_path: Path):
+    # a routine of a bot with mcps [sonos] is offered the Sonos tools while they are registered
+    from src.harness.loop import Session
+
+    provider = ScriptedProvider([completion("ok")])
+    loop = make_loop(provider, ledger, tmp_path)
+    loop.selector = _NoSelect()
+    loop.tools.register("sonos_rooms", "rooms", {"type": "object", "properties": {}}, lambda: "ok", group="sonos")
+    bot.mcps = ["sonos"]
+    s = await loop.run(bot, "morning music", Session(bot_id=bot.id, task="morning music", pinned_skills=["research-brief"]))
+    assert s.route["mcps"] == ["sonos"]
+    assert "sonos_rooms" in set(provider.tools[0])
