@@ -127,9 +127,10 @@ class SocoSpeakers:
 
     @_guarded
     def favorites(self, ip: str) -> list[Favorite]:
-        library = self._zone(ip).music_library
-        favs = [Favorite(str(f.title), "favorite", f) for f in library.get_sonos_favorites(complete_result=True)]
-        lists = [Favorite(str(p.title), "playlist", p) for p in library.get_sonos_playlists(complete_result=True)]
+        zone = self._zone(ip)
+        # SoCo 0.32: Sonos Favorites are on the music library, Sonos playlists on the speaker itself
+        favs = [Favorite(str(f.title), "favorite", f) for f in zone.music_library.get_sonos_favorites(complete_result=True)]
+        lists = [Favorite(str(p.title), "playlist", p) for p in zone.get_sonos_playlists(complete_result=True)]
         return favs + lists
 
     @_guarded

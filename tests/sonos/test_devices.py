@@ -147,3 +147,26 @@ def test_other_errors_map_to_other(monkeypatch):
     with pytest.raises(SpeakerError) as e:
         SocoSpeakers().play("192.0.2.10", Favorite("Dinner", "playlist", Ref("object.container.playlistContainer")))
     assert e.value.kind == "other"
+
+
+def test_favorites_reads_sonos_playlists_from_the_speaker(monkeypatch):
+    # SoCo 0.32: Sonos Favorites are on the music library, Sonos playlists on the speaker itself
+    zone = StubZone("RINCON_A", "Kitchen", "192.0.2.10")
+    fav, pl = SimpleNamespace(title="Morning Jazz"), SimpleNamespace(title="Dinner")
+    asked = []
+
+    def favorites(complete_result=False):
+        asked.append(("favorites", complete_result))
+        return [fav]
+
+    def playlists(*args, **kwargs):
+        asked.append(("playlists", kwargs.get("complete_result")))
+        return [pl]
+
+    zone.music_library = SimpleNamespace(get_sonos_favorites=favorites)
+    zone.get_sonos_playlists = playlists
+    stub_soco(monkeypatch, [zone])
+    got = SocoSpeakers().favorites("192.0.2.10")
+    assert [(f.title, f.kind) for f in got] == [("Morning Jazz", "favorite"), ("Dinner", "playlist")]
+    assert got[0].item is fav and got[1].item is pl
+    assert asked == [("favorites", True), ("playlists", True)]
