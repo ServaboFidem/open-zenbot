@@ -295,3 +295,28 @@ def test_a_narrator_never_takes_a_skill(vault, tmp_path):
     skill = type("S", (), {"slug": "pdf"})()
     bot = Bot(name="Narrator", role="r", narrates=True)
     assert bot.attach_skill(skill) == (SkillState.nothing, Reason.unsupported) and bot.skills == []
+
+
+# -- CodeRabbit review (PR 27) ----------------------------------------------------------------------
+
+async def test_a_settings_change_during_narration_does_not_mix_configurations(tmp_path):
+    seen: list = []
+    s, ledger = _speech(tmp_path, _ok_tts(seen))
+
+    class Reconfiguring:
+        async def complete(self, messages, model=None):
+            s.reconfigure(SpeechConfig(model="other/tts", voice="Puck"))  # PUT /settings/tools/speech lands mid-call
+            return completion("Spoken.")
+    await s.speak("hello", NARRATOR, lambda bot: (Reconfiguring(), None))
+    assert seen[0]["model"] == "google/gemini-3.8-flash-lite-tts" and seen[0]["voice"] == "Zephyr"
+    [entry] = [e for e in ledger.iter() if e.kind == "speech"]
+    assert entry.data["model"] == seen[0]["model"] and entry.data["voice"] == "Zephyr"
+
+
+async def test_the_narrator_takes_no_mcps_through_edit_bot(vault, tmp_path):
+    h, c = _app(vault, tmp_path)
+    async with c:
+        r = await c.patch("/bots/narrator", json={"mcps": ["sonos"]})
+        assert r.status_code == 422 and r.json()["detail"] == "The Narrator has no tool groups."
+        assert (await c.patch("/bots/narrator", json={"mcps": [], "role": "Reads."})).status_code == 200
+    assert h.bots["narrator"].mcps == [] and h.bots["narrator"].role == "Reads."

@@ -1644,6 +1644,8 @@ def create_app(h: Harness) -> FastAPI:
                 and (model_id is None or ch.model == model_id) and (r != "decision" or roles.scorer)]
         if h.images and h.images.config.enabled and h.images.config.provider == provider_id and model_id in (None, h.images.config.model):
             used.append("Image generation")
+        if h.speech and h.speech.config.enabled and h.speech.config.provider == provider_id and model_id in (None, h.speech.config.model):
+            used.append("Read aloud")
         used += [f"bot {h.bots[b].name}" for b, ch in (h.bot_models or {}).items()
                  if b in h.bots and ch.provider == provider_id and model_id in (None, ch.model)]
         return used
@@ -2755,6 +2757,8 @@ def create_app(h: Harness) -> FastAPI:
         bot = _bot(h, bot_id)
         if bot.closed and body.mcps is not None and list(body.mcps) != list(bot.mcps):
             raise HTTPException(422, "This bot's tools are fixed in its file.")
+        if bot.narrates and body.mcps:  # its file would no longer load with any
+            raise HTTPException(422, "The Narrator has no tool groups.")
         if body.name is not None:
             bot.name = body.name
         if body.role is not None:

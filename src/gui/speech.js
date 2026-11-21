@@ -51,6 +51,7 @@ export function createReader({ speak, player, onError }) {
     cancel() { seq++; player.stop(); },
     async read(item, isOn) {
       const mine = ++seq;
+      player.stop();  // a newer reply: the last one stops now, not when this one arrives
       let blob;
       try { blob = await speak(item.text); } catch (e) { if (mine === seq) onError(item, e); return; }
       if (mine !== seq || !isOn()) return;

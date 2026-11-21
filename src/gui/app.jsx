@@ -211,6 +211,7 @@ function App() {
   const [speakOn, setSpeakOn] = useState(() => { try { return readSpeakOn(localStorage); } catch { return false; } });
   const speakOnRef = useRef(speakOn); speakOnRef.current = speakOn;
   const speakWaiting = useRef(new Set());
+  const speakEpoch = useRef(0);  // turning the toggle off ends every message's chance to be read, even one still being sent
   const [speechFailed, setSpeechFailed] = useState(null);  // { sessionId, message }: the reply that could not be read
   const speech = useRef(null);  // a newer reply, a new message, the toggle off or a change of chat cancels a reading
   if (speech.current === null) {
@@ -220,9 +221,9 @@ function App() {
   function toggleSpeak() {
     const on = !speakOn; setSpeakOn(on);
     try { writeSpeakOn(localStorage, on); } catch { /* no storage: this page only */ }
-    if (!on) { speakWaiting.current.clear(); speech.current.cancel(); }
+    if (!on) { speakWaiting.current.clear(); speakEpoch.current++; speech.current.cancel(); }
   }
-  useEffect(() => { speech.current.cancel(); }, [bot?.id, conv?.current]);
+  useEffect(() => { speech.current.cancel(); }, [bot?.id, conv?.current, mode, roomId]);  // a room has no Read aloud button
   useEffect(() => () => speech.current.cancel(), []);
   useEffect(() => {
     const next = toSpeak(exchanges, speakWaiting.current);
@@ -567,6 +568,7 @@ function App() {
   // A chat task joins the shown conversation; a routine passes { conversation: false } and joins none.
   async function start(botId, task, { conversation = true, protected: block, designComments, conversationId: into, answersTo, redoOf } = {}) {
     const conversationId = into || (conversation && conv?.botId === botId ? conv.current || undefined : undefined);
+    const listenEpoch = speakOnRef.current ? speakEpoch.current : -1;  // decided when sent: turning it on later never reads this one
     const r = await guard(() => api.startTask(botId, task, { conversationId, conversation, protected: block, designComments, answersTo, redoOf }));
     if (!r) return;
     // only once the harness took it: a refusal leaves the picks. Only the picks that were sent: the user
@@ -576,7 +578,7 @@ function App() {
     // the routine's activity still reaches the panel through the ledger trail
     if (!conversation && liveRef.current) { api.sessions().then(setSessions).catch(() => {}); log('Routine started', task); return; }
     stopEvents.current?.();
-    if (conversation) { speech.current.cancel(); if (speakOnRef.current) speakWaiting.current.add(r.session_id); }  // a new message stops a reading, one on its way too
+    if (conversation) { speech.current.cancel(); if (listenEpoch === speakEpoch.current && speakOnRef.current) speakWaiting.current.add(r.session_id); }  // a new message stops a reading, one on its way too
     setLive({ sessionId: r.session_id, botId, events: [] });
     api.sessions().then(setSessions).catch(() => {});
     if (conversation) loadConversation(botId);

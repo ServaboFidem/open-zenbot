@@ -154,8 +154,9 @@ class Speech:
             key = self.resolve(ref)
         except (SecretNotFound, ValueError):
             raise SpeechError(409, NO_KEY) from None
+        speaker, tts_model, voice = self.provider, self.config.model, self.config.voice  # a settings save mid-call cannot mix them
         provider, model = model_for(narrator)
-        log = {"chars_in": len(text), "model": self.config.model, "voice": self.config.voice, "narrator_model": model or ""}
+        log = {"chars_in": len(text), "model": tts_model, "voice": voice, "narrator_model": model or ""}
         try:
             done = await provider.complete(narrator_messages(narrator, text[:NARRATE_IN_MAX]), model=model)
         except ProviderError as e:
@@ -167,7 +168,7 @@ class Speech:
             self._log(narrator, **log, stage="narrate", error="empty")
             raise SpeechError(502, EMPTY)
         try:
-            wav = await self.provider.speak(key, self.config.model, self.config.voice, spoken)
+            wav = await speaker.speak(key, tts_model, voice, spoken)
         except ProviderError as e:
             self._log(narrator, **log, stage="speak", error=failure_kind(e) or "other")
             raise SpeechError(502, SPEAK_FAILED) from None

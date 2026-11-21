@@ -92,3 +92,11 @@ test('the player passes a playback refusal on', async () => {
   const player = createPlayer({ Audio: Refusing, URL: { createObjectURL: () => 'blob:1', revokeObjectURL() {} } });
   await assert.rejects(player.play('wav'));
 });
+
+test('a new reading stops the one playing before it fetches', async () => {
+  const { createReader } = await import('../../src/gui/speech.js');
+  const calls = [];
+  const reader = createReader({ speak: async () => { calls.push('speak'); throw new Error('off'); }, player: { play() {}, stop() { calls.push('stop'); } }, onError() {} });
+  await reader.read({ sessionId: 's2', text: 'b' }, () => true);
+  assert.deepEqual(calls, ['stop', 'speak']);
+});
