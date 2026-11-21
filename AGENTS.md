@@ -6,10 +6,10 @@ name each top-level system and run the harness and the tests.
 | Path | What |
 | --- | --- |
 | `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`); the design studio (`design_studio.py`: numbered copies, comment block, preview bridge `design_bridge.js`; `design_systems.py`: loading and checking design systems; `design_html.py`: the HTML scan; `design_images.py`: pictures as files; `design_parts.py`: slots, worksheet, apply; `studio_helpers.py`: a helper's turn, apply and restore; `studio_help.py`: routing a revision); coding agents: `agent_clis.py` (find, sign-in, switches), `delegation.py` (the `delegate` tool, runner, folder rules), `dream_routes.py` (the `/dream` routes) |
-| `src/providers/` | Provider interface, registry, provider store (`providers.json`) and secrets, OpenRouter and OpenAI-compatible adapters, model listing and probing, the image provider, Langfuse tracing |
+| `src/providers/` | Provider interface, registry, provider store (`providers.json`) and secrets, OpenRouter and OpenAI-compatible adapters, model listing and probing, the image provider, the speech provider (`speech.py`), Langfuse tracing |
 | `src/decider/` | Decider interface, scorer registry (each scorer names the provider kinds its model may be on, `registry.provider_kinds`), skill and MCP routing (band and floor), skill-to-bot fit, supervisor, `answers.py` (typed answers from a probability per option), `adapters/`: `decision_model.py` (`openrouter-decision-1`, OpenRouter's Decisions API), `letter_model.py` (`letter-logprobs`, a local decision model asked through chat) and `systemone.py` (`systemone`, a local server's own decision route); see `### Local decision models` |
 | `src/context/` | Compaction, the protected (pinned) task, transcript rendering |
-| `src/generation/` | Generator boundary: compaction summaries and folds, vault summaries; the `image.generate` tool (`images.py`) |
+| `src/generation/` | Generator boundary: compaction summaries and folds, vault summaries; the `image.generate` tool (`images.py`); reading replies aloud (`speech.py`: the Narrator, then the speech model) |
 | `src/memory/` | Exclusion filter (secrets and approvals), ledger (`ledger.py`), recall, ingest, directory import, learning from a crawl, profile memory and store routing, Hindsight store and processes, dreaming (`dream.py`: learning facts from the user's own messages while idle) |
 | `src/rooms/` | Rooms, turns, handoff, orchestrator |
 | `src/music/` | Music discovery: Discogs scan, taste profile, the Soundlore atlas, MusicBrainz and YouTube Music lookups, candidates, the album gate, digests, `music_*` tools, `/music` routes |
@@ -19,7 +19,7 @@ name each top-level system and run the harness and the tests.
 | `src/sonos/` | Sonos control over SoCo: settings (`settings.py`), the device boundary (`devices.py`), the service that finds speakers (`service.py`), the `sonos_*` tools and the volume ceiling (`tools.py`) and the `/sonos` routes (`routes.py`); see `### Sonos` |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
 | `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, the approval dialog `ApprovalDialog.jsx` + `approval-dialog.js` (any pending approval opens it over whatever page is open, oldest first; `app.jsx` reads `GET /approvals` every 5 s while online and on a live `approval_request` event; closing it or Decide later decides nothing and puts that request off until a reload; it does not open on the Approvals page; never seen on screen with a real approval), program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; `open-vault.cjs` opens the vault's root in the OS file manager for the home page's Browse your vault button, shown in the desktop app only: the page sends no path, the folder is `ZEN_VAULT` as the main process reads it, checked by `tests/gui/open-vault.test.mjs`; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (AgentMail: the section at the top of Settings > Connected apps `MailSettings.jsx`, the AgentMail page `MailPage.jsx` (shown in the navigation below Conversations once a key is saved and an inbox chosen), their decisions in `mail.js` and styles in `mail.css`, through `mail-api.js`) (Sonos: the section of Settings > Connected apps `SonosSettings.jsx`, its decisions in `sonos.js`, and the Music > Sonos page `SonosPage.jsx` with its decisions in `sonos-panel.js` and styles in `sonos.css`, both through `sonos-api.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) |
-| `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`); a prompt can also set `closed: true` (only the tool groups in its `mcps`, no built-in tool, never in a room: `event-scout.md`) |
+| `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`); a prompt can also set `closed: true` (only the tool groups in its `mcps`, no built-in tool, never in a room: `event-scout.md`), or `narrates: true` (the Narrator, `narrator.md`: asked directly to rewrite replies for speech, never given a task) |
 | `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+), and `fetch-uv.mjs` (downloads the pinned uv into `build/bin/` for the installers). Packaging itself is `electron-builder.yml`, `build/` (icon, the .deb's AppArmor profile `apparmor-profile`, the NSIS include `installer.nsh`) and `packaging/harness/` (the CPU-only `pyproject.toml` and `uv.lock` the installed app uses) |
 | `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`); `skills/events-digest/` (the scout's weekly run); `skills/sonos-morning/` (ZenBot's morning music routine) |
@@ -994,6 +994,50 @@ first lowering every speaker above the ceiling. Every `/sonos` POST takes a requ
 commands), `test_routes.py`, the prompt checks in `tests/test_bot_prompts.py` (ZenBot carries `sonos-morning`), the
 routine in `tests/test_task_loop.py`; GUI `tests/gui/sonos.test.mjs`, `sonos-panel.test.mjs`,
 `sonos-api.test.mjs` and `settings-index.test.mjs`.
+
+### Reading replies aloud
+
+A Read aloud button in the chat header reads each new reply aloud on the computer's own speakers. The Narrator bot
+rewrites the reply for the ear, then OpenRouter's text-to-speech speaks it. Wi-Fi speakers (AirPlay, Chromecast,
+DLNA) are not built. Design: `docs/superpowers/specs/2026-11-21-narrator-speech-design.md` (git-ignored, on the
+computer the work was done on).
+
+- **The Narrator** (`bot-prompts/narrator.md`, `narrates: true`, set only in the file; `bot_prompts.parse` refuses it
+  beside `studio`, `places`, `closed`, skills or mcps). It is asked directly with one completion
+  (`generation/speech.py` `narrator_messages`: its prompt as the system message, the reply fenced in the user message
+  as content, the fence longer than any backtick run in the reply), on its own model (Edit bot) or the chat model
+  (`Harness._model_for`). No task, session, tools or conversation, so dreaming never reads a reply as the user's words.
+  `POST /bots/{id}/tasks` answers 409 for it, a routine on it fails, the orchestrator never asks about it and it never
+  joins a room (`RoomService.joinable`). Its chat page shows a note instead of the composer.
+- **Speech** (`src/providers/speech.py` `OpenRouterSpeech`): `POST /api/v1/audio/speech` with `response_format: "pcm"`
+  (Gemini TTS answers only PCM), wrapped in a WAV header (`pcm_to_wav`: 24 kHz, 16-bit, mono, assumed). A 200 answer
+  with a JSON content type is refused as no audio (`OpenRouterHttp.post_bytes`).
+- **Settings** in `vault-settings/tools.json` under `speech` (`SpeechConfig`: `provider` `openrouter`, `model`
+  `google/gemini-3.8-flash-lite-tts`, `voice` `Zephyr` (`VOICE_RE`), `enabled`), the Read aloud card on Settings >
+  Harness Tools; the key is the speech provider's, resolved per call (`Harness._speech_key_ref`).
+- **Routes** (`src/harness/speech_routes.py`): `POST /speech` (`{text}`, 1 to 20,000 characters, else 422; the
+  Narrator gets at most 12,000 and its answer is cut to 4,000) answers `audio/wav` with `nosniff` and `no-store`; 409
+  with a sentence when off, without a Narrator or without a key, 502 when the Narrator or the speech model fails or the
+  Narrator answers nothing. `PUT /settings/tools/speech` (`{enabled?, provider?, model?, voice?}`; a new model must be an
+  enabled `tts` model). `GET /settings/tools` lists it with `kind: "tts"` beside image generation (`kind: "image"`).
+- **The GUI** (`src/gui/speech.js`, wired in `app.jsx`): the toggle is remembered in `localStorage`
+  (`openzenbot.speakReplies`). Only a session started from that chat while the toggle is on is read (`toSpeak`), never
+  an old reply, a routine run or a room. A newer reply, a new message, turning the toggle off or changing bot or
+  conversation stops playback. The page plays a blob URL, so `index.html`'s CSP allows `blob:` in `media-src`. A failure
+  shows "Could not read this reply aloud." under the reply.
+- **Ledger.** Kind `speech`: `chars_in`, `chars_out`, `bytes`, `model`, `voice`, `narrator_model`, and on failure
+  `stage` (`narrate` or `speak`) and `error` (a `failure_kind`, or `empty`). Never the text. With tracing on, the
+  Narrator's call and the speech call are traced like every model call, the reply and the spoken text with them.
+- **Unverified.** No request has reached OpenRouter's speech endpoint: the tests use a mock transport. Whether
+  `google/gemini-3.8-flash-lite-tts` answers 24 kHz mono PCM, and takes `Zephyr`, is from OpenRouter's docs, not a call.
+  The Narrator prompt has never run with a model. The button, the playback and the settings card have not been seen on
+  screen: only `npm test` and the build have run them.
+
+Rules for contributors: never give the Narrator a task, tools or a conversation, and never put the reply in its
+system message. No text in a `speech` ledger entry or a log line. Keep `speech` in `vault-settings/tools.json`. Every
+POST takes a required JSON body. Tests never touch the network. Tests: `tests/test_speech.py`, the `narrates` checks in
+`tests/test_bot_prompts.py`, `tests/test_rooms.py` and `tests/test_orchestrator.py`; GUI `tests/gui/speech.test.mjs`
+and the CSP check in `tests/gui/shell.test.mjs`.
 
 ### Design studio
 
