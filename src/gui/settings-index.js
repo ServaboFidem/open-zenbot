@@ -19,6 +19,7 @@ export const PANELS = [
   { id: 'folders', name: 'Allowed Folders', description: 'The folders outside the vault that bots may read or write.' },
   { id: 'calendar', name: 'Calendar', description: 'Google Calendar: your own Google app, which calendars to bring in, and sending events made here to Google.' },
   { id: 'tracing', name: 'Tracing', description: 'Where errors and traces go: Sentry, GlitchTip and Langfuse.' },
+  { id: 'ledger', name: 'Ledger', description: 'Everything on the record: model calls, tool calls, decider scores, approvals, memory and settings changes.' },
   { id: 'memory', name: 'Memory', description: 'Your name in memory, and rebuilding what the bots have learned.' },
   { id: 'apps', name: 'Connected apps', description: "AgentMail, ZenBot's own email address, and Sonos speakers; other app connections are a mockup for now." },
   { id: 'about', name: 'About', description: 'What this app does, and its license.' },
@@ -107,6 +108,10 @@ export const SECTIONS = [
     'Public key: Settings › API Keys in your Langfuse project.', 'Secret key',
     'Server: your Langfuse URL. Empty means Langfuse Cloud (EU).',
     'Environment: keeps test traces apart from real ones, e.g. production or development.',
+  ]),
+  whole('ledger', [
+    'Model calls, tool calls, decider scores, pauses, approvals, memory, and settings changes. Secrets are redacted before they are written.',
+    'Kind', 'All kinds', 'Refresh', 'log', 'history', 'activity', 'audit', 'record',
   ]),
   section('memory', 'About you', ['Your name', 'Also called: nicknames, separated by commas', 'Owner']),
   section('memory', 'Rebuild memory', ["Re-learn everything shared under the current knowledge model: people, organizations, and how they relate. Your facts and each bot's private memory stay."]),
