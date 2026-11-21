@@ -71,6 +71,8 @@ def test_no_module_outside_providers_imports_a_provider_client():
             continue
         if "mail" in path.relative_to(REPO / "src").parts[:1]:  # the AgentMail API, not an LLM provider
             continue
+        if "sonos" in path.relative_to(REPO / "src").parts[:1]:  # SoCo's speaker requests (requests errors), not an LLM provider
+            continue
         if CLIENT_IMPORTS.search(path.read_text(encoding="utf-8")):
             offenders.append(str(path.relative_to(REPO)))
     assert offenders == [], f"provider clients must stay behind src/providers/: {offenders}"
