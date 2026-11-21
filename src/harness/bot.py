@@ -48,6 +48,8 @@ class Bot:
     narrates: bool = False  # the bot file's `narrates`: the Narrator, asked directly to rewrite replies for speech; takes no task
 
     def attach_skill(self, skill: Skill, max_per_bot: int = 250) -> tuple[SkillState, Reason | None]:
+        if self.narrates:  # the Narrator has no skills: its file would no longer load with one
+            return SkillState.nothing, Reason.unsupported
         if any(s.slug == skill.slug for s in self.skills):
             return SkillState.nothing, Reason.duplicate
         if len(self.skills) >= max_per_bot:

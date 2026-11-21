@@ -2,6 +2,7 @@
 // that plays one reply at a time. The harness does the work (POST /speech: the Narrator, then the speech model).
 
 export const SPEAK_KEY = 'openzenbot.speakReplies';
+export const SPEAK_MAX = 12000;  // what the Narrator reads; the rest of a long reply is never sent
 
 export function readSpeakOn(storage) {
   try { return storage?.getItem(SPEAK_KEY) === '1'; } catch { return false; }
@@ -19,7 +20,7 @@ export function toSpeak(exchanges, waiting) {
     const ex = exchanges[i];
     if (!ex || !waiting.has(ex.session_id) || ex.outcome === 'pending') continue;
     const text = typeof ex.reply === 'string' ? ex.reply.trim() : '';
-    if (text) return { sessionId: ex.session_id, text };
+    if (text) return { sessionId: ex.session_id, text: text.slice(0, SPEAK_MAX) };
   }
   return null;
 }
@@ -37,7 +38,23 @@ export function createPlayer({ Audio, URL } = {}) {
     audio = new Audio(url);
     const done = audio;
     audio.onended = () => { if (audio === done) stop(); };
-    return Promise.resolve(audio.play()).catch(() => {});
+    return Promise.resolve(audio.play());
   }
   return { play, stop };
+}
+
+// Fetches a reading and plays it, unless it was cancelled (a new message, a newer reply, the toggle off, another
+// chat) while on its way. `onError(item, error)` hears a reading that could not be fetched or played.
+export function createReader({ speak, player, onError }) {
+  let seq = 0;
+  return {
+    cancel() { seq++; player.stop(); },
+    async read(item, isOn) {
+      const mine = ++seq;
+      let blob;
+      try { blob = await speak(item.text); } catch (e) { if (mine === seq) onError(item, e); return; }
+      if (mine !== seq || !isOn()) return;
+      try { await player.play(blob); } catch { if (mine === seq) onError(item, new Error('The reply could not be played.')); }
+    },
+  };
 }

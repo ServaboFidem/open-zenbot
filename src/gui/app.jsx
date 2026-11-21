@@ -39,7 +39,7 @@ import { importLegacyRoutines, persistWorkspace, dropLegacyRoutines, importNotic
 import { describeOutcome, formatWhen } from './routine-schedule.js';
 import { arrivalText, scheduleLabel, weeklyArrival } from './music/helpers.js';
 import { choiceKey, defaultModelLabel, enabledByKind, modelName, modelLabel, parseChoice } from './models.js';
-import { createPlayer, readSpeakOn, toSpeak, writeSpeakOn } from './speech.js';
+import { createPlayer, createReader, readSpeakOn, toSpeak, writeSpeakOn } from './speech.js';
 import { createApi, HarnessError, harnessUrl } from './api';
 import { startTelemetry } from './telemetry';
 import { recallAdapter } from './knowledge-adapter';
@@ -211,26 +211,25 @@ function App() {
   const [speakOn, setSpeakOn] = useState(() => { try { return readSpeakOn(localStorage); } catch { return false; } });
   const speakOnRef = useRef(speakOn); speakOnRef.current = speakOn;
   const speakWaiting = useRef(new Set());
-  const speakSeq = useRef(0);  // a newer reply, a toggle off or a change of chat drops a reading still on its way
-  const speech = useRef(null);
-  if (speech.current === null) speech.current = typeof Audio === 'undefined' ? { play() {}, stop() {} } : createPlayer({ Audio, URL });
   const [speechFailed, setSpeechFailed] = useState(null);  // { sessionId, message }: the reply that could not be read
+  const speech = useRef(null);  // a newer reply, a new message, the toggle off or a change of chat cancels a reading
+  if (speech.current === null) {
+    const player = typeof Audio === 'undefined' ? { play: async () => {}, stop() {} } : createPlayer({ Audio, URL });
+    speech.current = createReader({ speak: text => api.speak(text), player, onError: (item, e) => setSpeechFailed({ sessionId: item.sessionId, message: e?.message || '' }) });
+  }
   function toggleSpeak() {
     const on = !speakOn; setSpeakOn(on);
     try { writeSpeakOn(localStorage, on); } catch { /* no storage: this page only */ }
-    if (!on) { speakWaiting.current.clear(); speakSeq.current++; speech.current.stop(); }
+    if (!on) { speakWaiting.current.clear(); speech.current.cancel(); }
   }
-  useEffect(() => { speakSeq.current++; speech.current.stop(); }, [bot?.id, conv?.current]);
-  useEffect(() => () => speech.current.stop(), []);
+  useEffect(() => { speech.current.cancel(); }, [bot?.id, conv?.current]);
+  useEffect(() => () => speech.current.cancel(), []);
   useEffect(() => {
     const next = toSpeak(exchanges, speakWaiting.current);
     if (!next) return;
     speakWaiting.current.delete(next.sessionId);
-    const seq = ++speakSeq.current;
     setSpeechFailed(null);
-    api.speak(next.text)
-      .then(blob => { if (seq === speakSeq.current && speakOnRef.current) speech.current.play(blob); })
-      .catch(e => { if (seq === speakSeq.current) setSpeechFailed({ sessionId: next.sessionId, message: e?.message || '' }); });
+    speech.current.read(next, () => speakOnRef.current);
   }, [exchanges]);
   const [picks, setPicks] = useState([]);  // the user's picks on the newest design revision, sent as comments
   useEffect(() => { setPicks([]); }, [bot?.id, conv?.current, newestRev?.attId]);
@@ -577,7 +576,7 @@ function App() {
     // the routine's activity still reaches the panel through the ledger trail
     if (!conversation && liveRef.current) { api.sessions().then(setSessions).catch(() => {}); log('Routine started', task); return; }
     stopEvents.current?.();
-    if (conversation) { speech.current.stop(); if (speakOnRef.current) speakWaiting.current.add(r.session_id); }  // a new message stops a reading
+    if (conversation) { speech.current.cancel(); if (speakOnRef.current) speakWaiting.current.add(r.session_id); }  // a new message stops a reading, one on its way too
     setLive({ sessionId: r.session_id, botId, events: [] });
     api.sessions().then(setSessions).catch(() => {});
     if (conversation) loadConversation(botId);

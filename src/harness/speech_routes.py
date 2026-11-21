@@ -4,20 +4,22 @@ site's page cannot send one without a preflight. No route returns or logs the te
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from src.generation.speech import DEFAULT_MODEL, VOICE_RE, SpeechConfig, SpeechError
 from src.memory.ledger import Kind
 
 TEXT_MAX = 20_000
+log = logging.getLogger(__name__)
 
 
 class SpeechIn(BaseModel):
-    text: str = Field(min_length=1, max_length=TEXT_MAX)
+    text: str  # its length is checked in the route: a validation error would echo the whole reply back
 
 
 class SpeechToolIn(BaseModel):
@@ -46,12 +48,17 @@ def speech_router(h) -> APIRouter:
     async def speak(body: SpeechIn) -> Response:
         if not body.text.strip():
             raise HTTPException(422, "There is nothing to read.")
+        if len(body.text) > TEXT_MAX:
+            raise HTTPException(422, "That reply is too long to read aloud.")
         if h.speech is None:
             raise HTTPException(503, "Reading aloud is not available on this harness.")
         try:
             wav = await h.speech.speak(body.text, narrator(h), h._model_for)
         except SpeechError as e:
             raise HTTPException(e.status, str(e)) from None
+        except Exception as e:  # the reply is in this call's frames: no traceback leaves for the error tracker
+            log.warning("reading aloud failed: %s", type(e).__name__)
+            raise HTTPException(502, "Reading aloud failed. Try again in a moment.") from None
         return Response(wav, media_type="audio/wav", headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
     @r.put("/settings/tools/speech")

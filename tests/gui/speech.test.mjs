@@ -60,3 +60,35 @@ test('api.speak carries the harness sentence on a refusal', async () => {
   const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
   await assert.rejects(api.speak('Hello'), e => e instanceof HarnessError && e.status === 409 && e.message === 'Reading aloud is off.');
 });
+
+test('toSpeak sends at most what the Narrator reads', async () => {
+  const { SPEAK_MAX } = await import('../../src/gui/speech.js');
+  assert.equal(SPEAK_MAX, 12000);
+  const got = toSpeak([{ session_id: 's', outcome: 'done', reply: 'x'.repeat(30000) }], new Set(['s']));
+  assert.equal(got.text.length, 12000);
+});
+
+test('a reader drops a reading cancelled while it was on its way', async () => {
+  const { createReader } = await import('../../src/gui/speech.js');
+  let release; const played = []; const errors = [];
+  const reader = createReader({ speak: () => new Promise(r => { release = r; }), player: { play: b => { played.push(b); return Promise.resolve(); }, stop() {} }, onError: (item, e) => errors.push(e) });
+  const going = reader.read({ sessionId: 's1', text: 'a' }, () => true);
+  reader.cancel();  // a new message was sent
+  release('wav'); await going;
+  assert.deepEqual(played, []); assert.deepEqual(errors, []);
+});
+
+test('a reader reports a reading that could not play, and a failed fetch', async () => {
+  const { createReader } = await import('../../src/gui/speech.js');
+  const errors = [];
+  const onError = (item, e) => errors.push([item.sessionId, e.message]);
+  await createReader({ speak: async () => 'wav', player: { play: () => Promise.reject(new Error('blocked')), stop() {} }, onError }).read({ sessionId: 's1', text: 'a' }, () => true);
+  await createReader({ speak: async () => { throw new Error('off'); }, player: { play() {}, stop() {} }, onError }).read({ sessionId: 's2', text: 'a' }, () => true);
+  assert.deepEqual(errors, [['s1', 'The reply could not be played.'], ['s2', 'off']]);
+});
+
+test('the player passes a playback refusal on', async () => {
+  class Refusing { constructor() {} play() { return Promise.reject(new Error('NotAllowedError')); } pause() {} }
+  const player = createPlayer({ Audio: Refusing, URL: { createObjectURL: () => 'blob:1', revokeObjectURL() {} } });
+  await assert.rejects(player.play('wav'));
+});

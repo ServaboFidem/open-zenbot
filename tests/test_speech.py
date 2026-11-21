@@ -267,3 +267,31 @@ def test_the_harness_builds_speech_from_saved_settings(vault, tmp_path):
     cfg.validate()
     h = Harness(config=cfg, provider=None, ledger=Ledger(vault), catalog=Catalog())
     assert isinstance(h.speech, Speech) and h.speech.config.voice == "Kore" and h.speech.ledger is h.ledger
+
+
+# -- review fixes ---------------------------------------------------------------------------------
+
+async def test_a_reply_over_the_limit_is_refused_with_a_sentence_not_echoed(vault, tmp_path):
+    _, c = _app(vault, tmp_path)
+    async with c:
+        r = await c.post("/speech", json={"text": "privateword " * 2000})
+    assert r.status_code == 422 and "privateword" not in r.text
+    assert r.json()["detail"] == "That reply is too long to read aloud."
+
+
+async def test_an_unexpected_failure_is_502_and_carries_no_text(vault, tmp_path):
+    h, c = _app(vault, tmp_path)
+
+    async def boom(text, narrator, model_for):
+        raise RuntimeError("boom")
+    h.speech.speak = boom
+    async with c:
+        r = await c.post("/speech", json={"text": "privateword"})
+    assert r.status_code == 502 and r.json()["detail"] == "Reading aloud failed. Try again in a moment."
+
+
+def test_a_narrator_never_takes_a_skill(vault, tmp_path):
+    from src.skills.loader import Reason, SkillState
+    skill = type("S", (), {"slug": "pdf"})()
+    bot = Bot(name="Narrator", role="r", narrates=True)
+    assert bot.attach_skill(skill) == (SkillState.nothing, Reason.unsupported) and bot.skills == []
