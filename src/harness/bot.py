@@ -45,6 +45,7 @@ class Bot:
     studio: bool = False  # the bot file's `studio`: a design bot, shown with a preview pane
     places: list[str] = field(default_factory=list)  # the bot file's `places`: "text" and/or "images", what it can place in a design
     closed: bool = False  # the bot file's `closed`: only the tools of `mcps`, whatever the router or a skill adds
+    narrates: bool = False  # the bot file's `narrates`: the Narrator, asked directly to rewrite replies for speech; takes no task
 
     def attach_skill(self, skill: Skill, max_per_bot: int = 250) -> tuple[SkillState, Reason | None]:
         if any(s.slug == skill.slug for s in self.skills):
@@ -103,4 +104,5 @@ class Bot:
             "studio": self.studio,
             "places": list(self.places),
             "closed": self.closed,
+            "narrates": self.narrates,
         }

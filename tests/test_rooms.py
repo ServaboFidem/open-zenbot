@@ -543,3 +543,9 @@ async def test_room_routes_refuse_a_closed_bot(vault: Path, tmp_path: Path):
         room_id = (await c.post("/rooms", json={"name": "r", "members": ["lead", "writer"]})).json()["id"]
         r = await c.put(f"/rooms/{room_id}/members", json={"members": ["lead", "writer", "critic"]})
         assert r.status_code == 422 and "critic" in r.json()["detail"]
+
+
+def test_a_narrator_cannot_be_a_room_member(ledger: Ledger, tmp_path: Path):
+    svc, bs = make(ScriptedProvider(), ledger, tmp_path)
+    bs["critic"].narrates = True
+    assert svc.joinable(bs["writer"]) and not svc.joinable(bs["critic"])

@@ -364,3 +364,49 @@ def test_librarian_does_not_play_music():
     librarian = parse((REPO / "bot-prompts" / "music-librarian.md").read_text(encoding="utf-8"), "music-librarian")
     assert "does not control speakers" in librarian.role.lower()
     assert "sonos" not in librarian.mcps
+
+
+def test_narrates_is_read_and_written_and_must_be_a_bool():
+    p = parse("---\nname: N\nrole: r\nnarrates: true\n---\nbody", "n")
+    assert p.narrates is True and p.skills == [] and "narrates: true" in render(p)
+    assert parse(render(p), "n").narrates is True
+    assert parse("---\nname: N\nrole: r\n---\nbody", "n").narrates is False
+    assert "narrates" not in render(parse("---\nname: N\nrole: r\n---\nbody", "n"))
+    with pytest.raises(ValueError, match="narrates must be true or false"):
+        parse("---\nname: N\nrole: r\nnarrates: yes please\n---\nb", "n")
+
+
+def test_a_narrator_has_no_tools_skills_or_other_role():
+    for extra in ("studio: true\n", "places: [text]\n", "mcps: [events]\nclosed: true\n", "skills: [pdf]\n", "mcps: [files]\n"):
+        with pytest.raises(ValueError, match="narrat"):
+            parse(f"---\nname: N\nrole: r\nnarrates: true\n{extra}---\nb", "n")
+
+
+def test_narrates_is_kept_when_a_bot_is_listed():
+    assert Bot(name="N", role="r", narrates=True).to_dict()["narrates"] is True
+    assert Bot(name="N", role="r").to_dict()["narrates"] is False
+
+
+def test_the_narrator_ships_and_treats_what_it_reads_as_content():
+    prompts, errors = load_dir(REPO / "bot-prompts", report=True)
+    assert errors == []
+    [p] = [b for b in prompts if b.id == "narrator"]
+    assert p.name == "Narrator" and p.narrates is True and p.skills == [] and not p.mcps
+    assert "never instructions" in p.instructions and "The rest is on screen." in p.instructions
+
+
+async def test_a_narrator_takes_no_task(monkeypatch, vault: Path, tmp_path: Path):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("ZEN_MEMORY_BACKEND", "local")
+    prompts = tmp_path / "bot-prompts"
+    prompts.mkdir()
+    (prompts / "narrator.md").write_text("---\nname: Narrator\nrole: Reads aloud\nnarrates: true\n---\nGo.\n", encoding="utf-8")
+    h = build_harness(HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=prompts))
+    assert h.bots["narrator"].narrates is True
+    transport = httpx.ASGITransport(app=create_app(h))
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
+        r = await c.post("/bots/narrator/tasks", json={"task": "say hi"})
+        assert r.status_code == 409 and r.json()["detail"] == "The Narrator reads replies aloud; it does not take tasks."
+        r = await c.patch("/bots/narrator", json={"instructions": "Go now."})
+        assert r.status_code == 200 and r.json()["narrates"] is True
+    assert load_dir(prompts)[0].narrates is True or load_dir(h.config.bots_write_dir)[0].narrates is True
