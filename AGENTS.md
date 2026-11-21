@@ -968,18 +968,20 @@ Settings > Connected apps has a Sonos section (`SonosSettings.jsx`). Design:
   own control port (UPnP on 1400): a bot with `shell` (curl) or the `browser` server can call the `/sonos` routes or
   drive the speakers directly, at any volume, in a bot room too. Anything on the home network can already do the
   latter. Do not describe Sonos as out of bots' reach.
-- **Partly verified (2026-11-21): reading only, by hand, on the owner's network** (Windows, three IKEA SYMFONISK
-  speakers grouped under one coordinator): `SocoSpeakers.discover` (multicast, no firewall prompt seen), `favorites`
+- **Partly verified (2026-11-21), by hand, on the owner's network** (Windows, three IKEA SYMFONISK speakers grouped
+  under one coordinator). Reading: `SocoSpeakers.discover` (multicast, no firewall prompt seen), `favorites`
   (8 items: favorites of item class `object.container`, `musicAlbum`, `audioBook`, `audioBroadcast` and
   `podcast`, and one Sonos playlist), `now_playing` and `get_volume`. That check found SoCo 0.32 keeps
-  `get_sonos_playlists` on the speaker, not the music library, which the stand-ins had hidden. Nothing has been played,
-  paused, grouped or had its volume changed on a real speaker: `play` for each favorite kind (a service
-  `object.container` may not take `add_to_queue`), transport, `set_volume`, `join` and `unjoin` have run only
-  against `FakeSpeakers` (`tests/sonos/conftest.py`) and stand-ins for SoCo. Also not tried: grouping with bonded
-  sets (stereo pairs, home-theatre subs), the known-address path on a later look, and the settings section on screen.
-  The Sonos page (2026-11-21) has run only against `FakeSpeakers` and the GUI tests, and the morning-music skill has
-  never run with a model: how real speakers take `panel_play`'s unjoin-then-join (a coordinator leaving a group it
-  leads hands the group to another member) is unchecked.
+  `get_sonos_playlists` on the speaker, not the music library, which the stand-ins had hidden. Then, through the Sonos
+  page (the owner, the same day): a Favorite played on all three speakers (`panel_play`), pause, skip to the next
+  track and a volume change from a slider all worked on the real speakers. Which favorite kind was played was not
+  recorded, so `play` for each kind (a service `object.container` may not take `add_to_queue`) is still unchecked;
+  so are resume, previous and stop. The three were already one group, so `panel_play` may not have had to regroup:
+  how real speakers take its unjoin-then-join from a different grouping (a coordinator leaving a group it leads
+  hands the group to another member) is unchecked. The bot tools (`sonos_*`) have not been run against real speakers,
+  only the page's commands, which share their code; nor have grouping with bonded sets (stereo pairs, home-theatre
+  subs), the known-address path on a later look, or the settings section on screen. The morning-music skill has
+  never run with a model.
 
 Rules for contributors: SoCo only behind `devices.py`, every call through `SonosService.call` (a thread and a
 timeout). No favorite title, track or artist in a ledger entry the Sonos code writes or a log line (the loop's own
