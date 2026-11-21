@@ -325,6 +325,11 @@ def test_helper_and_harness_agree_on_the_contract():
     assert fr.validate_report(report("events_dashboard", DASHBOARD, [GOOD_EVENT])) is not None
     assert fr.validate_report(report("invites", INVITES, [GOOD_INVITE])) is not None
     assert fr.validate_report(report("birthdays", BIRTHDAYS, [GOOD_BIRTHDAY])) is not None
+    # Facebook now sends /birthdays/ on to /events/birthdays/, with a query
+    moved = "https://www.facebook.com/events/birthdays/?acontext=x"
+    assert fr.corner_for_url(moved) == "birthdays"
+    assert fr.validate_report(report("birthdays", moved, [GOOD_BIRTHDAY])) is not None
+    assert fr.corner_for_url("https://www.facebook.com/events/birthdays/today") == ""
 
 
 # ---- lists: what the Facebook tab shows --------------------------------------

@@ -5,6 +5,12 @@
  * has open, builds a cleaned report, and hands it to the background worker.
  * It never answers an invitation, never presses anything, never posts, never
  * messages, and never posts to the network itself.
+ *
+ * The page (seen 2026-11-20, with no invitations on it) is drawn like the
+ * events dashboard: no <time>, headings or articles. So a card is read as
+ * the dashboard's is (page-text.js), and the inviter is taken from a line
+ * like "Sam Rivera invited you". A card with an invitation in it has not
+ * been seen yet.
  */
 (function () {
   "use strict";
@@ -18,11 +24,20 @@
   ];
   // Keep in sync with CHECK_INTERVAL_MIN in background.js (one rhythm).
   var RECHECK_MS = 240 * 60 * 1000;
+  var SETTLE_MS = [3000, 10000, 30000];
   var MAX_ITEMS = 200;
-  var TITLE_MAX = 300;
   var NAME_MAX = 200;
-  var ID_PATTERN = /\/events\/([0-9]{1,30})(?:[/?#]|$)/;
-  var INVITED_BY = /(.{1,200}?)\s+invited you/i;
+  var INVITED_BY = /^(.{1,200}?)\s+invited you\b/i;
+  var INVITED_BY_AFTER = /^invited by\s+(.{1,200})$/i;
+  var READER = "__ozbReader_invites";
+
+  // Loaded again in the same tab: read again, never run twice.
+  if (typeof globalThis[READER] === "function") {
+    globalThis[READER]();
+    return;
+  }
+  var text = globalThis.OzbPageText;
+  if (!text) return;
 
   function isAllowed(url) {
     var parsed;
@@ -37,82 +52,37 @@
     return ALLOWED_PATHS.indexOf(parsed.pathname) !== -1;
   }
 
-  function clean(value, limit) {
-    if (typeof value !== "string") return "";
-    var out = "";
-    for (var i = 0; i < value.length; i += 1) {
-      var code = value.charCodeAt(i);
-      if (code === 0x09 || code === 0x0a || code === 0x0d) out += " ";
-      else if (code >= 0x20 && code !== 0x7f) out += value[i];
+  /** The inviter's name from a card's lines, or "". */
+  function inviter(lines) {
+    for (var i = 0; i < lines.length; i += 1) {
+      var match = INVITED_BY.exec(lines[i]) || INVITED_BY_AFTER.exec(lines[i]);
+      if (match) return text.clean(match[1], NAME_MAX);
     }
-    return out.trim().slice(0, limit).trim();
-  }
-
-  function keepUrl(href) {
-    if (typeof href !== "string") return "";
-    var absolute;
-    try {
-      absolute = new URL(href, location.origin).href;
-    } catch (err) {
-      return "";
-    }
-    if (absolute.length > 1000) return "";
-    if (absolute.indexOf("https://www.facebook.com/events/") !== 0) return "";
-    return absolute;
-  }
-
-  function cardText(root) {
-    var heading = root.querySelector('[role="heading"], h1, h2, h3, h4');
-    if (heading && heading.textContent) return heading.textContent;
-    var labelled = root.getAttribute("aria-label");
-    return labelled || root.textContent || "";
-  }
-
-  function cardDate(root) {
-    var time = root.querySelector("time[datetime]");
-    if (time) return time.getAttribute("datetime") || "";
     return "";
   }
 
-  function splitDateTime(value) {
-    var match = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(value || "");
-    if (!match) return { date: "", time: "" };
-    return { date: match[1], time: match[2] };
-  }
-
-  function inviter(root) {
-    var text = clean(root.textContent || "", 500);
-    var match = INVITED_BY.exec(text);
-    return match ? clean(match[1], NAME_MAX) : "";
+  /** The invite items in `root`, read against `today`. */
+  function readInvites(root, today) {
+    var cards = text.eventCards(root, today, MAX_ITEMS);
+    var items = [];
+    for (var i = 0; i < cards.length; i += 1) {
+      items.push({
+        kind: "invite",
+        id: cards[i].id,
+        title: cards[i].fields.title,
+        start_date: cards[i].fields.date,
+        start_time: cards[i].fields.time,
+        url: cards[i].url,
+        inviter: inviter(cards[i].lines),
+      });
+    }
+    return items;
   }
 
   function observe() {
     if (!isAllowed(location.href)) return;
-    var items = [];
-    var seen = {};
-    var anchors = document.querySelectorAll('a[href*="/events/"]');
-    for (var i = 0; i < anchors.length && items.length < MAX_ITEMS; i += 1) {
-      var href = anchors[i].getAttribute("href") || "";
-      var idMatch = ID_PATTERN.exec(href);
-      if (!idMatch || seen[idMatch[1]]) continue;
-      var root = anchors[i].closest("article, div[role='article'], li") || anchors[i];
-      var title = clean(cardText(root), TITLE_MAX);
-      if (!title) continue;
-      var when = splitDateTime(cardDate(root));
-      if (!when.date) continue;
-      var url = keepUrl(href);
-      if (!url) continue;
-      seen[idMatch[1]] = true;
-      items.push({
-        kind: "invite",
-        id: idMatch[1],
-        title: title,
-        start_date: when.date,
-        start_time: when.time,
-        url: url,
-        inviter: inviter(root),
-      });
-    }
+    var root = document.querySelector('[role="main"]') || document;
+    var items = readInvites(root, new Date());
     var api = typeof chrome !== "undefined" ? chrome : null;
     if (api && api.runtime && api.runtime.sendMessage) {
       api.runtime.sendMessage({
@@ -128,6 +98,13 @@
     }
   }
 
+  function settle() {
+    observe();
+    for (var s = 0; s < SETTLE_MS.length; s += 1) setTimeout(observe, SETTLE_MS[s]);
+  }
+
+  globalThis[READER] = settle;
+
   var api = typeof chrome !== "undefined" ? chrome : null;
   if (api && api.runtime && api.runtime.onMessage) {
     api.runtime.onMessage.addListener(function (message) {
@@ -135,6 +112,6 @@
     });
   }
 
-  observe();
+  settle();
   setInterval(observe, RECHECK_MS);
 })();

@@ -210,6 +210,29 @@ Good to know:
 - **Eventbrite is read from its public pages**, one request a second, at most 40 pages a refresh, at most twice a day. That is for personal use; Eventbrite's terms on automated access were not checked.
 - **Where it lives.** Calendar and event data are in `~/.zen-agents/vault-calendar/`, beside the vault and outside the folders bots' file tools can reach.
 
+### Facebook browser helper
+
+A small Chrome extension in `src/helper/` lets the Events page show your Facebook events. It reads three Facebook pages while you have them open in Chrome: your events (`facebook.com/events/`), your invites (`facebook.com/events/invites/`) and birthdays (`facebook.com/events/birthdays/`). It sends what it read to the harness on this computer, and the Facebook tab on the Events page shows it: invites, events waiting for your approval, and birthdays. Nothing goes on your calendar until you approve it.
+
+It only watches. It never clicks, answers an invite, posts or sends a message, and it never opens, reloads or moves a tab. It sends data only to `http://127.0.0.1:8765`, the harness on your own computer. It never reads your News Feed or any other Facebook page. It uses the Facebook sign-in you already have in that Chrome, and it asks for no password.
+
+**Load it in Chrome** (or Edge, Brave or another Chromium browser):
+
+1. Start the harness (the desktop app, or `uv run python -m src.harness.main`), so it answers on port 8765.
+2. Open `chrome://extensions` and switch on **Developer mode** (top right).
+3. Click **Load unpacked** and choose the `src/helper` folder of this repo (the folder that holds `manifest.json`). **OpenZenBot Facebook Helper** appears with the ZenBot icon.
+4. Sign in to Facebook in that Chrome if you are not already, and open `https://www.facebook.com/events/`. Open the invites and birthdays pages too if you want those.
+5. Within about 30 seconds the Facebook tab on OpenZenBot's Events page shows what it read. After that it reads those tabs again every four hours while they stay open.
+
+Chrome asks for access to Facebook's events and birthdays pages. The helper needs this to start reading when you click through to Events inside Facebook, where the page changes without a reload. After `git pull` brings a new version of the helper, click the reload arrow on its card in `chrome://extensions`. Any events or birthdays tabs you already have open are read again, with no need to reload them.
+
+Good to know:
+
+- **English only.** It reads the dates Facebook writes in English ("Tomorrow at 10 AM", "Sat, Nov 28"). On a Facebook set to another language it finds nothing.
+- **Facebook changes its pages.** The readers were matched to Facebook's pages as they were on 2026-11-20. If the Facebook tab goes empty while Facebook shows events, the page layout has probably changed. An invite card has not yet been checked against a real one.
+- **Signed out?** The Facebook tab says the helper is not ready. Sign back in to Facebook in that Chrome, and the helper picks up on its next read.
+- More detail, including the report format it sends, is in [`src/helper/README.md`](src/helper/README.md). Its tests run with `node --test src/helper/helper.test.mjs`.
+
 ## Dreaming
 
 New in 0.1.2. While your computer sits idle, OpenZenBot can read back over your one-to-one conversations and keep short facts from them in shared memory, where every bot's recall finds them. It is off until you turn it on.
@@ -269,6 +292,7 @@ OPENROUTER_API_KEY=... uv run pytest -k live   # opt-in live check
 | `src/providers/` | Provider interface, registry, secrets, OpenRouter and OpenAI-compatible adapters, model fingerprinting |
 | `src/music/` | Music discovery: Discogs scan, taste profile, album gate, digests |
 | `src/events/` | The built-in calendar and Google sync; event discovery: the Eventbrite and FindLocal readers, the event pool, digests |
+| `src/helper/` | The Facebook browser helper: an observe-only Chrome extension that reads your Facebook events, invites and birthdays and sends them to the harness on this computer (see [Facebook browser helper](#facebook-browser-helper)) |
 | `src/rooms/` | Rooms, turns, handoff, the orchestrator that picks bots for a job |
 | `src/context/` | Compaction and the protected (pinned) task |
 | `src/skills/` | `SKILL.md` loader and the catalog |

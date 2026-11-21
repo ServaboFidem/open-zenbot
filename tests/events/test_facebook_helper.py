@@ -163,23 +163,31 @@ class TestHelperNeverPosts:
         assert src.index("validateReport(report)") < src.index("fetchImpl(url")
 
     def test_background_worker_never_drives_tabs(self):
+        # It may start a named corner's own reader in a tab already there (Facebook moves between
+        # pages without loading them); it never opens, navigates or reloads a tab, never runs a
+        # function or code of its own in one, only the reader files.
         src = _helper_src("background.js")
-        assert "tabs.create" not in src
-        assert "tabs.update" not in src
-        assert "scripting" not in src
+        for token in ("tabs.create", "tabs.update", "tabs.reload", "tabs.remove", "tabs.goBack",
+                      "tabs.goForward", "windows.create", "func:", "args:", "insertCSS"):
+            assert token not in src, token
+        assert src.count("executeScript(") == 1
+        assert "executeScript({ target: { tabId }, files })" in src
+        assert "const files = readerFiles(url);" in src
 
     def test_corner_readers_only_read_the_open_page(self):
-        for name in ("corner-events.js", "corner-invites.js",
-                     "corner-birthdays.js", "corners.js", "clean.js", "schema.js"):
+        for name in ("corner-events.js", "corner-invites.js", "corner-birthdays.js", "page-text.js",
+                     "corners.js", "clean.js", "schema.js"):
             assert "fetch(" not in _helper_src(name), name
 
-    def test_manifest_grants_no_facebook_host_permission(self):
+    def test_manifest_reaches_facebook_only_on_the_named_corners(self):
         path = HELPER_DIR / "manifest.json"
         if not path.exists():
             pytest.skip("src/helper has not merged yet")
         manifest = json.loads(path.read_text(encoding="utf-8"))
+        facebook = {"https://www.facebook.com/events*", "https://www.facebook.com/birthdays*"}
         for entry in manifest.get("host_permissions", []):
-            assert entry.startswith("http://127.0.0.1"), entry
+            assert entry.startswith("http://127.0.0.1") or entry in facebook, entry
+        assert set(manifest.get("permissions", [])) <= {"alarms", "storage", "scripting"}
 
     def test_harness_intake_modules_make_no_outbound_requests(self):
         pool_mod = _load("src.events.facebook_pool")

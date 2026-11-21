@@ -103,7 +103,8 @@ CORNERS = (
     {"id": "events_dashboard", "paths": ("/events", "/events/")},
     {"id": "invites", "paths": ("/events/invites", "/events/invites/",
                                 "/events/invitation_box", "/events/invitation_box/")},
-    {"id": "birthdays", "paths": ("/birthdays", "/birthdays/")},
+    # Facebook now sends /birthdays/ on to /events/birthdays/ (seen 2026-11-20)
+    {"id": "birthdays", "paths": ("/birthdays", "/birthdays/", "/events/birthdays", "/events/birthdays/")},
 )
 CORNER_IDS = tuple(c["id"] for c in CORNERS)
 _KINDS = {"events_dashboard": ("event",), "invites": ("invite",), "birthdays": ("birthday",)}

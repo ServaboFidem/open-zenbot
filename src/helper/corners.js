@@ -20,7 +20,11 @@ export const CORNERS = [
       "/events/invitation_box/",
     ],
   },
-  { id: "birthdays", paths: ["/birthdays", "/birthdays/"] },
+  // Facebook now sends /birthdays/ on to /events/birthdays/ (seen 2026-11-20).
+  {
+    id: "birthdays",
+    paths: ["/birthdays", "/birthdays/", "/events/birthdays", "/events/birthdays/"],
+  },
 ];
 
 export const CORNER_IDS = CORNERS.map((corner) => corner.id);
