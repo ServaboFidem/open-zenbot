@@ -49,15 +49,18 @@ class MailError(Exception):
 
 
 def clean_line(value: object, limit: int) -> str:
-    """One line of text: control characters and line separators become a space; trimmed; cut to `limit`."""
+    """One line of text: control characters and line separators become a space, half a UTF-16 pair (which no JSON
+    answer could carry on) goes; trimmed; cut to `limit`."""
     if not isinstance(value, str):
         return ""
-    out = "".join(" " if ch in _BREAKS or unicodedata.category(ch) == "Cc" else ch for ch in value)
+    out = "".join(" " if ch in _BREAKS or unicodedata.category(ch) == "Cc" else ch
+                  for ch in value if unicodedata.category(ch) != "Cs")
     return out.strip()[:limit].strip()
 
 
 def clean_text(value: object, limit: int) -> str:
-    """A body: line ends and line separators become \\n, tabs stay, every other control character goes; cut."""
+    """A body: line ends and line separators become \\n, tabs stay, every other control character and half a UTF-16
+    pair goes; cut."""
     if not isinstance(value, str):
         return ""
     value = value.replace("\r\n", "\n").replace("\r", "\n")
@@ -65,7 +68,7 @@ def clean_text(value: object, limit: int) -> str:
     for ch in value:
         if ch in _BREAKS:
             out.append("\n")
-        elif ch in "\n\t" or unicodedata.category(ch) != "Cc":
+        elif ch in "\n\t" or unicodedata.category(ch) not in ("Cc", "Cs"):
             out.append(ch)
     return "".join(out)[:limit]
 
@@ -148,7 +151,7 @@ class AgentMail:
             raise MailError("provider")
         try:
             payload = json.loads(data)
-        except ValueError:
+        except (ValueError, RecursionError):  # deep nesting raises RecursionError, which is no ValueError
             payload = None
         if 200 <= status < 300:
             if payload is None:

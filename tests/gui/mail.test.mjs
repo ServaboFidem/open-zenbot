@@ -1,7 +1,7 @@
 // The AgentMail page's and settings section's decisions, without the page.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BAD_NAME, errorLine, senderName, showsNav, timeLabel, usernameError } from '../../src/gui/mail.js';
+import { BAD_NAME, canUseInbox, errorLine, senderName, showsNav, timeLabel, usernameError } from '../../src/gui/mail.js';
 
 test('showsNav only when the harness says enabled', () => {
   assert.equal(showsNav({ enabled: true }), true);
@@ -53,4 +53,14 @@ test('errorLine uses the harness sentence, never raw JSON', () => {
   assert.equal(errorLine({ status: 422, message: '[{"loc":["body","key"]}]' }), 'Something went wrong. Try again.');
   assert.equal(errorLine({ status: 500, message: '' }), 'Something went wrong. Try again.');
   assert.equal(errorLine(null), 'Something went wrong. Try again.');
+});
+
+test('canUseInbox: only a picked, active inbox that is not already ZenBot\'s', () => {
+  const boxes = [{ inbox_id: 'a@agentmail.to' }, { inbox_id: 'b@agentmail.to' }, { inbox_id: 'c@agentmail.to', deactivated: true }];
+  assert.equal(canUseInbox('b@agentmail.to', 'a@agentmail.to', boxes), true);
+  assert.equal(canUseInbox('a@agentmail.to', 'a@agentmail.to', boxes), false);  // already chosen
+  assert.equal(canUseInbox('c@agentmail.to', 'a@agentmail.to', boxes), false);  // deactivated
+  assert.equal(canUseInbox('z@agentmail.to', '', boxes), false);                // not in the list
+  assert.equal(canUseInbox('', '', boxes), false);
+  assert.equal(canUseInbox('a@agentmail.to', '', null), false);
 });

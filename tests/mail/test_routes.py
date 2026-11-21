@@ -213,3 +213,45 @@ async def test_every_post_needs_a_body(client, harness):
             r = await client.post(path, content=b"username=zen4", headers=headers)
             assert r.status_code == 422, (path, headers)
         assert (await client.post(path, headers=foreign)).status_code == 422
+
+
+async def test_a_lone_surrogate_in_mail_never_breaks_the_inbox(client, fake_mail):
+    # AgentMail may cut a preview inside an emoji, leaving half a UTF-16 pair; the page must still answer
+    import json as _json
+    await enable(client)
+    row = {"message_id": "m9", "from": "Ann <ann@example.com>", "to": ["zen@agentmail.to"], "subject": "Hi \ud83d",
+           "preview": "cut \ud83d", "timestamp": "2026-11-20T10:00:00Z"}
+    fake_mail.fail["GET /inboxes/zen@agentmail.to/messages"] = httpx.Response(
+        200, content=_json.dumps({"messages": [row], "next_page_token": None}).encode("ascii"),
+        headers={"content-type": "application/json"})
+    r = await client.get("/agentmail/messages")
+    assert r.status_code == 200
+    got = r.json()["messages"][0]
+    assert got["subject"] == "Hi" and got["preview"] == "cut"
+
+
+async def test_a_gone_inbox_says_to_choose_another(client, fake_mail):
+    await enable(client)
+    fake_mail.inboxes.clear()
+    r = await client.get("/agentmail/messages")
+    assert r.status_code == 409
+    assert r.json()["detail"] == "ZenBot's inbox is no longer in this AgentMail account. Choose another in Settings."
+
+
+async def test_a_key_without_permission_for_the_inbox_says_so(client, fake_mail):
+    await enable(client)
+    fake_mail.fail["GET /inboxes/zen@agentmail.to/messages"] = httpx.Response(
+        403, json={"code": "missing_permission", "message": "Missing permission"})
+    r = await client.get("/agentmail/messages")
+    assert r.status_code == 403
+    assert r.json()["detail"] == "The saved key cannot read ZenBot's inbox. Save an organization API key in Settings."
+
+
+async def test_an_unexpected_failure_in_a_key_save_never_leaves_the_route(client, harness, monkeypatch, caplog):
+    async def boom(raw):
+        raise RuntimeError(f"held {raw}")
+
+    monkeypatch.setattr(harness.mail, "set_key", boom)
+    r = await client.put("/agentmail/key", json={"key": KEY})
+    assert r.status_code == 500 and r.json()["detail"] == "The key could not be saved."
+    assert KEY not in r.text and KEY not in caplog.text

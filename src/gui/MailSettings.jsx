@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Button, Field, Input, Radio, RadioGroup, Spinner } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
-import { MAIL_LINE, errorLine, usernameError } from './mail.js';
+import { MAIL_LINE, canUseInbox, errorLine, usernameError } from './mail.js';
 import './mail.css';
 
 // Settings > Connected apps > AgentMail: the API key (saved by the harness, never sent back; only its last four
@@ -16,6 +16,9 @@ export function MailSettings({ api, online, notify, onChange }) {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState({ at: '', text: '' });
+  const [picked, setPicked] = useState('');  // the radio marked, not yet used; '' follows ZenBot's current inbox
+  const current = status?.inbox?.inbox_id || '';
+  const shown = picked || current;
 
   async function loadInboxes() {
     try { setInboxes((await mail.inboxes()).inboxes); } catch (e) { setInboxes([]); setError({ at: 'inbox', text: errorLine(e) }); }
@@ -46,7 +49,10 @@ export function MailSettings({ api, online, notify, onChange }) {
     if (await run('key', 'save', () => mail.saveKey(key.trim()), 'AgentMail key saved')) setKey('');
   }
   const forget = () => run('key', 'forget', () => mail.forgetKey(), 'AgentMail key forgotten');
-  const choose = id => run('inbox', 'choose', () => mail.chooseInbox(id), 'ZenBot\'s inbox chosen');
+  async function choose(e) {
+    e.preventDefault();
+    if (await run('inbox', 'choose', () => mail.chooseInbox(shown), 'ZenBot\'s inbox chosen')) setPicked('');
+  }
   async function create(e) {
     e.preventDefault();
     if (await run('create', 'create', () => mail.createInbox(name.trim()), 'Inbox created')) setName('');
@@ -80,13 +86,19 @@ export function MailSettings({ api, online, notify, onChange }) {
     </form>
 
     {status?.key_set && <div className="mail-inbox">
-      <h3>ZenBot's inbox</h3>
+      <h3 id="mail-inbox-heading">ZenBot's inbox</h3>
       {inboxes === null ? <Spinner size="tiny" label="Reading your inboxes…"/>
         : inboxes.length === 0 ? <p className="field-hint">This account has no inboxes yet. Create one below.</p>
-        : <RadioGroup value={status.inbox?.inbox_id || ''} disabled={off || busy !== ''} onChange={(e, d) => choose(d.value)}>
-            {inboxes.map(i => <Radio key={i.inbox_id} value={i.inbox_id} disabled={i.deactivated}
-              label={`${i.email}${i.deactivated ? ' (deactivated)' : ''}`}/>)}
-          </RadioGroup>}
+        : <form className="mail-choose" onSubmit={choose}>
+            {/* arrow keys only move the mark; the group stays enabled while a change is saved, so focus is kept */}
+            <RadioGroup aria-labelledby="mail-inbox-heading" value={shown} disabled={off}
+              onChange={(e, d) => setPicked(d.value === current ? '' : d.value)}>
+              {inboxes.map(i => <Radio key={i.inbox_id} value={i.inbox_id} disabled={i.deactivated}
+                label={`${i.email}${i.deactivated ? ' (deactivated)' : ''}${i.inbox_id === current ? ' (in use)' : ''}`}/>)}
+            </RadioGroup>
+            <Button appearance="primary" type="submit" disabled={off || busy !== '' || !canUseInbox(shown, current, inboxes)}>
+              {busy === 'choose' ? 'Saving…' : 'Use this inbox'}</Button>
+          </form>}
       {here('inbox')}
       <form className="mail-create" onSubmit={create}>
         <Field label="Create a new inbox:" validationMessage={nameError || undefined}>

@@ -29,6 +29,11 @@ GENERAL = {
     "network": (502, UNREACHABLE),
 }
 UNREADABLE = (502, "AgentMail answered in a way ZenBot could not read.")
+# reading ZenBot's chosen inbox
+INBOX_READ = {
+    "not_found": (409, "ZenBot's inbox is no longer in this AgentMail account. Choose another in Settings."),
+    "permission": (403, "The saved key cannot read ZenBot's inbox. Save an organization API key in Settings."),
+}
 
 
 class KeyIn(BaseModel):
@@ -65,7 +70,7 @@ def mail_router(service: MailService) -> APIRouter:
             raise _fail(err, {"key": (422, "AgentMail did not accept this key."),
                               "permission": (422, "This key cannot list inboxes. Use an organization API key."),
                               "network": (502, UNREACHABLE)}) from None
-        except OSError as e:
+        except Exception as e:  # noqa: BLE001 - the key is in this call's frames, so no exception may leave it
             log.warning("agentmail key save failed: %s", type(e).__name__)
             raise HTTPException(500, KEY_NOT_SAVED) from None
 
@@ -116,7 +121,7 @@ def mail_router(service: MailService) -> APIRouter:
         except LookupError:
             raise HTTPException(409, NOT_SET_UP) from None
         except MailError as err:
-            raise _fail(err) from None
+            raise _fail(err, INBOX_READ) from None
 
     @r.get("/messages/{message_id}")
     async def message(message_id: str):

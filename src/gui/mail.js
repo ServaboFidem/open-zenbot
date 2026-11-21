@@ -45,3 +45,8 @@ export function errorLine(err) {
 
 /** The line under the AgentMail heading in Settings (also in the settings search). */
 export const MAIL_LINE = "ZenBot's own email address. For now you can read what arrives; nothing is sent, and no bot is given this mail.";
+
+// The inbox radios only mark a pick (arrow keys move it); "Use this inbox" makes the change, and only for an
+// active inbox in the list that is not ZenBot's already.
+export const canUseInbox = (picked, current, inboxes) => !!picked && picked !== current && Array.isArray(inboxes)
+  && inboxes.some(i => i.inbox_id === picked && !i.deactivated);

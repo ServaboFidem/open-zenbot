@@ -158,3 +158,11 @@ async def test_key_not_in_error(fake_mail):
     assert err.value.kind == "key"
     assert KEY not in repr(err.value) and KEY not in str(err.value)
     assert err.value.__cause__ is None
+
+
+async def test_deeply_nested_answer_is_provider(fake_mail):
+    # json.loads raises RecursionError, not ValueError, on deep nesting; it must not escape with the key in frames
+    fake_mail.fail["GET /inboxes"] = httpx.Response(200, content=b"[" * 200_000 + b"]" * 200_000)
+    with pytest.raises(MailError) as err:
+        await mail(fake_mail).list_inboxes()
+    assert err.value.kind == "provider" and err.value.__cause__ is None

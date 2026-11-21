@@ -833,16 +833,23 @@ computer the work was done on).
   `GET /inboxes` (one page of up to 100; 409 without a key); `POST /inboxes` (`{username}`, `check_username`:
   `[a-z0-9][a-z0-9._-]{0,63}` after trim and lower-case; creates and chooses it; 409 "That address is taken. Try
   another name."); `PUT /inbox` (`{inbox_id}`; 404 "No such inbox for this key."); `GET /messages?page_token=` (50
-  a page; 409 "AgentMail is not set up." unless enabled; a token over 1,000 characters is 422);
+  a page; 409 "AgentMail is not set up." unless enabled; a token over 1,000 characters is 422; an inbox AgentMail no
+  longer has is 409 "ZenBot's inbox is no longer in this AgentMail account. Choose another in Settings.", a key that
+  may not read it 403 "The saved key cannot read ZenBot's inbox. Save an organization API key in Settings.");
   `GET /messages/{id}` (404 "No such message."). Elsewhere: `refused` is 429, a saved key AgentMail now refuses is
-  401, other kinds 502. The only POST takes a JSON body, so a cross-site page cannot send it without a preflight.
+  401, other kinds 502. `PUT /key` catches every exception (the key is in its frames) and answers 500 with the class
+  name logged. Half a UTF-16 pair in an answer (an emoji cut short) is dropped like a control character, since no
+  JSON answer could carry it on. The only POST takes a JSON body, so a cross-site page cannot send it without a
+  preflight.
 - **Ledger.** Kind `mail`, events `key_saved` (with `inbox_cleared`), `key_forgotten`, `inbox_created` and
   `inbox_chosen` (with ZenBot's own address). Never a subject, sender, preview, body or key. Reading the inbox writes
   no entry. A route that may hold the key logs an exception's class name only.
 - **The GUI.** The page shows a message as a plain text child in a `white-space: pre-wrap` block: never its HTML,
   never through Markdown, so links are not clickable and nothing remote loads. The inbox is read when the page opens
   and on Refresh, never on a timer. The status is read when the harness comes online and after each change in the
-  settings section; when AgentMail stops being enabled while its page is open, the app goes to Overview.
+  settings section; when AgentMail stops being enabled while its page is open, the app goes to Overview. In the
+  settings section the inbox radios only mark a pick (arrow keys move it) and "Use this inbox" makes the change
+  (`mail.js` `canUseInbox`), so a keyboard user does not choose every inbox on the way to one.
 - **Packaging.** `src/mail` is listed in `electron-builder.yml` `extraResources` like every other harness package.
 - **Bots and AgentMail (a known residual risk, the owner's accepted call on 2026-11-21).** There is no mail tool,
   no catalog entry and no memory ingest. But the harness API has no authentication, so a bot with `shell` (curl) or
