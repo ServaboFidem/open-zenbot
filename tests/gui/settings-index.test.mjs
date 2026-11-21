@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PANELS, SECTIONS, anchorId, liveSections, searchSettings } from '../../src/gui/settings-index.js';
 
-test('panels are the twelve, in order', () => {
-  assert.deepEqual(PANELS.map(p => p.id), ['harness', 'providers', 'tools', 'mcps', 'skills', 'agents', 'folders', 'calendar', 'tracing', 'memory', 'apps', 'about']);
+test('panels are the thirteen, in order', () => {
+  assert.deepEqual(PANELS.map(p => p.id), ['harness', 'providers', 'tools', 'mcps', 'skills', 'agents', 'folders', 'calendar', 'tracing', 'ledger', 'memory', 'apps', 'about']);
   for (const p of PANELS) assert.ok(p.name && p.description);
 });
 test('every section belongs to a panel and its anchor is anchorId', () => {
@@ -65,6 +65,10 @@ test('a panel and its section of the same name are one result', () => {
   assert.equal(searchSettings('claude').filter(m => m.panel === 'agents').length, 1);
   assert.equal(searchSettings('claude')[0].anchor, 'settings-agents-coding-agents');
   assert.equal(searchSettings('tracing').filter(m => m.section === 'Tracing').length, 1);
+});
+test('the ledger is a settings panel, found by name and by its kinds filter', () => {
+  assert.equal(searchSettings('ledger')[0].panel, 'ledger');
+  assert.ok(searchSettings('decider scores').some(m => m.panel === 'ledger'));
 });
 test('a panel is found by its description', () => assert.equal(searchSettings('mockup')[0].panel, 'apps'));
 test('the matched text holds a word that was typed', () => { for (const m of searchSettings('secret langfuse')) assert.match(m.text, /secret|langfuse/i); });
