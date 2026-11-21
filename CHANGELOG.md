@@ -1,6 +1,6 @@
 # Changelog
 
-What changed on `main`, newest first. Updated automatically on every push to `main`.
+What changed on `main`, newest first. No longer updated: the workflow that kept it was removed.
 
 ## 2026-11-17
 
