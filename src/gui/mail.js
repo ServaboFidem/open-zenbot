@@ -42,3 +42,6 @@ export function errorLine(err) {
   const text = typeof err?.message === 'string' ? err.message.trim() : '';
   return !text || /^[[{]/.test(text) ? FALLBACK : text;
 }
+
+/** The line under the AgentMail heading in Settings (also in the settings search). */
+export const MAIL_LINE = "ZenBot's own email address. For now you can read what arrives; nothing is sent, and no bot is given this mail.";
