@@ -255,6 +255,26 @@ Good to know:
 - **Bots and the mail.** No bot has a mail tool. But like the calendar, the harness's local API has no login, so a bot
   allowed to run shell commands or drive the browser could read the mail through it. See `AGENTS.md`, `### AgentMail`.
 
+## Sonos
+
+If you have Sonos speakers on your home network, you can ask ZenBot to play music in a room: "play Morning Jazz in
+the kitchen", "pause the living room", "turn the patio down". It plays your Sonos Favorites and Sonos playlists, so
+add what you want to hear to Favorites in the Sonos app first.
+
+The harness looks for speakers when it starts and every 10 minutes after. Settings > Connected apps > **Sonos** shows
+the rooms it found, a **Look again** button (which also searches the whole network, more slowly), a switch to turn
+it off, and **Highest volume ZenBot may set** (60 to start). When a speaker is louder than that, ZenBot turns it down
+before it plays, and it will not turn one up past it. The Sonos app itself is not limited.
+
+Good to know:
+
+- **Not tried on real speakers yet.** The tests use a stand-in; the first look on your network is the first real
+  check. On Windows the firewall may ask whether the harness may use the network the first time it looks.
+- **Bots in a room never get the Sonos tools.** Talk to ZenBot one to one, or set up a routine for it.
+- **No login on the speakers.** Anything on your home network can control Sonos speakers, and the harness's local
+  API has no login either, so a bot allowed to run shell commands or drive the browser could play music or change the
+  volume. See `AGENTS.md`, `### Sonos`.
+
 ## Dreaming
 
 New in 0.1.2. While your computer sits idle, OpenZenBot can read back over your one-to-one conversations and keep short facts from them in shared memory, where every bot's recall finds them. It is off until you turn it on.
