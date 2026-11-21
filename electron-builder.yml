@@ -58,6 +58,9 @@ extraResources:
   - from: src/harness
     to: harness/src/harness
     filter: *python
+  - from: src/mail
+    to: harness/src/mail
+    filter: *python
   - from: src/memory
     to: harness/src/memory
     filter: *python

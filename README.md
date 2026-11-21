@@ -233,6 +233,28 @@ Good to know:
 - **Signed out?** The Facebook tab says the helper is not ready. Sign back in to Facebook in that Chrome, and the helper picks up on its next read.
 - More detail, including the report format it sends, is in [`src/helper/README.md`](src/helper/README.md). Its tests run with `node --test src/helper/helper.test.mjs`.
 
+## AgentMail
+
+ZenBot can have an email address of its own through [AgentMail](https://agentmail.to). For now you can only read what
+arrives: nothing is sent, and no bot is given the mail. Digests by mail and newsletter sign-up are planned.
+
+1. Make an AgentMail account and copy an API key from its console (an organization key, which can list inboxes).
+2. In OpenZenBot open Settings > Connected apps and paste the key under **AgentMail**. The harness checks it with
+   AgentMail before saving it. It is kept in `vault-settings/agentmail_keys.json`, readable by you only, and never
+   sent back to the app.
+3. Pick one of your inboxes as ZenBot's, or create one by name (`<name>@agentmail.to`). The free plan has 3 inboxes.
+
+**AgentMail** then shows in the left panel, below Conversations. Its page has ZenBot's address with a **Copy** button,
+and the inbox, newest first. A message is shown as plain text: its formatting and pictures are left out and links
+cannot be clicked, so nothing in a stranger's mail loads or tracks you. The inbox is read when you open the page and
+when you press Refresh.
+
+Good to know:
+
+- **Not tried against AgentMail itself yet.** The tests use a stand-in; the first key you save is the first real check.
+- **Bots and the mail.** No bot has a mail tool. But like the calendar, the harness's local API has no login, so a bot
+  allowed to run shell commands or drive the browser could read the mail through it. See `AGENTS.md`, `### AgentMail`.
+
 ## Dreaming
 
 New in 0.1.2. While your computer sits idle, OpenZenBot can read back over your one-to-one conversations and keep short facts from them in shared memory, where every bot's recall finds them. It is off until you turn it on.
@@ -293,6 +315,7 @@ OPENROUTER_API_KEY=... uv run pytest -k live   # opt-in live check
 | `src/music/` | Music discovery: Discogs scan, taste profile, album gate, digests |
 | `src/events/` | The built-in calendar and Google sync; event discovery: the Eventbrite and FindLocal readers, the event pool, digests |
 | `src/helper/` | The Facebook browser helper: an observe-only Chrome extension that reads your Facebook events, invites and birthdays and sends them to the harness on this computer (see [Facebook browser helper](#facebook-browser-helper)) |
+| `src/mail/` | AgentMail: ZenBot's own email address, read-only (see [AgentMail](#agentmail)) |
 | `src/rooms/` | Rooms, turns, handoff, the orchestrator that picks bots for a job |
 | `src/context/` | Compaction and the protected (pinned) task |
 | `src/skills/` | `SKILL.md` loader and the catalog |

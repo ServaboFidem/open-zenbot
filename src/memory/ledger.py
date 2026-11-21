@@ -63,6 +63,7 @@ class Kind(StrEnum):
     design_part = "design_part"
     calendar = "calendar"
     dream = "dream"
+    mail = "mail"
 
 
 def _on_loop(loop: asyncio.AbstractEventLoop) -> bool:

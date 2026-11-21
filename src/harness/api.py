@@ -91,6 +91,8 @@ from src.events.facebook_routes import facebook_router
 from src.events.routes import calendar_router
 from src.events.service import CalendarService
 from src.events.discovery import MANAGED_BY as EVENTS_MANAGED_BY, Discovery
+from src.mail.routes import mail_router
+from src.mail.service import MailService
 from src.music.routes import music_router
 from src.music.service import MANAGED_BY as MUSIC_MANAGED_BY, MusicService
 from src.generation.images import DEFAULT_MODEL as DEFAULT_IMAGE_MODEL, ImageConfig, ImageGenerator
@@ -195,6 +197,7 @@ class Harness:
     music: MusicService | None = None  # music discovery: settings, Discogs token, atlas, digests, the /music routes
     calendar: CalendarService | None = None  # the built-in calendar: its store, Google sync, the /calendar routes
     discover: Discovery | None = None  # event discovery: the Eventbrite pool, the scout's tools and routine, the digests
+    mail: MailService | None = None  # AgentMail: ZenBot's own inbox, read-only, the /agentmail routes (no bot tool)
     dreamer: Dreamer | None = None  # dreaming: learns facts from the user's own messages while idle; built once, a rebind keeps it
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
     provider_store: ProviderStore | None = None  # vault-settings/providers.json: providers, their keys, their enabled models
@@ -347,6 +350,8 @@ class Harness:
         self.music.register()  # the music tools appear only when music is on and the token is set
         if self.calendar is None:
             self.calendar = CalendarService(c, self.ledger)  # no network until Google is connected
+        if self.mail is None:
+            self.mail = MailService(c.vault_root, self.ledger)  # no network until a key is saved
         if self.discover is None:
             self.discover = Discovery(c, self.ledger, self.calendar)
             self.discover.tools, self.discover.catalog = self.tools, self.catalog
@@ -1501,7 +1506,7 @@ def create_app(h: Harness) -> FastAPI:
     h.music.routines, h.music.scheduler = routines, scheduler
     h.discover.routines, h.discover.scheduler = routines, scheduler
     app_routers = [music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h),
-                   facebook_router(h.discover, h), dream_router(h)]
+                   facebook_router(h.discover, h), dream_router(h), mail_router(h.mail)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -1560,6 +1565,7 @@ def create_app(h: Harness) -> FastAPI:
             await h.music.close()
             await h.discover.close()  # first: its background refresh reads through the calendar's HTTP client
             await h.calendar.close()
+            await h.mail.close()
             await h.learner.drain(timeout=30)  # background learn writes land before memory closes; a hung one does not hold shutdown
             # after the worker: the store stops its server and closes; blocks, so off the loop
             await asyncio.to_thread(h.memory.close)
