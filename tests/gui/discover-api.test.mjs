@@ -81,3 +81,17 @@ test('eventImageSrc joins the origin and the event path, empty without a picture
   assert.equal(api.eventImageSrc('http://127.0.0.1:8765', { image: null }), '');
   assert.equal(api.eventImageSrc('http://127.0.0.1:8765', null), '');
 });
+
+test('the Facebook tab reads through three functions and dismisses through one', async () => {
+  const { api, seen } = rec();
+  await api.facebookLists();
+  await api.facebookStatus();
+  await api.facebookRefresh();
+  await api.facebookDismiss('fb-1/x');
+  assert.deepEqual(seen.map(s => [s.method, s.path, s.body]), [
+    ['GET', '/intake/facebook/lists', undefined],
+    ['GET', '/intake/facebook/status', undefined],
+    ['POST', '/intake/facebook/refresh', {}],
+    ['POST', '/intake/facebook/events/fb-1%2Fx/dismiss', {}],
+  ]);
+});

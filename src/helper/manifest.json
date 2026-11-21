@@ -1,0 +1,66 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "116",
+  "name": "OpenZenBot Facebook Helper",
+  "version": "0.2.0",
+  "description": "Observes the Facebook events dashboard, invites and birthdays pages and reports them to the harness on this machine. Observe-only: it never clicks, RSVPs, posts or messages.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["alarms", "scripting"],
+  "host_permissions": [
+    "http://127.0.0.1:8765/*",
+    "https://www.facebook.com/events*",
+    "https://www.facebook.com/birthdays*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.facebook.com/events",
+        "https://www.facebook.com/events/",
+        "https://www.facebook.com/events?*",
+        "https://www.facebook.com/events/?*"
+      ],
+      "js": ["page-text.js", "corner-events.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.facebook.com/events/invites",
+        "https://www.facebook.com/events/invites?*",
+        "https://www.facebook.com/events/invites/",
+        "https://www.facebook.com/events/invites/*",
+        "https://www.facebook.com/events/invitation_box",
+        "https://www.facebook.com/events/invitation_box?*",
+        "https://www.facebook.com/events/invitation_box/",
+        "https://www.facebook.com/events/invitation_box/*"
+      ],
+      "js": ["page-text.js", "corner-invites.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.facebook.com/birthdays",
+        "https://www.facebook.com/birthdays?*",
+        "https://www.facebook.com/birthdays/",
+        "https://www.facebook.com/birthdays/*",
+        "https://www.facebook.com/events/birthdays",
+        "https://www.facebook.com/events/birthdays?*",
+        "https://www.facebook.com/events/birthdays/",
+        "https://www.facebook.com/events/birthdays/*"
+      ],
+      "js": ["page-text.js", "corner-birthdays.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

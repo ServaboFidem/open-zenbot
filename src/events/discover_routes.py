@@ -6,10 +6,8 @@ instant (no zone database), so the page sends the instants; each is read as a na
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import re
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,18 +15,17 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
+from src.events.calendar_add import add_lock, listing_times, make_event
 from src.events.discover_settings import CATEGORIES, FINDLOCAL_CITIES, DiscoverSettings, check_key
 from src.events.discover_store import LAST_REFRESH
 from src.events.discovery import BOT_ID, ROUTINE_SKILL
 from src.events.routes import NothingIn
-from src.events.store import EventError
 from src.harness.scheduler import next_run
+
+__all__ = ["discover_router", "listing_times", "make_event", "add_lock", "picture"]
 
 SET_UP_FIRST = "Set up event discovery first."
 ALREADY_LOOKING = "The event scout is already looking."
-PAST = "This event has already happened."
-BAD_TIMES = "Those times are not the listing's. Reload the page and try again."
-NO_ZONE = "This listing has no usable time zone."
 NO_EVENT = "No such event."
 NO_PICTURE = "No picture."
 KEY_NOT_SAVED = "The key could not be saved."
@@ -37,9 +34,6 @@ PICTURE_MAX = 1_500_000  # the most a kept picture holds (the connector's own ca
 log = logging.getLogger(__name__)
 RUN_TASK = ("On-demand picks: find local events for the user. "
             "Save them with events_save_digest using kind \"on_demand\".")
-MAX_HOURS = 14
-_INSTANT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
-_DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 # what the pool's routes answer of a row: the list's slim fields, and the detail's (plus ``state`` and ``image``)
 SLIM = ("id", "name", "start_date", "start_time", "end_date", "end_time", "venue", "city", "category_names", "source")
 DETAIL = SLIM + ("summary", "address", "region", "timezone", "url", "categories")
@@ -52,31 +46,6 @@ class KeyIn(BaseModel):
 class AddIn(BaseModel):
     start: str
     end: str
-
-
-def _instant(value: str) -> datetime | None:
-    if not _INSTANT.fullmatch(value):
-        return None
-    try:
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
-    except ValueError:
-        return None
-
-
-def _day(value: str) -> date | None:
-    if not _DAY.fullmatch(value):
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return None
-
-
-def _wall(day: str, clock: str) -> datetime | None:
-    try:
-        return datetime.strptime(f"{day} {clock}", "%Y-%m-%d %H:%M")
-    except ValueError:
-        return None
 
 
 def _sniff(head: bytes) -> str:
@@ -104,36 +73,9 @@ def picture(path: Path) -> Response:
     return Response(data, media_type=_sniff(data[:12]), headers={"X-Content-Type-Options": "nosniff"})
 
 
-def listing_times(card: dict, start: str, end: str) -> dict[str, Any]:
-    """The calendar event's timing fields for ``card`` from the page's instants, or ``EventError``."""
-    if not card["start_time"]:  # an all-day event: exactly the listing's dates, the end exclusive
-        last = _day(card["end_date"] or card["start_date"])
-        if _day(card["start_date"]) is None or last is None or start != card["start_date"] \
-                or end != (last + timedelta(days=1)).isoformat():
-            raise EventError(BAD_TIMES)
-        return {"all_day": True, "start": start, "end": end, "tz": ""}
-    if not card["timezone"]:  # the listing's zone failed the check when it was stored: no instant can be trusted
-        raise EventError(NO_ZONE)
-    a, b = _instant(start), _instant(end)
-    wall = _wall(card["start_date"], card["start_time"])
-    if a is None or b is None or wall is None or b <= a:
-        raise EventError(BAD_TIMES)
-    limit = timedelta(hours=MAX_HOURS)
-    if abs(a - wall) > limit:
-        raise EventError(BAD_TIMES)
-    if card["end_date"] and card["end_time"]:
-        listed_end = _wall(card["end_date"], card["end_time"])
-        if listed_end is None or abs(b - listed_end) > limit:
-            raise EventError(BAD_TIMES)
-    elif b - a != timedelta(hours=1):  # no end listed: one hour, nothing else
-        raise EventError(BAD_TIMES)
-    return {"all_day": False, "start": start, "end": end, "tz": card["timezone"]}
-
-
 def discover_router(discovery, harness) -> APIRouter:
     r = APIRouter(prefix="/discover")
     store = discovery.store
-    add_lock = asyncio.Lock()  # the whole add runs under it: two requests for one card cannot both create
 
     def card_view(card: dict) -> dict:
         out = {k: v for k, v in card.items() if k != "has_image"}
@@ -189,24 +131,6 @@ def discover_router(discovery, harness) -> APIRouter:
     def marked_row(event_id: str) -> dict | None:
         row = store.pool_row(event_id)
         return None if row is None else {**row, **store.marks(event_id)}
-
-    def make_event(listing: dict, body: AddIn) -> dict:
-        """The calendar event for a card or a pool row, at the listing's own time: 409 when it has passed, 422 for
-        times that are not the listing's or fields the calendar refuses."""
-        if (listing["end_date"] or listing["start_date"]) < discovery.today():
-            raise HTTPException(409, PAST)
-        try:
-            timing = listing_times(listing, body.start, body.end)
-            # a timed listing that ended earlier today: its end instant (checked against the listing just above)
-            # has passed. An all-day listing keeps the date rule.
-            if not timing["all_day"] and timing["end"] <= discovery.now():
-                raise HTTPException(409, PAST)
-            place =", ".join(p for p in (listing["venue"], listing["address"]) if p)
-            text = f"{listing['summary']}\n\n{listing['url']}" if listing["summary"] else listing["url"]
-            return discovery.calendar.store.add(
-                {"title": listing["name"], "location": place, "description": text, **timing})
-        except EventError as e:
-            raise HTTPException(422, str(e)) from None
 
     def undo(made: dict) -> None:
         """Take back a calendar event whose discovery link could not be written, so a retry of Add makes one event
@@ -307,7 +231,7 @@ def discover_router(discovery, harness) -> APIRouter:
             if existing is not None:
                 card = store.mark_added(card_id, existing["id"], replace=True) or card
                 return {"card": card_view(card), "event": event_view(existing)}
-            row = make_event(card, body)
+            row = make_event(discovery, card, body)
             try:
                 card = store.mark_added(card_id, row["id"], replace=True) or card
             except Exception as e:  # the link was not written: without it a retry would make a second event
@@ -353,7 +277,7 @@ def discover_router(discovery, harness) -> APIRouter:
             existing = pool_live(row)
             if existing is not None:
                 return {"event": full_view(row), "calendar_event": event_view(existing)}
-            made = make_event(row, body)
+            made = make_event(discovery, row, body)
             try:
                 card = store.card_for_event(event_id)
                 if card is not None:

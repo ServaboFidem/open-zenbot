@@ -5,6 +5,12 @@ export const URL_HINT = 'Open eventbrite.com, search your city, and copy the add
 export const MAX_INTERESTS = 2000;
 export const KEY_HINT = 'Make a free account at findlocal.community, then copy a key from Dashboard > Keys.';
 export const FINDLOCAL_FAILED = 'The last FindLocal read did not finish.';
+
+// What Settings and the Events page say when the Facebook helper cannot see
+// Facebook anymore. One plain sentence, shared by the settings search index
+// and the visible settings block, so both name the same state.
+export const FACEBOOK_LOGIN_LOSS = 'If Facebook signed you out, the Facebook tab says the helper is not ready. Sign back in to Facebook in this browser and the helper picks up on its next check.';
+
 const PROVIDER_SENTENCE = 'FindLocal sent an answer OpenZenBot could not use.';
 export const FINDLOCAL_ERRORS = {
   key: 'FindLocal did not accept the key. Check it here.',
