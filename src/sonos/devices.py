@@ -14,6 +14,10 @@ import soco
 
 T = TypeVar("T")
 
+# SoCo waits 20 s on a speaker by default; on a home network 5 s is plenty, and a look that first asks the speakers
+# last found must not spend its whole time on one that is switched off
+soco.config.REQUEST_TIMEOUT = 5.0
+
 TRANSPORT_STATES = {"PLAYING": "playing", "PAUSED_PLAYBACK": "paused", "STOPPED": "stopped"}
 ACTIONS = ("pause", "resume", "next", "previous", "stop")
 
