@@ -17,6 +17,7 @@ T = TypeVar("T")
 # SoCo waits 20 s on a speaker by default; on a home network 5 s is plenty, and a look that first asks the speakers
 # last found must not spend its whole time on one that is switched off
 soco.config.REQUEST_TIMEOUT = 5.0
+QUEUE_TIMEOUT_S = 30.0  # adding a playlist or album to the queue: the one request that may take the speaker long
 
 TRANSPORT_STATES = {"PLAYING": "playing", "PAUSED_PLAYBACK": "paused", "STOPPED": "stopped"}
 ACTIONS = ("pause", "resume", "next", "previous", "stop")
@@ -95,6 +96,20 @@ def _room(zone: Any) -> Room:
                 coordinator_uid=coordinator.uid)
 
 
+def _answering(zones: Any) -> list[Room]:
+    """The rooms of these speakers, leaving out any that does not answer. Reading another speaker's group or name
+    can send it a request (SoCo asks it for its household and topology), so one speaker still listed in the
+    topology but unplugged must not take the whole list down with it."""
+    rooms = []
+    for zone in zones:
+        try:
+            if zone.is_visible:
+                rooms.append(_room(zone))
+        except Exception:  # noqa: BLE001 - a speaker that cannot be read is one that is not there
+            continue
+    return sorted(rooms, key=lambda r: r.name.casefold())
+
+
 def _is_container(obj: Any) -> bool:
     return str(getattr(obj, "item_class", "")).startswith("object.container")
 
@@ -116,14 +131,13 @@ class SocoSpeakers:
                 break  # one answering speaker gives its whole household
             except SpeakerError:
                 continue
-        for zone in soco.discover(timeout=timeout, allow_network_scan=scan) or ():
-            if zone.uid not in found and zone.is_visible:
-                found[zone.uid] = _room(zone)
+        for r in _answering(soco.discover(timeout=timeout, allow_network_scan=scan) or ()):
+            found.setdefault(r.uid, r)
         return sorted(found.values(), key=lambda r: r.name.casefold())
 
     @_guarded
     def rooms(self, ip: str) -> list[Room]:
-        return sorted((_room(z) for z in self._zone(ip).visible_zones), key=lambda r: r.name.casefold())
+        return _answering(self._zone(ip).visible_zones)
 
     @_guarded
     def favorites(self, ip: str) -> list[Favorite]:
@@ -139,7 +153,7 @@ class SocoSpeakers:
         target = fav.item if fav.kind == "playlist" else fav.item.reference
         if _is_container(target):  # an album, a playlist, a service station: replace the queue and play it
             zone.clear_queue()
-            zone.add_to_queue(target)
+            zone.add_to_queue(target, timeout=QUEUE_TIMEOUT_S)  # a long playlist takes the speaker a while
             zone.play_from_queue(0)
         else:  # a stream or a single track: play the favorite's own address with its metadata
             zone.play_uri(fav.item.get_uri(), meta=fav.item.resource_meta_data)

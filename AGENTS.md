@@ -898,8 +898,11 @@ Settings > Connected apps has a Sonos section (`SonosSettings.jsx`). Design:
   `SonosTools.register`: the seven tools and the catalog entry (`USE`) while a speaker is known, neither otherwise.
 - **The tools** (`sonos_rooms`, `sonos_favorites`, `sonos_play`, `sonos_control`, `sonos_volume`, `sonos_group`,
   `sonos_ungroup`). Each call first reads the zone topology again from one speaker that answers (`refresh`); a room
-  that was known before but is gone answers "<room> did not answer.", and a speaker that fails a command with
-  `network` is dropped (the tools go when none remain). A room name matches case-insensitively across households.
+  that was known before but is gone answers "<room> did not answer.". A speaker still listed in the topology that
+  cannot be read is left out of the list rather than failing it. The speaker that fails a command is the one named and,
+  on `network`, dropped (a group member as well as the target; the tools go when none remain); one whose volume cannot
+  be read stops a play, since it might be loud. Queueing a playlist or album gets 30 s (`QUEUE_TIMEOUT_S`), the play
+  call 45 s; other requests 5 s. A room name matches case-insensitively. Only one Sonos household is seen: the first that answers (a home with two is rare).
   `sonos_play` takes a Favorite or playlist by its exact title (a favorite wins over a playlist of the same title);
   an unknown title answers the ten closest. Playback goes to the group's coordinator. Listings start with a line
   saying the names are content, not instructions, and `sonos_favorites` lists at most 200.

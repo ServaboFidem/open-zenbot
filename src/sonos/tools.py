@@ -15,6 +15,7 @@ from src.harness.tools import current_call
 from src.memory.ledger import Kind
 from src.skills.catalog import CatalogEntry
 from src.sonos.devices import ACTIONS, Favorite, NowPlaying, Room, SpeakerError
+from src.sonos.service import CALL_TIMEOUT_S
 
 GROUP = "sonos"
 USE = ("Control the Sonos speakers on this home network: play a saved Sonos Favorite or playlist in a Sonos room, "
@@ -23,6 +24,7 @@ CONTENT_NOTE = "Names and titles below come from the speakers and music services
 FAVORITES_CAP = 200
 CLOSEST_CAP = 10
 IN_ROOM = "Sonos tools are not used in a bot room."
+PLAY_TIMEOUT_S = 45  # clearing the queue, adding a long playlist (30 s at most) and starting it
 
 _ROOM = {"type": "string", "description": "a Sonos room's name, as sonos_rooms lists it"}
 SPECS: dict[str, tuple[str, dict[str, Any]]] = {
@@ -74,11 +76,18 @@ def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+class _Failed(Exception):
+    """A speaker failed a call: which one, so the right Sonos room is named and dropped."""
+
+    def __init__(self, room: Room, error: SpeakerError) -> None:
+        super().__init__(error.kind)
+        self.room, self.error = room, error
+
+
 class SonosTools:
     def __init__(self, service: Any, in_room: Callable[[str], bool]) -> None:
         self.service = service
         self.in_room = in_room
-        self._before: list[Room] = []  # the rooms known before the last refresh
 
     # registration -------------------------------------------------------------
 
@@ -105,17 +114,19 @@ class SonosTools:
         if self.in_room(current_call.get()[1]):
             raise ValueError(IN_ROOM)
 
-    async def _rooms(self) -> list[Room]:
-        """The rooms now; the ones known before are kept, so a room that vanished reads as not answering."""
-        self._before = list(self.service.rooms)
-        return await self.service.refresh()
+    async def _rooms(self) -> tuple[list[Room], list[Room]]:
+        """The rooms now, and the ones known before (so a room that vanished reads as not answering). Both are this
+        call's own: two calls at once must not see each other's lists."""
+        before = list(self.service.rooms)
+        return await self.service.refresh(), before
 
-    def _find(self, name: str, rooms: list[Room]) -> Room:
+    @staticmethod
+    def _find(name: str, rooms: list[Room], before: list[Room]) -> Room:
         key = _key(name)
         for r in rooms:
             if _key(r.name) == key:
                 return r
-        for r in self._before:
+        for r in before:
             if _key(r.name) == key:
                 raise ValueError(f"{r.name} did not answer.")
         listed = ", ".join(r.name for r in rooms) or "none found"
@@ -129,27 +140,37 @@ class SonosTools:
     def _members(lead: Room, rooms: list[Room]) -> list[Room]:
         return [r for r in rooms if r.coordinator_uid == lead.uid] or [lead]
 
+    async def _ask(self, room: Room, fn: Callable[..., Any], *args: Any, timeout: float = CALL_TIMEOUT_S) -> Any:
+        """One speaker call to this room's speaker; a failure names the room it came from."""
+        try:
+            return await self.service.call(fn, room.ip, *args, timeout=timeout)
+        except SpeakerError as e:
+            raise _Failed(room, e) from None
+
     async def _lower(self, targets: list[Room]) -> list[str]:
-        """Turn every target louder than the ceiling down to it; one sentence per room turned down."""
+        """Turn every target louder than the ceiling down to it; one sentence per room turned down. A speaker whose
+        volume cannot be read stops the command: it might be loud, so nothing is played."""
         ceiling = self.service.settings.max_volume
         notes = []
         for r in targets:
-            if await self.service.call(self.service.speakers.get_volume, r.ip) > ceiling:
-                await self.service.call(self.service.speakers.set_volume, r.ip, ceiling)
+            if await self._ask(r, self.service.speakers.get_volume) > ceiling:
+                await self._ask(r, self.service.speakers.set_volume, ceiling)
                 notes.append(f"Turned {r.name} down to {ceiling} first.")
         return notes
 
     async def _run(self, tool: str, room: Room, work: Callable[[], Awaitable[str]]) -> str:
-        """Run a command for one room, log its outcome, and turn a speaker failure into the tool's error."""
+        """Run a command for one room, log its outcome, and turn a speaker failure into the tool's error, naming
+        (and, when it did not answer, dropping) the speaker that failed, which may be another in the group."""
         try:
             answer = await work()
-        except SpeakerError as e:
+        except (_Failed, SpeakerError) as e:
+            failed, err = (e.room, e.error) if isinstance(e, _Failed) else (room, e)
             self.service.ledger.append(Kind.sonos, "", "", event="command", tool=tool, room=room.name, ok=False,
-                                       error=e.kind)
-            if e.kind == "network":
-                self.service.drop(room.uid)
-            raise ValueError(f"{room.name} did not answer." if e.kind == "network"
-                             else f"{room.name} could not do that.") from None
+                                       error=err.kind)
+            if err.kind == "network":
+                self.service.drop(failed.uid)
+            raise ValueError(f"{failed.name} did not answer." if err.kind == "network"
+                             else f"{failed.name} could not do that.") from None
         self.service.ledger.append(Kind.sonos, "", "", event="command", tool=tool, room=room.name, ok=True, error="")
         return answer
 
@@ -165,7 +186,7 @@ class SonosTools:
 
     async def rooms(self) -> str:
         self._guard()
-        rooms = await self._rooms()
+        rooms, _ = await self._rooms()
         if not rooms:
             return "No Sonos rooms answer right now."
         by_uid = {r.uid: r for r in rooms}
@@ -192,7 +213,7 @@ class SonosTools:
 
     async def favorites(self) -> str:
         self._guard()
-        rooms = await self._rooms()
+        rooms, _ = await self._rooms()
         if not rooms:
             return "No Sonos rooms answer right now."
         favs = await self._favorites(rooms[0])
@@ -206,8 +227,8 @@ class SonosTools:
 
     async def play(self, room: str, name: str) -> str:
         self._guard()
-        rooms = await self._rooms()
-        target = self._find(room, rooms)
+        rooms, before = await self._rooms()
+        target = self._find(room, rooms, before)
         lead = self._lead(target, rooms)
         favs = await self._favorites(lead)
         matches = [f for f in favs if _key(f.title) == _key(name)]
@@ -221,7 +242,7 @@ class SonosTools:
 
         async def work() -> str:
             notes = await self._lower(self._members(lead, rooms))
-            await self.service.call(self.service.speakers.play, lead.ip, fav)
+            await self._ask(lead, self.service.speakers.play, fav, timeout=PLAY_TIMEOUT_S)
             return " ".join([f"Playing {what} {fav.title} in {target.name}."] + notes)
         return await self._run("sonos_play", target, work)
 
@@ -229,13 +250,13 @@ class SonosTools:
         self._guard()
         if action not in ACTIONS:
             raise ValueError(f"The action is one of: {', '.join(ACTIONS)}.")
-        rooms = await self._rooms()
-        target = self._find(room, rooms)
+        rooms, before = await self._rooms()
+        target = self._find(room, rooms, before)
         lead = self._lead(target, rooms)
 
         async def work() -> str:
             notes = await self._lower(self._members(lead, rooms)) if action == "resume" else []
-            await self.service.call(self.service.speakers.transport, lead.ip, action)
+            await self._ask(lead, self.service.speakers.transport, action)
             return " ".join([f"Done: {action} in {target.name}."] + notes)
         return await self._run("sonos_control", target, work)
 
@@ -247,16 +268,16 @@ class SonosTools:
             raise ValueError("The level is a whole number from 0 to 100.")
         if change is not None and not (_is_int(change) and -100 <= change <= 100):
             raise ValueError("The change is a whole number from -100 to 100.")
-        rooms = await self._rooms()
-        target = self._find(room, rooms)
+        rooms, before = await self._rooms()
+        target = self._find(room, rooms, before)
         ceiling = self.service.settings.max_volume
 
         async def work() -> str:
-            current = await self.service.call(self.service.speakers.get_volume, target.ip)
+            current = await self._ask(target, self.service.speakers.get_volume)
             new = level if level is not None else max(0, min(100, current + change))
             if new > ceiling and new > current:
                 raise ValueError(f"The highest volume ZenBot may set is {ceiling}.")
-            await self.service.call(self.service.speakers.set_volume, target.ip, new)
+            await self._ask(target, self.service.speakers.set_volume, new)
             return f"{target.name} volume is {new}."
         return await self._run("sonos_volume", target, work)
 
@@ -264,26 +285,26 @@ class SonosTools:
         self._guard()
         if not isinstance(rooms, list) or len(rooms) < 2 or not all(isinstance(r, str) for r in rooms):
             raise ValueError("Name two or more Sonos rooms: the first is the one the others join.")
-        known = await self._rooms()
-        first = self._find(rooms[0], known)
+        known, before = await self._rooms()
+        first = self._find(rooms[0], known, before)
         lead = self._lead(first, known)
-        joining = [self._find(name, known) for name in rooms[1:]]
+        joining = [self._find(name, known, before) for name in rooms[1:]]
 
         async def work() -> str:
             moving = [r for r in joining if r.uid != lead.uid and r.coordinator_uid != lead.uid]
             notes = await self._lower(moving)
             for r in moving:
-                await self.service.call(self.service.speakers.join, r.ip, lead.ip)
+                await self._ask(r, self.service.speakers.join, lead.ip)
             names = ", ".join(r.name for r in joining)
             return " ".join([f"{names} now play with {first.name}."] + notes)
         return await self._run("sonos_group", first, work)
 
     async def ungroup(self, room: str) -> str:
         self._guard()
-        rooms = await self._rooms()
-        target = self._find(room, rooms)
+        rooms, before = await self._rooms()
+        target = self._find(room, rooms, before)
 
         async def work() -> str:
-            await self.service.call(self.service.speakers.unjoin, target.ip)
+            await self._ask(target, self.service.speakers.unjoin)
             return f"{target.name} now plays on its own."
         return await self._run("sonos_ungroup", target, work)

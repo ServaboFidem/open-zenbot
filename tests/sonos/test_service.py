@@ -184,3 +184,16 @@ async def test_status_survives_a_dead_coordinator(svc, speakers):
     st = await svc.status()
     patio = next(r for r in st["rooms"] if r["name"] == "Patio")
     assert (patio["state"], patio["title"]) == ("", "")
+
+
+async def test_switch_off_and_on_during_a_look_looks_again(svc, speakers):
+    speakers.gate = threading.Event()
+    assert svc.start_look(False) is True
+    await asyncio.sleep(0.02)
+    await svc.set_settings(False, 60)
+    await svc.set_settings(True, 60)
+    assert svc.looking is True  # a look for the new switch-on is under way, not refused by the stale one
+    speakers.gate.set()
+    await svc.settle()
+    assert len(speakers.discovers) == 2
+    assert [r.name for r in svc.rooms] == sorted(r.name for r in speakers.found)

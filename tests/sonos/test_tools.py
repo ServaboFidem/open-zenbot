@@ -8,7 +8,7 @@ from src.providers.interface import ToolCall
 from src.skills.catalog import Catalog
 from src.sonos.devices import Favorite, NowPlaying, SpeakerError
 from src.sonos.service import SonosService
-from src.sonos.tools import CONTENT_NOTE, GROUP, NAMES, SonosTools
+from src.sonos.tools import CONTENT_NOTE, GROUP, NAMES, SonosTools, PLAY_TIMEOUT_S
 from tests.sonos.conftest import room
 
 KITCHEN, LIVING, PATIO = "192.0.2.10", "192.0.2.11", "192.0.2.12"
@@ -203,3 +203,26 @@ async def test_runs_through_the_tool_runner(sonos, runner):
     assert result.ok is False and "No Sonos room named 'Garage'" in result.error
     result = await runner.run(ToolCall("2", "sonos_play", {"room": "Kitchen", "name": "Dinner"}))
     assert result.ok is True
+
+
+async def test_a_failing_group_member_is_named_and_dropped_not_the_target(sonos, svc, speakers):
+    # Patio still listed in the topology but not answering: playing in Living Room must not blame Living Room
+    speakers.down.add(PATIO)
+    with pytest.raises(ValueError, match="Patio did not answer"):
+        await sonos.play("Living Room", "Dinner")
+    names = {r.name for r in svc.rooms}
+    assert "Living Room" in names and "Patio" not in names
+    assert not any(c[0] == "play" for c in speakers.calls)  # its volume could not be checked, so nothing played
+
+
+async def test_play_gives_queueing_a_long_timeout(sonos, svc, monkeypatch):
+    seen = []
+    real = svc.call
+
+    async def call(fn, *args, timeout=10):
+        seen.append((getattr(fn, "__name__", ""), timeout))
+        return await real(fn, *args, timeout=timeout)
+
+    monkeypatch.setattr(svc, "call", call)
+    await sonos.play("Kitchen", "Dinner")
+    assert ("play", PLAY_TIMEOUT_S) in seen and PLAY_TIMEOUT_S > 30

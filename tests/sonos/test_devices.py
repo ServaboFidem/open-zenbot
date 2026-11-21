@@ -35,6 +35,7 @@ class StubZone:
 
     def add_to_queue(self, item, position=0, as_next=False, **kw):
         self.calls.append(("add_to_queue", item))
+        self.queue_timeouts = [*getattr(self, "queue_timeouts", []), kw.get("timeout")]
         return 1
 
     def play_from_queue(self, index, start=True):
@@ -170,3 +171,27 @@ def test_favorites_reads_sonos_playlists_from_the_speaker(monkeypatch):
     assert [(f.title, f.kind) for f in got] == [("Morning Jazz", "favorite"), ("Dinner", "playlist")]
     assert got[0].item is fav and got[1].item is pl
     assert asked == [("favorites", True), ("playlists", True)]
+
+
+class DeadZone(StubZone):
+    """A speaker still listed in the household topology but not answering: reading its group sends a request."""
+
+    @property
+    def group(self):
+        raise requests.exceptions.ConnectTimeout("gone")
+
+
+def test_a_listed_speaker_that_does_not_answer_is_left_out(monkeypatch):
+    kitchen = StubZone("RINCON_A", "Kitchen", "192.0.2.10")
+    office = DeadZone("RINCON_B", "Office", "192.0.2.11")
+    kitchen.peers = [kitchen, office]
+    stub_soco(monkeypatch, [kitchen, office], discovered=[kitchen, office])
+    assert [r.name for r in SocoSpeakers().rooms("192.0.2.10")] == ["Kitchen"]
+    assert [r.name for r in SocoSpeakers().discover([], False, 5)] == ["Kitchen"]
+
+
+def test_queueing_a_container_gets_a_long_request_timeout(monkeypatch):
+    zone = StubZone("RINCON_A", "Kitchen", "192.0.2.10")
+    stub_soco(monkeypatch, [zone])
+    SocoSpeakers().play("192.0.2.10", Favorite("Dinner", "playlist", Ref("object.container.playlistContainer")))
+    assert zone.queue_timeouts == [devices.QUEUE_TIMEOUT_S] and devices.QUEUE_TIMEOUT_S >= 30

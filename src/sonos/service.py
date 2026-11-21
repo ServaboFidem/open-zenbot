@@ -66,21 +66,22 @@ class SonosService:
         if not self.settings.enabled:
             return
         self._looks += 1
-        await self._look(scan)
+        await self._look(scan, self._gen)
 
     def start_look(self, scan: bool) -> bool:
         """Start a look in the background; False when Sonos is off or a look is under way."""
         if not self.settings.enabled or self.looking:
             return False
         self._looks += 1  # at once, so a second press before the task starts is refused
-        self.spawn(self._look(scan))
+        self.spawn(self._look(scan, self._gen))
         return True
 
-    async def _look(self, scan: bool) -> None:
-        """One look; the caller has counted it in `_looks`."""
+    async def _look(self, scan: bool, gen: int) -> None:
+        """One look for switch generation `gen`; the caller has counted it in `_looks`."""
         try:
             async with self._lock:
-                gen = self._gen
+                if gen != self._gen:
+                    return  # switched off (or off and on) while it waited: a newer look is the one that counts
                 try:
                     found = await self.call(self.speakers.discover, list(self.settings.known), scan,
                                             DISCOVER_TIMEOUT_S,
@@ -97,7 +98,16 @@ class SonosService:
                 self.ledger.append(Kind.sonos, "", "", event="look", rooms=len(found), scan=scan, error=error)
                 self._changed()
         finally:
-            self._looks -= 1
+            if gen == self._gen:  # a stale look was already uncounted when the switch changed
+                self._looks -= 1
+
+    def _new_generation(self) -> None:
+        """Sonos was switched on or off: drop the looks under way, so none can bring back old speakers or hold up
+        the next look (a cancelled look's thread may still finish its request, and its result is thrown away)."""
+        self._gen += 1
+        self._looks = 0
+        for task in list(self._tasks):
+            task.cancel()
 
     async def _loop(self) -> None:
         while True:
@@ -158,12 +168,12 @@ class SonosService:
         self.settings.save(self.vault_root)
         self.ledger.append(Kind.sonos, "", "", event="settings", enabled=self.settings.enabled, max_volume=max_volume)
         if was and not self.settings.enabled:
-            self._gen += 1
+            self._new_generation()
             self._stop_loop()
             self.rooms, self.error = [], ""
             self._changed()
         elif not was and self.settings.enabled:
-            self._gen += 1
+            self._new_generation()
             await self.start()
         return await self.status()
 
