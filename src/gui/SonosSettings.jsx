@@ -7,8 +7,8 @@ import { HELP_LINE, canLookAgain, freshRead, nextRead, statusLine, volumeError }
 // Settings > Connected apps > Sonos: whether ZenBot looks for Sonos speakers on this network, what it found, Look
 // again (which also scans the network, slower), and the highest volume ZenBot may set. Room names come from the
 // speakers and are shown as plain text.
-// Props: { api, online, notify }
-export function SonosSettings({ api, online, notify }) {
+// Props: { api, online, notify, onChange } (onChange: after a save, so the left bar's Sonos entry follows the switch)
+export function SonosSettings({ api, online, notify, onChange }) {
   const sonos = api.sonos;
   const [status, setStatus] = useState(null);
   const [volume, setVolume] = useState('');
@@ -42,6 +42,7 @@ export function SonosSettings({ api, online, notify }) {
       saves.current += 1;
       setStatus(st);
       if (done) notify(done);
+      onChange?.();
       return st;
     } catch (e) { setError(errorLine(e)); return null; }
     finally { setBusy(''); }

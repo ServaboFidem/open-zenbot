@@ -82,7 +82,7 @@ def test_build_harness_makes_bots_from_the_directory(monkeypatch, vault: Path, t
     h = build_harness(HarnessConfig(vault_root=vault, skills_dir=Path("skills"), bot_prompts_dir=prompts))
     assert set(h.bots) == {"research-partner", "generalist"}
     assert [s.slug for s in h.bots["research-partner"].skills] == ["research-brief"]
-    assert sorted(s.slug for s in h.bots["generalist"].skills) == ["archify", "clarify-crit", "contagious", "delegation", "design-everyday-things", "design-studio", "discernment-nudge", "doc-coauthoring", "docx", "drive-motivation", "events-digest", "frontend-design", "high-end-visual-design", "hooked-ux", "humanizer", "hundred-million-offers", "improve-retention", "influence-psychology", "learn-company", "made-to-stick", "mom-test", "obviously-awesome", "pdf", "pptx", "prompt-master", "research-brief", "skill-creator", "weekly-digest", "xlsx"]  # no skills key: every catalog skill
+    assert sorted(s.slug for s in h.bots["generalist"].skills) == ["archify", "clarify-crit", "contagious", "delegation", "design-everyday-things", "design-studio", "discernment-nudge", "doc-coauthoring", "docx", "drive-motivation", "events-digest", "frontend-design", "high-end-visual-design", "hooked-ux", "humanizer", "hundred-million-offers", "improve-retention", "influence-psychology", "learn-company", "made-to-stick", "mom-test", "obviously-awesome", "pdf", "pptx", "prompt-master", "research-brief", "skill-creator", "sonos-morning", "weekly-digest", "xlsx"]  # no skills key: every catalog skill
 
 
 def test_build_harness_with_an_empty_directory_has_no_bots(monkeypatch, vault: Path, tmp_path: Path):
@@ -349,6 +349,15 @@ def test_zenbot_always_has_sonos():
     no speaker answers (the tools are not registered then)."""
     zenbot = parse((REPO / "bot-prompts" / "personal-assistant.md").read_text(encoding="utf-8"), "personal-assistant")
     assert zenbot.mcps == ["sonos"]
+
+
+def test_zenbot_carries_the_morning_music_skill():
+    """The Sonos page's "Make this my morning routine" pairs ZenBot with sonos-morning; a routine whose skill is not
+    on its bot fails at run time, so the pairing is checked here."""
+    zenbot = parse((REPO / "bot-prompts" / "personal-assistant.md").read_text(encoding="utf-8"), "personal-assistant")
+    assert "sonos-morning" in zenbot.skills
+    skill = (REPO / "skills" / "sonos-morning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "slug: sonos-morning" in skill and "Morning music: <Favorite> in <speakers>" in skill
 
 
 def test_librarian_does_not_play_music():

@@ -1517,7 +1517,7 @@ def create_app(h: Harness) -> FastAPI:
     h.discover.routines, h.discover.scheduler = routines, scheduler
     app_routers = [music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h),
                    facebook_router(h.discover, h), dream_router(h), mail_router(h.mail),
-                   sonos_router(h.sonos)]
+                   sonos_router(h.sonos, h.sonos_tools)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):

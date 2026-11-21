@@ -21,21 +21,23 @@ export function ScheduleEditor({ value, onChange }) {
   </div>;
 }
 
-// Create or edit a routine. routine: the stored one to edit, or null for a new one.
+// Create or edit a routine. routine: the stored one to edit, or null for a new one. draft: starting values for a new
+// one (the Sonos page's morning routine: name, bot, skill, enabled, schedule); ignored when routine is given.
 // A managed routine (the Music digest) keeps its bot and skill; only its name, schedule and switch change.
-export default function RoutineDialog({ routine, bots, skills, onSave, onClose }) {
+export default function RoutineDialog({ routine, draft, bots, skills, onSave, onClose }) {
   const managed = !!routine?.managed_by;
-  const [name, setName] = useState(routine?.name || '');
-  const [bot, setBot] = useState(routine?.bot || bots[0]?.id || '');
-  const [skill, setSkill] = useState(routine?.skill || botSkills(routine?.bot || bots[0]?.id, bots, skills)[0]?.ref || '');
+  const seed = routine || draft || null;
+  const [name, setName] = useState(seed?.name || '');
+  const [bot, setBot] = useState(seed?.bot || bots[0]?.id || '');
+  const [skill, setSkill] = useState(seed?.skill || botSkills(seed?.bot || bots[0]?.id, bots, skills)[0]?.ref || '');
   const offered = botSkills(bot, bots, skills);
   function chooseBot(id) {
     setBot(id);
     const next = botSkills(id, bots, skills);
     if (!next.some(s => s.ref === skill)) setSkill(next[0]?.ref || '');
   }
-  const [enabled, setEnabled] = useState(routine?.enabled ?? true);
-  const [schedule, setSchedule] = useState(routine?.schedule ? { ...defaultSchedule(), ...routine.schedule } : defaultSchedule());
+  const [enabled, setEnabled] = useState(seed?.enabled ?? true);
+  const [schedule, setSchedule] = useState(seed?.schedule ? { ...defaultSchedule(), ...seed.schedule } : defaultSchedule());
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   async function submit(e) {
