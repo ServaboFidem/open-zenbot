@@ -546,7 +546,7 @@ async def test_sample_speaks_the_fixed_sentence_and_refuses_an_unknown_voice_and
     assert entry.data == {"sample": True, "voice": "bf_emma", "bytes": len(wav)}
     with pytest.raises(SpeechError) as e:
         await s.sample("nobody")
-    assert e.value.status == 422 and len(engine.calls) == 1
+    assert e.value.status == 422 and str(e.value) == "Pick a voice from the list." and len(engine.calls) == 1
     s.local_model._ready = False
     with pytest.raises(SpeechError) as e:
         await s.sample("af_heart")
@@ -593,3 +593,38 @@ async def test_a_kokoro_piece_is_traced_like_a_speech_call(tmp_path):
     assert len(calls) == len(split("One. Two."))
     assert all(c["model"] == "kokoro-v1.0" and c["model_parameters"] == {"voice": "af_heart"}
                and c["as_type"] == "generation" for c in calls)
+
+
+# -- fix round 1 ------------------------------------------------------------------------------------
+
+async def test_a_provider_change_during_a_failing_kokoro_reading_keeps_the_kokoro_sentence(tmp_path):
+    s, _, _ = _local(tmp_path, engine=FakeEngine(fail_on=1))
+    reading = await s.read("hello", NARRATOR, _narrate("One. Two."))
+    s.reconfigure(SpeechConfig(provider="openrouter"))
+    async def reading_of(*a):
+        return reading
+    s.read = reading_of
+    with pytest.raises(SpeechError) as e:
+        await s.speak("hello", NARRATOR, None)
+    assert e.value.status == 502 and str(e.value) == LOCAL_FAILED
+
+
+async def test_finish_twice_writes_one_entry(tmp_path):
+    s, _, ledger = _local(tmp_path)
+    reading = await s.read("hello", NARRATOR, _narrate("One."))
+    [w async for w in reading.pieces()]
+    s.finish(reading)
+    s.finish(reading, stopped=True)
+    assert len([x for x in ledger.iter() if x.kind == "speech"]) == 1
+
+
+async def test_a_narration_that_cleans_to_nothing_is_502_and_loads_nothing(tmp_path):
+    s, engine, ledger = _local(tmp_path)
+    calls = []
+    engine.ensure = lambda: calls.append("ensure")
+    with pytest.raises(SpeechError) as e:
+        await s.read("hello", NARRATOR, _narrate("\x00\x01 ​"))
+    assert e.value.status == 502 and str(e.value) == "The Narrator returned nothing to read."
+    assert calls == [] and engine.calls == []
+    [entry] = [x for x in ledger.iter() if x.kind == "speech"]
+    assert entry.data["stage"] == "narrate" and entry.data["error"] == "empty"

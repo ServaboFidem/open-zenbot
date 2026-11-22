@@ -20,7 +20,7 @@ from typing import Any
 from src.kokoro.engine import DEFAULT_VOICE as KOKORO_VOICE
 from src.kokoro.engine import MODEL as KOKORO_MODEL
 from src.kokoro.engine import RATE as KOKORO_RATE
-from src.kokoro.engine import KokoroEngine, NotDownloaded, voice as kokoro_voice, voices_view
+from src.kokoro.engine import KokoroEngine, NotDownloaded, clean, voice as kokoro_voice, voices_view
 from src.kokoro.model import KokoroModel
 from src.providers import tracing
 from src.providers.interface import Message, Provider, ProviderError, failure_kind
@@ -54,7 +54,7 @@ SPEAK_FAILED = "The speech model could not read this reply. Check its key and li
 NOT_DOWNLOADED = "The voice for this computer is not downloaded. Download it in Settings > Harness Tools."
 LOCAL_FAILED = ("The voice on this computer could not be started. Remove it and download it again in "
                 "Settings > Harness Tools.")
-UNKNOWN_VOICE = "That is not a voice on this computer."
+PICK_A_VOICE = "Pick a voice from the list."
 
 
 class SpeechError(Exception):
@@ -173,6 +173,7 @@ class Reading:
         self.log = log
         self.bot_id = bot_id
         self.made = 0
+        self.finished = False
 
     async def pieces(self) -> AsyncIterator[bytes]:
         async for wav in self._source:
@@ -280,12 +281,16 @@ class Speech:
             self._log(bot_id, **log, stage="narrate", error="empty")
             raise SpeechError(502, EMPTY)
         if local:
+            pieces = [p for p in split(spoken) if clean(p)]
+            if not pieces:
+                self._log(bot_id, **log, stage="narrate", error="empty")
+                raise SpeechError(502, EMPTY)
             try:
                 await engine.ensure()
             except ProviderError as e:
                 self._log(bot_id, **log, stage="speak", error=failure_kind(e) or "other")
                 raise SpeechError(*_local_refusal(e)) from None
-            return Reading(self._local_pieces(engine, split(spoken), voice), log, bot_id)
+            return Reading(self._local_pieces(engine, pieces, voice), log, bot_id)
         try:
             wav = await speaker.speak(key, tts_model, voice, spoken)
         except ProviderError as e:
@@ -316,7 +321,7 @@ class Speech:
             wav = await reading.wav()
         except ProviderError as e:
             self.finish(reading, error=failure_kind(e) or "other")
-            if self.config.provider == LOCAL:
+            if reading.log["provider"] == LOCAL:
                 raise SpeechError(*_local_refusal(e)) from None
             raise SpeechError(502, SPEAK_FAILED) from None
         self.finish(reading)
@@ -325,7 +330,7 @@ class Speech:
     async def sample(self, voice: str) -> bytes:
         """One WAV of SAMPLE_TEXT in `voice`, no Narrator. SpeechError: 422 unknown voice, 409 not downloaded, 502."""
         if kokoro_voice(voice) is None:
-            raise SpeechError(422, UNKNOWN_VOICE)
+            raise SpeechError(422, PICK_A_VOICE)
         if not self._local_ready():
             raise SpeechError(409, NOT_DOWNLOADED)
         try:
@@ -341,6 +346,9 @@ class Speech:
 
     def finish(self, reading: Reading, *, stopped: bool = False, error: str = "") -> None:
         """The one ledger entry of a reading: its sizes and models, how many pieces were made, never the text."""
+        if reading.finished:
+            return
+        reading.finished = True
         data = {**reading.log, "pieces": reading.made}
         if stopped:
             data["stopped"] = True
