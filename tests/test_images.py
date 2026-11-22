@@ -180,7 +180,9 @@ async def test_settings_api_reads_and_changes_the_image_tool(tmp_path: Path, vau
                 catalog=Catalog())
     transport = httpx.ASGITransport(app=create_app(h))
     async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
-        [tool] = (await c.get("/settings/tools")).json()["tools"]
+        tools = (await c.get("/settings/tools")).json()["tools"]
+        assert [t["id"] for t in tools] == ["image", "speech"]  # reading aloud is listed beside it
+        [tool] = [t for t in tools if t["id"] == "image"]
         assert tool["id"] == "image" and tool["enabled"] and tool["active"] and tool["providers"] == ["openrouter"]
         assert tool["default_model"] == DEFAULT_MODEL
         assert (await c.put("/settings/tools/image", json={"model": "other/model"})).status_code == 422  # not enabled yet

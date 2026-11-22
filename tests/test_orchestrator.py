@@ -304,3 +304,13 @@ async def test_a_closed_bot_is_never_a_specialist(ledger: Ledger, tmp_path: Path
     assert "bot:writer" not in asked and "bot:critic" in asked
     assert out.outcome == "room" and svc.get(out.room_id).members == ["lead", "critic"]
     await svc.settle(out.room_id)
+
+
+async def test_a_narrator_is_never_a_specialist(ledger: Ledger, tmp_path: Path):
+    svc = make(provider(), ledger, tmp_path)
+    svc.bots["writer"].narrates = True
+    scorer = MockScorer(scores(**{"bot:writer": 0.95, "bot:critic": 0.9}))
+    out = await orch(scorer, svc, ledger).route("Read this aloud")
+    asked = [q for req in scorer.requests for q in req.questions]
+    assert "bot:writer" not in asked and "bot:critic" in asked
+    await svc.settle(out.room_id)

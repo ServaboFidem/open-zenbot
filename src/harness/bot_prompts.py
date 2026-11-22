@@ -36,6 +36,7 @@ class BotPrompt:
     studio: bool = False  # a design bot: the GUI shows its design preview pane; set only in the file
     places: list[str] = field(default_factory=list)  # what this bot can place in another bot's design: "text", "images"; set only in the file
     closed: bool = False  # the bot gets only the tools of its own `mcps` (no built-ins, no routed servers); set only in the file
+    narrates: bool = False  # the Narrator: asked directly to rewrite a reply for reading aloud, never given a task; set only in the file
 
 
 def slugify(name: str) -> str:
@@ -71,7 +72,17 @@ def parse(text: str, bot_id: str) -> BotPrompt:
         raise ValueError("a closed bot needs mcps: the servers it may use")
     if closed and (studio or places):
         raise ValueError("a closed bot cannot be a studio bot or have places")
-    return BotPrompt(id=bot_id, name=name.strip(), role=role.strip(), instructions=body.strip(), skills=skills, mcps=mcps, studio=studio, places=list(places), closed=closed)
+    narrates = meta.get("narrates", False)
+    if not isinstance(narrates, bool):
+        raise ValueError("narrates must be true or false")
+    if narrates:
+        if studio or places or closed:
+            raise ValueError("a narrating bot cannot be a studio bot, have places or be closed")
+        if skills or mcps:
+            raise ValueError("a narrating bot has no skills and no mcps")
+        skills = []
+    return BotPrompt(id=bot_id, name=name.strip(), role=role.strip(), instructions=body.strip(), skills=skills, mcps=mcps,
+                     studio=studio, places=list(places), closed=closed, narrates=narrates)
 
 
 def render(p: BotPrompt) -> str:
@@ -86,6 +97,8 @@ def render(p: BotPrompt) -> str:
         meta["places"] = list(p.places)
     if p.closed:
         meta["closed"] = True
+    if p.narrates:
+        meta["narrates"] = True
     head = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, default_flow_style=None).strip()
     return f"---\n{head}\n---\n{p.instructions.strip()}\n"
 

@@ -86,7 +86,24 @@ class OpenRouterHttp:
     async def get_json(self, path: str, params: dict[str, str] | None = None, *, what: str = "openrouter") -> dict[str, Any]:
         return await self._send("GET", path, what, params=params)
 
+    async def post_bytes(self, path: str, payload: dict[str, Any], *, what: str = "openrouter") -> bytes:
+        """A POST whose answer is raw bytes (audio), with the same failure mapping as the JSON calls."""
+        r = await self._request("POST", path, what, json=payload)
+        if r.headers.get("content-type", "").split(";", 1)[0].strip().lower() == "application/json":
+            raise ProviderError(f"{what} returned no audio: a JSON body")  # an error answered with 200
+        return r.content
+
     async def _send(self, method: str, path: str, what: str, **kwargs: Any) -> dict[str, Any]:
+        r = await self._request(method, path, what, **kwargs)
+        try:
+            data = r.json()
+        except ValueError:
+            raise ProviderError(f"{what} returned non-JSON") from None
+        if not isinstance(data, dict):
+            raise ProviderError(f"{what} returned a non-object body")
+        return data
+
+    async def _request(self, method: str, path: str, what: str, **kwargs: Any) -> httpx.Response:
         try:
             r = await self._client.request(method, path, **kwargs)
         except httpx.TimeoutException as e:
@@ -104,13 +121,7 @@ class OpenRouterHttp:
                                       status=r.status_code)
         if r.status_code >= 400:
             raise ProviderError(f"{what} HTTP {r.status_code}: {_safe_error(r)}", status=r.status_code)
-        try:
-            data = r.json()
-        except ValueError:
-            raise ProviderError(f"{what} returned non-JSON") from None
-        if not isinstance(data, dict):
-            raise ProviderError(f"{what} returned a non-object body")
-        return data
+        return r
 
     async def probe(self, path: str = AUTH_PATH) -> bool:
         try:

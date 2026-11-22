@@ -703,3 +703,13 @@ async def test_saving_a_key_on_a_provider_binds_an_unbound_harness(vault: Path, 
         assert r.status_code == 200, r.text
         assert (await c.get("/settings")).json()["key_set"] is True
     assert h.bound and h.scorer is not None
+
+
+async def test_a_provider_and_model_that_read_aloud_are_in_use(client, harness: Harness):
+    model = harness.speech.config.model
+    [p] = (await client.get("/settings/providers")).json()["providers"]
+    assert "Read aloud" in p["in_use"]
+    assert (await client.delete("/settings/providers/openrouter")).status_code == 409
+    harness.speech.config.enabled = False
+    [p] = (await client.get("/settings/providers")).json()["providers"]
+    assert "Read aloud" not in p["in_use"] and model
