@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EMPTY, HOLD, body, canChange, compareDefaults, count, cssValue, frameMessages, holdsSend, pictureProblem, saveLabel, setImage, setText, setTweak, slotFor, whyNot } from '../../src/gui/design-edits.js';
+import { EMPTY, HOLD, body, canChange, compareDefaults, count, cssValue, frameMessages, holdsSend, pictureProblem, restorable, saveLabel, setImage, setText, setTweak, slotFor, slotsBehind, whyNot } from '../../src/gui/design-edits.js';
 
 const slots = { version: 5, texts: [{ id: 'hero', text: 'Hello' }], images: [{ id: 'logo', name: 'logo.png', alt: 'Logo' }],
   tweaks: [{ var: '--accent', label: 'Accent', type: 'color', value: '#2f6feb' }, { var: '--gap', label: 'Gap', type: 'range', min: 0, max: 40, step: 1, unit: 'px', value: 8 }] };
@@ -65,4 +65,27 @@ test('compareDefaults is previous and newest of the newest design', () => {
   const r = [{ attId: 'x1', design: 'other' }, { attId: 'a1', design: 'land' }, { attId: 'a2', design: 'land' }, { attId: 'a3', design: 'land' }];
   assert.deepEqual(compareDefaults(r), ['a2', 'a3']);
   assert.deepEqual(compareDefaults(r.slice(0, 1)), ['x1', 'x1']);
+});
+test('a colour picked back to the saved one, in any case, removes the entry', () => {
+  const upper = { ...slots, tweaks: [{ var: '--accent', label: 'Accent', type: 'color', value: '#2F6FEB' }] };
+  const t = setTweak(EMPTY, upper, '--accent', '#c2410c');
+  assert.equal(count(t), 1);
+  assert.equal(count(setTweak(t, upper, '--accent', '#2f6feb')), 0);
+  assert.equal(count(setTweak(t, slots, '--accent', '#2F6FEB')), 0);
+});
+test('restorable: an older version of the same file, outside Compare', () => {
+  const v3 = { attId: 'c', design: 'site', name: 'index.html', version: 3 };
+  const v1 = { attId: 'a', design: 'site', name: 'index.html', version: 1 };
+  assert.equal(restorable(v1, v3, false), true);
+  assert.equal(restorable(v3, v3, false), false);
+  assert.equal(restorable(v1, v3, true), false);
+  assert.equal(restorable({ ...v1, design: 'other' }, v3, false), false);
+  // two files in one design: the details page's version 1 is not the index page's
+  assert.equal(restorable({ attId: 'd', design: 'site', name: 'details.html', version: 1 }, v3, false), false);
+});
+test('slotsBehind: the slots name another version than the newest the pane holds', () => {
+  const newest = { attId: 'c', version: 3 };
+  assert.equal(slotsBehind({ version: 4 }, newest), true);
+  assert.equal(slotsBehind({ version: 3 }, newest), false);
+  assert.equal(slotsBehind(null, newest), false);
 });

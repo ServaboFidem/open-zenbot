@@ -20,7 +20,8 @@ function place(rect, stage) {
   return { left, top: Math.min(top, Math.max(8, H - 200)), width };
 }
 
-export default function DesignEditor({ slot, rect, stage, text, picture, onText, onPicture, onDone, onCancel }) {
+// `disabled` while a save is on its way: what is typed then would be wiped when the save clears the pending changes.
+export default function DesignEditor({ slot, rect, stage, text, picture, disabled = false, onText, onPicture, onDone, onCancel }) {
   const [where] = useState(() => place(rect, stage));
   const first = useRef(null);
   const fileInput = useRef(null);
@@ -31,7 +32,7 @@ export default function DesignEditor({ slot, rect, stage, text, picture, onText,
     el?.focus();
     if (typeof el?.setSelectionRange === 'function') el.setSelectionRange(el.value.length, el.value.length);
   }, []);
-  const onKeyDown = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); } };
+  const onKeyDown = e => { if (e.key === 'Escape' && !disabled) { e.preventDefault(); e.stopPropagation(); onCancel(); } };
 
   function choose(e) {
     const file = e.target.files?.[0];
@@ -53,17 +54,17 @@ export default function DesignEditor({ slot, rect, stage, text, picture, onText,
   const label = slot.kind === 'text' ? `Edit the text of ${slot.id}` : `Change the picture ${slot.id}`;
   return <div className="design-editor od-stack" role="dialog" aria-label={label} style={where} onKeyDown={onKeyDown}>
     {slot.kind === 'text'
-      ? <Textarea ref={first} className="design-editor-text" aria-label={label} value={text} maxLength={TEXT_MAX} resize="vertical" rows={3} onChange={(e, d) => onText(d.value)}/>
+      ? <Textarea ref={first} className="design-editor-text" aria-label={label} value={text} maxLength={TEXT_MAX} resize="vertical" rows={3} disabled={disabled} onChange={(e, d) => onText(d.value)}/>
       : <>
         <div className="od-row design-editor-pick">
-          <Button ref={first} appearance="outline" onClick={() => fileInput.current?.click()}>Choose picture</Button>
+          <Button ref={first} appearance="outline" disabled={disabled} onClick={() => fileInput.current?.click()}>Choose picture</Button>
           <span className="design-editor-name">{picture ? picture.name : slot.name}</span>
           <input ref={fileInput} type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif" onChange={choose}/>
         </div>
-        <label className="design-editor-alt od-stack">Alt text<Input value={alt} maxLength={TEXT_MAX} disabled={!picture} onChange={(e, d) => changeAlt(d.value)}/></label>
+        <label className="design-editor-alt od-stack">Alt text<Input value={alt} maxLength={TEXT_MAX} disabled={disabled || !picture} onChange={(e, d) => changeAlt(d.value)}/></label>
         {!picture && <span className="field-hint">The alt text is saved with a new picture.</span>}
         {problem && <span className="field-hint" role="alert">{problem}</span>}
       </>}
-    <div className="od-row design-editor-actions"><Button appearance="primary" size="small" onClick={onDone}>Done</Button><Button appearance="subtle" size="small" onClick={onCancel}>Cancel</Button></div>
+    <div className="od-row design-editor-actions"><Button appearance="primary" size="small" disabled={disabled} onClick={onDone}>Done</Button><Button appearance="subtle" size="small" disabled={disabled} onClick={onCancel}>Cancel</Button></div>
   </div>;
 }

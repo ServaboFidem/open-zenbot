@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Dropdown, Input, Option } from '@fluentui/react-components';
 import { Comment20Regular, Dismiss16Regular, Edit20Regular, History20Regular, Options20Regular, PanelRightContract20Regular, PanelRightExpand20Regular, SplitVertical20Regular } from '@fluentui/react-icons';
 import { acceptPick, acceptReady, addPick, MAX_PICKS, studioFrameUrl } from './design.js';
-import { body, canChange, count, EMPTY, frameMessages, HOLD, saveLabel, setImage, setText, setTweak, slotFor, whyNot } from './design-edits.js';
+import { body, canChange, count, EMPTY, frameMessages, HOLD, restorable, saveLabel, setImage, setText, setTweak, slotFor, slotsBehind, whyNot } from './design-edits.js';
 import DesignCompare from './DesignCompare';
 import DesignEditor from './DesignEditor';
 import DesignPendingBar from './DesignPendingBar';
@@ -30,7 +30,9 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
   const [slotsWhy, setSlotsWhy] = useState('');  // the harness's sentence when the slots could not be read
   const [editing, setEditing] = useState(null);  // { slot, rect, before }: the editor open on one slot
   const [note, setNote] = useState('');          // a sentence under the frame: a save's refusal, "Nothing changed.", not a slot
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState(false);   // a save or restore on its way: the editor and the tweaks wait
+  const [slotsRead, setSlotsRead] = useState(0); // bumped to read the slots again after a refusal
+  const busy = useRef(false);                    // the same, at once: a second click before the next render does nothing
   const frame = useRef(null), stage = useRef(null);
   const shown = revisions.find(r => r.attId === shownId) || newest;
   const onNewest = shown.attId === newest.attId;
@@ -50,11 +52,11 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
   const changeable = canChange({ onNewest, ready, disabled, comparing }) && !!slots;
   const whyChange = whyNot({ onNewest, ready, disabled, comparing, newestLabel: versionLabel(newest, false) }) || (slots ? '' : slotsWhy || 'The design is still loading.');
   const editingOn = mode === 'edit' && changeable, tweaking = mode === 'tweaks' && changeable;
-  const restorable = !onNewest && !comparing && shown.design === newest.design;
+  const canRestore = restorable(shown, newest, comparing);
   const pins = onNewest ? picks.map((p, i) => ({ n: i + 1, elementId: p.elementId, selector: p.selector })) : [];
   const pinsKey = JSON.stringify(pins);
   const latest = useRef({});
-  latest.current = { commenting, editingOn, picks, onPicks, slots, pending };
+  latest.current = { commenting, editingOn: editingOn && !saving, picks, onPicks, slots, pending };
 
   // A layout effect runs before the frame can post anything, so no message from it is missed.
   useLayoutEffect(() => {
@@ -80,7 +82,6 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
   useEffect(() => { setShownId(null); }, [newest.attId]);  // a new revision brings the pane to it
   useEffect(() => { if ((mode === 'comment' && !canPick) || ((mode === 'edit' || mode === 'tweaks') && !changeable)) setMode(null); }, [mode, canPick, changeable]);
   useEffect(() => { if (!editingOn) setEditing(null); }, [editingOn]);
-  useEffect(() => { setNote(''); }, [mode]);
   useEffect(() => { if (ready) post(frame, { zen: 'mode', pick: commenting || editingOn }); }, [commenting, editingOn, loads]);
   useEffect(() => { if (ready) post(frame, { zen: 'pins', pins }); }, [pinsKey, loads]);
   // Every change to pending, and every new frame, shows the whole pending state again from the saved design.
@@ -93,34 +94,40 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
     api.designSlots(convId).then(s => {
       if (!current) return;
       setSlots(s);
-      if (s?.version !== newest.version) onStale?.();  // the harness made a version the pane has not seen yet
+      if (slotsBehind(s, newest)) onStale?.();  // the harness made a version the pane has not seen yet
     }).catch(e => { if (current) setSlotsWhy(e?.message || ''); });
     return () => { current = false; };
-  }, [convId, newest.attId, disabled]);
+  }, [convId, newest.attId, disabled, slotsRead]);
 
+  // A 409 means the design or the task moved on: the conversation and the slots are read again, the sentence stays.
+  function refused(e, fallback) {
+    setNote(e?.message || fallback);
+    if (e?.status === 409) { onStale?.(); setSlotsRead(k => k + 1); }
+  }
   async function save() {
-    setSaving(true); setNote('');
+    if (busy.current) return;
+    busy.current = true; setSaving(true); setNote('');
     try {
       const r = await api.saveDesignChanges(convId, body(pending, slots.version));
       onPending(EMPTY); setEditing(null);
       if (r?.version == null) setNote('Nothing changed.');
       if (r?.conversation) onSaved(r.conversation);
-    } catch (e) { setNote(e?.message || 'The changes could not be saved.'); }  // the changes stay
-    finally { setSaving(false); }
+    } catch (e) { refused(e, 'The changes could not be saved.'); }  // the changes stay
+    finally { busy.current = false; setSaving(false); }
   }
   async function restore() {
-    if (!window.confirm(`Make Version ${shown.version} the newest version?`)) return;
-    setSaving(true); setNote('');
+    if (busy.current || !window.confirm(`Make Version ${shown.version} the newest version?`)) return;
+    busy.current = true; setSaving(true); setNote('');
     try {
       const r = await api.restoreDesign(convId, shown.version, newest.version);
       onPending(EMPTY);
       if (r?.version == null) setNote('Nothing changed.');
       if (r?.conversation) onSaved(r.conversation);
-    } catch (e) { setNote(e?.message || 'This version could not be restored.'); }
-    finally { setSaving(false); }
+    } catch (e) { refused(e, 'This version could not be restored.'); }
+    finally { busy.current = false; setSaving(false); }
   }
   const restoreWhy = disabled ? 'Wait for the task to finish before changing the design.' : n ? HOLD : '';
-  const modeButton = (key, label, icon, can, title) => <Button appearance={mode === key && can ? 'primary' : 'outline'} icon={icon} aria-pressed={mode === key && can} disabledFocusable={!can} title={title} onClick={() => setMode(m => m === key ? null : key)}>{label}</Button>;
+  const modeButton = (key, label, icon, can, title) => <Button appearance={mode === key && can ? 'primary' : 'outline'} icon={icon} aria-pressed={mode === key && can} disabledFocusable={!can} title={title} onClick={() => { setNote(''); setMode(m => m === key ? null : key); }}>{label}</Button>;
 
   if (!open) return <section className="design-pane" aria-label="Design"><Button appearance="subtle" icon={<PanelRightExpand20Regular/>} aria-label="Show the design" title="Show the design" onClick={() => setOpen(true)}/></section>;
   return <section className="design-pane open" aria-label="Design">
@@ -129,7 +136,7 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
         <strong className="od-fill">{shown.title}</strong>
         {!comparing && <Dropdown className="design-version" aria-label="Version" value={versionLabel(shown, many)} selectedOptions={[shown.attId]} onOptionSelect={(e, d) => d.optionValue && setShownId(d.optionValue === newest.attId ? null : d.optionValue)}>{[...revisions].reverse().map(r => <Option key={r.attId} value={r.attId} text={versionLabel(r, many)}>{versionLabel(r, many)}</Option>)}</Dropdown>}
         {revisions.length > 1 && <Button appearance={comparing ? 'primary' : 'subtle'} icon={<SplitVertical20Regular/>} aria-pressed={comparing} title="Show two versions side by side" onClick={() => { setComparing(v => !v); setEditing(null); }}>Compare</Button>}
-        {restorable && <Button appearance="outline" icon={<History20Regular/>} disabledFocusable={!!restoreWhy || saving} title={restoreWhy || `Make Version ${shown.version} the newest version`} onClick={restore}>Restore</Button>}
+        {canRestore && <Button appearance="outline" icon={<History20Regular/>} disabledFocusable={!!restoreWhy || saving} title={restoreWhy || `Make Version ${shown.version} the newest version`} onClick={restore}>Restore</Button>}
         {/* Export (Task 9): the Export menu on the version shown goes here. */}
         <Button appearance="subtle" icon={<PanelRightContract20Regular/>} aria-label="Hide the design" title="Hide the design" onClick={() => setOpen(false)}/>
       </div>
@@ -139,12 +146,12 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
         {modeButton('tweaks', 'Tweaks', <Options20Regular/>, changeable, whyChange || 'Adjust the colours and sizes the Designer made adjustable')}
       </div>
     </header>
-    {tweaking && <TweaksPanel knobs={slots.tweaks} values={pending.tweaks} onChange={(name, value) => onPending(setTweak(pending, slots, name, value))} onReset={() => onPending({ ...pending, tweaks: {} })}/>}
+    {tweaking && <TweaksPanel disabled={saving} knobs={slots.tweaks} values={pending.tweaks} onChange={(name, value) => onPending(setTweak(pending, slots, name, value))} onReset={() => onPending({ ...pending, tweaks: {} })}/>}
     {comparing
       ? <DesignCompare revisions={revisions} urlFor={urlFor} label={r => versionLabel(r, many)}/>
       : <div className="design-stage" ref={stage}>
         <iframe key={src} ref={frame} className="design-frame" sandbox="allow-scripts" src={src} onLoad={() => setLoaded(true)} title={`${shown.title}, version ${shown.version}`}/>
-        {editing && <DesignEditor key={editing.slot.id} slot={editing.slot} rect={editing.rect} stage={stage.current}
+        {editing && <DesignEditor key={editing.slot.id} disabled={saving} slot={editing.slot} rect={editing.rect} stage={stage.current}
           text={pending.texts[editing.slot.id] ?? editing.slot.text} picture={pending.images[editing.slot.id]}
           onText={t => onPending(setText(pending, slots, editing.slot.id, t))} onPicture={p => onPending(setImage(pending, editing.slot.id, p))}
           onDone={() => setEditing(null)} onCancel={() => { onPending(editing.before); setEditing(null); }}/>}

@@ -28,9 +28,12 @@ export function setImage(pending, id, { name, dataUrl, alt }) {
   return { ...pending, images: { ...pending.images, [id]: { name, dataUrl, alt: alt ?? null } } };
 }
 
+// A colour equal to the saved one in any case (the colour input answers lower-case) is no change.
 export function setTweak(pending, slots, name, value) {
-  const saved = (slots?.tweaks || []).find(k => k.var === name)?.value;
-  return { ...pending, tweaks: value === saved ? without(pending.tweaks, name) : { ...pending.tweaks, [name]: value } };
+  const knob = (slots?.tweaks || []).find(k => k.var === name);
+  const colour = knob?.type === 'color' && typeof value === 'string' && typeof knob.value === 'string';
+  const same = knob !== undefined && (colour ? value.toLowerCase() === knob.value.toLowerCase() : value === knob.value);
+  return { ...pending, tweaks: same ? without(pending.tweaks, name) : { ...pending.tweaks, [name]: value } };
 }
 
 export const count = pending =>
@@ -80,6 +83,14 @@ export function pictureProblem(file) {
   if (file.size > MAX_PICTURE_BYTES) return 'That picture is over 1,500,000 bytes.';
   return '';
 }
+
+// Restore acts on the newest revision's file, so it is offered only on an older version of that same file (design and
+// file name: one design can hold two files), and not while comparing.
+export const restorable = (shown, newest, comparing) =>
+  !comparing && !!shown && !!newest && shown.attId !== newest.attId && shown.design === newest.design && shown.name === newest.name;
+
+// The slots answer names another version than the newest the pane holds: the harness made one the pane has not seen.
+export const slotsBehind = (slots, newest) => !!slots && !!newest && slots.version !== newest.version;
 
 // Previous and newest revision of the newest design (the same one twice when there is only one).
 export function compareDefaults(revisions) {
