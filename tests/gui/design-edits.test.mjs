@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EMPTY, HOLD, WAIT_FOR_TASK, body, canChange, compareDefaults, count, cssValue, dropPending, dropStale, exportItems, frameMessages, holdsSend, pendingFor, pictureProblem, restorable, saveLabel, setImage, setText, setTweak, slotFor, slotsBehind, whyNot, withPending } from '../../src/gui/design-edits.js';
+import { DESIGN_CHANGED, EMPTY, HOLD, WAIT_FOR_TASK, body, canChange, compareDefaults, count, cssValue, dropPending, dropStale, exportItems, frameMessages, holdsSend, pendingFor, pictureProblem, restorable, saveLabel, saveWhy, setImage, setText, setTweak, slotFor, slotsBehind, unsavedLabel, whyNot, withPending } from '../../src/gui/design-edits.js';
 
 const slots = { version: 5, texts: [{ id: 'hero', text: 'Hello' }], images: [{ id: 'logo', name: 'logo.png', alt: 'Logo' }],
   tweaks: [{ var: '--accent', label: 'Accent', type: 'color', value: '#2f6feb' }, { var: '--gap', label: 'Gap', type: 'range', min: 0, max: 40, step: 1, unit: 'px', value: 8 }] };
@@ -144,4 +144,20 @@ test('pending changes are kept per conversation, on the revision they were made 
   assert.equal(dropPending(map, 'nope'), map);
   assert.equal(withPending(map, '', 'att1', a), map);
   assert.equal(pendingFor({}, 'toString', undefined), EMPTY);  // only the map's own entries
+});
+
+test('unsavedLabel names the count of waiting changes for the hidden pane', () => {
+  assert.equal(unsavedLabel(1), '1 change not saved');
+  assert.equal(unsavedLabel(3), '3 changes not saved');
+  assert.equal(unsavedLabel(0), '');
+});
+
+test('saveWhy: Save waits for a task, and is refused while the slots name a newer version than the pane holds', () => {
+  const newest = { attId: 'c', version: 3 };
+  assert.equal(saveWhy({ disabled: false, slots: { version: 3 }, newest }), '');
+  assert.equal(saveWhy({ disabled: true, slots: { version: 3 }, newest }), 'Wait for the task to finish before changing the design.');
+  // a catch-up made version 4 after these changes were made on version 3: saving them on 4 would overwrite it unseen
+  assert.equal(saveWhy({ disabled: false, slots: { version: 4 }, newest }), DESIGN_CHANGED);
+  assert.equal(DESIGN_CHANGED, 'The design has changed. Reload and try again.');
+  assert.equal(saveWhy({ disabled: false, slots: null, newest }), '');
 });

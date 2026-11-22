@@ -1356,16 +1356,17 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     forward: no numbered copy is rewritten or removed.
   - *The `edit` exchange* (`Conversations.record_edit`). Each new copy (a save, a restore, a catch-up) is attached to a
     new finished exchange: `user` empty, outcome `edit`, session id `edit-<id>`, and a reply the harness writes ("You
-    changed 1 text, 1 picture and 2 tweaks.", "You restored Version 2 as Version 5."). The pane and `GET /designs`
-    find it as they find any revision. The model reads it as one note, `edit_note` ("(The user changed the design in
-    the app, not through you: ...)"), and the fixed reply `EDIT_ACK` with the attachment line, in the history and in a
-    fold alike. Dreaming reads only `Exchange.user`, which is empty here, so it reads nothing of it. The chat draws
-    it as one plain line, and the scope check's "last task" skips it. The conversation's turn note is stale after an
-    edit; the Designer's prompt says to read the file again before each revision. The new copy keeps the title of
-    the newest revision of the same file (`_record_version`: the name the Designer gave the design, as the pane's
-    header and the Design page show it), else the file name. Once the user saves a change on top of a helper's
-    version, "Redo with the Designer" is no longer offered for that helper's change: its exchange is no longer the
-    newest (`redoTarget`).
+    changed 1 text, 1 picture and 2 tweaks.", "You restored Version 2 as Version 5."). The pane and `GET /designs` find
+    it as they find any revision. The model reads it as one note, `edit_note` ("(The user changed the design in the app,
+    not through you: ...)"), and the fixed reply `EDIT_ACK` with the attachment line, in the history and in a fold
+    alike. Dreaming reads only `Exchange.user`, which is empty here, so it reads nothing of it. The chat draws it as one
+    plain line, and the scope check's "last task" skips it. The conversation's turn note is stale after an edit; the
+    Designer's prompt says to read the file again before each revision. The new copy keeps the title of the newest
+    revision of the same file (`_record_version`; the pane's header and the Design page show it), else the file name.
+    That is the name the Designer gave the design unless a helper's version is the newest, whose copy is titled with the
+    file name (`Harness._apply_part`), so a save after it keeps the file name. Once the user saves a change
+    on top of a helper's version, "Redo with the Designer" is no longer offered for that helper's change: its exchange
+    is no longer the newest (`redoTarget`).
   - *The GUI* (`DesignPane.jsx`, decisions in `design-edits.js`). Comment, Edit and Tweaks are exclusive modes, Edit and
     Tweaks only on the newest version with the frame ready, no task running, Compare off and the slots read
     (`canChange`, `whyNot`; a frame that loaded but never became ready, as a file over 5 MB is served without the
@@ -1377,11 +1378,15 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     new newest revision in that conversation (a save, a restore, the Designer's) or Discard ends them, and a reload of
     the app loses them. They are shown live in the frame; the bar offers Discard and "Save as Version N". While the
     conversation on screen has any, sending a message, a form's answers and Redo are held with "Save or discard your
-    changes first.", and a hidden pane is shown again (its show button also names the count). Restore is offered on an
-    older version of the same file (`restorable`), not while a task runs or changes are pending, after "Make Version N
-    the newest version?". Compare shows two closed frames, each with its own Version dropdown (`compareDefaults`: the
-    previous and the newest), posts nothing to them, and turns the modes and Export off. A slots answer for a newer
-    version than the pane holds reloads the conversation (`slotsBehind`).
+    changes first." A hidden pane shows the count as a button beside its show button ("2 changes not saved",
+    `unsavedLabel`) that opens it, and a held form answer opens it. Save is off, with "The design has changed. Reload
+    and try again." as its title (and `save` itself refuses), while the slots answer names a newer version than the pane
+    holds (`saveWhy`, `slotsBehind`): a catch-up made after the changes, so saving would overwrite it unseen; the
+    conversation reload that follows ends them. Restore is offered on an older version of the same file (`restorable`),
+    not while a task runs or changes are pending, after "Make Version N the newest version?". Compare shows two closed
+    frames, each with its own Version dropdown (`compareDefaults`: the previous and the newest), posts nothing to them,
+    and turns the modes and Export off. A slots answer for a newer version than the pane holds reloads the conversation
+    (`slotsBehind`).
   - *The bridge* (`design_bridge.js`) takes, from the parent window only, display-only messages besides `mode` and
     `pins`: `text` (an element by `data-zen-id`, at most 2,000 characters, built as text nodes and `<br>` elements,
     never `innerHTML`; a `<textarea>`'s value), `image` (an `<img>` only, a `src` of
@@ -1446,6 +1451,8 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     - The Compare frames do not follow a new version; the editor closes when the slots are read again; a refusal
       sentence stays under the frame until the next mode click, save or restore; the picture editor can overlap the
       pending bar; while a picture is pending, every keystroke posts its `data:` URL to the frame again.
+    - After a helper's version, the user's next version keeps the file name as its title (see the `edit` exchange);
+      the helper's attach should carry the design's title too (not built).
     - Edit has no keyboard path: a slot can only be picked by clicking in the frame, as with Comment. A refused save
       names the reason but not which text it was about.
     - The PDF is one page (`pageRanges: '1'`): a page whose print layout runs taller than its screen height loses
@@ -1457,26 +1464,25 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
       (a later run saw `capturePage` fail with `UnknownVizError`). The capture is now a DevTools-protocol screenshot;
       an empty one is refused with "The design could not be exported." and the cause is logged.
   - *Unverified.* The pane's controls were exercised by hand once (with the first version of the pane, `da5b20f`) in
-    Playwright Chromium, a plain browser, against a throwaway harness with a conversation seeded by script (no
-    model): an Edit pick on a heading opening the editor with the harness's text, typing shown live, Escape putting
-    it back and Done keeping it, the not-a-slot sentence, a two-line text shown with a newline, a picture and its alt
-    shown live, a colour and a slider tweak moving the page, Save as Version 2 with its chat line, Restore with its
-    confirm (Version 1 as Version 3), Compare with both frames and the modes off, the titles on an older version, a
-    save refused with "The design has changed. Reload and try again." after a restore made behind the pane, and
-    Discard. One click on Save landed on the frame during a layout shift; the cause was not found. The later fixes
-    (Redo held, the pane reset per conversation, Restore of the shown file, inputs off while saving, the reload after
-    a 409, colour case), and the pending changes kept per conversation, the hidden pane shown again when a message is
-    held and the too-large sentence, ran only under `npm test` and the build. Nothing was seen in the Electron app, at
-    narrow widths, in the dark theme, by keyboard alone on the colour input, or with a task running. PDF and PNG were
-    produced and looked at by running the real `makeExportWindow` (sliced from `main.cjs`) and `export-design.cjs` in
-    Electron 45.2.3 from a scratch script against a stand-in server sending the harness's preview policy, not the
-    harness: `vh` pages at scale 1 and with the scale forced to 2, a 40,000 px page capped at 16,000, a 404 page and
-    a page that never stops running. The Export menu in the workspace, the `export-design` IPC channel with the OS
-    Save dialog, HTML and ZIP through Save…, and the browser download path for HTML and ZIP have not been seen on
-    screen by anyone.
-    The React components (`DesignPane.jsx`, `DesignEditor.jsx`, `TweaksPanel.jsx`, `DesignPendingBar.jsx`,
-    `DesignCompare.jsx`, `ExportMenu.jsx`) have no unit tests. No model has declared tweaks: whether the Designer
-    writes a usable block is untested.
+    Playwright Chromium, a plain browser, against a throwaway harness with a conversation seeded by script (no model):
+    an Edit pick on a heading opening the editor with the harness's text, typing shown live, Escape putting it back and
+    Done keeping it, the not-a-slot sentence, a two-line text shown with a newline, a picture and its alt shown live, a
+    colour and a slider tweak moving the page, Save as Version 2 with its chat line, Restore with its confirm (Version 1
+    as Version 3), Compare with both frames and the modes off, the titles on an older version, a save refused with "The
+    design has changed. Reload and try again." after a restore made behind the pane, and Discard. One click on Save
+    landed on the frame during a layout shift; the cause was not found. The later fixes (Redo held, the pane reset per
+    conversation, Restore of the shown file, inputs off while saving, the reload after a 409, colour case), and the
+    pending changes kept per conversation, the hidden pane's count button, the form answer that opens it, the Save
+    refusal while the slots are ahead and the too-large sentence, ran only under `npm test` and the build. Nothing was
+    seen in the Electron app, at narrow widths, in the dark theme, by keyboard alone on the colour input, or with a task
+    running. PDF and PNG were produced and looked at by running the real `makeExportWindow` (sliced from `main.cjs`) and
+    `export-design.cjs` in Electron 45.2.3 from a scratch script against a stand-in server sending the harness's preview
+    policy, not the harness: `vh` pages at scale 1 and with the scale forced to 2, a 40,000 px page capped at 16,000, a
+    404 page and a page that never stops running. The Export menu in the workspace, the `export-design` IPC channel with
+    the OS Save dialog, HTML and ZIP through Save…, and the browser download path for HTML and ZIP have not been seen on
+    screen by anyone. The React components (`DesignPane.jsx`, `DesignEditor.jsx`, `TweaksPanel.jsx`,
+    `DesignPendingBar.jsx`, `DesignCompare.jsx`, `ExportMenu.jsx`) have no unit tests. No model has declared tweaks:
+    whether the Designer writes a usable block is untested.
   - Don't let the user's text reach the file except through `design_parts.check_text` and `design_parts.apply`, or a
     tweak value except as `design_tweaks.fmt` formats it from a checked colour or number: no free CSS in a tweak,
     in the file or in a message to the frame. Never save, send to a bot or run anything the frame posts; the frame

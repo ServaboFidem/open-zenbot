@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Dropdown, Input, Option } from '@fluentui/react-components';
 import { Comment20Regular, Dismiss16Regular, Edit20Regular, History20Regular, Options20Regular, PanelRightContract20Regular, PanelRightExpand20Regular, SplitVertical20Regular } from '@fluentui/react-icons';
 import { acceptPick, acceptReady, addPick, MAX_PICKS, studioFrameUrl } from './design.js';
-import { body, canChange, count, EMPTY, frameMessages, HOLD, restorable, saveLabel, setImage, setText, setTweak, slotFor, slotsBehind, whyNot } from './design-edits.js';
+import { body, canChange, count, EMPTY, frameMessages, HOLD, restorable, saveLabel, saveWhy, setImage, setText, setTweak, slotFor, slotsBehind, unsavedLabel, whyNot } from './design-edits.js';
 import DesignCompare from './DesignCompare';
 import DesignEditor from './DesignEditor';
 import DesignPendingBar from './DesignPendingBar';
@@ -107,7 +107,8 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
     if (e?.status === 409) { onStale?.(); setSlotsRead(k => k + 1); }
   }
   async function save() {
-    if (busy.current) return;
+    if (busy.current || !slots) return;
+    if (slotsBehind(slots, newest)) { setNote(saveWhy({ slots, newest })); return; }  // the pane is behind the file
     busy.current = true; setSaving(true); setNote('');
     try {
       const r = await api.saveDesignChanges(convId, body(pending, slots.version));
@@ -131,8 +132,8 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
   const restoreWhy = disabled ? 'Wait for the task to finish before changing the design.' : n ? HOLD : '';
   const modeButton = (key, label, icon, can, title) => <Button appearance={mode === key && can ? 'primary' : 'outline'} icon={icon} aria-pressed={mode === key && can} disabledFocusable={!can} title={title} onClick={() => { setNote(''); setMode(m => m === key ? null : key); }}>{label}</Button>;
 
-  const showLabel = n ? `Show the design: ${n} unsaved change${n === 1 ? '' : 's'}` : 'Show the design';
-  if (!open) return <section className="design-pane" aria-label="Design"><Button appearance="subtle" icon={<PanelRightExpand20Regular/>} aria-label={showLabel} title={showLabel} onClick={() => setOpen(true)}/></section>;
+  const saveBlocked = saveWhy({ disabled, slots, newest });
+  if (!open) return <section className="design-pane" aria-label="Design"><Button appearance="subtle" icon={<PanelRightExpand20Regular/>} aria-label="Show the design" title="Show the design" onClick={() => setOpen(true)}/>{n > 0 && <Button className="design-unsaved" appearance="transparent" size="small" title="Show the design to save or discard them" onClick={() => setOpen(true)}>{unsavedLabel(n)}</Button>}</section>;
   return <section className="design-pane open" aria-label="Design">
     <header className="design-pane-head">
       <div className="od-row design-pane-top">
@@ -160,7 +161,7 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
           onDone={() => setEditing(null)} onCancel={() => { onPending(editing.before); setEditing(null); }}/>}
       </div>}
     {note && <p className="design-note" role="status">{note}</p>}
-    {n > 0 && <DesignPendingBar count={n} label={saveLabel(pending, slots?.version ?? newest.version)} saving={saving} canSave={!!slots && !disabled} why={disabled ? 'Wait for the task to finish before changing the design.' : ''} onSave={save} onDiscard={() => { onPending(EMPTY); setEditing(null); }}/>}
+    {n > 0 && <DesignPendingBar count={n} label={saveLabel(pending, slots?.version ?? newest.version)} saving={saving} canSave={!!slots && !saveBlocked} why={saveBlocked} onSave={save} onDiscard={() => { onPending(EMPTY); setEditing(null); }}/>}
   </section>;
 }
 

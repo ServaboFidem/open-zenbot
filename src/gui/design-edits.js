@@ -79,6 +79,18 @@ export function whyNot({ onNewest, ready, loaded, disabled, comparing, newestLab
 
 export const holdsSend = pending => count(pending) > 0;
 
+// The hidden pane's button that opens it again while changes wait; empty when none do.
+export const unsavedLabel = n => n > 0 ? `${n} change${n === 1 ? '' : 's'} not saved` : '';
+
+// Why Save is off, or '' when it may go. A slots answer for a newer version than the pane holds means the harness made a
+// version (a catch-up) after these changes were made: saving them on it would overwrite that version unseen.
+export const DESIGN_CHANGED = 'The design has changed. Reload and try again.';
+export function saveWhy({ disabled, slots, newest }) {
+  if (disabled) return 'Wait for the task to finish before changing the design.';
+  if (slotsBehind(slots, newest)) return DESIGN_CHANGED;
+  return '';
+}
+
 // Pending changes are kept per conversation (`map`: conversation id -> { pending, newest }), each with the attachment id
 // of the newest revision they were made on. Leaving the conversation and coming back keeps them; a new revision there (a
 // save, a restore, the Designer's) or a discard ends them.
