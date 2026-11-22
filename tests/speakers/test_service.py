@@ -190,3 +190,20 @@ async def test_the_default_survives_more_than_64_others_and_a_restart(tmp_path):
     again = SpeakerService(tmp_path / "vault", Ledger(tmp_path / "vault"), finders={"airplay": FakeFinder(), "chromecast": FakeFinder(), "dlna": FakeFinder(hold=True)})
     assert again.status()["default"]["name"] == "Kitchen"
     await again.close()
+
+
+async def test_a_new_default_picked_among_64_remembered_survives_a_restart(tmp_path):
+    vault = tmp_path / "vault"
+    many = [sp("dlna", f"X{i}", f"Other {i}") for i in range(64)]
+    SpeakerSettings(dlna=True, known={"dlna": many}).save(vault)
+    s = SpeakerService(vault, Ledger(vault), finders={"airplay": FakeFinder(), "chromecast": FakeFinder(), "dlna": FakeFinder([sp("dlna", "K", "Kitchen")])})
+    await s.start()
+    await s.settle()
+    # the look found only Kitchen; remembered list is now Kitchen. Put 64 others back to model a full list, then pick
+    s.settings.known["dlna"] = many
+    s.found["dlna"] = [*many, sp("dlna", "K", "Kitchen")]
+    await s.set_default("dlna:K")
+    await s.close()
+    again = SpeakerService(vault, Ledger(vault), finders={"airplay": FakeFinder(), "chromecast": FakeFinder(), "dlna": FakeFinder(hold=True)})
+    assert again.status()["default"]["name"] == "Kitchen"
+    await again.close()

@@ -190,8 +190,8 @@ class SpeakerService:
             entry = self._entry(key) if self.settings.on(p) else None
             if entry is None:
                 raise ValueError(UNKNOWN_DEFAULT)
-            if all(s.key != key for s in known.get(p, [])):
-                known.setdefault(p, []).append(entry)  # remembered from now on, even if a look misses it
+            # remembered from now on, even if a look misses it; first, so the cap of 64 never drops it
+            known[p] = [entry, *(s for s in known.get(p, []) if s.key != key)][:KNOWN_CAP]
         candidate = replace(self.settings, default=key, known=known)
         candidate.save(self.vault_root)
         self.settings = candidate

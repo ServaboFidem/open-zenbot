@@ -1045,15 +1045,17 @@ Reading announcements and digests through the default speaker comes later. Desig
 - **Routes** (`src/speakers/routes.py`, under `/speakers`; no answer carries an address): `GET /status`
   (`{default: {key, name, protocol, found, protocol_on} | null, protocols: {airplay|chromecast|dlna: {on, looking,
   last_look_at, error, speakers: [{key, name, model, also_sonos}]}}}`); `PUT /settings` (`{airplay?, chromecast?,
-  dlna?}`; a failed save changes nothing and answers 500); `PUT /default` (`{key}`, at most 300 characters, or null);
+  dlna?}`; a failed save changes nothing and answers 500); `PUT /default` (`{key}`, required, at most 300 characters, or an explicit null to clear; `{}` is 422);
   `POST /look` (`NothingIn`; 409 "No speaker type is switched on.", or "Already looking for speakers." when every type
   that is on is already looking). The only POST takes a required JSON body; `tests/speakers/test_routes.py` walks it.
 - **The panel** (`WifiSpeakers.jsx`, decisions in `wifi-speakers.js`, through `speakers-api.js`; a `speakers` entry in
   `settings-index.js` `PANELS` and `SECTIONS`, its icon in `SettingsHome.jsx`): the default line, Look again, No
   default, when it last looked, and per type a switch, a status line and a radio per speaker. A radio saves the
-  default at once; the radios stay usable while it saves (a disabled radio loses keyboard focus), and only the newest
-  pick's answer is shown (`radiosDisabled`). Under the heading: "Turning a speaker type on makes ZenBot listen on
-  your home network. Windows may ask whether to allow it." While any type is looking it reads the status every 3 s.
+  default at once; the radios stay usable while it saves (a disabled radio loses keyboard focus). Picks are written
+  one at a time, a pick made meanwhile waiting and only the newest waiting one sent (`createPickQueue`), so the harness
+  saves them in the order made; when the last write fails the panel reads the status again. Under the heading: "Turning a speaker type on makes ZenBot listen on
+  your home network. Windows may ask whether to allow it." While any type is looking it reads the status every 3 s, and every 30 s while any type is on (the harness looks again
+  on its own every 10 minutes); only the newest status read is used.
   Names and models are plain text.
 - **Ledger.** Kind `speakers`, events `look` (protocol, speakers found, error kind), `settings` (the three switches)
   and `default` (the protocol, or empty when cleared). Never a name, model or address; `src/speakers/` logs an

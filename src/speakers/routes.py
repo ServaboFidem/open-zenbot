@@ -21,7 +21,7 @@ class SwitchesIn(BaseModel):
 
 
 class DefaultIn(BaseModel):
-    key: str | None = Field(default=None, max_length=300)
+    key: str | None = Field(..., max_length=300)  # required: only an explicit null clears the default
 
 
 def speakers_router(service: SpeakerService) -> APIRouter:

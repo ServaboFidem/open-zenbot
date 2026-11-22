@@ -8,6 +8,7 @@ export const LOOKING_LINE = 'Looking for speakers…';
 export const FAILED_LINE = 'Could not look for speakers. Try Look again.';
 export const POLL_MS = 3000;
 export const RETRY_MS = 5000;
+export const IDLE_MS = 30000;  // while a type is on: the harness looks again every ten minutes on its own
 
 const protocols = status => PROTOCOLS.map(p => status?.protocols?.[p]).filter(Boolean);
 
@@ -41,8 +42,13 @@ export const canLookAgain = (status, online) => {
 
 export const shouldPoll = status => protocols(status).some(p => p.looking);
 
-/** How long until the next status read: while a look runs, POLL_MS; after a failed first read, RETRY_MS; else none. */
-export const nextRead = (status, failed) => (shouldPoll(status) ? POLL_MS : failed && !status ? RETRY_MS : null);
+/** How long until the next status read: while a look runs, POLL_MS; after a failed first read, RETRY_MS; while a type
+ * is on, IDLE_MS (so a look the harness ran on its own shows); else none. */
+export const nextRead = (status, failed) => {
+  if (shouldPoll(status)) return POLL_MS;
+  if (failed && !status) return RETRY_MS;
+  return protocols(status).some(p => p.on) ? IDLE_MS : null;
+};
 
 /** The newest look of any type that is on, as the harness wrote it, or ''. */
 export const lastLook = status => protocols(status).filter(p => p.on && p.last_look_at).map(p => p.last_look_at).sort().pop() || '';
@@ -50,3 +56,23 @@ export const lastLook = status => protocols(status).filter(p => p.on && p.last_l
 /** The radios are off only when the harness is, or while a switch or a look is being sent. Not while a default is
  * saving: a disabled radio loses keyboard focus, and arrowing through a list saves each step. */
 export const radiosDisabled = (busy, online) => !online || (busy !== '' && busy !== 'default');
+
+/** Default picks, one write at a time: a pick made while one is out waits, and only the newest waiting pick is sent,
+ * so the harness saves them in the order they were made. `done({status})` or `done({error})` hears the last write once
+ * the queue is empty; after an error the saved default is whatever an earlier write left, so read the status again. */
+export function createPickQueue(send, done) {
+  let out = false;
+  let waiting = null;  // { key } while a pick waits
+  async function go(key) {
+    out = true;
+    let result;
+    try { result = { status: await send(key) }; } catch (error) { result = { error }; }
+    out = false;
+    if (waiting) { const next = waiting.key; waiting = null; go(next); return; }
+    done(result);
+  }
+  return {
+    pick(key) { if (out) waiting = { key }; else go(key); },
+    pending: () => out || waiting !== null,
+  };
+}

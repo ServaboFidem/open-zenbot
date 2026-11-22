@@ -1,7 +1,7 @@
 // The Wi-Fi speakers panel's decisions: the default line, each type's line, Look again, polling.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NETWORK_LINE, POLL_MS, PROTOCOL_NAMES, canLookAgain, radiosDisabled, defaultLine, lastLook, nextRead, protocolLine, shouldPoll, speakerDetail } from '../../src/gui/wifi-speakers.js';
+import { IDLE_MS, NETWORK_LINE, POLL_MS, PROTOCOL_NAMES, canLookAgain, createPickQueue, radiosDisabled, defaultLine, lastLook, nextRead, protocolLine, shouldPoll, speakerDetail } from '../../src/gui/wifi-speakers.js';
 
 const proto = (over = {}) => ({ on: false, looking: false, last_look_at: '', error: '', speakers: [], ...over });
 const status = (protocols = {}, def = null) => ({ default: def, protocols: { airplay: proto(), chromecast: proto(), dlna: proto(), ...protocols } });
@@ -62,4 +62,31 @@ test('the radios stay usable while a default is being saved, so the keyboard kee
   assert.equal(radiosDisabled('switch-dlna', true), true);
   assert.equal(radiosDisabled('look', true), true);
   assert.equal(radiosDisabled('', false), true);
+});
+
+test('keeps reading the status slowly while a type is on, so the ten-minute look shows', () => {
+  assert.equal(nextRead(status({ dlna: proto({ on: true }) }), false), IDLE_MS);
+  assert.ok(IDLE_MS > POLL_MS);
+});
+
+test('one default write at a time: picks made meanwhile wait, only the newest is sent, then it settles once', async () => {
+  const sent = []; const settled = []; const gates = [];
+  const queue = createPickQueue(key => new Promise((ok, no) => { sent.push(key); gates.push({ ok, no }); }), r => settled.push(r));
+  queue.pick('a'); queue.pick('b'); queue.pick('c');
+  assert.deepEqual(sent, ['a']);
+  gates[0].ok({ default: { key: 'a' } }); await new Promise(r => setTimeout(r, 0));
+  assert.deepEqual(sent, ['a', 'c']);
+  assert.deepEqual(settled, []);
+  gates[1].ok({ default: { key: 'c' } }); await new Promise(r => setTimeout(r, 0));
+  assert.deepEqual(settled, [{ status: { default: { key: 'c' } } }]);
+});
+
+test('when the last write fails the queue says so, so the panel reads the saved default again', async () => {
+  const settled = []; const gates = [];
+  const queue = createPickQueue(() => new Promise((ok, no) => gates.push({ ok, no })), r => settled.push(r));
+  queue.pick('a'); queue.pick('b');
+  gates[0].ok({ default: { key: 'a' } }); await new Promise(r => setTimeout(r, 0));
+  const err = new Error('down'); gates[1].no(err); await new Promise(r => setTimeout(r, 0));
+  assert.deepEqual(settled, [{ error: err }]);
+  assert.equal(queue.pending(), false);
 });

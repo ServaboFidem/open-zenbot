@@ -86,3 +86,12 @@ async def test_the_harness_builds_its_own_service(cfg):
     h = Harness(config=cfg, provider=ScriptedProvider(), ledger=Ledger(cfg.vault_root), catalog=Catalog())
     assert isinstance(h.speakers, SpeakerService) and h.speakers.status()["default"] is None
     await h.speakers.close()
+
+
+async def test_an_empty_default_body_is_refused_and_an_explicit_null_clears(client, harness):
+    await client.put("/speakers/settings", json={"dlna": True})
+    await harness.speakers.settle()
+    await client.put("/speakers/default", json={"key": "dlna:D"})
+    assert (await client.put("/speakers/default", json={})).status_code == 422
+    assert (await client.get("/speakers/status")).json()["default"]["key"] == "dlna:D"
+    assert (await client.put("/speakers/default", json={"key": None})).json()["default"] is None

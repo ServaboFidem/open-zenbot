@@ -3,7 +3,7 @@ import { Button, Radio, RadioGroup, Spinner, Switch } from '@fluentui/react-comp
 import { anchorId } from './settings-index';
 import { errorLine } from './mail.js';
 import { freshRead } from './sonos.js';
-import { HELP_LINE, NETWORK_LINE, PROTOCOLS, PROTOCOL_NAMES, canLookAgain, defaultLine, lastLook, nextRead, protocolLine, radiosDisabled, speakerDetail } from './wifi-speakers.js';
+import { HELP_LINE, NETWORK_LINE, PROTOCOLS, PROTOCOL_NAMES, canLookAgain, createPickQueue, defaultLine, lastLook, nextRead, protocolLine, radiosDisabled, speakerDetail } from './wifi-speakers.js';
 
 // Settings > Wi-Fi speakers: a switch per speaker type (AirPlay, Chromecast, DLNA; each off until turned on, since
 // it listens on the home network), the speakers each found, and the one default speaker, picked with a radio and
@@ -16,18 +16,23 @@ export function WifiSpeakers({ api, online, notify }) {
   const [error, setError] = useState('');
   const [fails, setFails] = useState(0);  // failed status reads in a row
   const saves = useRef(0);  // saves finished; a status read that was out across one is stale
-  const picks = useRef(0);  // default picks sent; only the newest one's answer is shown
-  const [picked, setPicked] = useState(undefined);  // the newest pick until its answer comes (undefined: none out)
+  const reads = useRef(0);  // status reads started; only the newest one's answer is used
+  const [picked, setPicked] = useState(undefined);  // the newest pick until the pick queue empties (undefined: none)
+  const notifyRef = useRef(notify); notifyRef.current = notify;
 
   async function load() {
+    const mine = ++reads.current;
     const at = saves.current;
     try {
       const st = await speakers.status();
-      if (!freshRead(at, saves.current)) return;
+      if (mine !== reads.current || !freshRead(at, saves.current)) return;
       setStatus(st); setError(''); setFails(0);
-    } catch (e) { setError(errorLine(e)); setFails(n => n + 1); }
+    } catch (e) { if (mine === reads.current) { setError(errorLine(e)); setFails(n => n + 1); } }
   }
-  useEffect(() => { if (online) load(); }, [online]);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {  // a read still out from before going offline is dropped
+    reads.current += 1;
+    if (online) load();
+  }, [online]);  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {  // while a look is under way read the status again until it ends; retry a failed first read
     const wait = online ? nextRead(status, fails > 0) : null;
     if (wait === null) return undefined;
@@ -46,17 +51,19 @@ export function WifiSpeakers({ api, online, notify }) {
     finally { setBusy(''); }
   }
   const toggle = (p, on) => run(`switch-${p}`, () => speakers.saveSwitches({ [p]: on }), `${PROTOCOL_NAMES[p]} ${on ? 'on' : 'off'}`);
-  async function pick(key) {  // the radios stay usable meanwhile, so a newer pick may overtake this one
-    const mine = ++picks.current;
-    setPicked(key); setBusy('default'); setError('');
-    try {
-      const st = await speakers.setDefault(key);
+  // the radios stay usable while a default saves; picks go one write at a time, the newest waiting one last
+  const queue = useRef(null);
+  if (!queue.current) {
+    queue.current = createPickQueue(key => speakers.setDefault(key), ({ status: st, error: e }) => {
       saves.current += 1;
-      if (mine !== picks.current) return;
-      setStatus(st);
-      notify(key ? 'Default speaker saved' : 'Default speaker cleared');
-    } catch (e) { if (mine === picks.current) setError(errorLine(e)); }
-    finally { if (mine === picks.current) { setBusy(''); setPicked(undefined); } }
+      setBusy(''); setPicked(undefined);
+      if (st) { setStatus(st); notifyRef.current(st.default ? 'Default speaker saved' : 'Default speaker cleared'); }
+      else { setError(errorLine(e)); load(); }  // the saved default is whatever an earlier write left: read it
+    });
+  }
+  function pick(key) {
+    setPicked(key); setBusy('default'); setError('');
+    queue.current.pick(key);
   }
   const lookAgain = () => run('look', () => speakers.lookAgain());
 
