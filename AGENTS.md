@@ -1303,7 +1303,9 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     that has a design (`studio_helpers.newest_revision`), else 404 "no such design", and with no pending exchange,
     else 409 "Wait for the task to finish." (`_studio_design`; the GET routes too). Each acts on the file of the
     newest revision, and version numbers are per file. No route holds an `await` between its first check and its
-    last write, and none answers a disk path.
+    last write to the design or the conversation: three have no `await` at all, and the ZIP route's only one comes
+    after its checks and its catch-up, building the archive (which reads files only) off the event loop
+    (`asyncio.to_thread`) before its ledger entry. None answers a disk path.
   - *Catch-up* (`studio_edits.catch_up`, before every route below). When the working file is not its newest numbered
     copy (`design_studio.is_current`: the Designer changed it and was stopped before attaching, or a picture changed in
     place), the harness first takes a numbered copy of it as it is and records it ("Changes the Designer had not shown
@@ -1343,10 +1345,15 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     `range` (finite `min` < `max`, `step` > 0, default 1, `unit` one of `px`, `rem`, `em`, `%`, `ms`, `deg` or
     empty). Its variable must be declared once in that style element, on a line
     of its own inside the `:root` block, with a current value that passes its own check (`#rrggbb` in any case; a
-    number from `min` to `max` followed by exactly its unit). A malformed, repeated or undeclared knob is dropped,
+    number from `min` to `max` followed by exactly its unit) and that `fmt` can write back. CSS comments are
+    blanked (to the end of the style when unterminated, offsets kept) before anything is counted or matched, so a
+    declaration inside `/* ... */` neither counts nor becomes the knob; the declaration is matched in linear time,
+    so a long unfinished line cannot stall the harness. A malformed, repeated or undeclared knob is dropped,
     and a broken manifest means no tweaks, never an error. The manifest is bot-written: labels are shown as plain
-    text. On save the harness formats each value itself (`fmt`: lower-case hex; the number, whole or up to six
-    decimals, plus the unit; `min` and `max` are checked, the step is not) and replaces only the value's span.
+    text. On save the harness formats each value itself (`fmt`: lower-case hex; the number as a plain decimal read
+    from its shortest form, no exponent and no trailing zeros, at most 12 digits before the point and rounded to at
+    most 12 after it, plus the unit; `min` and `max` are checked on the value and again on the number written, and a
+    value that cannot be written within them is refused; the step is not checked) and replaces only the value's span.
   - *Restore* (`studio_edits.restore`). `newest` must be the newest version (else 409 "The design has changed.
     Reload and try again."), `version` an earlier one whose copy is a regular, single-link file in a real
     `.versions` (else 422 "That is not an earlier version of this design."). The copy's embedded `data:` pictures in
@@ -1376,9 +1383,13 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     (`designChangesByConv` in `app.jsx`, by `pendingFor`, `withPending`, `dropPending` and `dropStale`, each entry with
     the newest revision it was made on): switching bot or conversation and coming back shows them again with the bar; a
     new newest revision in that conversation (a save, a restore, the Designer's) or Discard ends them, and a reload of
-    the app loses them. They are shown live in the frame; the bar offers Discard and "Save as Version N". While the
-    conversation on screen has any, sending a message, a form's answers and Redo are held with "Save or discard your
-    changes first." A hidden pane shows the count as a button beside its show button ("2 changes not saved",
+    the app loses them. A save's or restore's answer clears only the changes made on the revision it was sent from
+    (`withPending`), and taking it moves `loadConversation`'s latest-only guard on, so a conversation read that
+    started before it cannot put the older record back. They are shown live in the frame; the bar offers Discard and
+    "Save as Version N". While the conversation on screen has any, sending a message, a form's answers and Redo are
+    held with "Save or discard your changes first." (a message is checked again after the scope check answers). A
+    picture read in the editor that is superseded by another choice, or still running when the editor closes, is
+    aborted and does nothing. A hidden pane shows the count as a button beside its show button ("2 changes not saved",
     `unsavedLabel`) that opens it, and a held form answer opens it. Save is off, with "The design has changed. Reload
     and try again." as its title (and `save` itself refuses), while the slots answer names a newer version than the pane
     holds (`saveWhy`, `slotsBehind`): a catch-up made after the changes, so saving would overwrite it unseen; the
@@ -1392,7 +1403,9 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     never `innerHTML`; a `<textarea>`'s value), `image` (an `<img>` only, a `src` of
     `data:image/(png|jpeg|webp|gif);base64,`, and an alt), `vars` (at most 8 names of `--[a-z][a-z0-9-]{0,40}`, each a
     string of at most 32 characters, all or none, set with `style.setProperty` on the root element) and `reset` (puts
-    back what the others changed). `text` skips a `<style>`, `<script>`, `<img>` or `<svg>`, and anything inside an SVG
+    back what the others changed: before its first write to each custom property the bridge remembers whether the
+    root had it inline, with its value and priority, and `reset` restores that, removing only a property the page
+    did not have). `text` skips a `<style>`, `<script>`, `<img>` or `<svg>`, and anything inside an SVG
     drawing, whatever its id (`takesText`). The GUI builds each tweak value from the knob's type (`cssValue`), so the
     frame never receives free CSS. Nothing from the frame is saved: the frame still sends only `ready` and `pick`.
   - *Export* (`ExportMenu.jsx`, on the version shown; hidden while comparing). The menu's choices are `exportItems` in
@@ -1400,7 +1413,9 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     task to finish." while a task runs; PDF and PNG only when the preload offers `openzenbot.exportDesign` (the desktop
     app). HTML is the numbered copy as it is. ZIP (runs catch-up first) is the working file and each regular,
     single-link file directly in its `images/` of at most 1,500,000 bytes whose name a design picture may have
-    (`design_images.NAME`); no link followed, no subfolder, nothing else. A title that is a file name loses its `.html`
+    (`design_images.NAME`); no link followed, no subfolder, nothing else. More than 100,000,000 bytes in all (the
+    working file and those pictures, `EXPORT_MAX_BYTES`) is refused with 409 "This design is too large to export as a
+    ZIP." A title that is a file name loses its `.html`
     or `.htm` before an extension is added, so no suggested name ends in two. In the desktop app both go through Save…
     (`save-media.cjs`, whose `ROUTES` include the ZIP route), in a browser they download. A result ("Saved to <path>")
     or a refusal shows as a line under the menu.
@@ -1428,7 +1443,9 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
       `exportDesign` holds the same limit over the whole render. A failed export logs the error's name and message in
       the main process (`export-design: <kind> failed: ...`) and shows the user a fixed sentence: "The design took too
       long to export." after the limit, else "The design could not be exported."; "That design cannot be exported."
-      for ids or a kind it refuses; "The file could not be saved (<code>)." when the file cannot be written.
+      for ids or a kind it refuses; "The file could not be saved (<code>)." when the file cannot be written. The
+      bytes are written to a new temporary file beside the chosen one and renamed over it only once written, so a
+      failed save leaves a file the user chose to overwrite as it was and removes only the temporary file.
   - *Ledger.* Kind `design_edit`, events `save` (version; counts of texts, pictures and tweaks; `ids`, the text and
     picture slot ids changed), `restore` (`from`, `to`), `catch_up` (version), `refused` (`action`: `slots`,
     `changes`, `restore` or `export`; `reason`: the HTTP status) and `export` (`format` `zip`, version). Never a text,
@@ -1441,13 +1458,11 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
       certainly the user's.
     - After a 409 "The design has changed. Reload and try again." the pane reloads the conversation and the slots;
       the new newest version clears the pending changes, so unsaved edits are dropped.
-    - A tweak declared on the same line as `:root {` (`:root { --a: 1px; }`) is no knob, a declaration inside a CSS
-      comment in the `:root` block can become a knob's span, and a tweak variable declared again in another
-      `<style>` is not caught and may override the saved value.
-    - `reset` removes a custom property the page itself set inline on its root rather than putting it back.
+    - A tweak declared on the same line as `:root {` (`:root { --a: 1px; }`) is no knob, and a tweak variable
+      declared again in another `<style>` is not caught and may override the saved value.
     - A refused save or restore can leave pictures already written into `images/`. The ZIP leaves out pictures over
-      1,500,000 bytes and has no cap on the working file's size. The slots and the ZIP also answer 409 while a task
-      runs.
+      1,500,000 bytes and is built whole in memory (capped at 100,000,000 bytes in all, not streamed). The slots and
+      the ZIP also answer 409 while a task runs.
     - The Compare frames do not follow a new version; the editor closes when the slots are read again; a refusal
       sentence stays under the frame until the next mode click, save or restore; the picture editor can overlap the
       pending bar; while a picture is pending, every keystroke posts its `data:` URL to the frame again.
