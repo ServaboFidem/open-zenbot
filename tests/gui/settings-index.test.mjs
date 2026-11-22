@@ -129,3 +129,9 @@ test('Dreaming is found under Harness settings by its words', () => {
   for (const q of ['dreaming', 'idle', 'local model', 'learn']) assert.ok(searchSettings(q).some(m => m.panel === 'harness' && m.section === 'Dreaming'), q);
   assert.equal(searchSettings('dreaming')[0].anchor, 'settings-harness-dreaming');
 });
+test('the Read aloud card is found by its local voice words', () => {
+  const summary = 'Reads bot replies aloud when the speaker button in a chat is on. The Narrator bot rewrites each reply for the ear first, then a voice speaks it: a speech model on a provider, or Kokoro on this computer.';
+  const live = liveSections(null, [{ id: 'speech', name: 'Read aloud', summary }]);
+  assert.equal(searchSettings('kokoro', live)[0].anchor, 'settings-tools-speech');
+  assert.ok(searchSettings('on this computer', live).some(m => m.anchor === 'settings-tools-speech'));
+});
