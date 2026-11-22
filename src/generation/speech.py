@@ -43,6 +43,9 @@ SUMMARY = ("Reads bot replies aloud when the speaker button in a chat is on. The
 LOCAL = "kokoro"  # a reserved provider id: speech on this computer, never looked up in providers.json
 PIECE_MAX = 400
 PIECE_AIM = 300
+PIECE_MIN = 12  # a shorter sentence ("Dr.", "1.") is joined to a neighbour, never a piece of its own
+PIECE_PAUSE_S = 0.25  # silence after every Kokoro piece but the last; to tune once the owner has listened
+_PAUSE = b"\x00\x00" * int(PIECE_PAUSE_S * KOKORO_RATE)
 SAMPLE_TEXT = "Good morning. Here is how this voice sounds when it reads a reply aloud."
 
 OFF = "Reading aloud is off. Switch it on in Settings > Harness Tools."
@@ -143,7 +146,8 @@ def _cut(sentence: str) -> list[str]:
 
 def split(text: str) -> list[str]:
     """The narration as pieces to speak in order: the first is the first sentence alone (so speech starts fast), the
-    later ones join sentences up to about PIECE_AIM characters, none is over PIECE_MAX, nothing is dropped."""
+    later ones join sentences up to about PIECE_AIM characters, none is over PIECE_MAX, nothing is dropped. A
+    sentence under PIECE_MIN characters ("Dr.", "1.") is never a piece of its own when it fits with a neighbour."""
     sentences: list[str] = []
     for raw in _SENTENCE_END.split(text.strip()):
         raw = raw.strip()
@@ -151,9 +155,12 @@ def split(text: str) -> list[str]:
             sentences.extend(_cut(raw))
     if not sentences:
         return []
-    pieces = [sentences[0]]
+    first, rest = sentences[0], sentences[1:]
+    while len(first) < PIECE_MIN and rest and len(first) + 1 + len(rest[0]) <= PIECE_MAX:
+        first = f"{first} {rest.pop(0)}"
+    pieces = [first]
     current = ""
-    for sentence in sentences[1:]:
+    for sentence in rest:
         if current and len(current) + 1 + len(sentence) > PIECE_AIM:
             pieces.append(current)
             current = sentence
@@ -161,6 +168,23 @@ def split(text: str) -> list[str]:
             current = f"{current} {sentence}" if current else sentence
     if current:
         pieces.append(current)
+    return _join_short(pieces)
+
+
+def _join_short(pieces: list[str]) -> list[str]:
+    """Each piece under PIECE_MIN joined to the next, else the one before, when the two fit in PIECE_MAX."""
+    i = 0
+    while i < len(pieces):
+        p = pieces[i]
+        if len(p) < PIECE_MIN:
+            if i + 1 < len(pieces) and len(p) + 1 + len(pieces[i + 1]) <= PIECE_MAX:
+                pieces[i:i + 2] = [f"{p} {pieces[i + 1]}"]
+                continue
+            if i > 0 and len(pieces[i - 1]) + 1 + len(p) <= PIECE_MAX:
+                pieces[i - 1:i + 1] = [f"{pieces[i - 1]} {p}"]
+                i -= 1
+                continue
+        i += 1
     return pieces
 
 
@@ -308,9 +332,13 @@ class Speech:
         return pcm
 
     async def _local_pieces(self, engine: Any, pieces: list[str], voice: str) -> AsyncIterator[bytes]:
-        for piece in pieces:
+        """A WAV per piece. Kokoro trims the silence at each end of what it makes, so every piece but the last ends
+        in PIECE_PAUSE_S of silence: the pause a sentence gets inside a piece, which the player cannot add itself."""
+        for at, piece in enumerate(pieces):
             pcm = await self._synthesise(engine, piece, voice)
-            if pcm:  # a piece empty after cleaning is skipped
+            if pcm:  # a piece empty after cleaning is skipped, its pause with it
+                if at < len(pieces) - 1:
+                    pcm += _PAUSE
                 yield pcm_to_wav(pcm, KOKORO_RATE)
 
     async def speak(self, text: str, narrator: Any | None,

@@ -324,6 +324,8 @@ from src.generation.speech import (  # noqa: E402
     LOCAL_FAILED,
     NOT_DOWNLOADED,
     PIECE_MAX,
+    PIECE_MIN,
+    PIECE_PAUSE_S,
     SAMPLE_TEXT,
     SUMMARY,
     split,
@@ -416,6 +418,30 @@ def test_empty_and_blank_text_give_no_pieces(text):
     assert split(text) == []
 
 
+def test_a_short_first_sentence_is_joined_to_the_next():
+    pieces = split("Dr. Smith will see you now. He is free at nine.")
+    assert pieces[0].startswith("Dr. Smith will see you now.")
+    assert " ".join(pieces) == "Dr. Smith will see you now. He is free at nine."
+
+
+def test_a_list_numeral_is_never_a_piece_of_its_own():
+    pieces = split("1. Open the door. 2. Walk in.")
+    assert "1." not in pieces and "2." not in pieces
+    assert all(len(p) >= PIECE_MIN for p in pieces)
+    assert " ".join(pieces).split() == "1. Open the door. 2. Walk in.".split()
+
+
+def test_a_short_piece_between_long_ones_joins_a_neighbour_within_the_limit():
+    long_a, long_b = "A" * 290 + ".", "B" * 395 + "."
+    pieces = split(f"{long_a} Ok. {long_b}")
+    assert "Ok." not in pieces and all(len(p) <= PIECE_MAX for p in pieces)
+    assert " ".join(pieces).split() == f"{long_a} Ok. {long_b}".split()
+
+
+def test_a_short_text_alone_is_still_one_piece():
+    assert split("Hi.") == ["Hi."]
+
+
 async def test_kokoro_needs_no_key_and_never_resolves_one(tmp_path):
     resolved: list = []
     s, engine, _ = _local(tmp_path, resolved=resolved)
@@ -436,11 +462,48 @@ async def test_kokoro_reads_one_wav_per_piece_in_order(tmp_path):
 
 async def test_wav_joins_the_pieces_under_one_header(tmp_path):
     s, engine, _ = _local(tmp_path)
-    narration = "First one. Second one."
+    narration = "The first one. The second one."
+    pieces = split(narration)
+    assert len(pieces) == 2
     wav = await (await s.read("hello", NARRATOR, _narrate(narration))).wav()
     assert wav[:4] == b"RIFF" and wav.count(b"RIFF") == 1
-    assert wav[44:] == b"".join(b"\x01\x00" * len(p) for p in split(narration))
+    pause = b"\x00\x00" * 6000
+    assert wav[44:] == b"\x01\x00" * len(pieces[0]) + pause + b"\x01\x00" * len(pieces[1])
     assert struct.unpack("<I", wav[40:44])[0] == len(wav) - 44
+
+
+async def test_every_kokoro_piece_but_the_last_ends_in_a_quarter_second_of_silence(tmp_path):
+    s, engine, _ = _local(tmp_path)
+    narration = ("A" * 250 + ". ") + ("B" * 250 + ". ") + ("C" * 250 + ".")
+    pieces = split(narration)
+    assert len(pieces) == 3 and PIECE_PAUSE_S == 0.25
+    wavs = [w async for w in (await s.read("hello", NARRATOR, _narrate(narration))).pieces()]
+    data = [wav_data(w) for w in wavs]
+    for text, pcm in zip(pieces[:2], data[:2]):
+        assert len(pcm) == len(text) * 2 + 12_000 and pcm.endswith(b"\x00" * 12_000)
+    assert data[2] == b"\x01\x00" * len(pieces[2])
+
+
+async def test_a_one_piece_kokoro_reading_has_no_pause(tmp_path):
+    s, _, _ = _local(tmp_path)
+    [wav] = [w async for w in (await s.read("hello", NARRATOR, _narrate("Just this."))).pieces()]
+    assert wav_data(wav) == b"\x01\x00" * len("Just this.")
+
+
+async def test_a_skipped_empty_piece_leaves_no_pause_of_its_own(tmp_path):
+    narration = ("A" * 250 + ". ") + ("B" * 250 + ". ") + ("C" * 250 + ".")
+    pieces = split(narration)
+    s, _, _ = _local(tmp_path, engine=FakeEngine(empty=(pieces[1],)))
+    wavs = [w async for w in (await s.read("hello", NARRATOR, _narrate(narration))).pieces()]
+    assert len(wavs) == 2
+    assert len(wav_data(wavs[0])) == len(pieces[0]) * 2 + 12_000
+    assert wav_data(wavs[1]) == b"\x01\x00" * len(pieces[2])
+
+
+async def test_an_openrouter_piece_is_never_padded(tmp_path):
+    s, _ = _speech(tmp_path, _ok_tts([]))
+    reading = await s.read("hello", NARRATOR, _narrate("One sentence. Two sentences."))
+    assert [w async for w in reading.pieces()] == [pcm_to_wav(PCM)]
 
 
 async def test_openrouter_speaks_inside_read_and_is_one_piece(tmp_path):
@@ -650,6 +713,11 @@ def _parse(body: bytes) -> tuple[list[bytes], bool]:
     return wavs, False
 
 
+def _padded(sizes: list[int]) -> list[int]:
+    """PCM sizes of Kokoro pieces once every one but the last carries its 0.25 s pause (12,000 bytes)."""
+    return [n + 12_000 for n in sizes[:-1]] + sizes[-1:]
+
+
 async def test_post_speech_answers_frames_then_the_end_mark(vault, tmp_path):
     engine = FakeEngine()
     h, c = _app(vault, tmp_path, narration=(LONG,), engine=engine, model=FakeModel(), config=LOCAL_CONFIG)
@@ -659,7 +727,7 @@ async def test_post_speech_answers_frames_then_the_end_mark(vault, tmp_path):
     assert r.headers["x-content-type-options"] == "nosniff" and r.headers["cache-control"] == "no-store"
     wavs, ended = _parse(r.content)
     assert ended and len(wavs) == len(engine.calls) >= 2
-    assert [len(wav_data(w)) for w in wavs] == [2 * len(t) for t, _ in engine.calls]
+    assert [len(wav_data(w)) for w in wavs] == _padded([2 * len(t) for t, _ in engine.calls])
     [entry] = [e for e in h.ledger.iter() if e.kind == "speech"]
     assert entry.data["pieces"] == len(wavs) and entry.data["provider"] == "kokoro" and "stopped" not in entry.data
 
@@ -714,7 +782,7 @@ async def test_two_readings_at_once_never_interleave_inside_one_body(vault, tmp_
     async with c:
         r1, r2 = await asyncio.gather(c.post("/speech", json={"text": "one"}), c.post("/speech", json={"text": "two"}))
     got = sorted(([len(wav_data(w)) for w in _parse(r.content)[0]] for r in (r1, r2)), key=lambda x: x[0])
-    want = sorted(([2 * len(p) for p in split(t)] for t in (a, b)), key=lambda x: x[0])
+    want = sorted((_padded([2 * len(p) for p in split(t)]) for t in (a, b)), key=lambda x: x[0])
     assert got == want and all(_parse(r.content)[1] for r in (r1, r2))
 
 
