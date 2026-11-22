@@ -97,6 +97,8 @@ from src.mail.service import MailService
 from src.sonos.routes import sonos_router
 from src.sonos.service import SonosService
 from src.sonos.tools import SonosTools
+from src.speakers.routes import speakers_router
+from src.speakers.service import SpeakerService
 from src.music.routes import music_router
 from src.music.service import MANAGED_BY as MUSIC_MANAGED_BY, MusicService
 from src.generation.images import DEFAULT_MODEL as DEFAULT_IMAGE_MODEL, ImageConfig, ImageGenerator
@@ -205,6 +207,7 @@ class Harness:
     discover: Discovery | None = None  # event discovery: the Eventbrite pool, the scout's tools and routine, the digests
     mail: MailService | None = None  # AgentMail: ZenBot's own inbox, read-only, the /agentmail routes (no bot tool)
     sonos: SonosService | None = None  # Sonos: the speakers found on the home network, the sonos tools, the /sonos routes
+    speakers: SpeakerService | None = None  # Wi-Fi speakers: AirPlay, Chromecast and DLNA found, the default speaker, /speakers
     dreamer: Dreamer | None = None  # dreaming: learns facts from the user's own messages while idle; built once, a rebind keeps it
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
     provider_store: ProviderStore | None = None  # vault-settings/providers.json: providers, their keys, their enabled models
@@ -368,6 +371,8 @@ class Harness:
         self.sonos_tools = SonosTools(self.sonos, in_room=lambda sid: bool((s := self.sessions.get(sid)) and s.room_id))
         self.sonos.on_change = lambda _found: self.sonos_tools.register(self.tools, self.catalog)
         self.sonos_tools.register(self.tools, self.catalog)
+        if self.speakers is None:  # nothing listens until a speaker type is switched on
+            self.speakers = SpeakerService(c.vault_root, self.ledger, sonos_addresses=self._sonos_addresses)
         if self.discover is None:
             self.discover = Discovery(c, self.ledger, self.calendar)
             self.discover.tools, self.discover.catalog = self.tools, self.catalog
@@ -558,6 +563,13 @@ class Harness:
         if self.images is None or self.provider_store is None or self.images.config.provider not in self.provider_store.entries:
             return None
         return self.provider_store.key_ref(self.images.config.provider)
+
+    def _sonos_addresses(self) -> set[str]:
+        """The addresses of the Sonos speakers last found, while Sonos is on: a Wi-Fi speaker at one of them is marked
+        "Also in Sonos"."""
+        if self.sonos is None or not self.sonos.settings.enabled:
+            return set()
+        return {r.ip for r in self.sonos.rooms}
 
     def _speech_key_ref(self) -> str | None:
         """Reading aloud's key: its provider's, from providers.json."""
@@ -1534,7 +1546,7 @@ def create_app(h: Harness) -> FastAPI:
     h.discover.routines, h.discover.scheduler = routines, scheduler
     app_routers = [music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h),
                    facebook_router(h.discover, h), dream_router(h), speech_router(h), mail_router(h.mail),
-                   sonos_router(h.sonos, h.sonos_tools)]
+                   sonos_router(h.sonos, h.sonos_tools), speakers_router(h.speakers)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -1573,6 +1585,7 @@ def create_app(h: Harness) -> FastAPI:
         await h.discover.start()  # the scout's tools and weekly routine, when discovery is on with a place
         h.calendar.spawn(h.calendar.start())  # a sync now and every 15 minutes, while Google is connected
         await h.sonos.start()  # a look now and every 10 minutes, while Sonos is on
+        await h.speakers.start()  # a look for each speaker type that is on, and every 10 minutes after
         stop = asyncio.Event()
         extracting = asyncio.create_task(h.extract_queue.run(stop)) if h.extract_queue else None
         dreaming = asyncio.create_task(h.dreamer.run(stop))  # a pass when the machine is idle and nothing is under way
@@ -1596,6 +1609,7 @@ def create_app(h: Harness) -> FastAPI:
             await h.calendar.close()
             await h.mail.close()
             await h.sonos.close()
+            await h.speakers.close()
             await h.learner.drain(timeout=30)  # background learn writes land before memory closes; a hung one does not hold shutdown
             # after the worker: the store stops its server and closes; blocks, so off the loop
             await asyncio.to_thread(h.memory.close)
