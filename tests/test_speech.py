@@ -343,6 +343,9 @@ class FakeEngine:
         if self.ensure_error:
             raise self.ensure_error
 
+    async def unload(self):
+        pass
+
     async def speak(self, text, voice):
         self.calls.append((text, voice))
         if self.fail_on == len(self.calls):
@@ -802,6 +805,7 @@ class DownloadModel(FakeModel):
     async def remove(self):
         self.removed += 1
         self.state = "absent"
+        return True
 
 
 async def test_download_starts_once_and_answers_the_status(vault, tmp_path):
@@ -879,3 +883,118 @@ def test_the_reserved_id_never_means_a_provider_entry(vault, tmp_path):
     h.speech.reconfigure(LOCAL_CONFIG)
     h.provider_store = types.SimpleNamespace(entries={"kokoro": object()}, key_ref=lambda pid: "must-not-be-asked")
     assert h._speech_key_ref() is None
+
+
+# -- fix round 1: remove, the response's own cleanup, a real cancel ---------------------------------------
+
+from src.harness.speech_routes import SpeechResponse  # noqa: E402
+
+
+async def test_remove_unloads_the_engine_before_it_deletes_the_files(vault, tmp_path):
+    order: list = []
+
+    class Eng(FakeEngine):
+        async def unload(self):
+            order.append("unload")
+
+    class Mod(DownloadModel):
+        async def remove(self):
+            order.append("remove")
+            return True
+    h, c = _app(vault, tmp_path, engine=Eng(), model=Mod("ready"))
+    async with c:
+        assert (await c.delete("/speech/local/model")).status_code == 200
+    assert order == ["unload", "remove"]
+
+
+async def test_a_remove_that_leaves_a_file_is_409(vault, tmp_path):
+    class Mod(DownloadModel):
+        async def remove(self):
+            return False
+
+    class Eng(FakeEngine):
+        async def unload(self):
+            pass
+    h, c = _app(vault, tmp_path, engine=Eng(), model=Mod("ready"))
+    async with c:
+        r = await c.delete("/speech/local/model")
+    assert r.status_code == 409
+    assert r.json()["detail"] == "The voice could not be removed. Close anything using it and try again."
+
+
+async def test_a_reading_whose_next_piece_comes_after_the_removal_ends_without_the_end_mark(vault, tmp_path):
+    class Gone(FakeEngine):
+        async def speak(self, text, voice):
+            if self.calls:
+                raise NotDownloaded()
+            return await super().speak(text, voice)
+    h, c = _app(vault, tmp_path, narration=(LONG,), engine=Gone(), model=FakeModel(), config=LOCAL_CONFIG)
+    async with c:
+        r = await c.post("/speech", json={"text": "hi"})
+    wavs, ended = _parse(r.content)
+    assert r.status_code == 200 and len(wavs) == 1 and not ended
+
+
+async def _drop(response, stop_after):
+    """Run the response against a client that fails its `stop_after`th send."""
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+        if len(sent) > stop_after:
+            raise OSError("client gone")
+
+    async def receive():
+        await asyncio.sleep(60)
+    with pytest.raises(Exception):
+        await response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+
+
+async def test_a_body_never_iterated_still_gets_its_one_entry(tmp_path):
+    s, engine, ledger = _local(tmp_path)
+    reading = await s.read("hi", NARRATOR, _narrate(LONG))
+    await _drop(SpeechResponse(s, reading, media_type=MEDIA), 0)
+    [entry] = [e for e in ledger.iter() if e.kind == "speech"]
+    assert entry.data["stopped"] is True and entry.data["pieces"] == 0 and engine.calls == []
+
+
+async def test_a_body_dropped_after_one_frame_gets_its_entry_from_the_responses_cleanup(tmp_path):
+    s, engine, ledger = _local(tmp_path)
+    reading = await s.read("hi", NARRATOR, _narrate(LONG))
+    await _drop(SpeechResponse(s, reading, media_type=MEDIA), 1)  # the start goes, the first frame's send fails
+    [entry] = [e for e in ledger.iter() if e.kind == "speech"]
+    assert entry.data["stopped"] is True and entry.data["pieces"] == 1 and len(engine.calls) == 1
+
+
+async def test_a_cancel_while_the_second_piece_is_made_stops_the_reading(tmp_path):
+    release = asyncio.Event()
+    asked = asyncio.Event()
+
+    class Blocking(FakeEngine):
+        async def speak(self, text, voice):
+            n = len(self.calls) + 1
+            if n == 2:
+                self.calls.append((text, voice))
+                asked.set()
+                await release.wait()
+                return b"\x01\x00"
+            return await super().speak(text, voice)
+    s, engine, ledger = _local(tmp_path, engine=Blocking())
+    reading = await s.read("hi", NARRATOR, _narrate(LONG))
+    got = []
+
+    async def consume():
+        async for chunk in frames(s, reading):
+            got.append(chunk)
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(asked.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    release.set()
+    await asyncio.sleep(0)
+    assert len(engine.calls) == 2 and len(got) == 1
+    [entry] = [e for e in ledger.iter() if e.kind == "speech"]
+    assert entry.data["stopped"] is True and entry.data["pieces"] == 1
+    again = await s.read("hi", NARRATOR, _narrate(LONG))
+    assert await asyncio.wait_for(frames(s, again).__anext__(), 5)

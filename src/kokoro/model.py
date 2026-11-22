@@ -254,14 +254,18 @@ class KokoroModel:
                 ok = False
         return ok
 
-    async def remove(self) -> None:
+    async def remove(self) -> bool:
+        """Delete the files. True only when none remains; the ledger entry says the same."""
         for f in self.files:
             self._verified.discard(f.name)
             with contextlib.suppress(OSError):
                 self.path(f.name).unlink(missing_ok=True)
         self._clear_parts()
-        self._error = ""
-        self._log(action="remove", bytes=0, ok=True, error="")
+        left = any(self.path(f.name).exists() for f in self.files)
+        if not left:
+            self._error = ""
+        self._log(action="remove", bytes=0, ok=not left, error="disk" if left else "")
+        return not left
 
     async def close(self) -> None:
         task, self._task = self._task, None

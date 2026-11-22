@@ -84,6 +84,22 @@ async def frames(speech: Speech, reading: Reading) -> AsyncIterator[bytes]:
         await pieces.aclose()
 
 
+class SpeechResponse(StreamingResponse):
+    """The framed body. Starlette never closes a body its client dropped, so the reading is finished here, whatever
+    way the response ends: `finish` is idempotent, and closing the body runs its cleanup if it had started."""
+
+    def __init__(self, speech: Speech, reading: Reading, **kwargs: Any) -> None:
+        self._speech, self._reading = speech, reading
+        super().__init__(frames(speech, reading), **kwargs)
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._speech.finish(self._reading, stopped=True)
+            await self.body_iterator.aclose()  # a started body runs its own cleanup; an unstarted one has none
+
+
 def speech_providers(h) -> list[str]:
     """The provider ids that can speak: Kokoro (on this computer), then the OpenRouter ones."""
     store = [e.id for e in h.provider_store.entries.values() if e.kind == "openrouter"] if h.provider_store else []
@@ -120,8 +136,8 @@ def speech_router(h) -> APIRouter:
         except Exception as e:  # the reply is in this call's frames: no traceback leaves for the error tracker
             log.warning("reading aloud failed: %s", type(e).__name__)
             raise HTTPException(502, READ_FAILED) from None
-        return StreamingResponse(frames(h.speech, reading), media_type=MEDIA,
-                                 headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+        return SpeechResponse(h.speech, reading, media_type=MEDIA,
+                              headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
     @r.put("/settings/tools/speech")
     async def set_speech_tool(body: SpeechToolIn) -> dict[str, Any]:
@@ -175,7 +191,10 @@ def speech_router(h) -> APIRouter:
         model = local_model()
         if model.status()["state"] == "downloading":
             raise HTTPException(409, "Wait for the download to finish.")
-        await model.remove()
+        if h.speech.local is not None:
+            await h.speech.local.unload()  # waits for a synthesis in flight; the files are then not in use
+        if not await model.remove():
+            raise HTTPException(409, "The voice could not be removed. Close anything using it and try again.")
         return h.speech.status(speech_providers(h))
 
     @r.post("/speech/local/sample")

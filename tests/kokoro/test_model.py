@@ -308,3 +308,25 @@ async def test_the_ledger_entry_has_action_bytes_ok_and_error_only(tmp_path: Pat
     kind, data = led.entries[-1]
     assert data["ok"] is False and data["error"] == "provider"
     assert "http" not in repr(data) and str(tmp_path) not in repr(data)
+
+
+async def test_remove_that_leaves_a_file_logs_not_ok_and_answers_false(tmp_path: Path, monkeypatch):
+    class Ledger:
+        def __init__(self) -> None:
+            self.entries: list = []
+
+        def append(self, *args, **data) -> None:
+            self.entries.append(data)
+    led = Ledger()
+    m = KokoroModel(tmp_path / "vault", files=tiny_files(), ledger=led)
+    m.dir.mkdir(parents=True, exist_ok=True)
+    m.path("a.onnx").write_bytes(b"x")
+    real = Path.unlink
+
+    def stuck(self, *args, **kwargs):
+        if self.name == "a.onnx":
+            raise PermissionError
+        return real(self, *args, **kwargs)
+    monkeypatch.setattr(Path, "unlink", stuck)
+    assert await m.remove() is False
+    assert led.entries[-1]["ok"] is False and led.entries[-1]["error"] == "disk"
