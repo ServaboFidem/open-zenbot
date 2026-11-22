@@ -205,25 +205,17 @@ from src.harness.config import HarnessConfig  # noqa: E402
 from src.skills.catalog import Catalog  # noqa: E402
 
 
-def _app(vault, tmp_path, narration=("Spoken words.",), tts=None, narrator=True):
+def _app(vault, tmp_path, narration=("Spoken words.",), tts=None, narrator=True, engine=None, model=None, config=None):
     cfg = HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=tmp_path / "none", shell_cwd=tmp_path)
     cfg.validate()
     h = Harness(config=cfg, provider=ScriptedProvider([completion(t) for t in narration]), ledger=Ledger(vault), catalog=Catalog())
     if narrator:
         h.add_bot(Bot(name="Narrator", role="Reads aloud.", instructions="Speak.", id="narrator", narrates=True))
     app = create_app(h)
-    h.speech = Speech(SpeechConfig.load(vault), key_ref=lambda: "ref", ledger=h.ledger, resolve=lambda ref: Secret(KEY),
-                      transport=httpx.MockTransport(tts or _ok_tts([])))
+    h.speech = Speech(config or SpeechConfig.load(vault), key_ref=lambda: "ref", ledger=h.ledger,
+                      resolve=lambda ref: Secret(KEY), transport=httpx.MockTransport(tts or _ok_tts([])),
+                      local=engine, local_model=model)
     return h, httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost")
-
-
-async def test_post_speech_answers_wav_closed(vault, tmp_path):
-    h, c = _app(vault, tmp_path)
-    async with c:
-        r = await c.post("/speech", json={"text": "Hello **there**."})
-    assert r.status_code == 200 and r.content == pcm_to_wav(PCM)
-    assert r.headers["content-type"] == "audio/wav"
-    assert r.headers["x-content-type-options"] == "nosniff" and r.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.parametrize("text", ["", "   ", "x" * 20001])
@@ -284,7 +276,7 @@ async def test_an_unexpected_failure_is_502_and_carries_no_text(vault, tmp_path)
 
     async def boom(text, narrator, model_for):
         raise RuntimeError("boom")
-    h.speech.speak = boom
+    h.speech.read = boom
     async with c:
         r = await c.post("/speech", json={"text": "privateword"})
     assert r.status_code == 502 and r.json()["detail"] == "Reading aloud failed. Try again in a moment."
@@ -628,3 +620,262 @@ async def test_a_narration_that_cleans_to_nothing_is_502_and_loads_nothing(tmp_p
     assert calls == [] and engine.calls == []
     [entry] = [x for x in ledger.iter() if x.kind == "speech"]
     assert entry.data["stage"] == "narrate" and entry.data["error"] == "empty"
+
+
+# -- routes: the framed body, the local voice's routes ----------------------------------------------------
+
+import asyncio  # noqa: E402
+import types  # noqa: E402
+
+from src.generation.speech import NO_NARRATOR, OFF, SPEAK_FAILED  # noqa: E402
+from src.harness.speech_routes import END, MEDIA, frames  # noqa: E402
+
+LOCAL_CONFIG = SpeechConfig(provider=LOCAL, model="kokoro-v1.0", voice="af_heart")
+LONG = "First one. " + "Another sentence follows here. " * 30
+
+
+def _parse(body: bytes) -> tuple[list[bytes], bool]:
+    """The WAV frames of a body, and whether the end mark closed it."""
+    wavs, at = [], 0
+    while at + 4 <= len(body):
+        n = int.from_bytes(body[at:at + 4], "big")
+        at += 4
+        if n == 0:
+            return wavs, at == len(body)
+        wavs.append(body[at:at + n])
+        at += n
+    return wavs, False
+
+
+async def test_post_speech_answers_frames_then_the_end_mark(vault, tmp_path):
+    engine = FakeEngine()
+    h, c = _app(vault, tmp_path, narration=(LONG,), engine=engine, model=FakeModel(), config=LOCAL_CONFIG)
+    async with c:
+        r = await c.post("/speech", json={"text": "Hello **there**."})
+    assert r.status_code == 200 and r.headers["content-type"] == MEDIA == "application/x-zenbot-speech"
+    assert r.headers["x-content-type-options"] == "nosniff" and r.headers["cache-control"] == "no-store"
+    wavs, ended = _parse(r.content)
+    assert ended and len(wavs) == len(engine.calls) >= 2
+    assert [len(wav_data(w)) for w in wavs] == [2 * len(t) for t, _ in engine.calls]
+    [entry] = [e for e in h.ledger.iter() if e.kind == "speech"]
+    assert entry.data["pieces"] == len(wavs) and entry.data["provider"] == "kokoro" and "stopped" not in entry.data
+
+
+async def test_an_openrouter_reading_is_one_frame_then_the_end_mark(vault, tmp_path):
+    h, c = _app(vault, tmp_path)
+    async with c:
+        r = await c.post("/speech", json={"text": "Hello."})
+    assert r.status_code == 200 and r.headers["content-type"] == MEDIA
+    wavs, ended = _parse(r.content)
+    assert ended and wavs == [pcm_to_wav(PCM)]
+    assert r.content == len(wavs[0]).to_bytes(4, "big") + wavs[0] + END
+
+
+async def test_a_failure_part_way_ends_the_body_without_the_end_mark_and_logs_no_text(vault, tmp_path, caplog):
+    engine = FakeEngine(fail_on=2)
+    h, c = _app(vault, tmp_path, narration=("Private first. " + "Private later sentence here. " * 20,),
+                engine=engine, model=FakeModel(), config=LOCAL_CONFIG)
+    async with c:
+        r = await c.post("/speech", json={"text": "hi"})
+    wavs, ended = _parse(r.content)
+    assert r.status_code == 200 and len(wavs) == 1 and not ended
+    [entry] = [e for e in h.ledger.iter() if e.kind == "speech"]
+    assert entry.data["stage"] == "speak" and entry.data["error"] and entry.data["pieces"] == 1
+    assert "Private" not in json.dumps(entry.data) and "Private" not in caplog.text
+
+
+async def test_a_client_that_goes_away_stops_the_reading(tmp_path):
+    s, engine, ledger = _local(tmp_path)
+    reading = await s.read("hi", NARRATOR, _narrate(LONG))
+    body = frames(s, reading)
+    first = await body.__anext__()
+    assert first[:4] == (len(first) - 4).to_bytes(4, "big")
+    await body.aclose()
+    assert len(engine.calls) == 1
+    [entry] = [e for e in ledger.iter() if e.kind == "speech"]
+    assert entry.data["stopped"] is True and entry.data["pieces"] == 1
+    again = await s.read("hi", NARRATOR, _narrate(LONG))
+    assert await frames(s, again).__anext__()  # a new reading gets its first piece
+    assert len(engine.calls) == 2
+
+
+async def test_two_readings_at_once_never_interleave_inside_one_body(vault, tmp_path):
+    a = "Alpha first. " + "Alpha again goes on. " * 20
+    b = "Bee first sentence is longer. " + "Bee again goes on and on. " * 20
+
+    class Slow(FakeEngine):
+        async def speak(self, text, voice):
+            await asyncio.sleep(0)
+            return await super().speak(text, voice)
+    h, c = _app(vault, tmp_path, narration=(a, b), engine=Slow(), model=FakeModel(), config=LOCAL_CONFIG)
+    async with c:
+        r1, r2 = await asyncio.gather(c.post("/speech", json={"text": "one"}), c.post("/speech", json={"text": "two"}))
+    got = sorted(([len(wav_data(w)) for w in _parse(r.content)[0]] for r in (r1, r2)), key=lambda x: x[0])
+    want = sorted(([2 * len(p) for p in split(t)] for t in (a, b)), key=lambda x: x[0])
+    assert got == want and all(_parse(r.content)[1] for r in (r1, r2))
+
+
+@pytest.mark.parametrize("case", ["off", "no_narrator", "not_downloaded", "engine_fails", "openrouter_fails"])
+async def test_refusals_are_still_plain_statuses(vault, tmp_path, case):
+    kw: dict = dict(engine=FakeEngine(), model=FakeModel(), config=LOCAL_CONFIG)
+    if case == "off":
+        kw["config"] = SpeechConfig(provider=LOCAL, model="kokoro-v1.0", voice="af_heart", enabled=False)
+    elif case == "no_narrator":
+        kw["narrator"] = False
+    elif case == "not_downloaded":
+        kw["model"] = FakeModel(ready=False)
+    elif case == "engine_fails":
+        kw["engine"] = FakeEngine(ensure_error=EngineFailed("RuntimeError"))
+    else:
+        kw = dict(tts=lambda request: httpx.Response(500, json={"error": "x"}))
+    h, c = _app(vault, tmp_path, **kw)
+    async with c:
+        r = await c.post("/speech", json={"text": "hi"})
+    status, sentence = {"off": (409, OFF), "no_narrator": (409, NO_NARRATOR), "not_downloaded": (409, NOT_DOWNLOADED),
+                        "engine_fails": (502, LOCAL_FAILED), "openrouter_fails": (502, SPEAK_FAILED)}[case]
+    assert r.status_code == status and r.json()["detail"] == sentence
+
+
+def _store(h):
+    entry = types.SimpleNamespace(id="openrouter", name="OpenRouter", kind="openrouter",
+                                  model=lambda m: types.SimpleNamespace(kinds=["tts"]))
+    h.provider_store = types.SimpleNamespace(entries={"openrouter": entry}, key_ref=lambda pid: "ref")
+
+
+async def test_saving_kokoro_needs_no_provider_entry_and_fixes_the_model(vault, tmp_path):
+    h, c = _app(vault, tmp_path, engine=FakeEngine(), model=FakeModel())
+    h.provider_store = None
+    async with c:
+        r = await c.put("/settings/tools/speech", json={"provider": "kokoro", "model": "anything"})
+    body = r.json()
+    assert r.status_code == 200 and (body["provider"], body["model"], body["voice"]) == ("kokoro", "kokoro-v1.0", "af_heart")
+    assert body["providers"][0] == "kokoro" and body["local"]["state"] == "ready"
+    assert SpeechConfig.load(vault).provider == "kokoro"
+
+
+async def test_a_voice_off_the_list_is_422(vault, tmp_path):
+    h, c = _app(vault, tmp_path, engine=FakeEngine(), model=FakeModel())
+    async with c:
+        r = await c.put("/settings/tools/speech", json={"provider": "kokoro", "voice": "Zephyr"})
+        assert r.status_code == 422 and r.json()["detail"] == "Pick a voice from the list."
+        assert (await c.put("/settings/tools/speech", json={"provider": "kokoro", "voice": "af_bella"})).status_code == 200
+        assert (await c.put("/settings/tools/speech", json={"voice": "nope_voice"})).status_code == 422
+    assert h.speech.config.voice == "af_bella"
+
+
+async def test_switching_to_kokoro_without_a_voice_takes_af_heart_and_back_takes_zephyr(vault, tmp_path):
+    h, c = _app(vault, tmp_path, engine=FakeEngine(), model=FakeModel())
+    _store(h)
+    async with c:
+        r = await c.put("/settings/tools/speech", json={"provider": "kokoro"})
+        assert (r.json()["voice"], r.json()["model"]) == ("af_heart", "kokoro-v1.0")
+        r = await c.put("/settings/tools/speech", json={"provider": "openrouter"})
+        assert r.status_code == 200
+        assert (r.json()["voice"], r.json()["model"]) == ("Zephyr", DEFAULT_MODEL)
+
+
+async def test_switching_with_a_voice_in_the_body_keeps_that_voice(vault, tmp_path):
+    h, c = _app(vault, tmp_path, engine=FakeEngine(), model=FakeModel())
+    _store(h)
+    async with c:
+        r = await c.put("/settings/tools/speech", json={"provider": "kokoro", "voice": "bf_emma"})
+        assert r.json()["voice"] == "bf_emma"
+        r = await c.put("/settings/tools/speech", json={"provider": "openrouter", "voice": "Puck"})
+        assert r.status_code == 200 and r.json()["voice"] == "Puck"
+
+
+class DownloadModel(FakeModel):
+    def __init__(self, state="absent"):
+        super().__init__(ready=state == "ready")
+        self.state, self.started, self.removed = state, 0, 0
+
+    def status(self):
+        return {"state": self.state, "done": 0, "total": 5, "error": ""}
+
+    def start_download(self):
+        if self.state in ("downloading", "ready"):
+            return False
+        self.started += 1
+        self.state = "downloading"
+        return True
+
+    async def remove(self):
+        self.removed += 1
+        self.state = "absent"
+
+
+async def test_download_starts_once_and_answers_the_status(vault, tmp_path):
+    model = DownloadModel()
+    h, c = _app(vault, tmp_path, engine=FakeEngine(), model=model)
+    async with c:
+        r = await c.post("/speech/local/download", json={})
+        assert r.status_code == 200 and r.json()["local"]["state"] == "downloading"
+        r = await c.post("/speech/local/download", json={})
+        assert r.status_code == 409 and r.json()["detail"] == "Already downloading."
+        model.state = "ready"
+        assert (await c.post("/speech/local/download", json={})).json()["local"]["state"] == "ready"
+    assert model.started == 1
+
+
+async def test_remove_is_409_while_downloading(vault, tmp_path):
+    model = DownloadModel("downloading")
+    h, c = _app(vault, tmp_path, engine=FakeEngine(), model=model)
+    async with c:
+        r = await c.delete("/speech/local/model")
+        assert r.status_code == 409 and r.json()["detail"] == "Wait for the download to finish."
+        model.state = "ready"
+        r = await c.delete("/speech/local/model")
+        assert r.status_code == 200 and r.json()["local"]["state"] == "absent"
+    assert model.removed == 1
+
+
+async def test_sample_answers_wav_and_takes_no_text(vault, tmp_path):
+    engine = FakeEngine()
+    h, c = _app(vault, tmp_path, engine=engine, model=FakeModel())
+    async with c:
+        r = await c.post("/speech/local/sample", json={"voice": "af_heart", "text": "ignored words"})
+        assert r.status_code == 200 and r.headers["content-type"] == "audio/wav"
+        assert r.headers["x-content-type-options"] == "nosniff" and r.headers["cache-control"] == "no-store"
+        assert engine.calls == [(SAMPLE_TEXT, "af_heart")]
+        bad = await c.post("/speech/local/sample", json={"voice": "Zephyr"})
+        assert bad.status_code == 422 and bad.json()["detail"] == "Pick a voice from the list."
+        assert (await c.post("/speech/local/sample", json={"voice": "x" * 41})).status_code == 422
+        h.speech.local_model._ready = False
+        r = await c.post("/speech/local/sample", json={"voice": "af_heart"})
+    assert r.status_code == 409 and r.json()["detail"] == NOT_DOWNLOADED
+
+
+async def test_every_speech_post_needs_a_json_body(vault, tmp_path):
+    h, c = _app(vault, tmp_path, engine=FakeEngine(), model=FakeModel())
+    from src.harness.speech_routes import speech_router
+    posts = [r.path for r in speech_router(h).routes if "POST" in (getattr(r, "methods", None) or ())]
+    assert set(posts) == {"/speech", "/speech/local/download", "/speech/local/sample"}
+    async with c:
+        for path in posts:
+            r = await c.post(path, content="x=1", headers={"content-type": "application/x-www-form-urlencoded"})
+            assert r.status_code == 422, path
+
+
+def _bare_harness(vault, tmp_path):
+    cfg = HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=tmp_path / "none", shell_cwd=tmp_path)
+    cfg.validate()
+    return Harness(config=cfg, provider=None, ledger=Ledger(vault), catalog=Catalog())
+
+
+def test_the_harness_builds_local_speech_without_importing_kokoro_onnx(vault, tmp_path):
+    import sys
+    h = _bare_harness(vault, tmp_path)
+    assert h.speech.local is not None and h.speech.local_model is not None
+    assert "kokoro_onnx" not in sys.modules and "onnxruntime" not in sys.modules
+
+
+def test_the_local_model_lives_beside_the_vault(vault, tmp_path):
+    from src.vault_settings import models_dir
+    assert _bare_harness(vault, tmp_path).speech.local_model.dir == models_dir(vault) / "kokoro"
+
+
+def test_the_reserved_id_never_means_a_provider_entry(vault, tmp_path):
+    h = _bare_harness(vault, tmp_path)
+    h.speech.reconfigure(LOCAL_CONFIG)
+    h.provider_store = types.SimpleNamespace(entries={"kokoro": object()}, key_ref=lambda pid: "must-not-be-asked")
+    assert h._speech_key_ref() is None
