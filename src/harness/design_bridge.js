@@ -84,7 +84,8 @@
     root().appendChild(layer);
   }
   // Unsaved changes the GUI asks the frame to show. Display only: nothing here is sent back.
-  var touched = [], varNames = [];
+  // varsBefore: each custom property the bridge set on the root, as the page had it before the first write
+  var touched = [], varsBefore = [];
   var IMAGE_SRC = /^data:image\/(png|jpeg|webp|gif);base64,/;
   var VAR_NAME = /^--[a-z][a-z0-9-]{0,40}$/;
   function byId(id) {
@@ -136,8 +137,13 @@
     }
     var style = document.documentElement.style;
     for (var j = 0; j < names.length; j++) {
-      style.setProperty(names[j], vars[names[j]]);
-      if (varNames.indexOf(names[j]) < 0) varNames.push(names[j]);
+      var n = names[j], seen = false;
+      for (var k = 0; k < varsBefore.length; k++) if (varsBefore[k].name === n) seen = true;
+      if (!seen) {  // a later write keeps the first remembered state
+        var was = style.getPropertyValue(n);
+        varsBefore.push({ name: n, had: was !== '', value: was, priority: style.getPropertyPriority(n) });
+      }
+      style.setProperty(n, vars[n]);
     }
   }
   function resetAll() {
@@ -151,8 +157,12 @@
       }
     });
     touched = [];
-    varNames.forEach(function (n) { document.documentElement.style.removeProperty(n); });
-    varNames = [];
+    // the page's own inline value comes back; a property it did not have goes
+    var style = document.documentElement.style;
+    varsBefore.forEach(function (v) {
+      if (v.had) style.setProperty(v.name, v.value, v.priority); else style.removeProperty(v.name);
+    });
+    varsBefore = [];
   }
   window.addEventListener('message', function (e) {
     var d = e.data;

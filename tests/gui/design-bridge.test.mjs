@@ -20,10 +20,16 @@ class Node_ {
   shape() { return this.childNodes.map((c) => (c.tagName === '#text' ? c.text : '<' + c.tagName + '>')); }
 }
 
-function setup() {
-  const props = {};
+function setup(inline = {}) {
+  // the root's inline custom properties: name -> value, with `!important` ones also in `important`
+  const props = { ...inline.props }; const important = new Set(inline.important || []);
   const root = new Node_('HTML');
-  root.style = { setProperty: (k, v) => { props[k] = v; }, removeProperty: (k) => { delete props[k]; } };
+  root.style = {
+    setProperty: (k, v, priority = '') => { props[k] = v; if (priority === 'important') important.add(k); else important.delete(k); },
+    removeProperty: (k) => { delete props[k]; important.delete(k); },
+    getPropertyValue: (k) => (k in props ? props[k] : ''),
+    getPropertyPriority: (k) => (important.has(k) ? 'important' : ''),
+  };
   const body = new Node_('BODY');
   root.appendChild(body);
   const p = new Node_('P'); p.attrs['data-zen-id'] = 'p1'; body.appendChild(p);
@@ -41,7 +47,7 @@ function setup() {
   const window = { parent, addEventListener: (t, f) => { handlers[t] = f; }, pageXOffset: 0, pageYOffset: 0 };
   vm.runInNewContext(SRC, { window, document, parent });
   const post = (data, source = parent) => handlers.message({ data, source });
-  return { p, img, ta, props, sent, post };
+  return { p, img, ta, props, important, sent, post };
 }
 
 test('bridge: text becomes text nodes and br, never markup', () => {
@@ -99,6 +105,20 @@ test('bridge: reset restores the first state after two edits and removes the pro
   assert.equal(img.getAttribute('alt'), 'old');
   assert.equal(ta.value, 'was');
   assert.deepEqual(props, {});
+});
+
+test('bridge: reset puts back a property the page set inline itself, with its priority, after repeated writes', () => {
+  const { props, important, post } = setup({ props: { '--accent': '#123456', '--gap': '4px' }, important: ['--gap'] });
+  post({ zen: 'vars', vars: { '--accent': '#ff0000', '--gap': '9px', '--new': '1px' } });
+  post({ zen: 'vars', vars: { '--accent': '#00ff00', '--gap': '10px' } });
+  assert.deepEqual(props, { '--accent': '#00ff00', '--gap': '10px', '--new': '1px' });
+  post({ zen: 'reset' });
+  assert.deepEqual(props, { '--accent': '#123456', '--gap': '4px' });
+  assert.deepEqual([...important], ['--gap']);
+  // a second round remembers afresh, from the restored state
+  post({ zen: 'vars', vars: { '--accent': '#abcdef' } });
+  post({ zen: 'reset' });
+  assert.deepEqual(props, { '--accent': '#123456', '--gap': '4px' });
 });
 
 test('bridge: a message from another source is ignored, and the frame sends only ready', () => {
