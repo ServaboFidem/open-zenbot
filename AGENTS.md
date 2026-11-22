@@ -5,7 +5,7 @@ name each top-level system and run the harness and the tests.
 
 | Path | What |
 | --- | --- |
-| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`); the design studio (`design_studio.py`: numbered copies, comment block, preview bridge `design_bridge.js`; `design_systems.py`: loading and checking design systems; `design_html.py`: the HTML scan; `design_images.py`: pictures as files; `design_parts.py`: slots, worksheet, apply; `studio_helpers.py`: a helper's turn, apply and restore; `studio_help.py`: routing a revision); coding agents: `agent_clis.py` (find, sign-in, switches), `delegation.py` (the `delegate` tool, runner, folder rules), `dream_routes.py` (the `/dream` routes) |
+| `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API (`api.py`), entry point (`main.py`), MCP client (`mcp_client.py`), MCP keys (`mcp_keys.py`) and host dependencies (`host_deps.py`, `tool_paths.py`); conversations, routines (`scheduler.py`), the onboarding interview, model roles; the guards (`allowed_folders.py`, `write_guard.py`, `magick_guard.py`); the design studio (`design_studio.py`: numbered copies, comment block, preview bridge `design_bridge.js`; `design_systems.py`: loading and checking design systems; `design_html.py`: the HTML scan; `design_images.py`: pictures as files; `design_parts.py`: slots, worksheet, apply; `studio_helpers.py`: a helper's turn, apply and restore; `studio_help.py`: routing a revision; `studio_edits.py`: the user's own changes, restore, catch-up and the ZIP; `design_tweaks.py`: the tweak knobs a design declares); coding agents: `agent_clis.py` (find, sign-in, switches), `delegation.py` (the `delegate` tool, runner, folder rules), `dream_routes.py` (the `/dream` routes) |
 | `src/providers/` | Provider interface, registry, provider store (`providers.json`) and secrets, OpenRouter and OpenAI-compatible adapters, model listing and probing, the image provider, the speech provider (`speech.py`), Langfuse tracing |
 | `src/decider/` | Decider interface, scorer registry (each scorer names the provider kinds its model may be on, `registry.provider_kinds`), skill and MCP routing (band and floor), skill-to-bot fit, supervisor, `answers.py` (typed answers from a probability per option), `adapters/`: `decision_model.py` (`openrouter-decision-1`, OpenRouter's Decisions API), `letter_model.py` (`letter-logprobs`, a local decision model asked through chat) and `systemone.py` (`systemone`, a local server's own decision route); see `### Local decision models` |
 | `src/context/` | Compaction, the protected (pinned) task, transcript rendering |
@@ -19,13 +19,13 @@ name each top-level system and run the harness and the tests.
 | `src/sonos/` | Sonos control over SoCo: settings (`settings.py`), the device boundary (`devices.py`), the service that finds speakers (`service.py`), the `sonos_*` tools and the volume ceiling (`tools.py`) and the `/sonos` routes (`routes.py`); see `### Sonos` |
 | `src/speakers/` | Wi-Fi speakers (finding only, nothing played): settings and the speaker record (`settings.py`), the three finders behind one `Finder` protocol (`finders.py`, the only importer of pyatv, pychromecast, async_upnp_client and zeroconf), the service with a look per speaker type and the one default (`service.py`) and the `/speakers` routes (`routes.py`); see `### Wi-Fi speakers` |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, the approval dialog `ApprovalDialog.jsx` + `approval-dialog.js` (any pending approval opens it over whatever page is open, oldest first; `app.jsx` reads `GET /approvals` every 5 s while online and on a live `approval_request` event; closing it or Decide later decides nothing and puts that request off until a reload; it does not open on the Approvals page; never seen on screen with a real approval), program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; `open-vault.cjs` opens the vault's root in the OS file manager for the home page's Browse your vault button, shown in the desktop app only: the page sends no path, the folder is `ZEN_VAULT` as the main process reads it, checked by `tests/gui/open-vault.test.mjs`; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (AgentMail: the section at the top of Settings > Connected apps `MailSettings.jsx`, the AgentMail page `MailPage.jsx` (shown in the navigation below Conversations once a key is saved and an inbox chosen), their decisions in `mail.js` and styles in `mail.css`, through `mail-api.js`) (Sonos: the section of Settings > Connected apps `SonosSettings.jsx`, its decisions in `sonos.js`, and the Music > Sonos page `SonosPage.jsx` with its decisions in `sonos-panel.js` and styles in `sonos.css`, both through `sonos-api.js`) (Wi-Fi speakers: the Settings > Wi-Fi speakers panel `WifiSpeakers.jsx`, its decisions in `wifi-speakers.js`, through `speakers-api.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, with the editor `DesignEditor.jsx`, `TweaksPanel.jsx`, `DesignPendingBar.jsx`, `DesignCompare.jsx` and `ExportMenu.jsx`, and its unsaved changes decided in `design-edits.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, the approval dialog `ApprovalDialog.jsx` + `approval-dialog.js` (any pending approval opens it over whatever page is open, oldest first; `app.jsx` reads `GET /approvals` every 5 s while online and on a live `approval_request` event; closing it or Decide later decides nothing and puts that request off until a reload; it does not open on the Approvals page; never seen on screen with a real approval), program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; `export-design.cjs` renders a design as PDF or PNG in a hidden window (`makeExportWindow` in `main.cjs`); `open-vault.cjs` opens the vault's root in the OS file manager for the home page's Browse your vault button, shown in the desktop app only: the page sends no path, the folder is `ZEN_VAULT` as the main process reads it, checked by `tests/gui/open-vault.test.mjs`; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (AgentMail: the section at the top of Settings > Connected apps `MailSettings.jsx`, the AgentMail page `MailPage.jsx` (shown in the navigation below Conversations once a key is saved and an inbox chosen), their decisions in `mail.js` and styles in `mail.css`, through `mail-api.js`) (Sonos: the section of Settings > Connected apps `SonosSettings.jsx`, its decisions in `sonos.js`, and the Music > Sonos page `SonosPage.jsx` with its decisions in `sonos-panel.js` and styles in `sonos.css`, both through `sonos-api.js`) (Wi-Fi speakers: the Settings > Wi-Fi speakers panel `WifiSpeakers.jsx`, its decisions in `wifi-speakers.js`, through `speakers-api.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) |
 | `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`); a prompt can also set `closed: true` (only the tool groups in its `mcps`, no built-in tool, never in a room: `event-scout.md`), or `narrates: true` (the Narrator, `narrator.md`: asked directly to rewrite replies for speech, never given a task) |
 | `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+), and `fetch-uv.mjs` (downloads the pinned uv into `build/bin/` for the installers). Packaging itself is `electron-builder.yml`, `build/` (icon, the .deb's AppArmor profile `apparmor-profile`, the NSIS include `installer.nsh`) and `packaging/harness/` (the CPU-only `pyproject.toml` and `uv.lock` the installed app uses) |
 | `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`); `skills/events-digest/` (the scout's weekly run); `skills/sonos-morning/` (ZenBot's morning music routine) |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
-| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_findlocal.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` and the FindLocal stand-in `FakeFindLocal` are in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `all-events.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs`; dreaming in `tests/test_dream.py` and `tests/test_dream_routes.py`, GUI `tests/gui/dream.test.mjs` and `idle-report.test.mjs`; the approval dialog's rules in `tests/gui/approval-dialog.test.mjs`; AgentMail in `tests/mail/` (its stand-in `FakeAgentMail` is in `tests/mail/conftest.py`), GUI `tests/gui/mail.test.mjs` and `mail-api.test.mjs`; Sonos in `tests/sonos/` (its stand-in `FakeSpeakers` is in `tests/sonos/conftest.py`), GUI `tests/gui/sonos.test.mjs`, `sonos-panel.test.mjs` and `sonos-api.test.mjs`; Wi-Fi speakers in `tests/speakers/` (finders get stand-ins and an `httpx.MockTransport`, the service a `FakeFinder`), GUI `tests/gui/wifi-speakers.test.mjs` and `speakers-api.test.mjs` |
+| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`; direct changes in `tests/test_studio_edits.py`, `tests/test_studio_edit_routes.py` and `tests/test_design_tweaks.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `design-edits.test.mjs`, `design-bridge.test.mjs`, `export-design.test.mjs`, `save-media.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_findlocal.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` and the FindLocal stand-in `FakeFindLocal` are in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `all-events.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs`; dreaming in `tests/test_dream.py` and `tests/test_dream_routes.py`, GUI `tests/gui/dream.test.mjs` and `idle-report.test.mjs`; the approval dialog's rules in `tests/gui/approval-dialog.test.mjs`; AgentMail in `tests/mail/` (its stand-in `FakeAgentMail` is in `tests/mail/conftest.py`), GUI `tests/gui/mail.test.mjs` and `mail-api.test.mjs`; Sonos in `tests/sonos/` (its stand-in `FakeSpeakers` is in `tests/sonos/conftest.py`), GUI `tests/gui/sonos.test.mjs`, `sonos-panel.test.mjs` and `sonos-api.test.mjs`; Wi-Fi speakers in `tests/speakers/` (finders get stand-ins and an `httpx.MockTransport`, the service a `FakeFinder`), GUI `tests/gui/wifi-speakers.test.mjs` and `speakers-api.test.mjs` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
 | `.github/` | Workflows: `stale.yml`, and `release.yml` (a `v*` tag builds the .deb and the Windows installer and opens a draft release; a manual run only builds them; see `## Installed app`) |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
@@ -1162,7 +1162,8 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
   `default-src 'none'` and its forms by the sandbox. Thumbnails and the design pane never ask. Don't add a
   route that serves a bot-made page open without a token.
 - **The GUI never trusts the frame.** A message from the framed page can only offer a pick (which element,
-  its selector and a short text, each capped); the GUI only ever adds a chip the user sees. Nothing
+  its selector and a short text, each capped) or say it is ready; the GUI only ever adds a chip the user sees,
+  or opens the editor on a slot the harness listed (see Direct changes). Nothing
   a framed page posts is sent to a bot, run or saved on its own. At most 20 comments go with a task; the
   note is 1000 characters, the text 160, the selector 300. The comment block (`design_studio.comment_block`)
   names the file relative to the vault, never a disk path. Its lines are also pinned as the task's
@@ -1287,11 +1288,165 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     marks that exchange set aside (`Conversations.set_aside`) and goes to the Designer with the same message and
     comments, accepted against the copy the helper started from. The helper's exchange and its version stay in
     the list. `Exchange.bot` names the bot that answered, empty for the owner; `_conversation_view` returns it.
-  - Don't let a helper's text reach the file except through `design_parts.check_text` and `design_parts.apply`.
-    Don't offer `design_set_text`, `design_set_image` or `design_add_image` outside the turns named above, don't
+  - Don't let a helper's text, or the user's (Direct changes, below), reach the file except through
+    `design_parts.check_text` and `design_parts.apply`. Don't offer `design_set_text`, `design_set_image` or `design_add_image` outside the turns named above, don't
     attach a design for a helper, and don't write a numbered copy or a `before-<n>` file through a link. Tests:
     `tests/test_design_html.py`, `test_design_images.py`, `test_design_parts.py`, `test_studio_helpers.py`,
     `test_studio_help.py`, `test_bot_prompts.py`; GUI `tests/gui/design.test.mjs`, `actions.test.mjs`, `api.test.mjs`.
+- **Direct changes.** In the pane the user changes a design's words, pictures and tweak values, restores an older
+  version, compares two, and exports one, with no bot turn. The frame only says what was clicked; the words, pictures
+  and values are typed in the GUI's own controls and saved by the harness (`src/harness/studio_edits.py`,
+  `design_tweaks.py`). Told and checked at the routes, not walled, as with the helpers. Design:
+  `docs/superpowers/specs/2026-11-21-studio-direct-changes-design.md` (git-ignored, on the computer the work was done
+  on). Handing a design to Claude Code ("Build as code") is not built; it is the next piece.
+  - *Who may call.* Four routes in `api.py`, each for a studio bot's own one-to-one conversation (`kind == "bot"`)
+    that has a design (`studio_helpers.newest_revision`), else 404 "no such design", and with no pending exchange,
+    else 409 "Wait for the task to finish." (`_studio_design`; the GET routes too). Each acts on the file of the
+    newest revision, and version numbers are per file. No route holds an `await` between its first check and its
+    last write, and none answers a disk path.
+  - *Catch-up* (`studio_edits.catch_up`, before every route below). When the working file is not its newest numbered
+    copy (`design_studio.is_current`: the Designer changed it and was stopped before attaching, or a picture changed in
+    place), the harness first takes a numbered copy of it as it is and records it ("Changes the Designer had not shown
+    are now Version N."). A working file that is gone, a link or not a file, or a copy that cannot be taken, answers
+    409 "Ask the Designer to show the design again."
+  - *The routes.* `GET /conversations/{id}/design/slots` answers `{version, texts: [{id, text}], images: [{id, name,
+    alt}], tweaks: [{var, label, type, min, max, step, unit, value}]}` (texts as the helpers' worksheet shows them, a
+    newline for each `<br>`; a picture's `name` under `images/`, empty while it is still embedded; through
+    `exclusion.redact_obj`). `POST .../design/changes` takes `{version, texts: {id: text}, images: {id: {name, data,
+    alt}}, tweaks: {var: value}}` (`data` is bare base64; `alt` null keeps the picture's alt). `POST .../design/restore`
+    takes `{version, newest}`. Both POSTs answer `{version, conversation}`, `version` null when nothing changed (no new
+    copy). `GET .../design/export.zip` answers the ZIP (`nosniff`, `no-store`). At most 50 texts (`MAX_TEXTS`), 10
+    pictures (`MAX_IMAGES`, also checked before any picture is decoded) and 8 tweaks; a picture's size is checked
+    from its base64 length before it is decoded.
+  - *A save* (`studio_edits.save`). 409 "The design has changed. Reload and try again." unless `version` is the
+    newest copy and the working file still is it. Then every check before any write: a text must name a text slot
+    and pass `design_parts.check_text`, a picture must name an image slot and be a PNG, JPEG, WebP or GIF by its first
+    bytes (at most 1,500,000 bytes), its alt is checked by a dry run of `design_parts.apply`, and a tweak must be a
+    knob of the file with a value `design_tweaks.fmt` accepts; any failure is 422 with a sentence. A text or tweak
+    equal to what the file holds is no change. Pictures are then written into `images/` (`design_images.write_out`:
+    the user's file name as the stem, else the slot id; a file of that name with the same bytes is reused, one with
+    other bytes is never overwritten and the name gets `-2`...), texts and pictures go in through
+    `design_parts.apply`, tweak values are spliced into their declarations (`design_tweaks.apply`, spans read again
+    after the text splice), the working file is written whole and a numbered copy taken; a copy that cannot
+    be taken puts the working file back (409 "The design could not be saved."). A copy over `BRIDGE_MAX_BYTES` is
+    422 "The design would be too large." No `before-<n>` file is kept: undoing a save is Restore of the version
+    before it.
+  - *The tweak format* (`design_tweaks.knobs`). Exactly one `<style data-zen-tweaks>` holding exactly one `:root`
+    block, and exactly one `<script data-zen-tweaks>` (written `type="application/json"` so the page does not run
+    it) holding `{"tweaks": [...]}` (at most 20,000 characters, `MANIFEST_MAX`); only the first 8 entries are read
+    (`MAX_KNOBS`). A knob is `var` (`--[a-z][a-z0-9-]{0,40}`), `label` (control, format and other Unicode category C
+    characters and U+2028 and U+2029 removed, trimmed, cut to 40 characters, not empty) and `type` `color` or
+    `range` (finite `min` < `max`, `step` > 0, default 1, `unit` one of `px`, `rem`, `em`, `%`, `ms`, `deg` or
+    empty). Its variable must be declared once in that style element, on a line
+    of its own inside the `:root` block, with a current value that passes its own check (`#rrggbb` in any case; a
+    number from `min` to `max` followed by exactly its unit). A malformed, repeated or undeclared knob is dropped,
+    and a broken manifest means no tweaks, never an error. The manifest is bot-written: labels are shown as plain
+    text. On save the harness formats each value itself (`fmt`: lower-case hex; the number, whole or up to six
+    decimals, plus the unit; `min` and `max` are checked, the step is not) and replaces only the value's span.
+  - *Restore* (`studio_edits.restore`). `newest` must be the newest version (else 409 "The design has changed.
+    Reload and try again."), `version` an earlier one whose copy is a regular, single-link file in a real
+    `.versions` (else 422 "That is not an earlier version of this design."). The copy's embedded `data:` pictures in
+    `<img>` are written back out to `images/` (a file there with the same bytes is reused, `design_images.same_bytes`)
+    and their `src` pointed at them. Only when that page, embedded again, equals copy `version` byte for byte is it
+    written and copied, as a new newest version; else 409 "This version cannot be restored." History only moves
+    forward: no numbered copy is rewritten or removed.
+  - *The `edit` exchange* (`Conversations.record_edit`). Each new copy (a save, a restore, a catch-up) is attached to a
+    new finished exchange: `user` empty, outcome `edit`, session id `edit-<id>`, and a reply the harness writes ("You
+    changed 1 text, 1 picture and 2 tweaks.", "You restored Version 2 as Version 5."). The pane and `GET /designs`
+    find it as they find any revision. The model reads it as one note, `edit_note` ("(The user changed the design in
+    the app, not through you: ...)"), and the fixed reply `EDIT_ACK` with the attachment line, in the history and in a
+    fold alike. Dreaming reads only `Exchange.user`, which is empty here, so it reads nothing of it. The chat draws
+    it as one plain line, and the scope check's "last task" skips it. The conversation's turn note is stale after an
+    edit; the Designer's prompt says to read the file again before each revision.
+  - *The GUI* (`DesignPane.jsx`, decisions in `design-edits.js`). Comment, Edit and Tweaks are exclusive modes, Edit
+    and Tweaks only on the newest version with the frame ready, no task running, Compare off and the slots read
+    (`canChange`, `whyNot`). An Edit pick on a slot opens `DesignEditor.jsx` with the text from the slots answer, never
+    from the pick; any other element gives "This element can't be edited directly. Comment on it instead." Changes
+    collect as pending in GUI memory only (`designChanges` in `app.jsx`, cleared when the bot, the conversation or
+    the newest revision changes) and are shown live in the frame; the bar offers Discard and "Save as Version N".
+    While any are pending, sending a message, a form's answers and Redo are held with "Save or discard your changes
+    first." Restore is offered on an older version of the same file (`restorable`), not while a task runs or changes
+    are pending, after "Make Version N the newest version?". Compare shows two closed frames, each with its own
+    Version dropdown (`compareDefaults`: the previous and the newest), posts nothing to them, and turns the modes and
+    Export off. A slots answer for a newer version than the pane holds reloads the conversation (`slotsBehind`).
+  - *The bridge* (`design_bridge.js`) takes, from the parent window only, display-only messages besides `mode` and
+    `pins`: `text` (an element by `data-zen-id`, at most 2,000 characters, built as text nodes and `<br>` elements,
+    never `innerHTML`; a `<textarea>`'s value), `image` (an `<img>` only, a `src` of
+    `data:image/(png|jpeg|webp|gif);base64,`, and an alt), `vars` (at most 8 names of `--[a-z][a-z0-9-]{0,40}`, each
+    a string of at most 32 characters, all or none, set with `style.setProperty` on the root element) and `reset`
+    (puts back what the others changed). The GUI builds each tweak value from the knob's type (`cssValue`), so the
+    frame never receives free CSS. Nothing from the frame is saved: the frame still sends only `ready` and `pick`.
+  - *Export* (`ExportMenu.jsx`, on the version shown; hidden while comparing). HTML is the numbered copy as it is.
+    ZIP (newest version only; runs catch-up first) is the working file and each regular, single-link file directly
+    in its `images/` of at most 1,500,000 bytes; no link followed, no subfolder, nothing else. In the desktop app
+    both go through Save… (`save-media.cjs`, whose `ROUTES` include the ZIP route), in a browser they download. PDF
+    and PNG need the desktop app (shown only when the preload offers `openzenbot.exportDesign`). The renderer sends
+    the two ids, the kind and a title over IPC `export-design` (refused unless from the app's own pages); the main
+    process builds the closed attachment URL on the harness's own origin (`export-design.cjs` `pageUrl`, ids
+    `[A-Za-z0-9_-]{1,80}`; served under `PREVIEW_CSP`, without the bridge), asks the Save dialog for the path, and
+    renders the page in a hidden window (`makeExportWindow`): sandboxed, context isolation, no node integration, no
+    preload, its own in-memory session (`partition: 'export-design'`), every navigation, redirect and frame
+    navigation refused, window opening denied, every permission refused, closed on a load that fails or answers
+    other than 200. Its height is measured in an isolated world, so a page script cannot replace what measures it,
+    and is still clamped (`pageHeight`). PNG is a capture `WIDTH` (1440) px wide; PDF is one continuous page of that
+    width, sized to the content, backgrounds on, no margins; both at most `MAX_HEIGHT` (16,000) px tall. Making the
+    window, loading, measuring and rendering share one time limit (`TIMEOUT_MS`). The sentences shown are in
+    `export-design.cjs` and `ExportMenu.jsx`; see the code.
+  - *Ledger.* Kind `design_edit`, events `save` (version; counts of texts, pictures and tweaks; `ids`, the text and
+    picture slot ids changed), `restore` (`from`, `to`), `catch_up` (version), `refused` (`action`: `slots`,
+    `changes`, `restore` or `export`; `reason`: the HTTP status) and `export` (`format` `zip`, version). Never a text,
+    a label, a tweak's value or name, or a disk path. A 404, the task-running 409 and a malformed body's 422 are not
+    ledgered, nor is a PDF or PNG export (the main process writes no ledger).
+  - *Known limits.*
+    - The harness API has no authentication, so a bot with `shell` or `browser` can call these routes. It can
+      already write the design file through `files`, so this adds no reach, but a version saved this way is not
+      certainly the user's.
+    - After a 409 "The design has changed. Reload and try again." the pane reloads the conversation and the slots;
+      the new newest version clears the pending changes, so unsaved edits are dropped.
+    - A tweak declared on the same line as `:root {` (`:root { --a: 1px; }`) is no knob, a declaration inside a CSS
+      comment in the `:root` block can become a knob's span, and a tweak variable declared again in another
+      `<style>` is not caught and may override the saved value.
+    - The `text` message would set the content of any element with that `data-zen-id`, a `<style>` or `<script>`
+      included (display only, never saved), and `reset` removes a custom property the page itself set inline on its
+      root rather than putting it back.
+    - A refused save or restore can leave pictures already written into `images/`. The ZIP leaves out pictures over
+      1,500,000 bytes and has no cap on the working file's size. The slots and the ZIP also answer 409 while a task
+      runs.
+    - The Compare frames do not follow a new version; the editor closes when the slots are read again; a refusal
+      sentence stays under the frame until the next mode click, save or restore; the picture editor can overlap the
+      pending bar; a picture's `data:` URL is posted to the frame again on every keystroke.
+    - The PDF is one page (`pageRanges: '1'`): a page whose print layout runs taller than its screen height loses
+      the overflow.
+  - *Unverified.* The pane's controls were exercised by hand once (with the first version of the pane, `da5b20f`) in
+    Playwright Chromium, a plain browser, against a throwaway harness with a conversation seeded by script (no
+    model): an Edit pick on a heading opening the editor with the harness's text, typing shown live, Escape putting
+    it back and Done keeping it, the not-a-slot sentence, a two-line text shown with a newline, a picture and its alt
+    shown live, a colour and a slider tweak moving the page, Save as Version 2 with its chat line, Restore with its
+    confirm (Version 1 as Version 3), Compare with both frames and the modes off, the titles on an older version, a
+    save refused with "The design has changed. Reload and try again." after a restore made behind the pane, and
+    Discard. One click on Save landed on the frame during a layout shift; the cause was not found. The later fixes
+    (Redo held, the pane reset per conversation, Restore of the shown file, inputs off while saving, the reload after
+    a 409, colour case) ran only under `npm test` and the build. Nothing was seen in the Electron app, at narrow
+    widths, in the dark theme, by keyboard alone on the colour input, or with a task running. PDF and PNG were made
+    in Electron 45 by a scratch script that ran the real `export-design.cjs` and `makeExportWindow` against a
+    stand-in server serving pages under `PREVIEW_CSP` (a 3200 px page, a 40,000 px page capped at 16,000, a hostile
+    page, a 404 and a page that never finishes), not through the harness, the app's Export menu, the IPC channel or
+    the Save dialog; one PNG in the first run failed with the cause unknown and did not recur in about 70 later
+    exports. The Export menu, HTML and ZIP export through Save… and the browser download were not seen on screen.
+    The React components (`DesignPane.jsx`, `DesignEditor.jsx`, `TweaksPanel.jsx`, `DesignPendingBar.jsx`,
+    `DesignCompare.jsx`, `ExportMenu.jsx`) have no unit tests. No model has declared tweaks: whether the Designer
+    writes a usable block is untested.
+  - Don't let the user's text reach the file except through `design_parts.check_text` and `design_parts.apply`, or a
+    tweak value except as `design_tweaks.fmt` formats it from a checked colour or number: no free CSS in a tweak,
+    in the file or in a message to the frame. Never save, send to a bot or run anything the frame posts; the frame
+    sends only `ready` and `pick`, and the editor's text comes from the slots answer. Never rewrite or remove a
+    numbered copy, and never write one, the working file or a picture through a link. No `await` between a route's
+    first check and its last write; every POST takes a required JSON body; no disk path in an answer; no text, label
+    or value in a `design_edit` entry. Keep PDF and PNG rendering in the main process, from ids only, in a window
+    with no preload. Tests: `tests/test_studio_edits.py`, `test_studio_edit_routes.py`, `test_design_tweaks.py`,
+    `test_conversations.py`, `test_design_images.py`, `test_bot_prompts.py` (the Designer's tweaks example parses);
+    GUI `tests/gui/design-edits.test.mjs`, `design-bridge.test.mjs`, `design.test.mjs`, `export-design.test.mjs`,
+    `save-media.test.mjs`, `shell.test.mjs`, `api.test.mjs`.
 - **Records.** The conversation routes return a record through `_conversation_view` (it carries
   `design_system`, a slug or empty, and `design_system_source`). Keep new conversation fields going through it.
 
