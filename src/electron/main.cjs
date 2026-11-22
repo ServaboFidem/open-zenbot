@@ -2,6 +2,7 @@ const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification,
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { saveMedia } = require('./save-media.cjs');
+const { exportDesign, pdfOptions, TIMEOUT_MS: EXPORT_TIMEOUT_MS } = require('./export-design.cjs');
 const { loadEnvFile } = require('./env-file.cjs');
 const { createArrival } = require('./arrival.cjs');
 const { createIdleReport } = require('./idle-report.cjs');
@@ -88,6 +89,47 @@ function createWindow(page = 'index.html') {
   win.loadURL(`app://openzenbot/${page}`);
   return win;
 }
+// Export as PDF or PNG: a hidden window for one bot-made page (export-design.cjs builds its URL, never the renderer).
+// Its scripts run as in the preview, under the harness's closed policy; the window has no preload, its own in-memory
+// session, goes nowhere else, opens nothing and is given no permission. A load that fails, answers other than 200
+// or takes longer than the limit closes it.
+const MEASURE = '(() => { const d = document.documentElement, b = document.body; return Math.max(d.scrollHeight, b ? b.scrollHeight : 0); })()';
+async function makeExportWindow(url, { width }) {
+  const win = new BrowserWindow({
+    show: false, width, height: 900, useContentSize: true, paintWhenInitiallyHidden: true,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'export-design', backgroundThrottling: false },
+  });
+  const wc = win.webContents;
+  const close = () => { if (!win.isDestroyed()) win.destroy(); };
+  const refuse = event => event.preventDefault();
+  wc.on('will-navigate', refuse);
+  wc.on('will-redirect', refuse);
+  wc.on('will-frame-navigate', refuse);
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  wc.session.setPermissionRequestHandler((_wc, _permission, answer) => answer(false));
+  let status = 0, timer;
+  wc.once('did-navigate', (_event, _url, code) => { status = code; });
+  try {
+    const limit = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(Object.assign(new Error('the page did not load in time'), { name: 'TimeoutError' })), EXPORT_TIMEOUT_MS);
+    });
+    await Promise.race([wc.loadURL(url), limit]);
+    if (status !== 200) throw new Error(`the page answered ${status}`);
+  } catch (e) { close(); throw e; } finally { clearTimeout(timer); }
+  return {
+    // measured in a world of its own, so the page's scripts cannot replace what measures it; still only a number
+    height: () => wc.executeJavaScriptInIsolatedWorld(1001, [{ code: MEASURE }]),
+    pdf: size => wc.printToPDF(pdfOptions(size)),
+    png: async ({ width: w, height: h }) => {
+      win.setContentSize(w, h);
+      const shot = await wc.capturePage({ x: 0, y: 0, width: w, height: h }, { stayHidden: true });
+      if (shot.isEmpty()) throw new Error('the capture came back empty');
+      return (shot.getSize().width === w ? shot : shot.resize({ width: w })).toPNG();  // device scale factor 1
+    },
+    close,
+  };
+}
+
 // IPC from this app's own pages only (never a framed page or another origin)
 const fromApp = (event, page = '') => String(event.senderFrame?.url || '').startsWith(`app://openzenbot/${page}`);
 // The update check, on GitHub Releases: Settings checks by hand in every run; the installed app also checks at launch
@@ -188,6 +230,19 @@ app.whenReady().then(() => {
     paths: { pictures: app.getPath('pictures'), downloads: app.getPath('downloads') },
     fs: require('node:fs'),
   }));
+  // Export as PDF or PNG: the page sends two ids, a kind and a title; the URL is built here and the dialog names the path
+  ipcMain.handle('export-design', (event, args) => {
+    if (!fromApp(event)) throw new Error('not allowed');
+    const { convId, attId, kind, name } = args || {};
+    return exportDesign({ convId, attId, kind, name }, {
+      harnessBase: harnessBase(),
+      dialog: { showSaveDialog: opts => dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), opts) },
+      makeWindow: makeExportWindow,
+      storePath: path.join(app.getPath('userData'), 'media-save.json'),
+      paths: { pictures: app.getPath('pictures'), downloads: app.getPath('downloads') },
+      fs: require('node:fs'),
+    });
+  });
   handleUpdates();
   if (managed) {
     require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling });

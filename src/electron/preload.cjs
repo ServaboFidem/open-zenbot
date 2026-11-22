@@ -1,6 +1,6 @@
 // The bridge between the renderer and the shell: where the harness listens,
 // two calls that open the OS directory or file picker, one that opens the vault's root in the file manager, Save… for a
-// preview (the OS save dialog picks the path), and one subscription for the
+// preview and Export for a design as PDF or PNG (the OS save dialog picks the path), and one subscription for the
 // new-digest notice click. No key, no filesystem beyond
 // those dialogs. The renderer talks to the harness itself over fetch
 // and EventSource, under the page's CSP. Bundled into dist/ by build-gui, so the
@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld('openzenbot', Object.freeze({
   // Browse your vault: no path is sent; answers '' or a sentence to show
   openVault: () => ipcRenderer.invoke('open-vault'),
   saveMedia: (url, name) => ipcRenderer.invoke('save-media', { url, name }),
+  // a design as PDF or PNG: two ids, never a URL; the main process builds the URL and the dialog picks the path
+  exportDesign: (convId, attId, kind, name) => ipcRenderer.invoke('export-design', { convId, attId, kind, name }),
   // the main process tells the page to open Music > This week (the user clicked the new-digest notice); returns an unsubscribe
   onOpenMusic: cb => {
     const handler = () => cb();
