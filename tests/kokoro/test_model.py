@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from pathlib import Path
 
 import httpx
@@ -295,6 +296,61 @@ async def test_verify_hashes_once_per_process(tmp_path: Path, monkeypatch):
     assert await m2.verify() is True
     assert await m2.verify() is True
     assert len(calls) == 2  # once for each file, none the second time
+
+
+def _swap(path: Path, data: bytes) -> None:
+    """Other bytes of the same size, with an mtime set apart so the test does not lean on the clock's resolution."""
+    before = path.stat()
+    assert len(data) == before.st_size
+    path.write_bytes(data)
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 5_000_000_000))
+
+
+async def test_verify_hashes_again_a_file_replaced_by_other_bytes_of_the_same_size(tmp_path: Path, monkeypatch):
+    m, _ = build(tmp_path)
+    await m.download()
+    calls: list = []
+    real = km.file_sha256
+    monkeypatch.setattr(km, "file_sha256", lambda p: calls.append(p.name) or real(p))
+    assert await m.verify() is True and calls == []  # the download hashed them as they arrived
+    _swap(m.path("a.onnx"), b"x" * len(A))
+    assert await m.verify() is False
+    assert calls == ["a.onnx"] and not m.path("a.onnx").exists()
+    assert m.status()["state"] == "absent"
+
+
+async def test_a_file_that_changed_while_it_was_hashed_is_not_remembered(tmp_path: Path, monkeypatch):
+    m, _ = build(tmp_path)
+    await m.download()
+    m2 = KokoroModel(tmp_path / "vault", files=tiny_files())  # a new process
+    calls: list = []
+    real = km.file_sha256
+
+    def touching(p: Path) -> str:
+        calls.append(p.name)
+        digest = real(p)
+        st = p.stat()
+        os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))  # written to after it was read
+        return digest
+    monkeypatch.setattr(km, "file_sha256", touching)
+    assert await m2.verify() is True
+    assert await m2.verify() is True
+    assert calls == ["a.onnx", "b.bin", "a.onnx", "b.bin"]
+
+
+async def test_the_download_hashes_again_a_file_in_place_that_changed_since_it_was_checked(tmp_path: Path, monkeypatch):
+    m, s = build(tmp_path)
+    await m.download()
+    calls: list = []
+    real = km.file_sha256
+    monkeypatch.setattr(km, "file_sha256", lambda p: calls.append(p.name) or real(p))
+    await m.download()  # nothing changed: nothing hashed, nothing fetched
+    assert calls == [] and len(s.requests) == 2
+    _swap(m.path("a.onnx"), b"x" * len(A))
+    await m.download()
+    assert calls == ["a.onnx"]
+    assert [r.url.path.rsplit("/", 1)[-1] for r in s.requests[2:]] == ["a.onnx"]
+    assert m.path("a.onnx").read_bytes() == A and m.ready()
 
 
 async def test_remove_deletes_everything_and_the_state_is_absent(tmp_path: Path):

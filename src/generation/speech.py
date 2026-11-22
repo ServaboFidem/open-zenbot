@@ -44,7 +44,7 @@ LOCAL = "kokoro"  # a reserved provider id: speech on this computer, never looke
 PIECE_MAX = 400
 PIECE_AIM = 300
 PIECE_MIN = 12  # a shorter sentence ("Dr.", "1.") is joined to a neighbour, never a piece of its own
-PIECE_PAUSE_S = 0.25  # silence after every Kokoro piece but the last; to tune once the owner has listened
+PIECE_PAUSE_S = 0.25  # silence before every Kokoro piece but the first; to tune once the owner has listened
 _PAUSE = b"\x00\x00" * int(PIECE_PAUSE_S * KOKORO_RATE)
 SAMPLE_TEXT = "Good morning. Here is how this voice sounds when it reads a reply aloud."
 
@@ -341,14 +341,16 @@ class Speech:
         return pcm
 
     async def _local_pieces(self, engine: Any, pieces: list[str], voice: str) -> AsyncIterator[bytes]:
-        """A WAV per piece. Kokoro trims the silence at each end of what it makes, so every piece but the last ends
-        in PIECE_PAUSE_S of silence: the pause a sentence gets inside a piece, which the player cannot add itself."""
-        for at, piece in enumerate(pieces):
+        """A WAV per piece. Kokoro trims the silence at each end of what it makes, so every piece yielded but the first
+        begins with PIECE_PAUSE_S of silence: the pause a sentence gets inside a piece, which the player cannot add
+        itself. Put before a piece rather than after one, so the last piece yielded never ends in a pause, even when
+        the pieces after it come back empty, and no piece waits for the next to be made."""
+        first = True
+        for piece in pieces:
             pcm = await self._synthesise(engine, piece, voice)
             if pcm:  # a piece empty after cleaning is skipped, its pause with it
-                if at < len(pieces) - 1:
-                    pcm += _PAUSE
-                yield pcm_to_wav(pcm, KOKORO_RATE)
+                yield pcm_to_wav(pcm if first else _PAUSE + pcm, KOKORO_RATE)
+                first = False
 
     async def speak(self, text: str, narrator: Any | None,
                     model_for: Callable[[Any], tuple[Provider, str | None]]) -> bytes:

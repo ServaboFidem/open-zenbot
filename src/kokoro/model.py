@@ -15,6 +15,7 @@ import hashlib
 import logging
 import os
 import shutil
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,7 +87,7 @@ class KokoroModel:
         self._active = False  # inside download(): a second call while one works returns at once
         self._done = 0
         self._error = ""
-        self._verified: set[str] = set()
+        self._verified: dict[str, tuple[int, int]] = {}  # name: (size, mtime_ns) when its hash last matched
         self._clear_parts()  # a part file left by a crash is never trusted
 
     def path(self, name: str) -> Path:
@@ -183,13 +184,31 @@ class KokoroModel:
             for f in todo:
                 await self._fetch(client, f)
 
+    def _seen(self, f: ModelFile) -> tuple[int, int] | None:
+        """The file's size and mtime as it stands, or None when it is not a regular file (a link is not one)."""
+        try:
+            st = self.path(f.name).lstat()
+        except OSError:
+            return None
+        return (st.st_size, st.st_mtime_ns) if stat.S_ISREG(st.st_mode) else None
+
+    def _remember(self, f: ModelFile) -> None:
+        seen = self._seen(f)
+        if seen is not None:
+            self._verified[f.name] = seen
+
     async def _hash_ok(self, f: ModelFile) -> bool:
-        if f.name in self._verified:
+        """Whether the file's bytes match the pin. Hashed again whenever its size or mtime is not what they were when
+        it last matched; remembered only when the file did not change while it was hashed."""
+        seen = self._seen(f)
+        if seen is not None and self._verified.get(f.name) == seen:
             return True
-        if await asyncio.to_thread(file_sha256, self.path(f.name)) == f.sha256:
-            self._verified.add(f.name)
-            return True
-        return False
+        self._verified.pop(f.name, None)
+        if seen is None or await asyncio.to_thread(file_sha256, self.path(f.name)) != f.sha256:
+            return False
+        if self._seen(f) == seen:
+            self._verified[f.name] = seen
+        return True
 
     async def _fetch(self, client: httpx.AsyncClient, f: ModelFile) -> None:
         url = httpx.URL(BASE_URL + f.name)
@@ -235,30 +254,27 @@ class KokoroModel:
         if size != f.size or digest.hexdigest() != f.sha256:
             raise ModelError("source_changed")
         os.replace(part, self.path(f.name))
-        self._verified.add(f.name)
+        self._remember(f)  # hashed as it arrived
 
     async def verify(self) -> bool:
-        """SHA-256 of both files, once per process. A file that does not match is deleted."""
+        """SHA-256 of both files, once per process while a file's size and mtime stay what they were when it matched.
+        A file that does not match is deleted."""
         ok = True
         for f in self.files:
-            if f.name in self._verified:
-                continue
-            p = self.path(f.name)
             if not self._in_place(f):
+                self._verified.pop(f.name, None)
                 ok = False
                 continue
-            if await asyncio.to_thread(file_sha256, p) == f.sha256:
-                self._verified.add(f.name)
-            else:
+            if not await self._hash_ok(f):
                 with contextlib.suppress(OSError):
-                    p.unlink()
+                    self.path(f.name).unlink()
                 ok = False
         return ok
 
     async def remove(self) -> bool:
         """Delete the files. True only when none remains; the ledger entry says the same."""
         for f in self.files:
-            self._verified.discard(f.name)
+            self._verified.pop(f.name, None)
             with contextlib.suppress(OSError):
                 self.path(f.name).unlink(missing_ok=True)
         self._clear_parts()

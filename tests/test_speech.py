@@ -472,16 +472,16 @@ async def test_wav_joins_the_pieces_under_one_header(tmp_path):
     assert struct.unpack("<I", wav[40:44])[0] == len(wav) - 44
 
 
-async def test_every_kokoro_piece_but_the_last_ends_in_a_quarter_second_of_silence(tmp_path):
+async def test_every_kokoro_piece_but_the_first_begins_with_a_quarter_second_of_silence(tmp_path):
     s, engine, _ = _local(tmp_path)
     narration = ("A" * 250 + ". ") + ("B" * 250 + ". ") + ("C" * 250 + ".")
     pieces = split(narration)
     assert len(pieces) == 3 and PIECE_PAUSE_S == 0.25
     wavs = [w async for w in (await s.read("hello", NARRATOR, _narrate(narration))).pieces()]
     data = [wav_data(w) for w in wavs]
-    for text, pcm in zip(pieces[:2], data[:2]):
-        assert len(pcm) == len(text) * 2 + 12_000 and pcm.endswith(b"\x00" * 12_000)
-    assert data[2] == b"\x01\x00" * len(pieces[2])
+    assert data[0] == b"\x01\x00" * len(pieces[0])
+    for text, pcm in zip(pieces[1:], data[1:]):
+        assert pcm == b"\x00" * 12_000 + b"\x01\x00" * len(text)
 
 
 async def test_a_one_piece_kokoro_reading_has_no_pause(tmp_path):
@@ -496,8 +496,26 @@ async def test_a_skipped_empty_piece_leaves_no_pause_of_its_own(tmp_path):
     s, _, _ = _local(tmp_path, engine=FakeEngine(empty=(pieces[1],)))
     wavs = [w async for w in (await s.read("hello", NARRATOR, _narrate(narration))).pieces()]
     assert len(wavs) == 2
-    assert len(wav_data(wavs[0])) == len(pieces[0]) * 2 + 12_000
-    assert wav_data(wavs[1]) == b"\x01\x00" * len(pieces[2])
+    assert wav_data(wavs[0]) == b"\x01\x00" * len(pieces[0])
+    assert wav_data(wavs[1]) == b"\x00" * 12_000 + b"\x01\x00" * len(pieces[2])
+
+
+async def test_a_last_piece_that_comes_back_empty_leaves_the_one_before_unpadded(tmp_path):
+    narration = ("A" * 250 + ". ") + ("B" * 250 + ".")
+    pieces = split(narration)
+    assert len(pieces) == 2
+    s, _, _ = _local(tmp_path, engine=FakeEngine(empty=(pieces[1],)))
+    wavs = [w async for w in (await s.read("hello", NARRATOR, _narrate(narration))).pieces()]
+    assert [wav_data(w) for w in wavs] == [b"\x01\x00" * len(pieces[0])]
+
+
+async def test_a_first_piece_that_comes_back_empty_leaves_the_next_unpadded(tmp_path):
+    narration = ("A" * 250 + ". ") + ("B" * 250 + ".")
+    pieces = split(narration)
+    assert len(pieces) == 2
+    s, _, _ = _local(tmp_path, engine=FakeEngine(empty=(pieces[0],)))
+    wavs = [w async for w in (await s.read("hello", NARRATOR, _narrate(narration))).pieces()]
+    assert [wav_data(w) for w in wavs] == [b"\x01\x00" * len(pieces[1])]
 
 
 async def test_an_openrouter_piece_is_never_padded(tmp_path):
@@ -569,10 +587,16 @@ async def test_a_failure_on_the_third_piece_raises_after_two_were_yielded(tmp_pa
 
 
 async def test_a_piece_empty_after_cleaning_is_skipped(tmp_path):
-    s, engine, _ = _local(tmp_path, engine=FakeEngine(empty=("Second.",)))
-    reading = await s.read("hello", NARRATOR, _narrate("First. Second. Third."))
+    narration = " ".join(f"{word} sentence is long enough to stay a piece of its own, " + "and so on, " * 20 + "the end."
+                         for word in ("First", "Second", "Third"))
+    pieces = split(narration)
+    assert len(pieces) >= 3
+    middle = pieces[len(pieces) // 2]
+    s, engine, _ = _local(tmp_path, engine=FakeEngine(empty=(middle,)))
+    reading = await s.read("hello", NARRATOR, _narrate(narration))
     wavs = [w async for w in reading.pieces()]
-    assert reading.made == len(wavs) and len(engine.calls) == len(split("First. Second. Third."))
+    assert [c[0] for c in engine.calls] == pieces and middle in [c[0] for c in engine.calls]
+    assert len(wavs) == len(pieces) - 1 and reading.made == len(wavs)
     assert all(wav_data(w) for w in wavs)
 
 
@@ -693,6 +717,8 @@ async def test_a_narration_that_cleans_to_nothing_is_502_and_loads_nothing(tmp_p
 import asyncio  # noqa: E402
 import types  # noqa: E402
 
+import anyio  # noqa: E402
+
 from src.generation.speech import NO_NARRATOR, OFF, SPEAK_FAILED  # noqa: E402
 from src.harness.speech_routes import END, MEDIA, frames  # noqa: E402
 
@@ -714,8 +740,8 @@ def _parse(body: bytes) -> tuple[list[bytes], bool]:
 
 
 def _padded(sizes: list[int]) -> list[int]:
-    """PCM sizes of Kokoro pieces once every one but the last carries its 0.25 s pause (12,000 bytes)."""
-    return [n + 12_000 for n in sizes[:-1]] + sizes[-1:]
+    """PCM sizes of Kokoro pieces once every one but the first begins with its 0.25 s pause (12,000 bytes)."""
+    return sizes[:1] + [n + 12_000 for n in sizes[1:]]
 
 
 async def test_post_speech_answers_frames_then_the_end_mark(vault, tmp_path):
@@ -917,6 +943,18 @@ async def test_sample_answers_wav_and_takes_no_text(vault, tmp_path):
     assert r.status_code == 409 and r.json()["detail"] == NOT_DOWNLOADED
 
 
+@pytest.mark.parametrize("body", [{"text": "secret words"}, {"voice": "x" * 41, "text": "secret words"},
+                                  {"voice": "", "text": "secret words"}, {"voice": 7, "text": "secret words"},
+                                  {"voice": None, "text": "secret words"}, {"voice": ["af_heart"], "text": "secret"}])
+async def test_a_sample_with_a_bad_or_missing_voice_is_the_pick_a_voice_422_and_echoes_nothing(vault, tmp_path, body):
+    engine = FakeEngine()
+    h, c = _app(vault, tmp_path, engine=engine, model=FakeModel())
+    async with c:
+        r = await c.post("/speech/local/sample", json=body)
+    assert r.status_code == 422 and r.json() == {"detail": "Pick a voice from the list."}
+    assert "secret" not in r.text and "x" * 41 not in r.text and engine.calls == []
+
+
 async def test_every_speech_post_needs_a_json_body(vault, tmp_path):
     h, c = _app(vault, tmp_path, engine=FakeEngine(), model=FakeModel())
     from src.harness.speech_routes import speech_router
@@ -1063,11 +1101,12 @@ async def test_a_cancel_while_the_second_piece_is_made_stops_the_reading(tmp_pat
     async def consume():
         async for chunk in frames(s, reading):
             got.append(chunk)
-    task = asyncio.create_task(consume())
-    await asyncio.wait_for(asked.wait(), 5)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    # as Starlette cancels a body whose client went away: the group's scope, which delivers the cancel again on every
+    # loop turn, not one task.cancel()
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(consume)
+        await asyncio.wait_for(asked.wait(), 5)
+        tg.cancel_scope.cancel()
     release.set()
     await asyncio.sleep(0)
     assert len(engine.calls) == 2 and len(got) == 1
@@ -1176,7 +1215,7 @@ async def test_a_piece_over_the_cap_ends_the_body_with_no_partial_frame_and_no_e
     s, engine, ledger = _local(tmp_path)
     pieces = split(narration)
     assert len(pieces) == 3
-    first_wav = 44 + 2 * len(pieces[0]) + 12_000
+    first_wav = 44 + 2 * len(pieces[0])  # the first piece has no pause; the second begins with one
     monkeypatch.setattr(speech_routes, "FRAME_MAX", first_wav)  # the first piece fits, the second does not
     reading = await s.read("hi", NARRATOR, _narrate(narration))
     body = b"".join([chunk async for chunk in frames(s, reading)])

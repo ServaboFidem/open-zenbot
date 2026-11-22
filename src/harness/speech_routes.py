@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from src.events.routes import NothingIn
 from src.generation.speech import (
@@ -46,7 +46,8 @@ class SpeechIn(BaseModel):
 
 
 class SampleIn(BaseModel):
-    voice: str = Field(max_length=40)
+    # any value, checked in the route: a validation error would echo the body back, an extra `text` field included
+    voice: Any = None
 
 
 class SpeechToolIn(BaseModel):
@@ -199,6 +200,8 @@ def speech_router(h) -> APIRouter:
 
     @r.post("/speech/local/sample")
     async def sample(body: SampleIn) -> Response:
+        if not isinstance(body.voice, str) or not 0 < len(body.voice) <= 40:
+            raise HTTPException(422, PICK_A_VOICE)
         if h.speech is None:
             raise HTTPException(503, UNAVAILABLE)
         try:
