@@ -102,7 +102,10 @@ export function pendingFor(map, convId, newest) {
 export const dropPending = (map, convId) => has(map, convId) ? without(map, convId) : map;
 export function withPending(map, convId, newest, pending) {
   if (!convId) return map;
-  return count(pending) ? { ...map, [convId]: { pending, newest } } : dropPending(map, convId);
+  if (count(pending)) return { ...map, [convId]: { pending, newest } };
+  // an empty update (a Save's or a restore's answer, a Discard) clears only the changes made on its own revision: a
+  // late answer must not clear changes made since on a newer one
+  return has(map, convId) && map[convId].newest !== newest ? map : dropPending(map, convId);
 }
 // The conversation's entry once its newest revision is no longer the one the changes were made on; else the same map.
 export const dropStale = (map, convId, newest) => has(map, convId) && map[convId].newest !== newest ? dropPending(map, convId) : map;

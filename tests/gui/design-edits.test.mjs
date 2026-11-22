@@ -146,6 +146,17 @@ test('pending changes are kept per conversation, on the revision they were made 
   assert.equal(pendingFor({}, 'toString', undefined), EMPTY);  // only the map's own entries
 });
 
+test('an empty update clears the changes made on its own revision, never those made since on a newer one', () => {
+  const newer = setText(EMPTY, slots, 'hero', 'Made on the new version');
+  const map = withPending({}, 'c1', 'att2', newer);
+  // a save or restore answer that was sent from att1 lands after edits on att2: they stay
+  assert.equal(withPending(map, 'c1', 'att1', EMPTY), map);
+  assert.equal(pendingFor(withPending(map, 'c1', 'att1', EMPTY), 'c1', 'att2'), newer);
+  // Save or Discard on the same revision still clears them
+  assert.deepEqual(withPending(map, 'c1', 'att2', EMPTY), {});
+  assert.deepEqual(withPending({}, 'c1', 'att1', EMPTY), {});
+});
+
 test('unsavedLabel names the count of waiting changes for the hidden pane', () => {
   assert.equal(unsavedLabel(1), '1 change not saved');
   assert.equal(unsavedLabel(3), '3 changes not saved');
