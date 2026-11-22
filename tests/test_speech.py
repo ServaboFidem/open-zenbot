@@ -935,10 +935,17 @@ def _bare_harness(vault, tmp_path):
 
 
 def test_the_harness_builds_local_speech_without_importing_kokoro_onnx(vault, tmp_path):
+    import subprocess
     import sys
+    from pathlib import Path
     h = _bare_harness(vault, tmp_path)
     assert h.speech.local is not None and h.speech.local_model is not None
-    assert "kokoro_onnx" not in sys.modules and "onnxruntime" not in sys.modules
+    # Checked in a fresh process: this one may already hold onnxruntime from another test.
+    code = ("import src.harness.api, sys; "
+            "assert 'kokoro_onnx' not in sys.modules and 'onnxruntime' not in sys.modules")
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                       cwd=Path(__file__).resolve().parent.parent)
+    assert r.returncode == 0, r.stderr
 
 
 def test_the_local_model_lives_beside_the_vault(vault, tmp_path):
