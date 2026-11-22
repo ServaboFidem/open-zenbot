@@ -1112,9 +1112,12 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   code by URL, size and SHA-256, from `https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/`:
   `kokoro-v1.0.onnx` (325,505,369 bytes, `beb0d1848dee9a49da392cc3df26958d46cfa35d321edf434f52949153f0df3a`) and
   `voices-v1.0.bin` (28,214,398 bytes, `bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d`). Download:
-  one at a time, in the background, `httpx` streaming with the harness's own client and 30 s timeouts; redirects are
-  followed by hand, at most 5, only to `https` on `github.com`, `objects.githubusercontent.com` or
-  `release-assets.githubusercontent.com`, anything else fails as `source_changed`; written to `<name>.part` (new, not
+  one at a time, in the background, `httpx` streaming through a client the download builds for itself
+  (`KokoroModel._fetch_all`: `trust_env=False`, so no proxy or certificate setting from the environment applies, and
+  `follow_redirects=False`) with 30 s timeouts, not a client shared with the rest of the harness; redirects are
+  followed by hand, at most 5, a relative `Location` resolved against the address it came from, and only to `https`
+  on `github.com`, `objects.githubusercontent.com` or `release-assets.githubusercontent.com`, with no user info and on
+  the default port (`_allowed`), anything else fails as `source_changed`; written to `<name>.part` (new, not
   through a link), stopped the moment it passes the pinned size, hashed as written, renamed into place only when size
   and hash both match, the part file removed on any failure; a file already in place with the right size and hash is
   kept. Error kinds: `network`, `refused` (403, 429), `source_changed`, `disk` (an `OSError`, or under 1 GB free on the
@@ -1123,19 +1126,53 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   absent). `voices-v1.0.bin` is a numpy archive that `kokoro-onnx` loads with pickle off (numpy's default): do not
   change that.
 - **The engine** (`src/kokoro/engine.py`, `KokoroEngine`). The only module that imports `kokoro_onnx` and `onnxruntime`,
-  and only inside its load function, so a harness that never speaks locally never imports them. `speak(text, voice)`
-  makes one piece of text as 16-bit mono 24 kHz PCM, in `asyncio.to_thread` under one lock: one synthesis at a time,
-  harness-wide. The model loads on first use (CPU provider only) and is dropped after `IDLE_S` (10 minutes) without a
-  call; unloading and removing wait for a synthesis in flight. A synthesis in a thread cannot be cancelled: when a
-  reading stops, the piece in flight finishes, its audio is thrown away and nothing further starts. The voices are a
-  fixed table of Kokoro's 28 English voices (American `a*`, British `b*`, female `*f_`, male `*m_`); nothing reads names
-  from the voices file, and a voice not in the table is refused before the engine is touched. A failure of the library
-  is a `ProviderError`, logged by class name only. Text is cleaned first (control characters removed, whitespace
-  collapsed); a piece empty after that is skipped.
+  and only inside its load function (`real_load`), so a harness that never speaks locally never imports them; numpy too
+  is imported only inside `speak`. `real_load` holds the library's logger (`kokoro_onnx`) at WARNING, inside a
+  `suppress(Exception)` so it cannot fail the load: the library sets that logger from the generic `LOG_LEVEL`
+  variable, and at DEBUG it writes the phonemes of the spoken text to stderr. `speak(text, voice)` makes one piece of
+  text as 16-bit mono 24 kHz PCM. The model loads on first use (CPU provider only) and is dropped after `IDLE_S` (10
+  minutes) without a call.
+  - *One at a time.* Each load and each synthesis runs in a job (`_run`): a task of its own that takes the one lock,
+    runs the work in a thread, waits for the thread to end whatever happens to it (`_thread`, which waits through any
+    cancel of the job itself, as at loop shutdown; the first load's hash check runs in `KokoroModel.verify`'s own
+    thread, which a cancel of the job at shutdown would not wait for) and only then releases the lock. Nothing cancels a
+    job that holds the lock except the loop's shutdown. The caller awaits the job through
+    `asyncio.shield`. So one load or synthesis runs at a time, harness-wide, and `unload()`, the idle unload, `close()`
+    and `DELETE /speech/local/model` (which calls `unload()` first) wait, through the lock, for the thread in flight.
+  - *A caller that goes away.* uvicorn announces ASGI spec 2.3, so Starlette runs `POST /speech`'s body in an anyio
+    task group, and when the app closes the connection its cancel scope cancels the body again on every loop turn: a
+    cancelled caller can await nothing. It returns at once and the job is left alone. A job that already holds the lock
+    runs to its end: the piece in flight is finished and its audio thrown away; the next reading (or sample, unload or
+    removal) waits for it. A job still waiting for the lock is cancelled and starts nothing. A synthesis whose caller
+    went away while the model was loading is not started; a model loaded for a caller that went away is kept, so the
+    next call does not load it again. Every call, even a failed or abandoned one, starts the idle count again; an idle
+    unload that fires while a job runs waits for it and is then replaced by the job's new count. `close()` (harness
+    shutdown) cancels the jobs still waiting, waits for the one in flight, and arms no new idle count.
+  - *Errors.* A failure of the library or onnxruntime (to import, to load, to make a piece) is `EngineFailed`, a
+    `ProviderError` whose message is the exception's class name; it is raised outside the handler, so it holds no
+    reference to the library's exception, whose message can embed the text (`kokoro_onnx` puts the text in its
+    `ValueError`s). Each job's outcome is read in a done callback, and the thread's exception is read inside the job, so
+    a failure whose caller went away never reaches the event loop's exception handler; the only log line is the job's
+    warning with the class name.
+  - The voices are a fixed table of Kokoro's 28 English voices (American `a*`, British `b*`, female `*f_`, male `*m_`);
+    nothing reads names from the voices file, and a voice not in the table is refused before the engine is touched.
+    Text is cleaned first (control characters, U+2028 and U+2029 removed, whitespace collapsed); a piece empty after
+    that is skipped.
 - **Splitting** (`generation/speech.py` `split`). The Narrator's answer (at most 4,000 characters) is split at sentence
   ends and line breaks, in order: the first piece is the first sentence alone so speech starts fast, later pieces join
   sentences up to about `PIECE_AIM` (300) characters, no piece is over `PIECE_MAX` (400) (a longer sentence is cut at a
-  comma, else a space), and nothing is dropped. OpenRouter's one WAV is its reading's only piece.
+  comma, else a space), and nothing is dropped. A first sentence under `PIECE_MIN` (12) characters ("Dr.", "1.") takes
+  the sentences after it until it reaches 12 (within 400), and then any piece still under 12 is joined to the next
+  piece, else the one before, when the two fit in 400 (`_join_short`). OpenRouter's one WAV is its reading's only
+  piece.
+- **The pause between pieces** (`Speech._local_pieces`). `kokoro_onnx` trims the silence at both ends of what it makes
+  (it puts its own pause only between sentences inside a piece), and the app starts the next piece when one ends, so
+  every Kokoro piece but the last of the reading ends in `PIECE_PAUSE_S` (0.25 s) of silence: 6,000 zero samples
+  (12,000 bytes) added to the PCM before it is wrapped as a WAV, so `Reading.wav()` carries them too. "Last" is the
+  last piece of the list `read` made; a piece the engine answers empty for is skipped with its pause, so the pause is
+  never a piece of its own (`read` drops pieces that clean to nothing, so the last listed piece is never empty in
+  practice). OpenRouter's one piece is untouched. The 0.25 s is a controller's choice, made without listening, for the
+  owner to tune.
 - **A reading** (`Speech.read`, awaited, then `Reading.pieces()`). `read` does every check and the Narrator call before
   the answer starts, so a failure with a known cause is a plain refusal with its sentence: off, no Narrator, no key
   (not asked for `kokoro`), the Narrator failing or answering nothing (502); for `kokoro` a model not ready is 409 "The
@@ -1143,21 +1180,24 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   `read` (library imported, hashes checked the first time, model loaded), a hash mismatch being that 409 and any other
   failure to start 502 "The voice on this computer could not be started. Remove it and download it again in Settings >
   Harness Tools."; a narration that is empty after cleaning is 502; for OpenRouter the speech call itself runs inside
-  `read`, so a lapsed key or a rate limit still answers 502 `SPEAK_FAILED`. Only the synthesis of Kokoro's pieces
-  happens in the stream. `Reading.pieces()` yields one complete WAV per piece for both providers; a failure after the
-  first piece ends it by raising. `Reading.wav()` awaits every piece and answers one WAV (the PCM under one header),
-  which `Speech.speak` returns and the AirPlay design will hand to a speaker. `active` is `enabled`, a provider that can
-  speak, and for `kokoro` the model ready.
+  `read`, so a lapsed key or a rate limit still answers 502 `SPEAK_FAILED`. Any other exception inside `read` (in the
+  Narrator's call, the engine's start or OpenRouter's call) writes the reading's ledger entry with its `stage` and the
+  exception's class name as `error`, then goes on to the route, which answers 502 "Reading aloud failed. Try again in
+  a moment." Only the synthesis of Kokoro's pieces happens in the stream. `Reading.pieces()` yields one complete WAV
+  per piece for both providers; a failure after the first piece ends it by raising. `Reading.wav()` awaits every piece
+  and answers one WAV (the PCM under one header), which `Speech.speak` returns and the AirPlay design will hand to a
+  speaker. `active` is `enabled`, a provider that can speak, and for `kokoro` the model ready.
 - **Settings** in `vault-settings/tools.json` under `speech` (`SpeechConfig`: `provider` (default `openrouter`),
   `model` (`google/gemini-3.8-flash-lite-tts`, or `kokoro-v1.0` for `kokoro`), `voice` (default `Zephyr`; `VOICE_RE`;
   for `kokoro` it must be in the voice table), `enabled`), the Read aloud card on Settings > Harness Tools; the key is
   the speech provider's, resolved per call (`Harness._speech_key_ref`). `PUT /settings/tools/speech` takes
   `provider: "kokoro"` without a provider-store entry, fixes the model, and may save it before the model is downloaded
-  (Read aloud is then not active); a voice in the body is checked and never replaced, and the swap happens only when
-  the provider changes and the body sends no voice: to Kokoro a non-Kokoro voice becomes `af_heart`, back to a provider
-  a Kokoro voice becomes `Zephyr` (and a model left with Kokoro goes back to the default). The voice of the other side
-  is not remembered. `GET /settings/tools` lists the tool with `kind: "tts"`, `providers` (the ids that can speak,
-  `kokoro` first) and a `local` block: `state` (`absent`, `downloading`, `ready` or `failed`), `done`, `total`
+  (Read aloud is then not active); a voice in the body is checked and never replaced. With no voice in the body the
+  saved voice is swapped in two cases (`set_speech_tool`): whenever the provider the save ends with is `kokoro` (sent
+  or already saved) and the saved voice is not a Kokoro voice, it becomes `af_heart`; when the saved provider is
+  `kokoro` and the save names another, a Kokoro voice becomes `Zephyr`, and with no model in the body the model goes
+  back to the default. The voice of the other side is not remembered. `GET /settings/tools` lists the tool with
+  `kind: "tts"`, `providers` (the ids that can speak, `kokoro` first) and a `local` block: `state` (`absent`, `downloading`, `ready` or `failed`), `done`, `total`
   (353,719,767), `error` (a kind), `voices` (`name`, `label`, `accent`, `gender`) and `default_voice`.
 - **Routes** (`src/harness/speech_routes.py`). `POST /speech` (`{text}`, 1 to 20,000 characters, else 422; the Narrator
   gets at most 12,000 and its answer is cut to 4,000) answers `200 application/x-zenbot-speech` with `nosniff` and
@@ -1165,12 +1205,15 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   and a frame of length 0 as the end mark, always the last thing on success; a body that ends without it means the
   reading failed part-way. No frame is over `FRAME_MAX` (64,000,000 bytes) and the app refuses a larger length as a
   broken stream. Refusals come before the response starts as a plain 409, 422, 502 or 503 with their sentences. When
-  the app closes the connection the body is cancelled and no further piece is made (`SpeechResponse` finishes the
-  reading's ledger entry whichever way the response ends). `POST /speech/local/download` (`NothingIn`): starts the
-  download in the background and answers the status; 409 "Already downloading."; at once when ready.
-  `DELETE /speech/local/model`: unloads the engine, removes both files and any part file, answers the status; 409 "Wait
-  for the download to finish." while one runs, and 409 "The voice could not be removed. Close anything using it and try
-  again." when a file remains. `POST /speech/local/sample` (`{voice}`, at most 40 characters): speaks one fixed sentence
+  the app closes the connection the body is cancelled and no further piece is started; the piece already in the
+  engine's thread is finished with the engine's lock held and its audio thrown away (see the engine above), and
+  `SpeechResponse` finishes the reading's ledger entry whichever way the response ends. A piece whose WAV would pass
+  `FRAME_MAX` ends the body before any of its bytes are sent, with no end mark and an entry with an error.
+  `POST /speech/local/download` (`NothingIn`): starts the download in the background and answers the status; 409
+  "Already downloading."; at once when ready. `DELETE /speech/local/model`: unloads the engine (waiting for a load or
+  synthesis in flight), removes both files and any part file, answers the status; 409 "Wait for the download to
+  finish." while one runs, and 409 "The voice could not be removed. Close anything using it and try again." when a
+  file remains. `POST /speech/local/sample` (`{voice}`, at most 40 characters): speaks one fixed sentence
   held in code ("Good morning. Here is how this voice sounds when it reads a reply aloud.") with no Narrator and answers
   `audio/wav` with `nosniff` and `no-store`; 422 "Pick a voice from the list." for a voice not in the table; 409 with
   the not-downloaded sentence; it works whether Read aloud is on or off and takes no text.
@@ -1190,11 +1233,18 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   the 28 voices (American then British, female then male), **Play a sample** (the picked voice, saved or not; off until
   the model is ready) and a line saying the Narrator still rewrites the reply on its own model. The Kokoro voice and a
   provider's free-text voice are kept apart in the form (`speechForm`, `speechPatch`, `speechDirty`), and a sample that
-  arrives after the card is gone is dropped (`createSampler`). The Settings search finds the card by "Kokoro" and "on
-  this computer" through the tool's `summary` (`liveSections`).
+  arrives after the card is gone is dropped (`createSampler`). The status line is not a live region: a visually hidden
+  one (`.sr-only`, `role="status"`) says `liveLine`, which is the status line except "Downloading…" while downloading,
+  so a screen reader hears the start, the end and a failure but not each 2 s progress tick. The voice select takes its
+  accessible name from its Field only. The card's error line is cleared when the model's state or the picked voice
+  changes (`errorKey`), and Download sends one request however fast it is clicked (`oneAtATime`). The alert "<provider>
+  is not a provider that speaks…" is decided on the saved tool, never on the pick in the select, and never shows when
+  the saved provider is `kokoro` (`showsNoSpeakerAlert`). The Settings search finds the card by "Kokoro" and "on this
+  computer" through the tool's `summary` (`liveSections`), and the Harness Tools panel's description names reading
+  aloud.
 - **Ledger.** Kind `speech`: `chars_in`, `chars_out`, `bytes`, `model`, `voice`, `provider`, `pieces` (made), `narrator_model`,
   `stopped: true` when the app closed the connection first, and on failure `stage` (`narrate` or `speak`) and `error`
-  (a `failure_kind`, or `empty`). Event `model` for a download or removal: `action` (`download`, `remove`), `bytes`,
+  (a `failure_kind`, `empty`, or for an unexpected exception inside `read` its class name). Event `model` for a download or removal: `action` (`download`, `remove`), `bytes`,
   `ok`, `error`. A sample writes `sample: true`, the voice and `bytes`. Never the text, a path or a URL. With tracing on,
   the Narrator's call and the speech call are traced like every model call, the reply and the spoken text with them: a
   Kokoro piece's text goes in the trace's input (`Speech._synthesise`) with the voice.
@@ -1209,11 +1259,15 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   narration, one synthesis at a time). It cannot make the harness fetch anything but the two pinned files, and the
   sample route speaks only its fixed sentence. Do not describe local speech as out of bots' reach.
 - **Known limits.**
-  - A synthesis in a thread is not cancelled: after a stop, one piece (a sentence or about 300 characters) is still
-    finished and thrown away, and the engine is busy until then.
-  - `split` breaks at "Dr." and at list numerals ("1."), so a piece can be a bare abbreviation or number.
-  - The download checks a redirect's host, not its port. The 354 MB hash is computed, and the file written, on the
-    event loop in 1 MiB steps while downloading.
+  - A synthesis in a thread is not cancelled: after a stop, one piece (at most 400 characters) is still finished and
+    thrown away, and the engine is busy until then, so a new reading or sample started at once waits for it.
+  - `split` still ends a sentence at an abbreviation, and only text under 12 characters is joined to a neighbour:
+    "Please call Dr. Smith about the results." gives the pieces "Please call Dr." and "Smith about the results.", so a
+    pause falls after "Dr.".
+  - The pause goes by position in the list, not by what was made: had the last listed piece come back empty, the
+    reading would end on a pause (`read` drops such pieces before it starts, so this is not expected).
+  - The 354 MB hash is computed, and the file written, on the event loop in 1 MiB steps while downloading.
+  - In a screen reader's browse mode the status is read twice: the visible line and the hidden live region.
   - Remove unloads the engine first, but a new reading or sample between the unload and the delete can load it again
     (the result is a 409 or a failed piece).
   - A client that goes away just after the end mark is sent can be logged as `stopped`.
@@ -1232,10 +1286,15 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   deleted the files, a sample then answered 409 with the not-downloaded sentence, and a new download worked. Nothing of
   the feature was written inside the vault folder.
 - **Unverified.** Nothing was heard: the audio was checked by its WAV header and duration, not by a person (the voices'
-  quality, whether pieces join without a gap or a click, and whether the narration reads at a natural pace are not
-  known). Not tried: a laptop-class CPU (speed, and the memory use, about 420 MB loaded in the spike), Linux, the
-  installed app's environment (`kokoro-onnx` and `espeakng-loader` inside it, a user folder with non-ASCII characters,
-  the .deb and Windows installer with `src/kokoro`), any language but English, and the Electron shell. In a plain
+  quality, whether pieces join without a gap or a click, whether the 0.25 s pause between pieces sounds right, and
+  whether the narration reads at a natural pace are not known). The measured run above was made before the engine's
+  jobs, the pause between pieces, the short-sentence rule, the port rule and the card's later changes: those have run
+  only in the tests (a fake voice library, `httpx.MockTransport`, node tests of the card's decisions) and the GUI
+  build, not against the real model, GitHub or a screen reader. `real_load`'s logger change is not covered by any test
+  (no test runs `real_load`) and has not run. Not tried: a laptop-class CPU (speed, and the memory use: about 420 MB
+  loaded, measured in the spike before this was built), Linux, the installed app's environment (`kokoro-onnx` and
+  `espeakng-loader` inside it, a user folder with non-ASCII characters, the .deb and Windows installer with
+  `src/kokoro`), any language but English, and the Electron shell. In a plain
   browser against the real harness the card was seen in its not-downloaded, downloading and downloaded states, Play a
   sample made its request (200) with no error line, and Remove asked its confirmation (answered No). With no speech
   model enabled on a provider in that vault the select held only Kokoro, so the switch to a provider model and back (the
@@ -1251,13 +1310,19 @@ system message. No text, spoken text, path or URL in a `speech` ledger entry, a 
 text may be in a call's frames, log the exception's class name only. Keep `speech` in `vault-settings/tools.json` and the
 model in `<vault>-models/`, in `private_folders`, never in the vault. Only `src/kokoro/engine.py` imports `kokoro_onnx`
 or `onnxruntime`, only inside its load function, and the harness must start without them. Never use a model file whose
-size and SHA-256 do not match the pin; keep the redirect rule and the part-file-then-rename download; never add a
-second source for the files or a way to fetch anything else. `kokoro` stays a reserved provider id, and the voice sent
-in a `PUT` is checked and never replaced. One synthesis at a time. The framed stream (media type, 4-byte length, end
+size and SHA-256 do not match the pin; keep the redirect rule (https, the three hosts, no user info, the default
+port) and the part-file-then-rename download; never add a second source for the files or a way to fetch anything
+else. Keep the download's own client (`trust_env=False`, redirects off): do not swap in a client shared with the rest
+of the harness, which would bring the environment's proxy settings and its own redirect rule. `kokoro` stays a
+reserved provider id, and the voice sent in a `PUT` is checked and never replaced. One load or synthesis at a time:
+run each only inside an engine job (`KokoroEngine._run`) that holds the lock until its thread has ended, never await a
+thread from a caller the route can cancel, and never let the library's exception or its message out of the job
+(class name only). Keep `kokoro_onnx` and numpy imported only where they are now. The framed stream (media type, 4-byte length, end
 mark, `FRAME_MAX`) is one format for the app and the route: change both sides and their tests together. Every POST takes a
 required JSON body (`NothingIn` where it needs nothing). Tests never touch the network, never import `kokoro_onnx`,
 never load a model and never download: `tests/conftest.py` `_kokoro_inert` makes the engine a harness builds load and
-speak nothing, and `tests/kokoro/` passes a fake library. Tests: `tests/test_speech.py`, `tests/kokoro/test_model.py`,
+speak nothing, and `tests/kokoro/` passes a fake library. A test of a stop cancels the way production does (inside
+`anyio.create_task_group()`, or `SpeechResponse` driven at ASGI spec 2.3), not with one `task.cancel()`. Tests: `tests/test_speech.py`, `tests/kokoro/test_model.py`,
 `tests/kokoro/test_engine.py`, the `narrates` checks in `tests/test_bot_prompts.py`, `tests/test_rooms.py` and
 `tests/test_orchestrator.py`; GUI `tests/gui/speech.test.mjs`, `speech-settings.test.mjs`, `api.test.mjs` and the CSP
 check in `tests/gui/shell.test.mjs`.
