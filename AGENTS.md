@@ -17,7 +17,7 @@ name each top-level system and run the harness and the tests.
 | `src/skills/` | `SKILL.md` loader and catalog; recorder |
 | `src/mail/` | AgentMail, ZenBot's own email address (read-only): settings and the owner-only key (`settings.py`), the plain-`httpx` client (`agentmail.py`), the service (`service.py`) and the `/agentmail` routes (`routes.py`); see `### AgentMail` |
 | `src/sonos/` | Sonos control over SoCo: settings (`settings.py`), the device boundary (`devices.py`), the service that finds speakers (`service.py`), the `sonos_*` tools and the volume ceiling (`tools.py`) and the `/sonos` routes (`routes.py`); see `### Sonos` |
-| `src/speakers/` | Wi-Fi speakers (finding only, nothing played): settings and the speaker record (`settings.py`), the three finders behind one `Finder` protocol and the shared zeroconf listener (`finders.py`, the only importer of pyatv, pychromecast, async_upnp_client and zeroconf), the service with a look per speaker type and the one default (`service.py`) and the `/speakers` routes (`routes.py`); see `### Wi-Fi speakers` |
+| `src/speakers/` | Wi-Fi speakers (finding only, nothing played): settings and the speaker record (`settings.py`), the three finders behind one `Finder` protocol (`finders.py`, the only importer of pyatv, pychromecast, async_upnp_client and zeroconf), the service with a look per speaker type and the one default (`service.py`) and the `/speakers` routes (`routes.py`); see `### Wi-Fi speakers` |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
 | `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, the approval dialog `ApprovalDialog.jsx` + `approval-dialog.js` (any pending approval opens it over whatever page is open, oldest first; `app.jsx` reads `GET /approvals` every 5 s while online and on a live `approval_request` event; closing it or Decide later decides nothing and puts that request off until a reload; it does not open on the Approvals page; never seen on screen with a real approval), program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; `open-vault.cjs` opens the vault's root in the OS file manager for the home page's Browse your vault button, shown in the desktop app only: the page sends no path, the folder is `ZEN_VAULT` as the main process reads it, checked by `tests/gui/open-vault.test.mjs`; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (AgentMail: the section at the top of Settings > Connected apps `MailSettings.jsx`, the AgentMail page `MailPage.jsx` (shown in the navigation below Conversations once a key is saved and an inbox chosen), their decisions in `mail.js` and styles in `mail.css`, through `mail-api.js`) (Sonos: the section of Settings > Connected apps `SonosSettings.jsx`, its decisions in `sonos.js`, and the Music > Sonos page `SonosPage.jsx` with its decisions in `sonos-panel.js` and styles in `sonos.css`, both through `sonos-api.js`) (Wi-Fi speakers: the Settings > Wi-Fi speakers panel `WifiSpeakers.jsx`, its decisions in `wifi-speakers.js`, through `speakers-api.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) |
 | `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`); a prompt can also set `closed: true` (only the tool groups in its `mcps`, no built-in tool, never in a room: `event-scout.md`), or `narrates: true` (the Narrator, `narrator.md`: asked directly to rewrite replies for speech, never given a task) |
@@ -1014,26 +1014,32 @@ Reading announcements and digests through the default speaker comes later. Desig
   cut to 120 characters (`clean`); the address, which never leaves the harness.
 - **Finding** (`src/speakers/finders.py`; each finder answers a list or raises `FindError(kind)`, `network` for an
   `OSError` or a timeout, else `other`):
-  - AirPlay: `pyatv.scan` for AirPlay and RAOP on the shared `AsyncZeroconf`; a device is kept only when it offers
-    RAOP, the audio service (a video-only or remote-only one is not a speaker).
-  - Chromecast: PyChromecast's `discover_chromecasts`, which blocks, in a thread, on the same zeroconf; every cast
-    type is kept (a speaker group is a place to play); the browser is always stopped.
+  - AirPlay: `pyatv.scan` for AirPlay and RAOP with pyatv's own scanner, which sends its queries and listens for the
+    timeout (given an `aiozc`, pyatv only reads that zeroconf's cache, which nothing fills); a device is kept only
+    when it offers RAOP, the audio service (a video-only or remote-only one is not a speaker).
+  - Chromecast: PyChromecast's `discover_chromecasts`, which blocks, in a thread, on a zeroconf it makes for that
+    look; every cast type is kept (a speaker group is a place to play); the browser is always stopped, which closes
+    that zeroconf (pychromecast's `stop_discovery` closes whatever zeroconf it was given, so never hand it one to
+    share).
   - DLNA: an SSDP search for `urn:schemas-upnp-org:device:MediaRenderer:1` (async-upnp-client), then each
-    responder's description, read once: only `http`, only on the address that answered the search (`_host`), no 3xx
-    followed, at most 262,144 bytes, parsed with defusedxml (no entities); a responder that fails any of these is
-    skipped. Name `friendlyName`, model `modelName`, id the UDN.
-  - The zeroconf listener (`SharedZeroconf`) is made on the first AirPlay or Chromecast look and closed when both are
-    switched off and at shutdown.
+    responder's description, read once: only `http`, only on the address that answered the search (`_host`), never
+    through a proxy (`trust_env=False`), uncompressed only (`Accept-Encoding: identity`, any other `content-encoding`
+    refused), no 3xx followed, at most 262,144 bytes and 4 s (`DESCRIPTION_TIMEOUT_S`, for the whole read), parsed
+    with defusedxml (no entities). A responder that fails any of these, or raises anything, is skipped; the others
+    still list. Name `friendlyName`, model `modelName`, id the UDN.
+  - Nothing is kept listening between looks: each look makes and closes what it needs.
 - **Looks** (`SpeakerService`). Each type is looked for on its own task with its own generation: at start for the
   types that are on, every 10 minutes while on (`LOOK_EVERY_S`), on Look again, and at once when its switch goes on. A
   finder is cut off at 15 s (`FIND_TIMEOUT_S` 5 plus `FIND_SLACK_S` 10) as `network`; one type failing or hanging
-  never holds up another. A good look replaces that type's list and its `known`; a failed one keeps the list it had
+  never holds up another (a Chromecast look cut off this way keeps its thread until pychromecast's own timeout ends
+  it, then cleans up). A good look replaces that type's list (at most 64, the default first) and its `known`; a failed one keeps the list it had
   and sets `error`. Switching a type off bumps its generation (a look under way is thrown away), cancels its look and
   drops its speakers from `known`. Before a type's first look its remembered speakers stand in, so the lists and the
   default's name show at once.
 - **The default.** One speaker overall, picked from the lists (a key in no list is 422 "Pick a speaker from the
   lists."); null clears it. Its `known` entry is always kept: a look that misses it, or its type switched off, leaves
-  it the default, shown by its last name with `found: false` or `protocol_on: false`.
+  it the default, shown by its last name with `found: false` or `protocol_on: false`. It is kept first in every list,
+  so the cap of 64 never drops it.
 - **Also in Sonos.** A speaker whose address is one of the Sonos rooms' (`Harness._sonos_addresses`, empty while Sonos
   is off) is marked `also_sonos`, worked out when the status is asked for. A SYMFONISK shows up both ways.
 - **Routes** (`src/speakers/routes.py`, under `/speakers`; no answer carries an address): `GET /status`
@@ -1045,7 +1051,8 @@ Reading announcements and digests through the default speaker comes later. Desig
 - **The panel** (`WifiSpeakers.jsx`, decisions in `wifi-speakers.js`, through `speakers-api.js`; a `speakers` entry in
   `settings-index.js` `PANELS` and `SECTIONS`, its icon in `SettingsHome.jsx`): the default line, Look again, No
   default, when it last looked, and per type a switch, a status line and a radio per speaker. A radio saves the
-  default at once (disabled while a save runs). Under the heading: "Turning a speaker type on makes ZenBot listen on
+  default at once; the radios stay usable while it saves (a disabled radio loses keyboard focus), and only the newest
+  pick's answer is shown (`radiosDisabled`). Under the heading: "Turning a speaker type on makes ZenBot listen on
   your home network. Windows may ask whether to allow it." While any type is looking it reads the status every 3 s.
   Names and models are plain text.
 - **Ledger.** Kind `speakers`, events `look` (protocol, speakers found, error kind), `settings` (the three switches)
@@ -1064,7 +1071,8 @@ Reading announcements and digests through the default speaker comes later. Desig
 
 Rules for contributors: only `finders.py` imports pyatv, pychromecast, async_upnp_client or zeroconf. No address in a
 route answer, a ledger entry or a log line, and no name or model in a ledger entry or a log line. The DLNA description
-is fetched only from the responder's own address, over `http`, with no redirect followed and the size limit. Never
+is fetched only from the responder's own address, over `http`, with no proxy, no compression, no redirect followed and the size
+and time limits. Never hand pychromecast a zeroconf that something else uses. Never
 listen on the network while every switch is off. Keep `wifi_speakers.json` in `vault-settings/`. Every `/speakers`
 POST takes a required JSON body. Tests never touch the network: `tests/conftest.py` `_speakers_inert` swaps the real
 finders for ones that find nothing, and `tests/speakers/` passes its own. Tests: `tests/speakers/test_settings.py`,

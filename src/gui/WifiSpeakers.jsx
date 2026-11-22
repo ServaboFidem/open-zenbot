@@ -3,7 +3,7 @@ import { Button, Radio, RadioGroup, Spinner, Switch } from '@fluentui/react-comp
 import { anchorId } from './settings-index';
 import { errorLine } from './mail.js';
 import { freshRead } from './sonos.js';
-import { HELP_LINE, NETWORK_LINE, PROTOCOLS, PROTOCOL_NAMES, canLookAgain, defaultLine, lastLook, nextRead, protocolLine, speakerDetail } from './wifi-speakers.js';
+import { HELP_LINE, NETWORK_LINE, PROTOCOLS, PROTOCOL_NAMES, canLookAgain, defaultLine, lastLook, nextRead, protocolLine, radiosDisabled, speakerDetail } from './wifi-speakers.js';
 
 // Settings > Wi-Fi speakers: a switch per speaker type (AirPlay, Chromecast, DLNA; each off until turned on, since
 // it listens on the home network), the speakers each found, and the one default speaker, picked with a radio and
@@ -16,6 +16,8 @@ export function WifiSpeakers({ api, online, notify }) {
   const [error, setError] = useState('');
   const [fails, setFails] = useState(0);  // failed status reads in a row
   const saves = useRef(0);  // saves finished; a status read that was out across one is stale
+  const picks = useRef(0);  // default picks sent; only the newest one's answer is shown
+  const [picked, setPicked] = useState(undefined);  // the newest pick until its answer comes (undefined: none out)
 
   async function load() {
     const at = saves.current;
@@ -44,7 +46,18 @@ export function WifiSpeakers({ api, online, notify }) {
     finally { setBusy(''); }
   }
   const toggle = (p, on) => run(`switch-${p}`, () => speakers.saveSwitches({ [p]: on }), `${PROTOCOL_NAMES[p]} ${on ? 'on' : 'off'}`);
-  const pick = key => run('default', () => speakers.setDefault(key), key ? 'Default speaker saved' : 'Default speaker cleared');
+  async function pick(key) {  // the radios stay usable meanwhile, so a newer pick may overtake this one
+    const mine = ++picks.current;
+    setPicked(key); setBusy('default'); setError('');
+    try {
+      const st = await speakers.setDefault(key);
+      saves.current += 1;
+      if (mine !== picks.current) return;
+      setStatus(st);
+      notify(key ? 'Default speaker saved' : 'Default speaker cleared');
+    } catch (e) { if (mine === picks.current) setError(errorLine(e)); }
+    finally { if (mine === picks.current) { setBusy(''); setPicked(undefined); } }
+  }
   const lookAgain = () => run('look', () => speakers.lookAgain());
 
   const off = !online;
@@ -80,7 +93,7 @@ export function WifiSpeakers({ api, online, notify }) {
           </div>
           {line && <p className="field-hint">{line}</p>}
           {info.on && info.speakers?.length > 0 &&
-            <RadioGroup aria-label={`${name} speakers`} value={chosen} disabled={off || busy !== ''} onChange={(e, d) => pick(d.value)}>
+            <RadioGroup aria-label={`${name} speakers`} value={(picked === undefined ? chosen : picked) || ''} disabled={radiosDisabled(busy, online)} onChange={(e, d) => pick(d.value)}>
               {info.speakers.map(s => <Radio key={s.key} value={s.key} label={<>
                 {s.name || 'Unnamed speaker'}
                 {speakerDetail(s) && <span className="field-hint"> {speakerDetail(s)}</span>}

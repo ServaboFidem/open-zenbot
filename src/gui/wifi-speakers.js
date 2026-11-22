@@ -46,3 +46,7 @@ export const nextRead = (status, failed) => (shouldPoll(status) ? POLL_MS : fail
 
 /** The newest look of any type that is on, as the harness wrote it, or ''. */
 export const lastLook = status => protocols(status).filter(p => p.on && p.last_look_at).map(p => p.last_look_at).sort().pop() || '';
+
+/** The radios are off only when the harness is, or while a switch or a look is being sent. Not while a default is
+ * saving: a disabled radio loses keyboard focus, and arrowing through a list saves each step. */
+export const radiosDisabled = (busy, online) => !online || (busy !== '' && busy !== 'default');

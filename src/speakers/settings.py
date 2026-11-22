@@ -85,7 +85,8 @@ class SpeakerSettings:
                 entries = raw_known.get(p)
                 if isinstance(entries, list):
                     found = [s for s in (Speaker.from_dict(e) for e in entries) if s is not None and s.protocol == p]
-                    known[p] = found[:KNOWN_CAP]
+                    # the default first, so the cap never drops the entry that keeps its name
+                    known[p] = ([s for s in found if s.key == default][:1] + [s for s in found if s.key != default])[:KNOWN_CAP]
         return cls(**switches, default=default if isinstance(default, str) and 0 < len(default) <= KEY_CAP else None,
                    known=known)
 

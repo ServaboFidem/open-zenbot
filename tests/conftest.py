@@ -55,7 +55,7 @@ def _speakers_inert(monkeypatch):
         async def find(self, timeout):
             return []
 
-    monkeypatch.setattr(service, "real_finders", lambda zc: {p: NoSpeakers() for p in ("airplay", "chromecast", "dlna")})
+    monkeypatch.setattr(service, "real_finders", lambda: {p: NoSpeakers() for p in ("airplay", "chromecast", "dlna")})
 
 
 def pytest_configure(config):

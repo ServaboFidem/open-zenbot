@@ -1,7 +1,7 @@
 // The Wi-Fi speakers panel's decisions: the default line, each type's line, Look again, polling.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NETWORK_LINE, POLL_MS, PROTOCOL_NAMES, canLookAgain, defaultLine, lastLook, nextRead, protocolLine, shouldPoll, speakerDetail } from '../../src/gui/wifi-speakers.js';
+import { NETWORK_LINE, POLL_MS, PROTOCOL_NAMES, canLookAgain, radiosDisabled, defaultLine, lastLook, nextRead, protocolLine, shouldPoll, speakerDetail } from '../../src/gui/wifi-speakers.js';
 
 const proto = (over = {}) => ({ on: false, looking: false, last_look_at: '', error: '', speakers: [], ...over });
 const status = (protocols = {}, def = null) => ({ default: def, protocols: { airplay: proto(), chromecast: proto(), dlna: proto(), ...protocols } });
@@ -54,4 +54,12 @@ test('the newest look of any type that is on', () => {
   assert.equal(lastLook(status()), '');
   assert.equal(lastLook(status({ airplay: proto({ on: true, last_look_at: '2026-11-21T10:00:00Z' }),
     dlna: proto({ on: true, last_look_at: '2026-11-21T11:00:00Z' }) })), '2026-11-21T11:00:00Z');
+});
+
+test('the radios stay usable while a default is being saved, so the keyboard keeps its place', () => {
+  assert.equal(radiosDisabled('', true), false);
+  assert.equal(radiosDisabled('default', true), false);
+  assert.equal(radiosDisabled('switch-dlna', true), true);
+  assert.equal(radiosDisabled('look', true), true);
+  assert.equal(radiosDisabled('', false), true);
 });

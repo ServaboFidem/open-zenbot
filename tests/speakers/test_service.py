@@ -107,7 +107,7 @@ async def test_the_default_survives_a_missed_look_and_its_protocol_off(tmp_path)
     await s.settle()
     d = s.status()["default"]
     assert d == {"key": "airplay:A", "name": "Kitchen", "protocol": "airplay", "found": False, "protocol_on": True}
-    assert [x.key for x in SpeakerSettings.load(tmp_path / "vault").known["airplay"]] == ["airplay:B", "airplay:A"]
+    assert [x.key for x in SpeakerSettings.load(tmp_path / "vault").known["airplay"]] == ["airplay:A", "airplay:B"]  # the default first
     await s.set_switches(airplay=False)
     d = s.status()["default"]
     assert d["key"] == "airplay:A" and d["name"] == "Kitchen" and d["protocol_on"] is False and d["found"] is False
@@ -173,3 +173,20 @@ async def test_ledger_and_status_carry_no_address_or_name(tmp_path):
     assert {e.data["event"] for e in entries} == {"settings", "look", "default"}
     assert "Secret Den" not in json.dumps([e.data for e in entries]) and "10.0.0.77" not in json.dumps([e.data for e in entries])
     await s.close()
+
+
+async def test_the_default_survives_more_than_64_others_and_a_restart(tmp_path):
+    finder = FakeFinder([sp("dlna", "K", "Kitchen")])
+    s, _ = make(tmp_path, dlna=finder)
+    await s.set_switches(dlna=True)
+    await s.settle()
+    await s.set_default("dlna:K")
+    finder.answer = [sp("dlna", f"X{i}", f"Other {i}") for i in range(70)] + [sp("dlna", "K", "Kitchen")]
+    s.start_looks()
+    await s.settle()
+    assert s.status()["default"]["found"] is True
+    assert len(s.status()["protocols"]["dlna"]["speakers"]) == 64
+    await s.close()
+    again = SpeakerService(tmp_path / "vault", Ledger(tmp_path / "vault"), finders={"airplay": FakeFinder(), "chromecast": FakeFinder(), "dlna": FakeFinder(hold=True)})
+    assert again.status()["default"]["name"] == "Kitchen"
+    await again.close()

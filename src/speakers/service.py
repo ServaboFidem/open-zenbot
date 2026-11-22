@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.memory.ledger import Kind, Ledger
-from src.speakers.finders import Finder, FindError, SharedZeroconf, real_finders
-from src.speakers.settings import PROTOCOLS, Speaker, SpeakerSettings
+from src.speakers.finders import Finder, FindError, real_finders
+from src.speakers.settings import KNOWN_CAP, PROTOCOLS, Speaker, SpeakerSettings
 
 log = logging.getLogger(__name__)
 
@@ -43,11 +43,8 @@ class SpeakerService:
                  sonos_addresses: Callable[[], set[str]] = set) -> None:
         self.vault_root = vault_root
         self.ledger = ledger
-        self._zc: SharedZeroconf | None = None
-        if finders is None:
-            self._zc = SharedZeroconf()  # nothing listens until a finder's first look asks for it
-            finders = real_finders(self._zc)
-        self.finders: dict[str, Finder] = finders
+        # nothing listens until a finder's look: each makes and closes what it needs
+        self.finders: dict[str, Finder] = finders if finders is not None else real_finders()
         self.sonos_addresses = sonos_addresses
         self.settings = SpeakerSettings.load(vault_root)
         # what each type that is on shows: the last look's speakers, or, before its first look, the ones remembered
@@ -93,8 +90,9 @@ class SpeakerService:
                 return  # switched off (or off and on) meanwhile: this result is stale
             self.errors[protocol], self.last_look_at[protocol] = error, _now()
             if found is not None:
-                self.found[protocol] = list(found)
-                self.settings.known[protocol] = self._with_default(protocol, found)
+                shown = self._default_first(protocol, found)[:KNOWN_CAP]
+                self.found[protocol] = shown
+                self.settings.known[protocol] = self._with_default(protocol, shown)
                 try:
                     self.settings.save(self.vault_root)
                 except OSError as e:
@@ -106,15 +104,22 @@ class SpeakerService:
             log.warning("wifi speakers look failed: %s", type(e).__name__)
             self.ledger.append(Kind.error, "", "", error=f"wifi speakers look: {type(e).__name__}")
 
+    def _default_first(self, protocol: str, speakers: list[Speaker]) -> list[Speaker]:
+        """`speakers` with the default moved to the front when it is among them, so no cap ever cuts it off."""
+        key = self.settings.default
+        if not key or _protocol_of(key) != protocol:
+            return list(speakers)
+        return [s for s in speakers if s.key == key][:1] + [s for s in speakers if s.key != key]
+
     def _with_default(self, protocol: str, speakers: list[Speaker]) -> list[Speaker]:
-        """`speakers`, plus the default's remembered entry when it is this protocol's and missing from them."""
-        kept = list(speakers)
+        """`speakers` (at most KNOWN_CAP) with the default first: found now, or its remembered entry when missed."""
+        kept = self._default_first(protocol, speakers)
         key = self.settings.default
         if key and _protocol_of(key) == protocol and all(s.key != key for s in kept):
             entry = self._entry(key)
             if entry is not None:
-                kept.append(entry)
-        return kept
+                kept.insert(0, entry)
+        return kept[:KNOWN_CAP]
 
     def _entry(self, key: str) -> Speaker | None:
         p = _protocol_of(key)
@@ -176,8 +181,6 @@ class SpeakerService:
         if turned_on or turned_off:
             self.ledger.append(Kind.speakers, "", "", event="settings", **self.settings.switches())
         self._keep_loop()
-        if self._zc is not None and not (self.settings.airplay or self.settings.chromecast):
-            await self._zc.close()  # both zeroconf users are off: stop listening
         return self.status()
 
     async def set_default(self, key: str | None) -> dict[str, Any]:
@@ -234,5 +237,3 @@ class SpeakerService:
             t.cancel()
         await asyncio.gather(*self._looks.values(), return_exceptions=True)
         self._looks.clear()
-        if self._zc is not None:
-            await self._zc.close()

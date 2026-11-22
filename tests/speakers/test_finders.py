@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace as NS
 
 import httpx
@@ -12,13 +13,6 @@ from src.speakers.finders import AirPlayFinder, CastFinder, DlnaFinder, FindErro
 from src.speakers.settings import Speaker
 
 
-class FakeZc:
-    zeroconf = object()
-
-    async def get(self):
-        return self
-
-
 def _conf(identifier, name, address, model, *protocols):
     return NS(identifier=identifier, name=name, address=address, device_info=NS(model_str=model),
               services=[NS(protocol=p) for p in protocols])
@@ -27,32 +21,31 @@ def _conf(identifier, name, address, model, *protocols):
 async def test_airplay_keeps_audio_devices_and_cleans_names():
     seen = {}
 
-    async def scan(loop, timeout=5, protocol=None, aiozc=None, **kw):
-        seen.update(timeout=timeout, protocol=protocol, aiozc=aiozc)
+    async def scan(loop, timeout=5, protocol=None, **kw):
+        seen.update(timeout=timeout, protocol=protocol)
         return [_conf("ID1", "Kit\x07chen", "10.0.0.5", "HomePod", Protocol.RAOP, Protocol.AirPlay),
                 _conf("ID2", "Remote only", "10.0.0.6", "Apple TV", Protocol.MRP),
                 _conf("ID3", "Video only", "10.0.0.7", "TV", Protocol.AirPlay)]
-    found = await AirPlayFinder(FakeZc(), scan=scan).find(5)
+    found = await AirPlayFinder(scan=scan).find(5)
     assert found == [Speaker("airplay:ID1", "airplay", "Kitchen", "HomePod", "10.0.0.5")]
-    assert seen["protocol"] == {Protocol.AirPlay, Protocol.RAOP} and isinstance(seen["aiozc"], FakeZc)
+    assert seen["protocol"] == {Protocol.AirPlay, Protocol.RAOP}
 
 
 async def test_cast_lists_every_cast_type_and_stops_discovery():
     stops = []
     browser = NS(stop_discovery=lambda: stops.append(1))
 
-    def discover(timeout=5, zeroconf_instance=None, **kw):
-        assert zeroconf_instance is FakeZc.zeroconf
+    def discover(timeout=5, **kw):
         return [NS(uuid="u-1", friendly_name="Bedroom", model_name="Nest Mini", host="10.0.0.8", cast_type="audio"),
                 NS(uuid="u-2", friendly_name="Downstairs", model_name="Google Cast Group", host="10.0.0.9", cast_type="group")], browser
-    found = await CastFinder(FakeZc(), discover=discover).find(5)
+    found = await CastFinder(discover=discover).find(5)
     assert [s.key for s in found] == ["chromecast:u-1", "chromecast:u-2"] and found[0].name == "Bedroom"
     assert stops == [1]
 
     def broken(**kw):
         raise OSError("no network")
     with pytest.raises(FindError) as e:
-        await CastFinder(FakeZc(), discover=broken).find(5)
+        await CastFinder(discover=broken).find(5)
     assert e.value.kind == "network"
 
 
@@ -112,5 +105,77 @@ async def test_a_library_failure_is_a_find_error(exc, kind):
     async def scan(*a, **kw):
         raise exc
     with pytest.raises(FindError) as e:
-        await AirPlayFinder(FakeZc(), scan=scan).find(5)
+        await AirPlayFinder(scan=scan).find(5)
     assert e.value.kind == kind
+
+
+# --- final review fixes ------------------------------------------------------------------------------------------
+
+
+async def test_airplay_scan_sends_its_own_queries():
+    """pyatv given an aiozc only reads that zeroconf's cache, which nothing fills: it must use its own scanner."""
+    seen = {}
+
+    async def scan(loop, timeout=5, protocol=None, **kw):
+        seen.update(kw)
+        return []
+    await AirPlayFinder(scan=scan).find(5)
+    assert seen.get("aiozc") is None
+
+
+async def test_cast_gives_each_look_its_own_zeroconf():
+    """pychromecast's stop_discovery closes the zeroconf it was given: so it is never handed one to share."""
+    given = []
+
+    def discover(timeout=5, **kw):
+        given.append(kw.get("zeroconf_instance"))
+        return [], NS(stop_discovery=lambda: None)
+    finder = CastFinder(discover=discover)
+    await finder.find(5)
+    await finder.find(5)
+    assert given == [None, None]
+
+
+class Drip(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        yield b"<root>"
+        await asyncio.sleep(3600)
+        yield b"</root>"
+
+
+async def test_dlna_one_bad_or_slow_responder_never_hides_the_others(monkeypatch):
+    from src.speakers import finders
+    monkeypatch.setattr(finders, "DESCRIPTION_TIMEOUT_S", 0.05)
+
+    def handler(request):
+        if request.url.path == "/slow.xml":
+            return httpx.Response(200, stream=Drip())
+        return httpx.Response(200, text=DESCRIPTION)
+    search = _search({"location": "http://10.0.0.9:abc/d.xml", "_host": "10.0.0.9"},
+                     {"location": "http://10.0.0.9/\x00.xml", "_host": "10.0.0.9"},
+                     {"location": "http://10.0.0.9:1400/slow.xml", "_host": "10.0.0.9"},
+                     {"location": "http://10.0.0.9:1400/good.xml", "_host": "10.0.0.9"})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        found = await asyncio.wait_for(DlnaFinder(search=search, http=http).find(4), 5)
+    assert [s.key for s in found] == ["dlna:uuid:RINCON_1"]
+
+
+async def test_dlna_asks_for_no_compression_and_refuses_a_compressed_body():
+    import gzip
+    asked = []
+
+    def handler(request):
+        asked.append(request.headers.get("accept-encoding"))
+        return httpx.Response(200, content=gzip.compress(DESCRIPTION.encode()), headers={"content-encoding": "gzip"})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        found = await DlnaFinder(search=_search({"location": "http://10.0.0.9:1400/d.xml", "_host": "10.0.0.9"}), http=http).find(4)
+    assert found == [] and asked == ["identity"]
+
+
+async def test_dlna_own_client_ignores_proxy_settings():
+    from src.speakers import finders
+    client = finders._client()
+    try:
+        assert client.trust_env is False
+    finally:
+        await client.aclose()
