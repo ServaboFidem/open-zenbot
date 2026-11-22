@@ -27,6 +27,13 @@ export default function DesignEditor({ slot, rect, stage, text, picture, disable
   const fileInput = useRef(null);
   const [alt, setAlt] = useState(picture?.alt ?? slot.alt ?? '');
   const [problem, setProblem] = useState('');
+  // A picture read is owned by the editor: only the newest one acts, and none after the editor closed. What it acts
+  // with (the alt text, the parent's callback) is read when it finishes, not when it started.
+  const reading = useRef(null);
+  const altNow = useRef(alt); altNow.current = alt;
+  const onPictureNow = useRef(onPicture); onPictureNow.current = onPicture;
+  const stopReading = () => { const r = reading.current; reading.current = null; if (r && r.readyState === 1) r.abort(); };
+  useEffect(() => stopReading, []);
   useEffect(() => {  // focus the textarea (caret after the text) or Choose picture
     const el = first.current;
     el?.focus();
@@ -38,12 +45,22 @@ export default function DesignEditor({ slot, rect, stage, text, picture, disable
     const file = e.target.files?.[0];
     e.target.value = '';  // choosing the same file again still fires
     if (!file) return;
+    stopReading();  // a new choice supersedes a read still on its way
     const why = pictureProblem(file);
     setProblem(why);
     if (why) return;
     const reader = new FileReader();
-    reader.onload = () => { if (typeof reader.result === 'string') onPicture({ name: file.name, dataUrl: reader.result, alt }); };
-    reader.onerror = () => setProblem('That picture could not be read.');
+    reading.current = reader;
+    reader.onload = () => {
+      if (reading.current !== reader) return;
+      reading.current = null;
+      if (typeof reader.result === 'string') onPictureNow.current({ name: file.name, dataUrl: reader.result, alt: altNow.current });
+    };
+    reader.onerror = () => {
+      if (reading.current !== reader) return;
+      reading.current = null;
+      setProblem('That picture could not be read.');
+    };
     reader.readAsDataURL(file);
   }
   function changeAlt(value) {
