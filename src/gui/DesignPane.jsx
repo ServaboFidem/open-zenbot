@@ -19,7 +19,7 @@ const post = (frame, msg) => { try { frame.current?.contentWindow?.postMessage(m
 const versionLabel = (r, many) => many ? `${r.title} · Version ${r.version}` : `Version ${r.version}`;
 const NOT_A_SLOT = "This element can't be edited directly. Comment on it instead.";
 
-export default function DesignPane({ api, convId, revisions, urlFor, picks, onPicks, pending = EMPTY, onPending, onSaved, onStale, disabled }) {
+export default function DesignPane({ api, convId, revisions, urlFor, picks, onPicks, pending = EMPTY, onPending, onSaved, onStale, disabled, reveal = 0 }) {
   const newest = revisions.at(-1);
   const [shownId, setShownId] = useState(null);  // null follows the newest
   const [open, setOpen] = useState(true);
@@ -51,7 +51,7 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
     : full ? `${MAX_PICKS} comments is the most one message can carry. Send these first.`
     : 'Click elements in the design to comment on them';
   const changeable = canChange({ onNewest, ready, disabled, comparing }) && !!slots;
-  const whyChange = whyNot({ onNewest, ready, disabled, comparing, newestLabel: versionLabel(newest, false) }) || (slots ? '' : slotsWhy || 'The design is still loading.');
+  const whyChange = whyNot({ onNewest, ready, loaded, disabled, comparing, newestLabel: versionLabel(newest, false) }) || (slots ? '' : slotsWhy || 'The design is still loading.');
   const editingOn = mode === 'edit' && changeable, tweaking = mode === 'tweaks' && changeable;
   const canRestore = restorable(shown, newest, comparing);
   const pins = onNewest ? picks.map((p, i) => ({ n: i + 1, elementId: p.elementId, selector: p.selector })) : [];
@@ -81,6 +81,7 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
   // A new frame (another revision, a new conversation, the pane shown again, Compare closed) starts unready, in no mode.
   useLayoutEffect(() => { setLoads(0); setLoaded(false); setMode(null); }, [src, open, comparing]);
   useEffect(() => { setShownId(null); }, [newest.attId]);  // a new revision brings the pane to it
+  useEffect(() => { if (reveal) setOpen(true); }, [reveal]);  // the app held a message for the pending changes: show them
   useEffect(() => { if ((mode === 'comment' && !canPick) || ((mode === 'edit' || mode === 'tweaks') && !changeable)) setMode(null); }, [mode, canPick, changeable]);
   useEffect(() => { if (!editingOn) setEditing(null); }, [editingOn]);
   useEffect(() => { if (ready) post(frame, { zen: 'mode', pick: commenting || editingOn }); }, [commenting, editingOn, loads]);
@@ -130,7 +131,8 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
   const restoreWhy = disabled ? 'Wait for the task to finish before changing the design.' : n ? HOLD : '';
   const modeButton = (key, label, icon, can, title) => <Button appearance={mode === key && can ? 'primary' : 'outline'} icon={icon} aria-pressed={mode === key && can} disabledFocusable={!can} title={title} onClick={() => { setNote(''); setMode(m => m === key ? null : key); }}>{label}</Button>;
 
-  if (!open) return <section className="design-pane" aria-label="Design"><Button appearance="subtle" icon={<PanelRightExpand20Regular/>} aria-label="Show the design" title="Show the design" onClick={() => setOpen(true)}/></section>;
+  const showLabel = n ? `Show the design: ${n} unsaved change${n === 1 ? '' : 's'}` : 'Show the design';
+  if (!open) return <section className="design-pane" aria-label="Design"><Button appearance="subtle" icon={<PanelRightExpand20Regular/>} aria-label={showLabel} title={showLabel} onClick={() => setOpen(true)}/></section>;
   return <section className="design-pane open" aria-label="Design">
     <header className="design-pane-head">
       <div className="od-row design-pane-top">

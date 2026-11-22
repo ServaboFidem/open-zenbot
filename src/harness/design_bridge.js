@@ -100,9 +100,17 @@
     return t;
   }
   function clearKids(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+  // No text goes into a style, a script, a picture or an SVG drawing (or anything inside one), whatever its id says.
+  var NO_TEXT = /^(STYLE|SCRIPT|IMG|SVG)$/;
+  function takesText(el) {
+    if (NO_TEXT.test(String(el.tagName).toUpperCase())) return false;
+    for (var n = el; n && n.nodeType === 1; n = n.parentNode)
+      if (n.namespaceURI === 'http://www.w3.org/2000/svg' || String(n.tagName).toUpperCase() === 'SVG') return false;
+    return true;
+  }
   function showText(id, text) {
     var el = byId(id);
-    if (!el) return;
+    if (!el || !takesText(el)) return;
     remember(el);
     if (el.tagName === 'TEXTAREA') { el.value = text; return; }
     clearKids(el);

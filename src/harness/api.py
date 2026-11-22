@@ -2757,9 +2757,13 @@ def create_app(h: Harness) -> FastAPI:
         return HTTPException(e.status, message)
 
     def _record_version(conv: Any, copy: Path, reply: str) -> tuple[Any, int]:
-        """Attach a new numbered copy in a finished `edit` exchange, as a helper's apply attaches one."""
-        _slug, version, name = design_studio.revision_of(h.config.vault_root, copy) or ("", 0, copy.name)
-        ex = h.conversations.record_edit(conv.id, reply, {"id": uuid4().hex[:10], "title": name, "path": str(copy)})
+        """Attach a new numbered copy in a finished `edit` exchange, as a helper's apply attaches one. It keeps the
+        title of the newest revision of the same file (the name the Designer gave the design), else the file name."""
+        slug, version, name = design_studio.revision_of(h.config.vault_root, copy) or ("", 0, copy.name)
+        newest = studio_helpers.newest_revision(h.config.vault_root, conv)
+        title = newest[0].get("title") if newest and newest[1][0] == slug and newest[1][2] == name else ""
+        ex = h.conversations.record_edit(conv.id, reply,
+                                         {"id": uuid4().hex[:10], "title": title or name, "path": str(copy)})
         return ex, version
 
     def _catch_up(conv: Any, action: str) -> None:

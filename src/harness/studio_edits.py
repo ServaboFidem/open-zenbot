@@ -343,7 +343,8 @@ def _read_plain(p: Path, limit: int | None = None) -> bytes | None:
 
 def zip_bytes(vault_root: Path, conv: Any) -> bytes:
     """A ZIP of the newest design's working file and each regular, single-link file directly in its `images/`
-    folder (no picture over the picture limit). No link is followed, no subfolder read, nothing else taken."""
+    folder whose name a design picture may have (no picture over the picture limit). No link is followed, no
+    subfolder read, nothing else taken."""
     found = _design(vault_root, conv)
     if found is None:
         raise EditRefused(409, SHOW_AGAIN)
@@ -358,6 +359,8 @@ def zip_bytes(vault_root: Path, conv: Any) -> bytes:
     except (design_images.ImageRefused, OSError):
         names = []  # a link or an unreadable folder: the page alone
     for name in names:
+        if not design_images.NAME.fullmatch(name):
+            continue
         data = _read_plain(d / name, design_images.PICTURE_MAX_BYTES)
         if data is not None:
             pictures.append((name, data))

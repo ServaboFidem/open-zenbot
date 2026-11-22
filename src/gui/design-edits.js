@@ -68,15 +68,32 @@ export function body(pending, version) {
 
 export const canChange = ({ onNewest, ready, disabled, comparing }) => Boolean(onNewest && ready && !disabled && !comparing);
 
-export function whyNot({ onNewest, ready, disabled, comparing, newestLabel = 'the newest version' }) {
+// `loaded` with no `ready`: the frame loaded but its bridge never answered, as for a file over 5 MB (served without it).
+export function whyNot({ onNewest, ready, loaded, disabled, comparing, newestLabel = 'the newest version' }) {
   if (disabled) return 'Wait for the task to finish before changing the design.';
   if (comparing) return 'Close Compare to change the design.';
   if (!onNewest) return `Changes go on the newest version. Switch to ${newestLabel} to change it.`;
-  if (!ready) return 'The design is still loading.';
+  if (!ready) return loaded ? 'Changing is off for this file: it is too large.' : 'The design is still loading.';
   return '';
 }
 
 export const holdsSend = pending => count(pending) > 0;
+
+// Pending changes are kept per conversation (`map`: conversation id -> { pending, newest }), each with the attachment id
+// of the newest revision they were made on. Leaving the conversation and coming back keeps them; a new revision there (a
+// save, a restore, the Designer's) or a discard ends them.
+const has = (map, convId) => !!convId && Object.prototype.hasOwnProperty.call(map, convId);
+export function pendingFor(map, convId, newest) {
+  const entry = has(map, convId) ? map[convId] : null;
+  return entry && entry.newest === newest ? entry.pending : EMPTY;
+}
+export const dropPending = (map, convId) => has(map, convId) ? without(map, convId) : map;
+export function withPending(map, convId, newest, pending) {
+  if (!convId) return map;
+  return count(pending) ? { ...map, [convId]: { pending, newest } } : dropPending(map, convId);
+}
+// The conversation's entry once its newest revision is no longer the one the changes were made on; else the same map.
+export const dropStale = (map, convId, newest) => has(map, convId) && map[convId].newest !== newest ? dropPending(map, convId) : map;
 
 export function pictureProblem(file) {
   if (!file || !PICTURE_TYPES.includes(file.type)) return 'Use a PNG, JPEG, WebP or GIF picture.';
@@ -103,10 +120,11 @@ export function compareDefaults(revisions) {
 
 // The Export menu on the version shown: HTML always; ZIP (the working file and its pictures) only on the newest
 // version, and not while a task runs (the harness answers 409 then); PDF and PNG only in the desktop app. `name` is the
-// suggested file name (for PDF and PNG the main process adds the extension to the title).
+// suggested file name (for PDF and PNG the main process adds the extension to the title); a title that is a file name
+// loses its `.html` or `.htm` first, so no name ends in two extensions.
 export const WAIT_FOR_TASK = 'Wait for the task to finish.';
 export function exportItems({ isNewest, hasBridge, disabled, title }) {
-  const base = String(title || '').trim() || 'design';
+  const base = String(title || '').trim().replace(/\.html?$/i, '').trim() || 'design';
   return [
     { kind: 'html', label: 'HTML', name: `${base}.html` },
     ...(isNewest ? [{ kind: 'zip', label: 'ZIP (page and pictures)', name: `${base}.zip`, ...(disabled ? { why: WAIT_FOR_TASK } : {}) }] : []),

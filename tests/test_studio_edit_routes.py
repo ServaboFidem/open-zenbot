@@ -56,8 +56,8 @@ async def client(harness: Harness):
         yield c
 
 
-def _designed(h: Harness, owner: str = "des", page: str = PAGE) -> str:
-    """A conversation of `owner` whose Designer attached `designs/site/index.html` once (version 1)."""
+def _designed(h: Harness, owner: str = "des", page: str = PAGE, title: str = "index.html") -> str:
+    """A conversation of `owner` whose Designer attached `designs/site/index.html` once (version 1), as `title`."""
     folder = h.config.vault_root.resolve() / "designs" / "site"
     (folder / "images").mkdir(parents=True, exist_ok=True)
     (folder / "images" / "a.png").write_bytes(PNG)
@@ -67,7 +67,7 @@ def _designed(h: Harness, owner: str = "des", page: str = PAGE) -> str:
     conv = h.conversations.start_new(owner)
     h.conversations.begin(owner, "make a site", session_id="s1", conv_id=conv.id)
     h.conversations.finish(conv.id, "s1", "done", "Here it is.",
-                           attachments=[{"id": "a1", "title": "index.html", "path": str(copy)}])
+                           attachments=[{"id": "a1", "title": title, "path": str(copy)}])
     return conv.id
 
 
@@ -180,6 +180,19 @@ async def test_a_drifted_file_is_caught_up_first(client, harness: Harness):
     assert r.status_code == 409 and r.json() == {"detail": "The design has changed. Reload and try again."}
     assert harness.conversations.get(cid).exchanges[-1].reply == "Changes the Designer had not shown are now Version 3."
     assert _edits(harness)[-1] == {"event": "refused", "action": "changes", "reason": 409}
+
+
+async def test_a_version_the_user_makes_keeps_the_designs_title(client, harness: Harness):
+    cid = _designed(harness, title="Landing page")
+    _live(harness).write_text(PAGE.replace(">Hello<", ">Hi there<"), encoding="utf-8")
+    assert (await client.get(f"/conversations/{cid}/design/slots")).json()["version"] == 2  # a catch-up
+    r = await client.post(f"/conversations/{cid}/design/changes", json={"version": 2, "texts": {"title": "Ship"}})
+    assert r.json()["version"] == 3
+    r = await client.post(f"/conversations/{cid}/design/restore", json={"version": 1, "newest": 3})
+    assert r.json()["version"] == 4
+    titles = [(a["version"], a["title"]) for ex in r.json()["conversation"]["exchanges"] for a in ex["attachments"]]
+    assert titles == [(1, "Landing page"), (2, "Landing page"), (3, "Landing page"), (4, "Landing page")]
+    assert [d["title"] for d in await _designs(client)] == ["Landing page"]
 
 
 async def test_a_file_that_cannot_be_caught_up_is_refused(client, harness: Harness, monkeypatch):

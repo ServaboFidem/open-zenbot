@@ -110,3 +110,23 @@ test('bridge: a message from another source is ignored, and the frame sends only
   post({ zen: 'text', elementId: 'p1', text: 'x' });
   assert.deepEqual(sent.map((m) => m.zen), ['ready']);
 });
+
+test('bridge: text never goes into a style, a script, a picture or an SVG drawing, whatever its id', () => {
+  const { p, img, post } = setup();
+  const body = p.parentNode;
+  const add = (tag, id, parent = body, ns) => {
+    const n = new Node_(tag); n.attrs['data-zen-id'] = id; if (ns) n.namespaceURI = ns;
+    n.appendChild(new Node_('#text', 'kept')); parent.appendChild(n); return n;
+  };
+  const SVG = 'http://www.w3.org/2000/svg';
+  const style = add('STYLE', 's1'), script = add('SCRIPT', 'x1');
+  const svg = add('svg', 'g1', body, SVG), inSvg = add('text', 'g2', svg, SVG);
+  const svgNoNs = add('SVG', 'g3'), inSvgNoNs = add('SPAN', 'g4', svgNoNs);  // a foreign element under an svg
+  for (const id of ['s1', 'x1', 'i1', 'g1', 'g2', 'g3', 'g4']) post({ zen: 'text', elementId: id, text: 'body { }' });
+  for (const n of [style, script, inSvg, inSvgNoNs]) assert.deepEqual(n.shape(), ['kept']);
+  assert.deepEqual(svg.shape(), ['kept', '<text>']);
+  assert.deepEqual(svgNoNs.shape(), ['kept', '<SPAN>']);
+  assert.deepEqual(img.childNodes, []);
+  post({ zen: 'text', elementId: 'p1', text: 'still works' });
+  assert.deepEqual(p.shape(), ['still works']);
+});

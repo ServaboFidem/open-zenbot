@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EMPTY, HOLD, WAIT_FOR_TASK, body, canChange, compareDefaults, count, cssValue, exportItems, frameMessages, holdsSend, pictureProblem, restorable, saveLabel, setImage, setText, setTweak, slotFor, slotsBehind, whyNot } from '../../src/gui/design-edits.js';
+import { EMPTY, HOLD, WAIT_FOR_TASK, body, canChange, compareDefaults, count, cssValue, dropPending, dropStale, exportItems, frameMessages, holdsSend, pendingFor, pictureProblem, restorable, saveLabel, setImage, setText, setTweak, slotFor, slotsBehind, whyNot, withPending } from '../../src/gui/design-edits.js';
 
 const slots = { version: 5, texts: [{ id: 'hero', text: 'Hello' }], images: [{ id: 'logo', name: 'logo.png', alt: 'Logo' }],
   tweaks: [{ var: '--accent', label: 'Accent', type: 'color', value: '#2f6feb' }, { var: '--gap', label: 'Gap', type: 'range', min: 0, max: 40, step: 1, unit: 'px', value: 8 }] };
@@ -49,6 +49,10 @@ test('canChange, whyNot and the send hold', () => {
   assert.equal(whyNot({ ...ok, comparing: true }), 'Close Compare to change the design.');
   assert.equal(whyNot({ ...ok, disabled: true }), 'Wait for the task to finish before changing the design.');
   assert.equal(whyNot({ ...ok, ready: false }), 'The design is still loading.');
+  assert.equal(whyNot({ ...ok, ready: false, loaded: false }), 'The design is still loading.');
+  // loaded with no bridge: a file over 5 MB is served without it, so changing never becomes possible
+  assert.equal(whyNot({ ...ok, ready: false, loaded: true }), 'Changing is off for this file: it is too large.');
+  assert.equal(whyNot({ ...ok, loaded: true }), '');
   assert.equal(whyNot({ ...ok, onNewest: false, newestLabel: 'Version 3' }), 'Changes go on the newest version. Switch to Version 3 to change it.');
   assert.equal(whyNot(ok), '');
   assert.equal(holdsSend(EMPTY), false);
@@ -106,4 +110,38 @@ test('exportItems: ZIP waits while a task runs, and an empty title names the fil
   assert.equal(WAIT_FOR_TASK, 'Wait for the task to finish.');
   assert.equal(zip(false).why, undefined);
   assert.equal(exportItems({ title: '  ' })[0].name, 'design.html');
+});
+
+test('exportItems: a title that is a file name loses its .html or .htm, in any case', () => {
+  const names = title => exportItems({ isNewest: true, hasBridge: true, title }).map(i => i.name);
+  assert.deepEqual(names('landing.html'), ['landing.html', 'landing.zip', 'landing', 'landing']);
+  assert.deepEqual(names('Landing.HTM'), ['Landing.html', 'Landing.zip', 'Landing', 'Landing']);
+  assert.deepEqual(names('Landing page'), ['Landing page.html', 'Landing page.zip', 'Landing page', 'Landing page']);
+  assert.equal(exportItems({ title: '.html' })[0].name, 'design.html');
+  assert.equal(exportItems({ title: 'notes.html.txt' })[0].name, 'notes.html.txt.html');
+});
+
+test('pending changes are kept per conversation, on the revision they were made on', () => {
+  const a = setText(EMPTY, slots, 'hero', 'Hi'), b = setTweak(EMPTY, slots, '--gap', 12);
+  let map = withPending({}, 'c1', 'att1', a);
+  map = withPending(map, 'c2', 'att9', b);
+  // switching away and back shows the same changes; another conversation has its own
+  assert.equal(pendingFor(map, 'c1', 'att1'), a);
+  assert.equal(pendingFor(map, 'c2', 'att9'), b);
+  assert.equal(pendingFor(map, 'c3', 'att1'), EMPTY);
+  assert.equal(pendingFor(map, '', 'att1'), EMPTY);
+  assert.equal(holdsSend(pendingFor(map, 'c1', 'att1')), true);
+  assert.equal(holdsSend(pendingFor(map, 'c3', 'att1')), false);
+  // a new revision in that conversation ends them
+  assert.equal(pendingFor(map, 'c1', 'att2'), EMPTY);
+  const pruned = dropStale(map, 'c1', 'att2');
+  assert.deepEqual(Object.keys(pruned), ['c2']);
+  assert.equal(dropStale(map, 'c1', 'att1'), map);  // nothing stale: the same map
+  assert.equal(dropStale(map, 'c3', 'att1'), map);
+  // a discard or a save (no changes left) drops the entry; an unknown or empty id changes nothing
+  assert.deepEqual(Object.keys(withPending(map, 'c1', 'att1', EMPTY)), ['c2']);
+  assert.deepEqual(Object.keys(dropPending(map, 'c2')), ['c1']);
+  assert.equal(dropPending(map, 'nope'), map);
+  assert.equal(withPending(map, '', 'att1', a), map);
+  assert.equal(pendingFor({}, 'toString', undefined), EMPTY);  // only the map's own entries
 });

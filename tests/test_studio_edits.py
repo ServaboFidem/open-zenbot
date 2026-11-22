@@ -406,6 +406,12 @@ def test_zip_bytes_holds_the_working_file_and_its_pictures_only(studio):
                                "images/b.gif": b"GIF89a" + b"\0" * 8}
 
 
+def test_zip_bytes_leaves_out_a_file_whose_name_no_picture_may_have(studio):
+    for name in ("Upper.png", ".hidden.png", "has space.png", "-dash.png"):
+        (studio.folder / "images" / name).write_bytes(PNG2)
+    assert set(_zipped(studio)) == {"index.html", "images/a.png"}
+
+
 def test_zip_bytes_follows_no_link(studio, tmp_path):
     outside = tmp_path / "secret.png"
     outside.write_bytes(PNG2)
