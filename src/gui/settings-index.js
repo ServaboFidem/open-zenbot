@@ -8,6 +8,7 @@ import { PRIVACY } from './dream.js';
 import { FACEBOOK_LOGIN_LOSS } from './discovery-settings.js';
 import { MAIL_LINE } from './mail.js';
 import { HELP_LINE as SONOS_LINE } from './sonos.js';
+import { NETWORK_LINE as SPEAKERS_LINE } from './wifi-speakers.js';
 
 export const PANELS = [
   { id: 'harness', name: 'Harness settings', description: 'The models your bots, summaries and the decider run on.' },
@@ -22,6 +23,7 @@ export const PANELS = [
   { id: 'ledger', name: 'Ledger', description: 'Everything on the record: model calls, tool calls, decider scores, approvals, memory and settings changes.' },
   { id: 'memory', name: 'Memory', description: 'Your name in memory, and rebuilding what the bots have learned.' },
   { id: 'apps', name: 'Connected apps', description: "AgentMail, ZenBot's own email address, and Sonos speakers; other app connections are a mockup for now." },
+  { id: 'speakers', name: 'Wi-Fi speakers', description: 'AirPlay, Chromecast and DLNA speakers on your network, and the default speaker ZenBot will use.' },
   { id: 'about', name: 'About', description: 'What this app does, and its license.' },
 ];
 
@@ -117,6 +119,7 @@ export const SECTIONS = [
   section('memory', 'Rebuild memory', ["Re-learn everything shared under the current knowledge model: people, organizations, and how they relate. Your facts and each bot's private memory stay."]),
   section('apps', 'AgentMail', ['AgentMail', 'email', 'inbox', 'address', 'API key', 'newsletter', MAIL_LINE]),
   section('apps', 'Sonos', ['Sonos', 'speakers', 'play music', 'Favorites', 'playlists', 'volume', 'Highest volume ZenBot may set', 'Look again', SONOS_LINE]),
+  section('speakers', 'Wi-Fi speakers', ['AirPlay', 'Chromecast', 'DLNA', 'speakers', 'default speaker', 'No default', 'Look again', SPEAKERS_LINE]),
   whole('apps', ["Mockup: connected apps don't work yet. Connect only marks an app as connected in this window.", 'Connect app', 'Disconnect']),
   section('about', 'Version and updates', ['Version', 'Check for updates', 'Check for updates automatically', 'Update to the newest release, or skip a version.']),
   section('about', 'What this app does', ['Bots, skills, approvals, rooms, memory, and the ledger come from the zen-agents harness on localhost.']),

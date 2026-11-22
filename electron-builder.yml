@@ -79,6 +79,9 @@ extraResources:
   - from: src/sonos
     to: harness/src/sonos
     filter: *python
+  - from: src/speakers
+    to: harness/src/speakers
+    filter: *python
   - from: bot-prompts
     to: harness/bot-prompts
   - from: skills
