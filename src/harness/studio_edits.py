@@ -246,8 +246,7 @@ def _write_version(vault_root: Path, d: _Design, new: bytes) -> tuple[Path, int]
         raise EditRefused(409, NOT_SAVED) from None
     try:
         copy = design_studio.snapshot(vault_root, d.live)
-        rev = design_studio.revision_of(vault_root, copy) if copy is not None else None
-        if rev is None:
+        if copy is None or (rev := design_studio.revision_of(vault_root, copy)) is None:
             raise design_studio.SnapshotRefused("not a design file")
     except (design_studio.SnapshotRefused, OSError):
         try:

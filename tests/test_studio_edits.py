@@ -138,6 +138,20 @@ def test_tweaks_are_saved_with_the_rest(studio):
     assert set(_versions(studio)) == {"1.index.html", "2.index.html"}
 
 
+def test_a_text_before_the_tweaks_moves_them_and_both_land(studio):
+    block = ('<style data-zen-tweaks>\n:root {\n  --accent: #2f6feb;\n  --radius: 8px;\n}\n</style>\n'
+             f'<script type="application/json" data-zen-tweaks>{MANIFEST}</script>\n')
+    late = PAGE.replace(block, "").replace("</body>", block + "</body>")
+    assert late != PAGE and late.index("data-zen-tweaks") > late.index('data-zen-id="title"')
+    studio.live.write_bytes(late.encode("utf-8"))
+    _record(studio, catch_up(studio.vault, studio.conv))
+    made = _save(studio, version=2, texts={"title": "A much longer title than before"},
+                 tweaks={"--accent": "#c2410c", "--radius": 12})
+    assert made.version == 3 and made.texts == ["title"] and made.tweaks == ["--accent", "--radius"]
+    assert studio.live.read_bytes() == late.replace(">Hello<", ">A much longer title than before<").replace(
+        "--accent: #2f6feb;", "--accent: #c2410c;").replace("--radius: 8px;", "--radius: 12px;").encode("utf-8")
+
+
 def test_a_bad_tweak_value_refuses_the_whole_save(studio):
     _refused(studio, 422, texts={"title": "Ship faster"}, tweaks={"--radius": "12px; color: red"})
     _refused(studio, 422, texts={"title": "Ship faster"}, tweaks={"--radius": 25})
@@ -162,12 +176,16 @@ def test_an_unknown_slot_or_wrong_kind_is_refused(studio):
 
 
 def test_over_the_limits_is_refused(studio):
-    _refused(studio, 422, texts={f"t{i}": "x" for i in range(studio_edits.MAX_TEXTS + 1)})
-    _refused(studio, 422, images={f"i{i}": Picture(name="b.png", data=PNG2, alt=None)
-                                  for i in range(studio_edits.MAX_IMAGES + 1)})
-    _refused(studio, 422, tweaks={f"--k{i}": 1 for i in range(9)})
+    e = _refused(studio, 422, texts={f"t{i}": "x" for i in range(studio_edits.MAX_TEXTS + 1)})
+    assert e.message == "At most 50 texts can be saved at once."
+    e = _refused(studio, 422, images={f"i{i}": Picture(name="b.png", data=PNG2, alt=None)
+                                      for i in range(studio_edits.MAX_IMAGES + 1)})
+    assert e.message == "At most 10 pictures can be saved at once."
+    e = _refused(studio, 422, tweaks={f"--k{i}": 1 for i in range(9)})
+    assert e.message == "At most 8 tweaks can be saved at once."
     big = PNG + b"\0" * (PICTURE_MAX_BYTES + 1 - len(PNG))
-    _refused(studio, 422, images={"photo": Picture(name="big.png", data=big, alt=None)})
+    e = _refused(studio, 422, images={"photo": Picture(name="big.png", data=big, alt=None)})
+    assert e.message == "A picture can be at most 1,500,000 bytes."
 
 
 def test_nothing_changed_makes_no_version(studio):
