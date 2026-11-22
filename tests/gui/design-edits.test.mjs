@@ -47,9 +47,9 @@ test('canChange, whyNot and the send hold', () => {
   assert.equal(canChange({ ...ok, disabled: true }), false);
   assert.equal(canChange({ ...ok, comparing: true }), false);
   assert.equal(whyNot({ ...ok, comparing: true }), 'Close Compare to change the design.');
-  assert.equal(whyNot({ ...ok, disabled: true }), 'Wait for the task to finish before commenting.');
+  assert.equal(whyNot({ ...ok, disabled: true }), 'Wait for the task to finish before changing the design.');
   assert.equal(whyNot({ ...ok, ready: false }), 'The design is still loading.');
-  assert.match(whyNot({ ...ok, onNewest: false, newestLabel: 'Version 3' }), /Switch to Version 3/);
+  assert.equal(whyNot({ ...ok, onNewest: false, newestLabel: 'Version 3' }), 'Changes go on the newest version. Switch to Version 3 to change it.');
   assert.equal(whyNot(ok), '');
   assert.equal(holdsSend(EMPTY), false);
   assert.equal(holdsSend(setText(EMPTY, slots, 'hero', 'Hi')), true);

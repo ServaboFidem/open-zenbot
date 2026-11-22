@@ -66,9 +66,9 @@ export function body(pending, version) {
 export const canChange = ({ onNewest, ready, disabled, comparing }) => Boolean(onNewest && ready && !disabled && !comparing);
 
 export function whyNot({ onNewest, ready, disabled, comparing, newestLabel = 'the newest version' }) {
-  if (disabled) return 'Wait for the task to finish before commenting.';
+  if (disabled) return 'Wait for the task to finish before changing the design.';
   if (comparing) return 'Close Compare to change the design.';
-  if (!onNewest) return `Comments go on the newest version. Switch to ${newestLabel} to comment.`;
+  if (!onNewest) return `Changes go on the newest version. Switch to ${newestLabel} to change it.`;
   if (!ready) return 'The design is still loading.';
   return '';
 }

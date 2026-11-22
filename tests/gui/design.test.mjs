@@ -48,6 +48,12 @@ test('two files in one design with the same version number are separate revision
               { attachments: [{ id: 'c', title: 'Home', name: 'index.html', design: 'site', version: 1 }] }];
   assert.deepEqual(designRevisions(ex).map(r => r.attId), ['b', 'c']);
 });
+test('a version the user saved (an edit exchange, no user text) is the newest revision', () => {
+  const ex = [{ user: 'Make a landing page', outcome: 'done', attachments: [{ id: 'a', title: 'L', name: 'index.html', design: 'landing', version: 1 }] },
+              { user: '', outcome: 'edit', reply: 'You changed 1 text.', attachments: [{ id: 'e', title: 'L', name: 'index.html', design: 'landing', version: 2 }] }];
+  assert.deepEqual(designRevisions(ex).map(r => r.attId), ['a', 'e']);
+  assert.deepEqual(designRevisions(ex).at(-1), { attId: 'e', title: 'L', design: 'landing', version: 2 });
+});
 test('the studio frame url adds studio=1', () => {
   assert.equal(studioFrameUrl('http://h/conversations/c/attachments/a'), 'http://h/conversations/c/attachments/a?studio=1');
   assert.equal(studioFrameUrl('http://h/x?k=1'), 'http://h/x?k=1&studio=1');
