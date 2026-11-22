@@ -3,7 +3,7 @@ import json
 import pytest
 
 from src.harness.design_parts import PartRefused
-from src.harness.design_tweaks import apply, fmt, knobs, view
+from src.harness.design_tweaks import Knob, apply, fmt, knobs, view
 
 PAGE = '''<html><head><style data-zen-tweaks>
 :root {
@@ -71,6 +71,39 @@ def test_good_values_are_formatted():
     assert fmt(radius, 1.5) == "1.5px"
 
 
+def small_knob():
+    tiny = {"var": "--tiny", "label": "Tiny", "type": "range", "min": 0.0000001,
+            "max": 0.000002, "step": 0.0000001, "unit": ""}
+    (k,) = knobs(page([tiny], css=":root {\n  --tiny: 0.000001;\n}"))
+    return k
+
+
+def test_a_small_value_is_written_as_the_number_it_is():
+    k = small_knob()
+    assert k.value == "0.000001"
+    assert fmt(k, 0.0000004) == "0.0000004"
+    assert "e" not in fmt(k, 0.0000001)
+
+
+def test_float_noise_is_rounded_to_twelve_places_and_whole_floats_stay_whole():
+    _, radius = knobs(PAGE)
+    assert fmt(radius, 0.1 + 0.2) == "0.3px"
+    assert fmt(radius, 7.0) == "7px" and fmt(radius, 0) == "0px"
+
+
+def test_a_value_that_cannot_be_written_in_range_is_refused():
+    k = Knob("--tiny", "Tiny", "range", 4e-13, 6e-13, 1e-13, "", "5e-13", (0, 0))
+    with pytest.raises(PartRefused):  # 12 places round 5e-13 to 0, out of range
+        fmt(k, 5e-13)
+    css = ":root {\n  --tiny: 0.0000000000005;\n}"
+    tiny = {"var": "--tiny", "label": "Tiny", "type": "range", "min": 4e-13, "max": 6e-13}
+    assert knobs(page([tiny], css=css)) == []  # its value could not be written back
+    wide = {**RADIUS, "min": 0, "max": 10**15, "unit": ""}
+    (big,) = knobs(page([wide], css=":root {\n  --radius: 8;\n}"))
+    with pytest.raises(PartRefused):
+        fmt(big, 10**13)
+
+
 def bad(**kw):
     return {**RADIUS, **kw}
 
@@ -133,6 +166,42 @@ def test_no_manifest_or_garbage_never_raises():
 def test_a_huge_whole_number_never_raises_anything_but_part_refused():
     with pytest.raises(PartRefused):
         fmt(knobs(PAGE)[1], 10**400)
+
+
+def test_a_commented_out_declaration_is_neither_counted_nor_the_knob():
+    css = ":root {\n  /* --radius: 4px; */\n  --radius: 8px;\n  --accent: #2f6feb;\n}"
+    html = page([RADIUS, ACCENT], css=css)
+    radius, accent = knobs(html)
+    assert radius.value == "8" and html[radius.span[0]:radius.span[1]] == "8px"
+    out = apply(html, [radius, accent], {"--radius": 12})
+    assert "/* --radius: 4px; */" in out and "--radius: 12px;" in out
+
+
+def test_a_variable_only_in_a_comment_is_no_knob():
+    css = ":root {\n  /*\n  --radius: 8px;\n  */\n  --accent: #2f6feb;\n}"
+    assert [k.var for k in knobs(page([RADIUS, ACCENT], css=css))] == ["--accent"]
+    unterminated = ":root {\n  --accent: #2f6feb;\n  /* --radius: 8px;\n}"
+    assert knobs(page([RADIUS, ACCENT], css=unterminated)) == []
+
+
+def test_an_unfinished_declaration_on_a_long_line_returns_at_once():
+    import time
+    css = ":root {\n  --accent: #2f6feb;\n  --radius:" + " " * 200_000 + "\n}"
+    started = time.perf_counter()
+    found = knobs(page([RADIUS, ACCENT], css=css))
+    assert time.perf_counter() - started < 0.5
+    assert [k.var for k in found] == ["--accent"]
+
+
+def test_the_value_span_leaves_the_spaces_around_it():
+    a, r = knobs(PAGE)
+    assert PAGE[r.span[0]:r.span[1]] == "8px"
+    css = ":root {\n  --accent:\t #2f6feb \t;\n  --radius :  8px  ;\n}"
+    html = page([ACCENT, RADIUS], css=css)
+    accent, radius = knobs(html)
+    assert html[accent.span[0]:accent.span[1]] == "#2f6feb"
+    assert html[radius.span[0]:radius.span[1]] == "8px"
+    assert knobs(page([RADIUS], css=":root {\n  --radius:   ;\n}")) == []
 
 
 def test_a_huge_manifest_bound_drops_only_that_knob():
