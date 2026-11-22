@@ -246,8 +246,16 @@ function App() {
   const [revealDesign, setRevealDesign] = useState(0);  // bumped when a message is held, so a hidden pane shows its changes
   const holdForChanges = () => { setNotice(HOLD_FOR_CHANGES); setRevealDesign(k => k + 1); };
   const sendHeld = holdsSend(designChanges);
-  // a save or restore answers the conversation as it now is: show it, so the pane moves to the new version
-  const showSavedConversation = record => setConv(c => c && c.record?.id === record?.id ? { ...c, record } : c);
+  const sendHeldRef = useRef(sendHeld); sendHeldRef.current = sendHeld;  // as it is now, for a send that awaited
+  const shownConvRef = useRef(''); shownConvRef.current = conv?.record?.id || '';
+  // a save or restore answers the conversation as it now is: show it, so the pane moves to the new version. Taking
+  // it moves loadConversation's latest-only guard on, so a read that started before the save cannot put the older
+  // record back (and so drop the changes made since as stale).
+  const showSavedConversation = record => {
+    if (!record?.id || shownConvRef.current !== record.id) return;
+    convLoads.current();
+    setConv(c => c && c.record?.id === record.id ? { ...c, record } : c);
+  };
   const roomGroups = useMemo(() => sortRooms(rooms), [rooms]);
   const roomSession = room ? (room.open_turn?.task_session || room.last_session || '') : '';
   const roomSpeakerId = room?.open_turn?.bot_id || room?.active_speaker || '';
@@ -571,6 +579,8 @@ function App() {
     if (lastTask && harness.settings?.scorer) {
       const change = await guard(() => api.scopeCheck(lastTask.session_id, task), { quiet: true });
       if (change?.changed) { setScopePrompt({ sessionId: lastTask.session_id, change, text: task, botId: bot.id }); return; }
+      // design changes made while the scope check was out hold the message too
+      if (sendHeldRef.current) { holdForChanges(); return; }
     }
     await start(bot.id, task);
   }
