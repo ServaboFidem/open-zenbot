@@ -9,14 +9,16 @@ value only as `design_tweaks.fmt` formats it. Plain functions, no `await`: a rou
 first check and its last write."""
 from __future__ import annotations
 
+import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import design_images, design_parts, design_studio, design_tweaks
+from . import design_html, design_images, design_parts, design_studio, design_tweaks
 from .design_parts import Change, PartRefused
-from .studio_helpers import _read_source, _replace, _too_large, design_dir, newest_revision
+from .studio_helpers import _decode_uri, _read_source, _replace, _too_large, design_dir, newest_revision
 
 MAX_TEXTS = 50
 MAX_IMAGES = 10
@@ -28,6 +30,8 @@ NOT_PICTURE = "A picture must be a PNG, JPEG, WebP or GIF file."
 NOT_TEXT = "That is not a text of this design that can be edited."
 NOT_IMAGE = "That is not a picture of this design that can be changed."
 NOT_TWEAK = "That is not a tweak of this design."
+NOT_RESTORABLE = "This version cannot be restored."
+NOT_EARLIER = "That is not an earlier version of this design."
 
 
 class EditRefused(Exception):
@@ -233,6 +237,97 @@ def save(vault_root: Path, conv: Any, version: int, texts: dict[str, str], image
                 texts=[i for i in changes if slots[i].kind == "text"],
                 images=[i for i in changes if slots[i].kind == "images"],
                 tweaks=list(values))
+
+
+def _whole(n: object) -> bool:
+    return isinstance(n, int) and not isinstance(n, bool)
+
+
+def _read_copy(folder: Path, name: str, version: int) -> bytes | None:
+    """The bytes of numbered copy `version` of the design file `name`: a regular file under one name only,
+    opened without following a link, in a `.versions` that is a real folder. None otherwise."""
+    vdir = folder / ".versions"
+    p = vdir / f"{version}.{name}"
+    try:
+        if vdir.is_symlink() or not vdir.is_dir() or vdir.resolve() != vdir:
+            return None
+        if not hasattr(os, "O_NOFOLLOW") and p.is_symlink():  # Windows: no O_NOFOLLOW, so look first
+            return None
+        fd = os.open(p, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+                     | getattr(os, "O_BINARY", 0))
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as f:  # every check is on the file that was opened
+        try:
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+                return None
+            return f.read()
+        except OSError:
+            return None
+
+
+def _unembed(folder: Path, page: str) -> str:
+    """The numbered copy's page with each embedded `data:` picture in an `<img>` written back out to
+    `images/` (a file there with the same bytes is reused) and its `src` pointed at it. A `src` is changed
+    only when embedding the new reference gives back exactly the text it had; otherwise it stays as written.
+    A picture may be written out even when its `src` then stays (the file changed meanwhile)."""
+    edits: list[tuple[int, int, str]] = []
+    for el in design_html.scan(page):
+        span = el.attr_span("src")
+        src = el.attrs.get("src", "")
+        if el.tag != "img" or span is None or not src[:5].lower() == "data:":
+            continue
+        raw = page[span[0]:span[1]]
+        data = _decode_uri(src)
+        if data is None or design_images.data_uri(design_images.sniff(data), data) != raw:
+            continue  # embedding a file never writes this text: leave it, rather than write a file for nothing
+        try:
+            name = design_images.same_bytes(folder, data)
+            ref = (f"{design_images.IMAGES}/{name}" if name is not None
+                   else design_images.write_out(folder, data, el.attrs.get("data-zen-id") or "picture"))
+        except (design_images.ImageRefused, OSError):
+            continue
+        again = design_images.embed(f'<img src="{ref}">'.encode("utf-8"), folder, design_studio.BRIDGE_MAX_BYTES)[0]
+        if again == f'<img src="{raw}">'.encode("utf-8"):
+            edits.append((span[0], span[1], ref))
+    pieces: list[str] = []
+    at = 0
+    for a, b, ref in edits:  # in document order, as `scan` gives them
+        pieces += (page[at:a], ref)
+        at = b
+    pieces.append(page[at:])
+    return "".join(pieces)
+
+
+def restore(vault_root: Path, conv: Any, version: int, newest: int) -> Made | None:
+    """Make numbered copy `version` the design again, as a new newest copy equal to it byte for byte.
+    `newest` is the newest version the user saw. The working file gets the copy's page with its pictures
+    written back out to `images/`, and only when that page, embedded again, is exactly copy `version`
+    (else 409 NOT_RESTORABLE, and nothing but pictures already written out has changed). None when the
+    newest copy already shows that version. No numbered copy is rewritten or removed."""
+    d = _current(vault_root, conv)
+    if not _whole(newest) or newest != d.version:
+        raise EditRefused(409, CHANGED)
+    if not _whole(version) or not 1 <= version < d.version:
+        raise EditRefused(422, NOT_EARLIER)
+    want = _read_copy(d.folder, d.live.name, version)
+    if want is None:
+        raise EditRefused(422, NOT_EARLIER)
+    try:
+        page = want.decode("utf-8")  # strict; a BOM stays as the first character, as `embed` keeps it
+    except UnicodeDecodeError:
+        raise EditRefused(409, NOT_RESTORABLE) from None
+    new = _unembed(d.folder, page).encode("utf-8")
+    if design_images.embed(new, d.folder, design_studio.BRIDGE_MAX_BYTES)[0] != want:
+        raise EditRefused(409, NOT_RESTORABLE)
+    if new == d.raw:
+        return None
+    made = _write_version(vault_root, d, new)
+    if made is None:
+        return None
+    copy, n = made
+    return Made(copy, n, texts=[], images=[], tweaks=[])
 
 
 def _write_version(vault_root: Path, d: _Design, new: bytes) -> tuple[Path, int] | None:

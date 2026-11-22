@@ -197,6 +197,39 @@ def test_write_out_reuses_the_same_bytes_and_never_overwrites_others(tmp_path):
         write_out(d, PNG + b"\0" * PICTURE_MAX_BYTES, "big")
 
 
+def test_same_bytes_finds_a_picture_by_its_bytes(tmp_path):
+    from src.harness.design_images import same_bytes
+
+    d = design(tmp_path)
+    assert same_bytes(d, PNG) is None
+    (d / "images" / "b.png").write_bytes(PNG + b"x")
+    (d / "images" / "hero.png").write_bytes(PNG)
+    (d / "images" / "zz.png").write_bytes(PNG)
+    assert same_bytes(d, PNG) == "hero.png"  # the first name in order, the same answer every time
+    assert same_bytes(d, PNG + b"x") == "b.png"
+    assert same_bytes(d, JPEG) is None and same_bytes(d, b"") is None
+    (d / "images" / "notes.txt").write_bytes(b"plain text")
+    assert same_bytes(d, b"plain text") is None  # only a picture is an answer
+
+
+def test_same_bytes_never_answers_a_link_or_a_shared_file(tmp_path):
+    from src.harness.design_images import same_bytes
+
+    d = design(tmp_path)
+    real = tmp_path / "outside.png"
+    real.write_bytes(PNG)
+    os.symlink(real, d / "images" / "ln.png")
+    os.link(real, d / "images" / "hard.png")
+    (d / "images" / "Upper.png").write_bytes(PNG)  # not a name `load` takes
+    assert same_bytes(d, PNG) is None
+    e = tmp_path / "designs" / "other"
+    e.mkdir()
+    assert same_bytes(e, PNG) is None  # no images folder
+    os.symlink(d / "images", e / "images")
+    (d / "images" / "plain.png").write_bytes(PNG)
+    assert same_bytes(d, PNG) == "plain.png" and same_bytes(e, PNG) is None  # images itself a link
+
+
 def test_load_never_follows_a_link_swapped_in_at_the_name(tmp_path, monkeypatch):
     from src.harness import design_images
 

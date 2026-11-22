@@ -10,7 +10,8 @@ import pytest
 
 from src.harness import design_studio, studio_edits
 from src.harness.design_images import PICTURE_MAX_BYTES, data_uri, embed
-from src.harness.studio_edits import CHANGED, EditRefused, Made, Picture, catch_up, save, slots_view
+from src.harness.studio_edits import (CHANGED, NOT_RESTORABLE, EditRefused, Made, Picture, catch_up, restore, save,
+                                      slots_view)
 
 PNG = (bytes.fromhex("89504e470d0a1a0a") + b"\0\0\0\rIHDR" + (800).to_bytes(4, "big") + (600).to_bytes(4, "big")
        + b"\x08\x06\0\0\0" + b"\0" * 8)
@@ -268,3 +269,121 @@ def test_slots_view_of_a_drifted_file_is_refused(studio):
     with pytest.raises(EditRefused) as e:
         slots_view(studio.vault, studio.conv)
     assert (e.value.status, e.value.message) == (409, CHANGED)
+
+
+def _drafted(s: SimpleNamespace, page: str) -> Path:
+    """The working file rewritten and caught up as the next version, recorded."""
+    s.live.write_bytes(page.encode("utf-8"))
+    copy = catch_up(s.vault, s.conv)
+    _record(s, copy)
+    return copy
+
+
+def _restore_refused(s: SimpleNamespace, status: int, version: int, newest: int) -> EditRefused:
+    """The restore is refused with `status` and writes nothing."""
+    live, versions, images = s.live.read_bytes(), _versions(s), _images(s)
+    with pytest.raises(EditRefused) as e:
+        restore(s.vault, s.conv, version, newest)
+    assert e.value.status == status
+    assert s.live.read_bytes() == live and _versions(s) == versions and _images(s) == images
+    return e.value
+
+
+def test_restore_makes_a_new_newest_version_equal_to_the_old_one(studio):
+    _record(studio, _save(studio, texts={"title": "Ship faster"}).copy)
+    history = _versions(studio)
+    made = restore(studio.vault, studio.conv, 1, 2)
+    assert made == Made(copy=_copy(studio, 3), version=3, texts=[], images=[], tweaks=[])
+    assert made.copy.read_bytes() == studio.copy1_bytes
+    assert {k: v for k, v in _versions(studio).items() if k != "3.index.html"} == history  # history only moves forward
+    assert b"data:image" not in studio.live.read_bytes()
+    assert studio.live.read_bytes() == PAGE.encode("utf-8")  # images/a.png again: the same file, no duplicate
+    assert _images(studio) == {"a.png": PNG}
+    _record(studio, made.copy)
+    assert _save(studio, version=3, texts={"lede": "Editable again"}).version == 4
+
+
+def test_restore_after_a_picture_was_overwritten_in_place(studio):
+    (studio.folder / "images" / "a.png").write_bytes(PNG2)  # the same name, other bytes
+    _drafted(studio, PAGE.replace("Hello", "Later"))
+    assert data_uri("png", PNG2) in _copy(studio, 2).read_text("utf-8")
+    history = _versions(studio)
+    made = restore(studio.vault, studio.conv, 1, 2)
+    assert made.version == 3 and made.copy.read_bytes() == studio.copy1_bytes
+    assert data_uri("png", PNG2) not in made.copy.read_text("utf-8")  # the old picture, never the new one
+    assert _images(studio) == {"a.png": PNG2, "photo.png": PNG}  # the old bytes written out under a new name
+    assert studio.live.read_bytes() == PAGE.replace("images/a.png", "images/photo.png").encode("utf-8")
+    assert {k: v for k, v in _versions(studio).items() if k != "3.index.html"} == history
+
+
+def test_restoring_the_newest_version_or_an_unknown_one_is_refused(studio):
+    _restore_refused(studio, 422, 1, 1)
+    _record(studio, _save(studio, texts={"title": "Ship faster"}).copy)
+    for version in (2, 3, 0, -1):
+        e = _restore_refused(studio, 422, version, 2)
+        assert ".versions" not in e.message and str(studio.vault) not in e.message
+    _copy(studio, 1).unlink()  # a copy gone from the disk (as a test only: history is never removed)
+    _restore_refused(studio, 422, 1, 2)
+    outside = studio.vault.parent / "outside.html"
+    outside.write_bytes(studio.copy1_bytes)
+    _copy(studio, 1).symlink_to(outside)  # a link at the copy's name is never read
+    _restore_refused(studio, 422, 1, 2)
+
+
+def test_restore_with_a_stale_newest_is_refused(studio):
+    _record(studio, _save(studio, texts={"title": "Ship faster"}).copy)
+    assert _restore_refused(studio, 409, 1, 1).message == CHANGED
+    studio.live.write_bytes(PAGE.replace("Hello", "Drafted").encode("utf-8"))  # the working file ahead of its copy
+    assert _restore_refused(studio, 409, 1, 2).message == CHANGED
+
+
+def test_a_version_that_cannot_round_trip_is_refused(studio):
+    # version 2 shows a picture that was missing then; it is there now, so the page would no longer render as it did
+    _drafted(studio, PAGE.replace("images/a.png", "images/later.png"))
+    _drafted(studio, PAGE.replace("Hello", "Third"))
+    (studio.folder / "images" / "later.png").write_bytes(PNG2)
+    assert _restore_refused(studio, 409, 2, 3).message == NOT_RESTORABLE == "This version cannot be restored."
+
+
+def test_a_version_whose_rebuilt_page_differs_is_refused(studio, monkeypatch):
+    _record(studio, _save(studio, texts={"title": "Ship faster"}).copy)
+    real = studio_edits.design_images.embed
+
+    def drifted(html, folder, budget=studio_edits.design_images.PAGE_MAX_BYTES):
+        out = real(html, folder, budget)
+        return (out[0] + b"<!-- drift -->", out[1]) if b">Hello<" in html else out
+
+    monkeypatch.setattr(studio_edits.design_images, "embed", drifted)
+    assert _restore_refused(studio, 409, 1, 2).message == NOT_RESTORABLE
+
+
+def test_an_embedded_picture_that_would_not_embed_the_same_is_left_as_written(studio):
+    import base64
+
+    odd = f'data:image/png;base64, {base64.b64encode(PNG).decode("ascii")}'  # a space: embed would not write it so
+    page = PAGE.replace('src="images/a.png"', f'src="{odd}"')
+    _drafted(studio, page)
+    _drafted(studio, PAGE.replace("Hello", "Third"))
+    made = restore(studio.vault, studio.conv, 2, 3)
+    assert made.copy.read_bytes() == _copy(studio, 2).read_bytes()
+    assert studio.live.read_bytes() == page.encode("utf-8") and _images(studio) == {"a.png": PNG}
+
+
+def test_restoring_a_version_the_newest_already_shows_makes_none(studio):
+    _record(studio, _save(studio, texts={"title": "Ship faster"}).copy)
+    _record(studio, restore(studio.vault, studio.conv, 1, 2).copy)
+    versions, live = _versions(studio), studio.live.read_bytes()
+    assert restore(studio.vault, studio.conv, 1, 3) is None
+    assert _versions(studio) == versions and studio.live.read_bytes() == live
+
+
+def test_a_restore_whose_copy_cannot_be_taken_puts_the_file_back(studio, monkeypatch):
+    _record(studio, _save(studio, texts={"title": "Ship faster"}).copy)
+    live = studio.live.read_bytes()
+
+    def refuse(*_a, **_k):
+        raise design_studio.SnapshotRefused("designs/site/.versions/3.index.html is already there")
+
+    monkeypatch.setattr(studio_edits.design_studio, "snapshot", refuse)
+    e = _restore_refused(studio, 409, 1, 2)
+    assert ".versions" not in e.message and studio.live.read_bytes() == live
