@@ -66,6 +66,7 @@ class Kind(StrEnum):
     mail = "mail"
     sonos = "sonos"
     speech = "speech"
+    speakers = "speakers"
 
 
 def _on_loop(loop: asyncio.AbstractEventLoop) -> bool:

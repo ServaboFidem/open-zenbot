@@ -23,6 +23,9 @@ dependencies = [
     "ytmusicapi==1.12.3",
     "soco==0.32.2",
     "torch>=2.15.0",
+    "pyatv==0.18.0",
+    "pychromecast==14.1.1",
+    "async-upnp-client==0.49.0",
 ]
 
 [tool.uv]
