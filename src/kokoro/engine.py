@@ -123,7 +123,12 @@ class KokoroEngine:
             raise NotDownloaded("The voice for this computer is not downloaded.")
         if self._lib is not None:
             return
-        if not await self.model.verify():
+        try:
+            verified = await self.model.verify()
+        except Exception as e:  # noqa: BLE001 - an OSError's message holds a disk path
+            log.warning("kokoro verify failed: %s", type(e).__name__)
+            raise EngineFailed(type(e).__name__) from None
+        if not verified:
             raise NotDownloaded("The voice for this computer is not downloaded.")
         load = self._load or real_load
         try:
@@ -131,6 +136,7 @@ class KokoroEngine:
         except Exception as e:  # noqa: BLE001 - class name only, the frames may hold more
             log.warning("kokoro load failed: %s", type(e).__name__)
             raise EngineFailed(type(e).__name__) from None
+        self._arm()
 
     async def speak(self, text: str, voice: str) -> bytes:
         v = _BY_NAME.get(voice)
@@ -143,13 +149,16 @@ class KokoroEngine:
             await self._ensure_locked()
             lib = self._lib
             try:
-                samples, rate = await self._in_thread(self._create, lib, text, v)
-            except Exception as e:  # noqa: BLE001
-                log.warning("kokoro synthesis failed: %s", type(e).__name__)
-                raise EngineFailed(type(e).__name__) from None
-            if rate != RATE:
-                raise EngineFailed("RateMismatch")
-            self._arm()
+                try:
+                    samples, rate = await self._in_thread(self._create, lib, text, v)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("kokoro synthesis failed: %s", type(e).__name__)
+                    raise EngineFailed(type(e).__name__) from None
+                if rate != RATE:
+                    raise EngineFailed("RateMismatch")
+            finally:
+                if self._lib is not None:
+                    self._arm()  # a call, even a failed one, starts the idle count again
         pcm = np.clip(np.asarray(samples, dtype=np.float32), -1.0, 1.0)
         return (pcm * 32767.0).astype("<i2").tobytes()
 

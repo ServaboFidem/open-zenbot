@@ -220,3 +220,39 @@ def test_importing_the_engine_module_imports_no_kokoro_onnx():
     code = "import src.kokoro.engine, sys; assert 'kokoro_onnx' not in sys.modules and 'onnxruntime' not in sys.modules"
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+async def test_ensure_alone_arms_the_idle_timer():
+    e, _, _ = make(idle_s=0.05)
+    await e.ensure()
+    assert e.loaded
+    await asyncio.sleep(0.3)
+    assert not e.loaded
+
+
+async def test_a_failed_synthesis_on_a_fresh_load_still_unloads_when_idle():
+    lib = FakeVoiceLib()
+    lib.error = ValueError("x")
+    e, _, _ = make(lib, idle_s=0.05)
+    with pytest.raises(EngineFailed):
+        await e.speak("hello", "af_heart")
+    await asyncio.sleep(0.3)
+    assert not e.loaded
+
+
+async def test_the_guard_fixture_is_not_swallowed_as_engine_failed():
+    e = KokoroEngine(FakeModel())  # no load=: the autouse guard stands in for real_load
+    with pytest.raises(pytest.fail.Exception):
+        await e.ensure()
+
+
+async def test_a_verify_error_is_engine_failed_naming_the_class_only():
+    class Locked(FakeModel):
+        async def verify(self):
+            raise PermissionError("C:\secret\path")
+
+    e, _, loads = make(model=Locked())
+    with pytest.raises(EngineFailed) as info:
+        await e.ensure()
+    assert "PermissionError" in str(info.value) and "secret" not in str(info.value)
+    assert loads == []

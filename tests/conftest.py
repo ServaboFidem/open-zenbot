@@ -64,7 +64,8 @@ def _kokoro_inert(monkeypatch):
     from src.kokoro import engine
 
     def refuse(*args, **kwargs):
-        raise AssertionError("a test tried to load the Kokoro model")
+        # pytest's Failed is a BaseException: the engine's `except Exception` cannot turn it into EngineFailed
+        pytest.fail("a test tried to load the Kokoro model", pytrace=False)
 
     monkeypatch.setattr(engine, "real_load", refuse)
 
