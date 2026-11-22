@@ -2848,11 +2848,14 @@ def create_app(h: Harness) -> FastAPI:
     async def export_design_zip(conv_id: str) -> Response:
         conv = _studio_design(conv_id)
         _catch_up(conv, "export")
+        _att, (slug, version, _name) = studio_helpers.newest_revision(h.config.vault_root, conv)
+        # The idle check and every write to the design and the conversation (the catch-up) come before this
+        # route's only await; building the ZIP reads files only, off the event loop. After it the ledger records
+        # the outcome.
         try:
-            data = studio_edits.zip_bytes(h.config.vault_root, conv)
+            data = await asyncio.to_thread(studio_edits.zip_bytes, h.config.vault_root, conv)
         except studio_edits.EditRefused as e:
             raise _edit_refused(conv, "export", e) from None
-        _att, (slug, version, _name) = studio_helpers.newest_revision(h.config.vault_root, conv)
         h.ledger.append(Kind.design_edit, conv.owner, "", event="export", format="zip", version=version)
         filename = re.sub(r"[^A-Za-z0-9._-]", "", slug) or "design"
         return Response(data, media_type="application/zip",

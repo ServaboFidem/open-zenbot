@@ -6,7 +6,7 @@ Everything is checked before anything is written; the working file is written wh
 taken, and a copy that cannot be taken puts the working file back (the order of `studio_helpers.apply`).
 A user's text reaches the file only through `design_parts.check_text` and `design_parts.apply`, and a tweak
 value only as `design_tweaks.fmt` formats it. Plain functions, no `await`: a route calls them between its
-first check and its last write."""
+first check and its last write (`zip_bytes`, which writes nothing, runs in a thread after them)."""
 from __future__ import annotations
 
 import io
@@ -34,6 +34,8 @@ NOT_IMAGE = "That is not a picture of this design that can be changed."
 NOT_TWEAK = "That is not a tweak of this design."
 NOT_RESTORABLE = "This version cannot be restored."
 NOT_EARLIER = "That is not an earlier version of this design."
+EXPORT_MAX_BYTES = 100_000_000  # the working file and its pictures together, before compression
+EXPORT_TOO_LARGE = "This design is too large to export as a ZIP."
 
 
 class EditRefused(Exception):
@@ -344,7 +346,8 @@ def _read_plain(p: Path, limit: int | None = None) -> bytes | None:
 def zip_bytes(vault_root: Path, conv: Any) -> bytes:
     """A ZIP of the newest design's working file and each regular, single-link file directly in its `images/`
     folder whose name a design picture may have (no picture over the picture limit). No link is followed, no
-    subfolder read, nothing else taken."""
+    subfolder read, nothing else taken. More than EXPORT_MAX_BYTES in all is refused. Reads only: the export
+    route runs it in a thread."""
     found = _design(vault_root, conv)
     if found is None:
         raise EditRefused(409, SHOW_AGAIN)
@@ -352,6 +355,9 @@ def zip_bytes(vault_root: Path, conv: Any) -> bytes:
     page = _read_plain(live)
     if page is None:
         raise EditRefused(409, SHOW_AGAIN)
+    if len(page) > EXPORT_MAX_BYTES:
+        raise EditRefused(409, EXPORT_TOO_LARGE)
+    total = len(page)
     pictures: list[tuple[str, bytes]] = []
     d = folder / design_images.IMAGES
     try:
@@ -363,6 +369,9 @@ def zip_bytes(vault_root: Path, conv: Any) -> bytes:
             continue
         data = _read_plain(d / name, design_images.PICTURE_MAX_BYTES)
         if data is not None:
+            total += len(data)
+            if total > EXPORT_MAX_BYTES:
+                raise EditRefused(409, EXPORT_TOO_LARGE)
             pictures.append((name, data))
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:

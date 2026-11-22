@@ -437,6 +437,19 @@ def test_zip_bytes_with_images_as_a_link_holds_the_page_alone(studio, tmp_path):
     assert set(_zipped(studio)) == {"index.html"}
 
 
+def test_zip_bytes_over_the_size_cap_in_all_is_refused(studio, monkeypatch):
+    page = len(PAGE.encode("utf-8"))
+    monkeypatch.setattr(studio_edits, "EXPORT_MAX_BYTES", page + len(PNG))
+    assert set(_zipped(studio)) == {"index.html", "images/a.png"}  # exactly at the cap
+    (studio.folder / "images" / "b.gif").write_bytes(b"GIF89a" + b"\0" * 8)
+    with pytest.raises(EditRefused) as e:
+        studio_edits.zip_bytes(studio.vault, studio.conv)
+    assert (e.value.status, e.value.message) == (409, "This design is too large to export as a ZIP.")
+    monkeypatch.setattr(studio_edits, "EXPORT_MAX_BYTES", page - 1)  # the page alone over it
+    with pytest.raises(EditRefused):
+        studio_edits.zip_bytes(studio.vault, studio.conv)
+
+
 def test_zip_bytes_without_a_design_is_refused(studio):
     studio.conv.exchanges.clear()
     with pytest.raises(EditRefused) as e:

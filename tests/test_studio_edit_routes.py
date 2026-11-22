@@ -266,6 +266,13 @@ async def test_the_zip_holds_the_page_and_its_pictures_only(client, harness: Har
     assert _edits(harness) == [{"event": "export", "format": "zip", "version": 1}]
 
 
+async def test_a_design_over_the_export_cap_answers_409_with_its_sentence(client, harness: Harness, monkeypatch):
+    cid = _designed(harness)
+    monkeypatch.setattr(studio_edits, "EXPORT_MAX_BYTES", 10)
+    r = await client.get(f"/conversations/{cid}/design/export.zip")
+    assert (r.status_code, r.json()["detail"]) == (409, "This design is too large to export as a ZIP.")
+
+
 async def test_the_zip_of_a_drifted_file_is_caught_up_first(client, harness: Harness):
     cid = _designed(harness)
     _live(harness).write_text(PAGE.replace(">Hello<", ">Hi<"), encoding="utf-8")
