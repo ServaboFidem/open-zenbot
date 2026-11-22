@@ -45,6 +45,19 @@ def _sonos_inert(monkeypatch):
     monkeypatch.setattr(service, "SocoSpeakers", NoSpeakers)
 
 
+@pytest.fixture(autouse=True)
+def _speakers_inert(monkeypatch):
+    """A harness built in a test makes a SpeakerService, whose default finders are the real ones (zeroconf, SSDP).
+    No test may listen on the network: the default finders find nothing. tests/speakers/ passes its own fakes."""
+    from src.speakers import service
+
+    class NoSpeakers:
+        async def find(self, timeout):
+            return []
+
+    monkeypatch.setattr(service, "real_finders", lambda zc: {p: NoSpeakers() for p in ("airplay", "chromecast", "dlna")})
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_agent_probe: run agent_clis.probe for real (against fake CLIs)")
 
