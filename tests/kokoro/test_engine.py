@@ -1,10 +1,12 @@
 import asyncio
+import gc
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 
+import anyio
 import numpy as np
 import pytest
 
@@ -256,3 +258,177 @@ async def test_a_verify_error_is_engine_failed_naming_the_class_only():
         await e.ensure()
     assert "PermissionError" in str(info.value) and "secret" not in str(info.value)
     assert loads == []
+
+
+# -- a caller cancelled the way the route's is: Starlette's anyio task group (ASGI spec 2.3) --------------------
+
+async def _until(check, limit=5.0):
+    end = time.monotonic() + limit
+    while not check():
+        assert time.monotonic() < end, "timed out"
+        await asyncio.sleep(0.005)
+
+
+async def _cancel_as_anyio_does(call, started):
+    """Run `call()` in an anyio task group and cancel the group's scope once `started()` is true, as Starlette's
+    StreamingResponse does when the client goes away. The scope delivers the cancel again on every loop turn, so a
+    cancelled coroutine cannot await anything afterwards."""
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(call)
+        await asyncio.sleep(0.02)  # the call is under way (or waiting for the lock) before the check
+        await _until(started)
+        tg.cancel_scope.cancel()
+
+
+async def test_a_speak_cancelled_by_a_task_group_keeps_the_lock_until_its_thread_ends():
+    lib = FakeVoiceLib()
+    lib.delay = 0.3
+    e, _, _ = make(lib)
+    await e.ensure()
+    await _cancel_as_anyio_does(lambda: e.speak("a", "af_heart"), lambda: lib.now == 1)
+    assert lib.now == 1  # the caller has gone; its thread has not
+    await e.speak("b", "af_heart")
+    assert lib.peak == 1 and [c["text"] for c in lib.calls] == ["a", "b"]
+    await e.close()
+
+
+async def test_unload_after_a_cancelled_speak_waits_for_its_thread():
+    lib = FakeVoiceLib()
+    lib.delay = 0.3
+    e, _, _ = make(lib)
+    await e.ensure()
+    await _cancel_as_anyio_does(lambda: e.speak("a", "af_heart"), lambda: lib.now == 1)
+    await e.unload()
+    assert lib.now == 0 and not e.loaded
+    await e.close()
+
+
+def _slow_load(lib, delay=0.3):
+    state = {"loads": 0, "now": 0, "peak": 0}
+    guard = threading.Lock()
+
+    def load(m, v):
+        with guard:
+            state["loads"] += 1
+            state["now"] += 1
+            state["peak"] = max(state["peak"], state["now"])
+        try:
+            time.sleep(delay)
+            return lib
+        finally:
+            with guard:
+                state["now"] -= 1
+    return load, state
+
+
+async def test_a_load_cancelled_by_a_task_group_is_kept_and_never_loaded_twice():
+    lib = FakeVoiceLib()
+    load, state = _slow_load(lib)
+    e = KokoroEngine(FakeModel(), load=load)
+    await _cancel_as_anyio_does(e.ensure, lambda: state["now"] == 1)
+    assert state["now"] == 1
+    await e.speak("a", "af_heart")
+    assert state["loads"] == 1 and state["peak"] == 1 and e.loaded
+    await e.close()
+
+
+async def test_unload_after_a_cancelled_load_waits_for_the_load_to_end():
+    lib = FakeVoiceLib()
+    load, state = _slow_load(lib)
+    e = KokoroEngine(FakeModel(), load=load)
+    await _cancel_as_anyio_does(e.ensure, lambda: state["now"] == 1)
+    await e.unload()
+    assert state["now"] == 0 and state["loads"] == 1 and not e.loaded
+    await e.close()
+
+
+async def test_a_failure_whose_caller_was_cancelled_reaches_no_exception_handler():
+    loop = asyncio.get_running_loop()
+    seen: list = []
+    loop.set_exception_handler(lambda _loop, context: seen.append(context))
+    try:
+        lib = FakeVoiceLib()
+        lib.delay = 0.2
+        lib.error = ValueError("secret reply text")
+        e, _, _ = make(lib)
+        await e.ensure()
+        await _cancel_as_anyio_does(lambda: e.speak("a", "af_heart"), lambda: lib.now == 1)
+        await _until(lambda: lib.now == 0)
+        await e.unload()
+        await e.close()
+        for _ in range(5):
+            await asyncio.sleep(0.01)
+        gc.collect()
+        await asyncio.sleep(0)
+        assert seen == []
+    finally:
+        loop.set_exception_handler(None)
+
+
+async def test_a_speak_cancelled_while_it_waits_for_the_lock_never_starts_its_synthesis():
+    lib = FakeVoiceLib()
+    lib.delay = 0.3
+    e, _, _ = make(lib)
+    await e.ensure()
+    first = asyncio.create_task(e.speak("a", "af_heart"))
+    await _until(lambda: lib.now == 1)
+    await _cancel_as_anyio_does(lambda: e.speak("b", "af_heart"), lambda: True)
+    assert len(await first) == 4800
+    await e.unload()
+    assert [c["text"] for c in lib.calls] == ["a"]
+    await e.close()
+
+
+async def test_a_load_whose_speak_was_cancelled_does_not_go_on_to_the_synthesis():
+    lib = FakeVoiceLib()
+    load, state = _slow_load(lib)
+    e = KokoroEngine(FakeModel(), load=load)
+    await _cancel_as_anyio_does(lambda: e.speak("a", "af_heart"), lambda: state["now"] == 1)
+    await e.unload()
+    assert state["loads"] == 1 and lib.calls == []
+    await e.close()
+
+
+async def test_a_speak_cancelled_after_its_thread_ended_still_rearms_the_idle_timer():
+    lib = FakeVoiceLib()
+    lib.delay = 0.1
+    e, _, _ = make(lib, idle_s=0.05)
+    await e.ensure()
+    await _cancel_as_anyio_does(lambda: e.speak("a", "af_heart"), lambda: lib.now == 1)
+    await _until(lambda: not e.loaded)
+    await e.close()
+
+
+async def test_close_waits_for_the_one_piece_in_flight_and_no_longer():
+    lib = FakeVoiceLib()
+    lib.delay = 0.2
+    e, _, _ = make(lib)
+    await e.ensure()
+    await _cancel_as_anyio_does(lambda: e.speak("a", "af_heart"), lambda: lib.now == 1)
+    t0 = time.monotonic()
+    await asyncio.wait_for(e.close(), 5)
+    assert lib.now == 0 and not e.loaded and time.monotonic() - t0 < 1.0
+
+
+async def test_a_job_whose_thread_ends_after_the_test_task_is_cancelled_twice_still_holds_the_lock():
+    """A plain asyncio task cancelled twice (not anyio): the second cancel arrives while the first is handled."""
+    lib = FakeVoiceLib()
+    lib.delay = 0.3
+    e, _, _ = make(lib)
+    await e.ensure()
+    task = asyncio.create_task(e.speak("a", "af_heart"))
+    await _until(lambda: lib.now == 1)
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await e.speak("b", "af_heart")
+    assert lib.peak == 1
+    await e.close()
+
+
+def test_importing_the_engine_module_imports_no_numpy():
+    code = "import src.kokoro.engine, sys; assert 'numpy' not in sys.modules, 'numpy'"
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr

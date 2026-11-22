@@ -935,8 +935,8 @@ async def test_a_reading_whose_next_piece_comes_after_the_removal_ends_without_t
     assert r.status_code == 200 and len(wavs) == 1 and not ended
 
 
-async def _drop(response, stop_after):
-    """Run the response against a client that fails its `stop_after`th send."""
+async def _drop(response, stop_after, spec="2.4"):
+    """Run the response against a client that fails its `stop_after`th send. uvicorn announces spec 2.3."""
     sent = []
 
     async def send(message):
@@ -947,21 +947,23 @@ async def _drop(response, stop_after):
     async def receive():
         await asyncio.sleep(60)
     with pytest.raises(Exception):
-        await response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+        await response({"type": "http", "asgi": {"spec_version": spec}}, receive, send)
 
 
-async def test_a_body_never_iterated_still_gets_its_one_entry(tmp_path):
+@pytest.mark.parametrize("spec", ["2.3", "2.4"])
+async def test_a_body_never_iterated_still_gets_its_one_entry(tmp_path, spec):
     s, engine, ledger = _local(tmp_path)
     reading = await s.read("hi", NARRATOR, _narrate(LONG))
-    await _drop(SpeechResponse(s, reading, media_type=MEDIA), 0)
+    await _drop(SpeechResponse(s, reading, media_type=MEDIA), 0, spec)
     [entry] = [e for e in ledger.iter() if e.kind == "speech"]
     assert entry.data["stopped"] is True and entry.data["pieces"] == 0 and engine.calls == []
 
 
-async def test_a_body_dropped_after_one_frame_gets_its_entry_from_the_responses_cleanup(tmp_path):
+@pytest.mark.parametrize("spec", ["2.3", "2.4"])
+async def test_a_body_dropped_after_one_frame_gets_its_entry_from_the_responses_cleanup(tmp_path, spec):
     s, engine, ledger = _local(tmp_path)
     reading = await s.read("hi", NARRATOR, _narrate(LONG))
-    await _drop(SpeechResponse(s, reading, media_type=MEDIA), 1)  # the start goes, the first frame's send fails
+    await _drop(SpeechResponse(s, reading, media_type=MEDIA), 1, spec)  # the start goes, the first frame's send fails
     [entry] = [e for e in ledger.iter() if e.kind == "speech"]
     assert entry.data["stopped"] is True and entry.data["pieces"] == 1 and len(engine.calls) == 1
 
@@ -998,3 +1000,83 @@ async def test_a_cancel_while_the_second_piece_is_made_stops_the_reading(tmp_pat
     assert entry.data["stopped"] is True and entry.data["pieces"] == 1
     again = await s.read("hi", NARRATOR, _narrate(LONG))
     assert await asyncio.wait_for(frames(s, again).__anext__(), 5)
+
+
+# -- final review: the path production takes (uvicorn announces ASGI spec 2.3), a real engine ------------------
+
+import threading  # noqa: E402
+import time  # noqa: E402
+
+from src.kokoro.engine import KokoroEngine  # noqa: E402
+
+
+class SlowVoiceLib:
+    """The voice library's shape: `create` blocks its thread for `delay` s; counts how many run at once."""
+
+    def __init__(self, delay=0.3):
+        self.delay = delay
+        self.texts: list[str] = []
+        self.now = 0
+        self.peak = 0
+        self._guard = threading.Lock()
+
+    def create(self, text, voice="af_heart", speed=1.0, lang="en-us"):
+        import numpy as np
+        with self._guard:
+            self.texts.append(text)
+            self.now += 1
+            self.peak = max(self.peak, self.now)
+        try:
+            time.sleep(self.delay)
+            return np.zeros(2400, dtype=np.float32), 24000
+        finally:
+            with self._guard:
+                self.now -= 1
+
+
+class LoadableModel(FakeModel):
+    async def verify(self):
+        return True
+
+    def path(self, name):
+        from pathlib import Path
+        return Path("/nowhere") / name
+
+
+async def _wait_for(check, limit=5.0):
+    end = time.monotonic() + limit
+    while not check():
+        assert time.monotonic() < end, "timed out"
+        await asyncio.sleep(0.005)
+
+
+async def test_a_client_that_disconnects_at_spec_2_3_stops_a_real_engine_reading(tmp_path):
+    lib = SlowVoiceLib()
+    engine = KokoroEngine(LoadableModel(), load=lambda m, v: lib)
+    s, _, ledger = _local(tmp_path, engine=engine, model=LoadableModel())
+    reading = await s.read("hi", NARRATOR, _narrate(LONG))
+    pieces = split(LONG)
+    assert len(pieces) >= 3
+    sent: list = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def receive():  # the app goes away while the second piece is being made
+        await _wait_for(lambda: len(lib.texts) == 2 and lib.now == 1)
+        return {"type": "http.disconnect"}
+    scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}}
+    await SpeechResponse(s, reading, media_type=MEDIA)(scope, receive, send)
+    body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    wavs, ended = _parse(body)
+    assert len(wavs) == 1 and not ended
+    [entry] = [e for e in ledger.iter() if e.kind == "speech"]
+    assert entry.data["stopped"] is True and entry.data["pieces"] == 1
+    again = await s.read("hi", NARRATOR, _narrate(LONG))  # a new reading at once: the abandoned piece still runs
+    new_pieces = again.pieces()
+    first = await asyncio.wait_for(new_pieces.__anext__(), 5)
+    await new_pieces.aclose()
+    assert wav_data(first)
+    assert lib.peak == 1
+    assert lib.texts == [pieces[0], pieces[1], pieces[0]]  # no third piece of the abandoned reading
+    await engine.close()
