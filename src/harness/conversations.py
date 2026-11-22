@@ -35,6 +35,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+EDIT_ACK = "(Noted. I will read the design file again before I change it.)"
+
+
 def _new_id() -> str:
     return uuid.uuid4().hex[:12]
 
@@ -50,7 +53,7 @@ class Exchange:
     user: str
     session_id: str = ""
     reply: str = ""
-    outcome: str = "pending"  # pending|done|failed|stopped|interrupted|routed
+    outcome: str = "pending"  # pending|done|failed|stopped|interrupted|routed|edit (a version the user made in the design pane: user is empty, reply says what changed)
     at: str = field(default_factory=_now)
     attachments: list[dict[str, str]] = field(default_factory=list)  # {id, title, path}: files the bot attached; path never leaves the harness
     comments: list[dict[str, str]] = field(default_factory=list)  # the user's design comments, as the chat shows them
@@ -73,6 +76,8 @@ def reply_text(ex: Exchange) -> str:
 
 
 def _reply_text(ex: Exchange) -> str:
+    if ex.outcome == "edit":
+        return EDIT_ACK
     if ex.outcome in ("done", "routed"):
         return ex.reply
     if ex.outcome == "failed":
@@ -125,7 +130,10 @@ class Conversation:
         for ex in self.exchanges[self.folded :]:
             if exclude and ex.session_id == exclude:
                 continue
-            msgs.append(Message("user", f"{ex.user}\n\n{ex.addendum}" if ex.addendum else ex.user))
+            if ex.outcome == "edit":
+                msgs.append(Message("user", f"(The user changed the design in the app, not through you: {ex.reply})"))
+            else:
+                msgs.append(Message("user", f"{ex.user}\n\n{ex.addendum}" if ex.addendum else ex.user))
             msgs.append(Message("assistant", reply_text(ex)))
         return msgs
 
@@ -316,6 +324,16 @@ class Conversations:
     def record(self, owner: str, user_text: str, outcome: str, reply: str) -> Exchange:
         c, ex = self.begin(owner, user_text)
         ex.outcome, ex.reply = outcome, reply
+        self._touch(c)
+        return ex
+
+    def record_edit(self, conv_id: str, reply: str, attachment: dict[str, str]) -> Exchange:
+        """Add a finished exchange for a version the user made directly in the design pane."""
+        c = self._by_id.get(conv_id)
+        if c is None:
+            raise KeyError(conv_id)
+        ex = Exchange(user="", session_id="edit-" + _new_id(), reply=reply, outcome="edit", attachments=[dict(attachment)])
+        c.exchanges.append(ex)
         self._touch(c)
         return ex
 
