@@ -68,7 +68,8 @@ def _free(path: Path) -> int:
 
 
 def _allowed(url: httpx.URL) -> bool:
-    return url.scheme == "https" and url.host in ALLOWED_HOSTS and not url.userinfo
+    """https, one of the named hosts, no user info and the default port (httpx gives None for 443 written out)."""
+    return url.scheme == "https" and url.host in ALLOWED_HOSTS and not url.userinfo and url.port in (None, 443)
 
 
 class KokoroModel:

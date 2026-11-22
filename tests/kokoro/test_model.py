@@ -78,7 +78,23 @@ async def test_a_redirect_to_an_allowed_host_is_followed(tmp_path: Path):
     assert any(str(r.url).startswith(CDN) for r in s.requests)
 
 
-@pytest.mark.parametrize("bad", ["http://github.com/x", "https://example.com/x", "https://user:pw@github.com/x"])
+async def test_a_relative_redirect_on_an_allowed_host_is_followed(tmp_path: Path):
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        seen.append(url)
+        if url.startswith(GITHUB):
+            return httpx.Response(302, headers={"location": "/other/" + url.rsplit("/", 1)[-1]})
+        return httpx.Response(200, content={"a.onnx": A, "b.bin": B}[url.rsplit("/", 1)[-1]])
+    m = KokoroModel(tmp_path / "vault", transport=httpx.MockTransport(handler), free_bytes=BIG, files=tiny_files())
+    await m.download()
+    assert m.ready()
+    assert "https://github.com/other/a.onnx" in seen
+
+
+@pytest.mark.parametrize("bad", ["http://github.com/x", "https://example.com/x", "https://user:pw@github.com/x",
+                                 "https://github.com:8443/x", "https://objects.githubusercontent.com:80/x"])
 async def test_a_redirect_elsewhere_is_source_changed(tmp_path: Path, bad: str):
     s = site(hops=(bad,))
     m, _ = build(tmp_path, s)

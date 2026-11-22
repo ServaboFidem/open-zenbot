@@ -299,6 +299,9 @@ class Speech:
         except ProviderError as e:
             self._log(bot_id, **log, stage="narrate", error=failure_kind(e) or "other")
             raise SpeechError(502, NARRATE_FAILED) from None
+        except Exception as e:  # unexpected: logged by class name (its message may hold the reply), then passed on
+            self._log(bot_id, **log, stage="narrate", error=type(e).__name__)
+            raise
         spoken = (done.message.content or "").strip()[:NARRATE_OUT_MAX].strip()
         log["chars_out"] = len(spoken)
         if not spoken:
@@ -314,12 +317,18 @@ class Speech:
             except ProviderError as e:
                 self._log(bot_id, **log, stage="speak", error=failure_kind(e) or "other")
                 raise SpeechError(*_local_refusal(e)) from None
+            except Exception as e:
+                self._log(bot_id, **log, stage="speak", error=type(e).__name__)
+                raise
             return Reading(self._local_pieces(engine, pieces, voice), log, bot_id)
         try:
             wav = await speaker.speak(key, tts_model, voice, spoken)
         except ProviderError as e:
             self._log(bot_id, **log, stage="speak", error=failure_kind(e) or "other")
             raise SpeechError(502, SPEAK_FAILED) from None
+        except Exception as e:
+            self._log(bot_id, **log, stage="speak", error=type(e).__name__)
+            raise
         return Reading(_once(wav), log, bot_id)
 
     @staticmethod

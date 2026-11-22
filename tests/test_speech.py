@@ -1148,3 +1148,70 @@ async def test_a_client_that_disconnects_at_spec_2_3_stops_a_real_engine_reading
     assert lib.peak == 1
     assert lib.texts == [pieces[0], pieces[1], pieces[0]]  # no third piece of the abandoned reading
     await engine.close()
+
+
+# -- final review: frame() bounds, the over-cap path, an unexpected failure inside read ----------------------
+
+from src.harness import speech_routes  # noqa: E402
+from src.harness.speech_routes import FRAME_MAX, frame  # noqa: E402
+
+
+def test_frame_refuses_an_empty_wav_and_one_over_the_cap():
+    with pytest.raises(ValueError):
+        frame(b"")
+    with pytest.raises(ValueError):
+        frame(b"\x00" * (FRAME_MAX + 1))
+    assert frame(b"\x01\x02") == b"\x00\x00\x00\x02\x01\x02"
+
+
+async def test_a_piece_over_the_cap_ends_the_body_with_no_partial_frame_and_no_end_mark(tmp_path, monkeypatch, caplog):
+    narration = "Private first sentence. " + "P" * 250 + ". " + "Q" * 250 + "."
+    s, engine, ledger = _local(tmp_path)
+    pieces = split(narration)
+    assert len(pieces) == 3
+    first_wav = 44 + 2 * len(pieces[0]) + 12_000
+    monkeypatch.setattr(speech_routes, "FRAME_MAX", first_wav)  # the first piece fits, the second does not
+    reading = await s.read("hi", NARRATOR, _narrate(narration))
+    body = b"".join([chunk async for chunk in frames(s, reading)])
+    wavs, ended = _parse(body)
+    assert len(wavs) == 1 and len(wavs[0]) == first_wav and not ended
+    assert body == first_wav.to_bytes(4, "big") + wavs[0]  # nothing of the second frame was sent
+    [entry] = [e for e in ledger.iter() if e.kind == "speech"]
+    assert entry.data["stage"] == "speak" and entry.data["error"] and entry.data["pieces"] == 2
+    assert "Private" not in json.dumps(entry.data) and "Private" not in caplog.text
+
+
+async def test_an_unexpected_engine_failure_in_read_is_502_with_one_entry_naming_its_class(vault, tmp_path):
+    engine = FakeEngine(ensure_error=RuntimeError("privateword"))
+    h, c = _app(vault, tmp_path, engine=engine, model=FakeModel(), config=LOCAL_CONFIG)
+    async with c:
+        r = await c.post("/speech", json={"text": "privateword"})
+    assert r.status_code == 502 and r.json()["detail"] == "Reading aloud failed. Try again in a moment."
+    [entry] = [e for e in h.ledger.iter() if e.kind == "speech"]
+    assert entry.data["stage"] == "speak" and entry.data["error"] == "RuntimeError"
+    assert "privateword" not in json.dumps(entry.data)
+
+
+async def test_an_unexpected_narrator_failure_is_logged_by_class_and_passed_on(tmp_path):
+    s, _, ledger = _local(tmp_path)
+
+    class Broken:
+        async def complete(self, messages, model=None):
+            raise KeyError("privateword")
+    with pytest.raises(KeyError):
+        await s.read("privateword", NARRATOR, lambda bot: (Broken(), None))
+    [entry] = [e for e in ledger.iter() if e.kind == "speech"]
+    assert entry.data["stage"] == "narrate" and entry.data["error"] == "KeyError"
+    assert "privateword" not in json.dumps(entry.data)
+
+
+async def test_an_unexpected_openrouter_failure_is_logged_by_class_and_passed_on(tmp_path):
+    s, ledger = _speech(tmp_path, _ok_tts([]))
+
+    async def broken(*a, **k):
+        raise TypeError("privateword")
+    s.provider.speak = broken
+    with pytest.raises(TypeError):
+        await s.read("privateword", NARRATOR, _narrate("hi"))
+    [entry] = [e for e in ledger.iter() if e.kind == "speech"]
+    assert entry.data["stage"] == "speak" and entry.data["error"] == "TypeError"
