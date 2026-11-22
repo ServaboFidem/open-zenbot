@@ -30,7 +30,7 @@ from src.harness.config import HarnessConfig
 from src.harness.mcp_client import load_config
 from src.memory.ledger import Ledger
 from src.skills.catalog import Catalog
-from src.vault_settings import settings_dir, user_bots_dir, user_skills_dir
+from src.vault_settings import models_dir, settings_dir, user_bots_dir, user_skills_dir
 
 FIXTURE = Path(__file__).parent / "fixtures" / "mcp_echo_server.py"
 
@@ -54,7 +54,7 @@ def test_the_harness_settings_ledger_and_music_folders_are_refused(tmp_path: Pat
     zen = tmp_path / ".zen-agents"
     vault = zen / "vault"
     private = af.private_folders(vault)
-    assert private == [zen / "vault-settings", zen / "vault-ledger", zen / "vault-music", zen / "vault-calendar", zen / "vault-bots", zen / "vault-skills"]
+    assert private == [zen / "vault-settings", zen / "vault-ledger", zen / "vault-music", zen / "vault-calendar", zen / "vault-bots", zen / "vault-skills", zen / "vault-models"]
     for d in (vault / "notes", *private, zen / "vault-settings" / "sub"):
         d.mkdir(parents=True, exist_ok=True)
     home = tmp_path / "home"
@@ -202,6 +202,12 @@ def test_the_users_bots_and_skills_folders_are_private(tmp_path: Path):
     vault = tmp_path / "vault"
     private = af.private_folders(vault)
     assert user_bots_dir(vault) in private and user_skills_dir(vault) in private
+
+
+def test_the_models_folder_is_private(tmp_path: Path):
+    vault = tmp_path / "vault"
+    assert models_dir(vault) == tmp_path / "vault-models"
+    assert models_dir(vault) in af.private_folders(vault)
 
 
 def test_a_saved_folder_that_is_private_now_is_not_loaded(tmp_path: Path, capsys):

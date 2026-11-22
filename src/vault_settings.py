@@ -17,6 +17,7 @@ from pathlib import Path
 SUFFIX = "-settings"
 BOTS_SUFFIX = "-bots"
 SKILLS_SUFFIX = "-skills"
+MODELS_SUFFIX = "-models"
 OLD = "settings"  # where settings lived inside the vault before
 
 
@@ -35,6 +36,12 @@ def user_skills_dir(vault_root: Path) -> Path:
     """The user's own skills, beside the vault for the same reason."""
     vault_root = Path(vault_root)
     return vault_root.parent / f"{vault_root.name}{SKILLS_SUFFIX}"
+
+
+def models_dir(vault_root: Path) -> Path:
+    """Downloaded model files (`kokoro/`), beside the vault: large, not for bots to read or replace."""
+    vault_root = Path(vault_root)
+    return vault_root.parent / f"{vault_root.name}{MODELS_SUFFIX}"
 
 
 def migrate(vault_root: Path) -> list[str]:
