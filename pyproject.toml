@@ -35,6 +35,8 @@ dependencies = [
     "pyatv==0.18.0",
     "pychromecast==14.1.1",
     "async-upnp-client==0.49.0",
+    "kokoro-onnx==0.6.1",
+    "onnxruntime==1.32.0",
 ]
 
 [project.urls]

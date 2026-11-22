@@ -58,6 +58,17 @@ def _speakers_inert(monkeypatch):
     monkeypatch.setattr(service, "real_finders", lambda: {p: NoSpeakers() for p in ("airplay", "chromecast", "dlna")})
 
 
+@pytest.fixture(autouse=True)
+def _kokoro_inert(monkeypatch):
+    """No test may load the real Kokoro model. tests/kokoro/ passes its own fake library."""
+    from src.kokoro import engine
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a test tried to load the Kokoro model")
+
+    monkeypatch.setattr(engine, "real_load", refuse)
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_agent_probe: run agent_clis.probe for real (against fake CLIs)")
 
