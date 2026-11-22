@@ -1,64 +1,167 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Dropdown, Input, Option } from '@fluentui/react-components';
-import { Comment20Regular, Dismiss16Regular, PanelRightContract20Regular, PanelRightExpand20Regular } from '@fluentui/react-icons';
+import { Comment20Regular, Dismiss16Regular, Edit20Regular, History20Regular, Options20Regular, PanelRightContract20Regular, PanelRightExpand20Regular, SplitVertical20Regular } from '@fluentui/react-icons';
 import { acceptPick, acceptReady, addPick, MAX_PICKS, studioFrameUrl } from './design.js';
+import { body, canChange, count, EMPTY, frameMessages, HOLD, restorable, saveLabel, saveWhy, setImage, setText, setTweak, slotFor, slotsBehind, unsavedLabel, whyNot } from './design-edits.js';
+import DesignCompare from './DesignCompare';
+import DesignEditor from './DesignEditor';
+import DesignPendingBar from './DesignPendingBar';
+import ExportMenu from './ExportMenu';
+import TweaksPanel from './TweaksPanel';
 
-// The docked design pane in a studio bot's conversation: frames a design revision (the newest unless
-// the menu picks another) with the harness's bridge. In Comment mode a click in the frame comes back as
-// a pick; the pane appends it to `picks` and sends the numbered pins back. The framed page is made by a
-// bot: every message goes through acceptReady/acceptPick, and a pick only ever becomes a chip.
+// The docked design pane in a studio bot's conversation: frames a design revision (the newest unless the menu picks
+// another) with the harness's bridge. Three exclusive modes: Comment (a click in the frame comes back as a pick, which
+// becomes a chip), Edit (a pick on a slot opens the editor) and Tweaks (the knobs). Edits and tweaks collect as
+// `pending` (the app holds it) and the frame shows them; one save makes a new version. The framed page is made by a
+// bot: every message from it goes through acceptReady/acceptPick, and a pick only ever becomes a chip or opens the
+// editor on text the harness gave (the slots answer).
 const post = (frame, msg) => { try { frame.current?.contentWindow?.postMessage(msg, '*'); } catch { /* frame gone */ } };  // opaque origin: '*' is the only target
 const versionLabel = (r, many) => many ? `${r.title} · Version ${r.version}` : `Version ${r.version}`;
+const NOT_A_SLOT = "This element can't be edited directly. Comment on it instead.";
 
-export default function DesignPane({ revisions, urlFor, picks, onPicks, disabled }) {
+export default function DesignPane({ api, convId, revisions, urlFor, picks, onPicks, pending = EMPTY, onPending, onSaved, onStale, disabled, reveal = 0 }) {
   const newest = revisions.at(-1);
   const [shownId, setShownId] = useState(null);  // null follows the newest
   const [open, setOpen] = useState(true);
   const [loads, setLoads] = useState(0);         // ready signals from the current frame; 0 until its script runs
   const [loaded, setLoaded] = useState(false);   // the frame's load event; loaded with no ready means no bridge (over 5 MB)
-  const [pick, setPick] = useState(false);
-  const frame = useRef(null);
+  const [mode, setMode] = useState(null);        // null | 'comment' | 'edit' | 'tweaks'
+  const [comparing, setComparing] = useState(false);
+  const [slots, setSlots] = useState(null);      // GET .../design/slots for the newest version; null until read
+  const [slotsWhy, setSlotsWhy] = useState('');  // the harness's sentence when the slots could not be read
+  const [editing, setEditing] = useState(null);  // { slot, rect, before }: the editor open on one slot
+  const [note, setNote] = useState('');          // a sentence under the frame: a save's refusal, "Nothing changed.", not a slot
+  const [saving, setSaving] = useState(false);   // a save or restore on its way: the editor and the tweaks wait
+  const [slotsRead, setSlotsRead] = useState(0); // bumped to read the slots again after a refusal
+  const busy = useRef(false);                    // the same, at once: a second click before the next render does nothing
+  const frame = useRef(null), stage = useRef(null);
   const shown = revisions.find(r => r.attId === shownId) || newest;
   const onNewest = shown.attId === newest.attId;
   const src = studioFrameUrl(urlFor(shown.attId));
   const ready = loads > 0;
-  const canPick = onNewest && ready && !disabled;
+  const many = new Set(revisions.map(r => r.design)).size > 1;
+  const n = count(pending);
+  const canPick = onNewest && ready && !disabled && !comparing;
   const full = picks.length >= MAX_PICKS;
-  const active = pick && canPick;
-  const latest = useRef({}); latest.current = { active, picks, onPicks };
+  const commenting = mode === 'comment' && canPick;
   const why = disabled ? 'Wait for the task to finish before commenting.'
+    : comparing ? 'Close Compare to comment.'
     : !onNewest ? `Comments go on the newest version. Switch to ${versionLabel(newest, false)} to comment.`
     : !ready ? (loaded ? 'Picking is off for this file: it is too large to comment on.' : 'The design is still loading.')
     : full ? `${MAX_PICKS} comments is the most one message can carry. Send these first.`
     : 'Click elements in the design to comment on them';
-  const many = new Set(revisions.map(r => r.design)).size > 1;
+  const changeable = canChange({ onNewest, ready, disabled, comparing }) && !!slots;
+  const whyChange = whyNot({ onNewest, ready, loaded, disabled, comparing, newestLabel: versionLabel(newest, false) }) || (slots ? '' : slotsWhy || 'The design is still loading.');
+  const editingOn = mode === 'edit' && changeable, tweaking = mode === 'tweaks' && changeable;
+  const canRestore = restorable(shown, newest, comparing);
   const pins = onNewest ? picks.map((p, i) => ({ n: i + 1, elementId: p.elementId, selector: p.selector })) : [];
   const pinsKey = JSON.stringify(pins);
+  const latest = useRef({});
+  latest.current = { commenting, editingOn: editingOn && !saving, picks, onPicks, slots, pending };
 
   // A layout effect runs before the frame can post anything, so no message from it is missed.
   useLayoutEffect(() => {
     const onMessage = e => {
       const win = frame.current?.contentWindow;
-      if (acceptReady(e, win)) { setLoads(n => n + 1); return; }
+      if (acceptReady(e, win)) { setLoads(k => k + 1); return; }
       const p = acceptPick(e, win), l = latest.current;
-      if (!p || !l.active) return;
-      const next = addPick(l.picks, p);
-      if (next !== l.picks) { l.picks = next; l.onPicks(next); }  // a second pick before the next render builds on the first
+      if (!p) return;
+      if (l.commenting) {
+        const next = addPick(l.picks, p);
+        if (next !== l.picks) { l.picks = next; l.onPicks(next); }  // a second pick before the next render builds on the first
+      } else if (l.editingOn) {
+        const slot = slotFor(l.slots, p);  // the text shown comes from the slots answer, never from the pick
+        setNote(slot ? '' : NOT_A_SLOT);
+        setEditing(slot ? { slot, rect: p.rect, before: l.pending } : null);
+      }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, []);
-  // A new frame (another revision, a new conversation, the pane shown again) starts unready, not picking.
-  useLayoutEffect(() => { setLoads(0); setLoaded(false); setPick(false); }, [src, open]);
+  // A new frame (another revision, a new conversation, the pane shown again, Compare closed) starts unready, in no mode.
+  useLayoutEffect(() => { setLoads(0); setLoaded(false); setMode(null); }, [src, open, comparing]);
   useEffect(() => { setShownId(null); }, [newest.attId]);  // a new revision brings the pane to it
-  useEffect(() => { if (!canPick) setPick(false); }, [canPick]);
-  useEffect(() => { if (ready) post(frame, { zen: 'mode', pick: active }); }, [active, loads]);
+  useEffect(() => { if (reveal) setOpen(true); }, [reveal]);  // the app held a message for the pending changes: show them
+  useEffect(() => { if ((mode === 'comment' && !canPick) || ((mode === 'edit' || mode === 'tweaks') && !changeable)) setMode(null); }, [mode, canPick, changeable]);
+  useEffect(() => { if (!editingOn) setEditing(null); }, [editingOn]);
+  useEffect(() => { if (ready) post(frame, { zen: 'mode', pick: commenting || editingOn }); }, [commenting, editingOn, loads]);
   useEffect(() => { if (ready) post(frame, { zen: 'pins', pins }); }, [pinsKey, loads]);
+  // Every change to pending, and every new frame, shows the whole pending state again from the saved design.
+  useEffect(() => { if (ready && onNewest) for (const m of frameMessages(pending, slots)) post(frame, m); }, [pending, slots, loads, onNewest]);
+  // The slots are read for each newest version, and again when a task ends (it may have changed the file).
+  useEffect(() => {
+    if (disabled) return undefined;
+    let current = true;
+    setSlots(null); setSlotsWhy('');
+    api.designSlots(convId).then(s => {
+      if (!current) return;
+      setSlots(s);
+      if (slotsBehind(s, newest)) onStale?.();  // the harness made a version the pane has not seen yet
+    }).catch(e => { if (current) setSlotsWhy(e?.message || ''); });
+    return () => { current = false; };
+  }, [convId, newest.attId, disabled, slotsRead]);
 
-  if (!open) return <section className="design-pane" aria-label="Design"><Button appearance="subtle" icon={<PanelRightExpand20Regular/>} aria-label="Show the design" title="Show the design" onClick={() => setOpen(true)}/></section>;
+  // A 409 means the design or the task moved on: the conversation and the slots are read again, the sentence stays.
+  function refused(e, fallback) {
+    setNote(e?.message || fallback);
+    if (e?.status === 409) { onStale?.(); setSlotsRead(k => k + 1); }
+  }
+  async function save() {
+    if (busy.current || !slots) return;
+    if (slotsBehind(slots, newest)) { setNote(saveWhy({ slots, newest })); return; }  // the pane is behind the file
+    busy.current = true; setSaving(true); setNote('');
+    try {
+      const r = await api.saveDesignChanges(convId, body(pending, slots.version));
+      onPending(EMPTY); setEditing(null);
+      if (r?.version == null) setNote('Nothing changed.');
+      if (r?.conversation) onSaved(r.conversation);
+    } catch (e) { refused(e, 'The changes could not be saved.'); }  // the changes stay
+    finally { busy.current = false; setSaving(false); }
+  }
+  async function restore() {
+    if (busy.current || !window.confirm(`Make Version ${shown.version} the newest version?`)) return;
+    busy.current = true; setSaving(true); setNote('');
+    try {
+      const r = await api.restoreDesign(convId, shown.version, newest.version);
+      onPending(EMPTY);
+      if (r?.version == null) setNote('Nothing changed.');
+      if (r?.conversation) onSaved(r.conversation);
+    } catch (e) { refused(e, 'This version could not be restored.'); }
+    finally { busy.current = false; setSaving(false); }
+  }
+  const restoreWhy = disabled ? 'Wait for the task to finish before changing the design.' : n ? HOLD : '';
+  const modeButton = (key, label, icon, can, title) => <Button appearance={mode === key && can ? 'primary' : 'outline'} icon={icon} aria-pressed={mode === key && can} disabledFocusable={!can} title={title} onClick={() => { setNote(''); setMode(m => m === key ? null : key); }}>{label}</Button>;
+
+  const saveBlocked = saveWhy({ disabled, slots, newest });
+  if (!open) return <section className="design-pane" aria-label="Design"><Button appearance="subtle" icon={<PanelRightExpand20Regular/>} aria-label="Show the design" title="Show the design" onClick={() => setOpen(true)}/>{n > 0 && <Button className="design-unsaved" appearance="transparent" size="small" title="Show the design to save or discard them" onClick={() => setOpen(true)}>{unsavedLabel(n)}</Button>}</section>;
   return <section className="design-pane open" aria-label="Design">
-    <header className="design-pane-head od-row"><strong className="od-fill">{shown.title}</strong><Dropdown className="design-version" aria-label="Version" value={versionLabel(shown, many)} selectedOptions={[shown.attId]} onOptionSelect={(e, d) => d.optionValue && setShownId(d.optionValue === newest.attId ? null : d.optionValue)}>{[...revisions].reverse().map(r => <Option key={r.attId} value={r.attId} text={versionLabel(r, many)}>{versionLabel(r, many)}</Option>)}</Dropdown><Button appearance={active ? 'primary' : 'outline'} icon={<Comment20Regular/>} aria-pressed={active} disabledFocusable={!canPick} title={why} onClick={() => setPick(v => !v)}>Comment</Button><Button appearance="subtle" icon={<PanelRightContract20Regular/>} aria-label="Hide the design" title="Hide the design" onClick={() => setOpen(false)}/></header>
-    <iframe key={src} ref={frame} className="design-frame" sandbox="allow-scripts" src={src} onLoad={() => setLoaded(true)} title={`${shown.title}, version ${shown.version}`}/>
+    <header className="design-pane-head">
+      <div className="od-row design-pane-top">
+        <strong className="od-fill">{shown.title}</strong>
+        {!comparing && <Dropdown className="design-version" aria-label="Version" value={versionLabel(shown, many)} selectedOptions={[shown.attId]} onOptionSelect={(e, d) => d.optionValue && setShownId(d.optionValue === newest.attId ? null : d.optionValue)}>{[...revisions].reverse().map(r => <Option key={r.attId} value={r.attId} text={versionLabel(r, many)}>{versionLabel(r, many)}</Option>)}</Dropdown>}
+        {revisions.length > 1 && <Button appearance={comparing ? 'primary' : 'subtle'} icon={<SplitVertical20Regular/>} aria-pressed={comparing} title="Show two versions side by side" onClick={() => { setComparing(v => !v); setEditing(null); }}>Compare</Button>}
+        {canRestore && <Button appearance="outline" icon={<History20Regular/>} disabledFocusable={!!restoreWhy || saving} title={restoreWhy || `Make Version ${shown.version} the newest version`} onClick={restore}>Restore</Button>}
+        {!comparing && <ExportMenu key={shown.attId} api={api} convId={convId} shown={shown} isNewest={onNewest} disabled={disabled}/>}
+        <Button appearance="subtle" icon={<PanelRightContract20Regular/>} aria-label="Hide the design" title="Hide the design" onClick={() => setOpen(false)}/>
+      </div>
+      <div className="od-row design-modes" role="toolbar" aria-label="Design tools">
+        {modeButton('comment', 'Comment', <Comment20Regular/>, canPick, why)}
+        {modeButton('edit', 'Edit', <Edit20Regular/>, changeable, whyChange || 'Click a text or a picture in the design to change it')}
+        {modeButton('tweaks', 'Tweaks', <Options20Regular/>, changeable, whyChange || 'Adjust the colours and sizes the Designer made adjustable')}
+      </div>
+    </header>
+    {tweaking && <TweaksPanel disabled={saving} knobs={slots.tweaks} values={pending.tweaks} onChange={(name, value) => onPending(setTweak(pending, slots, name, value))} onReset={() => onPending({ ...pending, tweaks: {} })}/>}
+    {comparing
+      ? <DesignCompare revisions={revisions} urlFor={urlFor} label={r => versionLabel(r, many)}/>
+      : <div className="design-stage" ref={stage}>
+        <iframe key={src} ref={frame} className="design-frame" sandbox="allow-scripts" src={src} onLoad={() => setLoaded(true)} title={`${shown.title}, version ${shown.version}`}/>
+        {editing && <DesignEditor key={editing.slot.id} disabled={saving} slot={editing.slot} rect={editing.rect} stage={stage.current}
+          text={pending.texts[editing.slot.id] ?? editing.slot.text} picture={pending.images[editing.slot.id]}
+          onText={t => onPending(setText(pending, slots, editing.slot.id, t))} onPicture={p => onPending(setImage(pending, editing.slot.id, p))}
+          onDone={() => setEditing(null)} onCancel={() => { onPending(editing.before); setEditing(null); }}/>}
+      </div>}
+    {note && <p className="design-note" role="status">{note}</p>}
+    {n > 0 && <DesignPendingBar count={n} label={saveLabel(pending, slots?.version ?? newest.version)} saving={saving} canSave={!!slots && !saveBlocked} why={saveBlocked} onSave={save} onDiscard={() => { onPending(EMPTY); setEditing(null); }}/>}
   </section>;
 }
 

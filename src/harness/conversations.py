@@ -35,6 +35,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+EDIT_ACK = "(Noted. I will read the design file again before I change it.)"
+
+
 def _new_id() -> str:
     return uuid.uuid4().hex[:12]
 
@@ -50,7 +53,7 @@ class Exchange:
     user: str
     session_id: str = ""
     reply: str = ""
-    outcome: str = "pending"  # pending|done|failed|stopped|interrupted|routed
+    outcome: str = "pending"  # pending|done|failed|stopped|interrupted|routed|edit (a version the user made in the design pane: user is empty, reply says what changed)
     at: str = field(default_factory=_now)
     attachments: list[dict[str, str]] = field(default_factory=list)  # {id, title, path}: files the bot attached; path never leaves the harness
     comments: list[dict[str, str]] = field(default_factory=list)  # the user's design comments, as the chat shows them
@@ -72,7 +75,14 @@ def reply_text(ex: Exchange) -> str:
     return text
 
 
+def edit_note(ex: Exchange) -> str:
+    """The user side of an `edit` exchange: what the user changed in the app, as a note to the model."""
+    return f"(The user changed the design in the app, not through you: {ex.reply})"
+
+
 def _reply_text(ex: Exchange) -> str:
+    if ex.outcome == "edit":
+        return EDIT_ACK
     if ex.outcome in ("done", "routed"):
         return ex.reply
     if ex.outcome == "failed":
@@ -125,7 +135,10 @@ class Conversation:
         for ex in self.exchanges[self.folded :]:
             if exclude and ex.session_id == exclude:
                 continue
-            msgs.append(Message("user", f"{ex.user}\n\n{ex.addendum}" if ex.addendum else ex.user))
+            if ex.outcome == "edit":
+                msgs.append(Message("user", edit_note(ex)))
+            else:
+                msgs.append(Message("user", f"{ex.user}\n\n{ex.addendum}" if ex.addendum else ex.user))
             msgs.append(Message("assistant", reply_text(ex)))
         return msgs
 
@@ -319,6 +332,16 @@ class Conversations:
         self._touch(c)
         return ex
 
+    def record_edit(self, conv_id: str, reply: str, attachment: dict[str, str]) -> Exchange:
+        """Add a finished exchange for a version the user made directly in the design pane."""
+        c = self._by_id.get(conv_id)
+        if c is None:
+            raise KeyError(conv_id)
+        ex = Exchange(user="", session_id="edit-" + _new_id(), reply=reply, outcome="edit", attachments=[dict(attachment)])
+        c.exchanges.append(ex)
+        self._touch(c)
+        return ex
+
     async def fold_if_needed(self, conv: Conversation, generator: Any, *, budget_chars: int, keep: int) -> bool:
         """When the unfolded exchanges pass `budget_chars`, fold the oldest of
         them into the summary until what stays unfolded is at or under half
@@ -331,7 +354,7 @@ class Conversations:
         call per fold. The exchanges stay in the record for display; only
         the history drops them. On a generator error the history is kept
         as it was and the failure goes to the ledger."""
-        sizes = [len(ex.user) + len(reply_text(ex)) for ex in conv.exchanges]
+        sizes = [len(edit_note(ex) if ex.outcome == "edit" else ex.user) + len(reply_text(ex)) for ex in conv.exchanges]
         unfolded = sum(sizes[conv.folded :])
         if unfolded <= budget_chars:
             return False
@@ -350,7 +373,7 @@ class Conversations:
             return False
         before = history_chars(conv.history())
         old = conv.exchanges[conv.folded : end]
-        msgs = [m for ex in old for m in (Message("user", ex.user), Message("assistant", reply_text(ex)))]
+        msgs = [m for ex in old for m in (Message("user", edit_note(ex) if ex.outcome == "edit" else ex.user), Message("assistant", reply_text(ex)))]
         try:
             latest = await generator.compact(render_transcript(msgs), goal=conv.title or None)
             summary = await generator.fold(conv.summary, latest)

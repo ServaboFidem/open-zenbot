@@ -3,6 +3,7 @@ import json
 import pytest
 
 from src.harness.conversations import (
+    EDIT_ACK,
     SUMMARY_PREFIX,
     ConversationStore,
     Conversations,
@@ -327,3 +328,33 @@ def test_an_old_record_without_bot_or_set_aside_loads_and_the_owners_reply_is_pl
     ex = make(tmp_path, ledger).get(conv.id).exchanges[0]
     assert (ex.bot, ex.set_aside) == ("", False)
     assert reply_text(ex) == "ok"
+
+
+def test_an_edit_exchange_is_one_note_to_the_model(tmp_path, ledger):
+    convs = make(tmp_path, ledger)
+    c = convs.start_new("designer")
+    ex = convs.record_edit(c.id, "You changed 2 texts.", {"id": "a1", "title": "index.html", "path": "/v/designs/x/.versions/5.index.html"})
+    assert (ex.user, ex.outcome, ex.reply) == ("", "edit", "You changed 2 texts.")
+    assert ex.session_id.startswith("edit-") and ex.attachments[0]["id"] == "a1"
+    user, bot = convs.get(c.id).history()[-2:]
+    assert user.role == "user" and user.content == "(The user changed the design in the app, not through you: You changed 2 texts.)"
+    assert bot.role == "assistant" and bot.content.startswith(EDIT_ACK) and "5.index.html" in bot.content
+
+
+def test_an_edit_exchange_survives_a_reload(tmp_path, ledger):
+    convs = make(tmp_path, ledger)
+    c = convs.start_new("designer")
+    convs.record_edit(c.id, "You changed 2 texts.", {"id": "a1", "title": "index.html", "path": "/v/5.index.html"})
+    ex = make(tmp_path, ledger).get(c.id).exchanges[-1]
+    assert ex.outcome == "edit" and ex.attachments[0]["id"] == "a1"
+
+
+async def test_a_fold_keeps_the_note_of_an_edit_exchange(tmp_path, ledger):
+    convs = make(tmp_path, ledger)
+    conv = _fill(convs, 2)
+    convs.record_edit(conv.id, "You changed 2 texts.", {"id": "a1", "title": "index.html", "path": "/v/5.index.html"})
+    _fill(convs, 6)
+    gen = FakeGenerator()
+    assert await convs.fold_if_needed(conv, gen, budget_chars=1000, keep=2) is True
+    rendered, _ = gen.compacted[0]
+    assert "(The user changed the design in the app, not through you: You changed 2 texts.)" in rendered

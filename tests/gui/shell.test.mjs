@@ -1,4 +1,4 @@
-// The Electron shell: the preload exposes only the harness URL, the two OS pickers, Save…, the version, the
+// The Electron shell: the preload exposes only the harness URL, the two OS pickers, Save…, Export, the version, the
 // update check and the setup page's few calls; the CSP
 // lets the renderer connect to the harness loopback origin and nothing else;
 // the main process serves the app from its own origin so CORS can name it.
@@ -34,9 +34,9 @@ function loadPreload(env, argv = []) {
   return { exposed, invoked, listeners };
 }
 
-const KEYS = ['harnessUrl', 'managed', 'onOpenMusic', 'openVault', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'updates', 'version'];
+const KEYS = ['exportDesign', 'harnessUrl', 'managed', 'onOpenMusic', 'openVault', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'updates', 'version'];
 
-test('preload exposes the harness url, the directory and file pickers, save, the version and two narrow groups, nothing else', async () => {
+test('preload exposes the harness url, the directory and file pickers, save, export, the version and two narrow groups, nothing else', async () => {
   const { exposed, invoked } = loadPreload({ ZEN_HARNESS_URL: '' });
   assert.deepEqual(Object.keys(exposed), ['openzenbot']);
   assert.deepEqual(Object.keys(exposed.openzenbot).sort(), KEYS);
@@ -45,7 +45,9 @@ test('preload exposes the harness url, the directory and file pickers, save, the
   assert.equal(await exposed.openzenbot.pickDirectory(), 'F:/picked');
   assert.equal(await exposed.openzenbot.pickFile(), 'F:/picked');
   assert.equal(await exposed.openzenbot.saveMedia('http://127.0.0.1:8765/media?url=x&ok=1', 'a.png'), 'F:/picked');
-  assert.deepEqual(invoked, [['pick-directory'], ['pick-file'], ['save-media', { url: 'http://127.0.0.1:8765/media?url=x&ok=1', name: 'a.png' }]]);
+  assert.equal(await exposed.openzenbot.exportDesign('c1', 'a1', 'pdf', 'Page'), 'F:/picked');
+  assert.deepEqual(invoked, [['pick-directory'], ['pick-file'], ['save-media', { url: 'http://127.0.0.1:8765/media?url=x&ok=1', name: 'a.png' }],
+    ['export-design', { convId: 'c1', attId: 'a1', kind: 'pdf', name: 'Page' }]]);
   assert.equal(loadPreload({ ZEN_HARNESS_URL: 'http://127.0.0.1:9000' }).exposed.openzenbot.harnessUrl, 'http://127.0.0.1:9000');
 });
 
@@ -92,9 +94,11 @@ test('main starts sentry only from ZEN_GLITCHTIP_DSN, over classic ipc', () => {
   assert.match(src, /sendDefaultPii: false/);
 });
 
-test('main registers the directory and file pickers, save, and the update check\'s five channels, from the app\'s own pages', () => {
+test('main registers the directory and file pickers, save, export, and the update check\'s five channels, from the app\'s own pages', () => {
   const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');  // checked out with CRLF on Windows
-  assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 5);  // four, and the updates:* helper
+  assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 6);  // five, and the updates:* helper
+  assert.match(src, /ipcMain\.handle\('export-design', \(event, args\) => \{\n    if \(!fromApp\(event\)\) throw/);
+  assert.match(src, /require\('\.\/export-design\.cjs'\)/);
   assert.match(src, /ipcMain\.handle\('open-vault', event => \{\n    if \(!fromApp\(event\)\) throw/);
   assert.match(src, /openVault\(\{ shell, base: vaultBase \}\)/);  // no argument from the page reaches it
   assert.deepEqual(src.match(/handle\('updates:[a-z-]+'/g), ["handle('updates:get'", "handle('updates:check'", "handle('updates:skip'", "handle('updates:set-auto'", "handle('updates:open'"]);
@@ -123,6 +127,36 @@ test('main registers the app scheme, loads the preload, and keeps the sandbox', 
   assert.match(src, /loadURL\(`app:\/\/openzenbot\/\$\{page\}`\)/);
   assert.match(src, /preload: path\.join\(ROOT, 'preload\.cjs'\)/);  // bundled into dist/ by build-gui
   assert.match(src, /contextIsolation: true, sandbox: true/);
+});
+
+test('the export window is offscreen, sandboxed, without a preload, in its own in-memory session, and goes nowhere', () => {
+  const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const body = name => { const start = src.indexOf(name); assert.ok(start > 0, name); return src.slice(start, src.indexOf('\n}\n', start)); };
+  const fn = body('async function makeExportWindow');
+  assert.match(fn, /show: false/);
+  assert.match(fn, /webPreferences: \{ sandbox: true, contextIsolation: true, nodeIntegration: false, session: exportSession\(\), offscreen: true/);
+  assert.doesNotMatch(fn, /preload/);
+  for (const ev of ['will-navigate', 'will-redirect', 'will-frame-navigate']) assert.ok(fn.includes(`wc.on('${ev}', refuse)`), ev);
+  assert.ok(fn.includes("setWindowOpenHandler(() => ({ action: 'deny' }))"));
+  assert.ok(fn.includes('catch (e) { close(); throw e; }'));  // a failed, refused or slow load closes the window
+  assert.ok(fn.includes('deviceScaleFactor: 1'));  // the PNG is 1440 px wide whatever the display's scale
+  assert.ok(fn.includes('FREEZE_UNITS'));  // the PDF keeps vh as on screen
+  // one limit from the window's making destroys it, and every wait races that limit, so a page that blocks its main
+  // thread after load (which holds any call into it) cannot leave the window open
+  assert.match(fn, /setTimeout\(\(\) => \{ close\(\); reject\(/);
+  assert.ok(fn.includes('const bounded = work => Promise.race([work, limit]);'));
+  const waits = fn.match(/\bawait\b[^;]*/g);
+  assert.ok(waits.length >= 4);
+  for (const w of waits) assert.match(w, /^await bounded\(/, w);
+  for (const call of ['wc.loadURL(', "cdp.sendCommand('Emulation.setDeviceMetricsOverride'", 'wc.executeJavaScriptInIsolatedWorld(1001, [{ code: MEASURE }])', 'wc.printToPDF(', "cdp.sendCommand('Page.captureScreenshot'"]) {
+    assert.ok(fn.includes(`bounded(${call}`), call);
+  }
+  const ses = body('function exportSession');
+  assert.ok(ses.includes("session.fromPartition('export-design')"));  // no persist: prefix: in memory only
+  assert.ok(ses.includes('setPermissionRequestHandler((_wc, _permission, answer) => answer(false))'));
+  assert.ok(ses.includes('setPermissionCheckHandler(() => false)'));
+  assert.ok(ses.includes('setDevicePermissionHandler(() => false)'));
+  assert.ok(ses.includes("ses.on('will-download', event => event.preventDefault())"));
 });
 
 test('csp lets media and frames come from the harness only, with no wildcard', () => {

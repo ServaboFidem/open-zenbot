@@ -20,7 +20,7 @@ export function designRevisions(exchanges) {
       if (typeof a.version === 'number') {
         const key = JSON.stringify([a.design, a.name, a.version]);
         byRev.delete(key);  // re-inserted, so the latest attachment takes the newest place
-        byRev.set(key, { attId: a.id, title: a.title, design: a.design, version: a.version });
+        byRev.set(key, { attId: a.id, title: a.title, design: a.design, name: a.name, version: a.version });
       }
   return [...byRev.values()];
 }

@@ -83,10 +83,98 @@
     });
     root().appendChild(layer);
   }
+  // Unsaved changes the GUI asks the frame to show. Display only: nothing here is sent back.
+  // varsBefore: each custom property the bridge set on the root, as the page had it before the first write
+  var touched = [], varsBefore = [];
+  var IMAGE_SRC = /^data:image\/(png|jpeg|webp|gif);base64,/;
+  var VAR_NAME = /^--[a-z][a-z0-9-]{0,40}$/;
+  function byId(id) {
+    var all = document.querySelectorAll('[data-zen-id]');
+    for (var i = 0; i < all.length; i++) if (all[i].getAttribute('data-zen-id') === id) return all[i];
+    return null;
+  }
+  function remember(el) {
+    for (var i = 0; i < touched.length; i++) if (touched[i].el === el) return touched[i];
+    var t = { el: el, kids: Array.prototype.slice.call(el.childNodes), value: el.value,
+      hadSrc: el.hasAttribute('src'), src: el.getAttribute('src'), hadAlt: el.hasAttribute('alt'), alt: el.getAttribute('alt') };
+    touched.push(t);
+    return t;
+  }
+  function clearKids(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+  // No text goes into a style, a script, a picture or an SVG drawing (or anything inside one), whatever its id says.
+  var NO_TEXT = /^(STYLE|SCRIPT|IMG|SVG)$/;
+  function takesText(el) {
+    if (NO_TEXT.test(String(el.tagName).toUpperCase())) return false;
+    for (var n = el; n && n.nodeType === 1; n = n.parentNode)
+      if (n.namespaceURI === 'http://www.w3.org/2000/svg' || String(n.tagName).toUpperCase() === 'SVG') return false;
+    return true;
+  }
+  function showText(id, text) {
+    var el = byId(id);
+    if (!el || !takesText(el)) return;
+    remember(el);
+    if (el.tagName === 'TEXTAREA') { el.value = text; return; }
+    clearKids(el);
+    var lines = text.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      if (i) el.appendChild(document.createElement('br'));
+      if (lines[i]) el.appendChild(document.createTextNode(lines[i]));
+    }
+  }
+  function showImage(id, src, alt) {
+    var el = byId(id);
+    if (!el || el.tagName !== 'IMG') return;
+    remember(el);
+    el.setAttribute('src', src);
+    el.setAttribute('alt', alt);
+  }
+  function showVars(vars) {
+    var names = Object.keys(vars);
+    if (names.length > 8) return;
+    for (var i = 0; i < names.length; i++) {
+      var v = vars[names[i]];
+      if (!VAR_NAME.test(names[i]) || typeof v !== 'string' || v.length > 32) return;
+    }
+    var style = document.documentElement.style;
+    for (var j = 0; j < names.length; j++) {
+      var n = names[j], seen = false;
+      for (var k = 0; k < varsBefore.length; k++) if (varsBefore[k].name === n) seen = true;
+      if (!seen) {  // a later write keeps the first remembered state
+        var was = style.getPropertyValue(n);
+        varsBefore.push({ name: n, had: was !== '', value: was, priority: style.getPropertyPriority(n) });
+      }
+      style.setProperty(n, vars[n]);
+    }
+  }
+  function resetAll() {
+    touched.forEach(function (t) {
+      var el = t.el;
+      if (el.tagName === 'TEXTAREA') el.value = t.value;
+      else { clearKids(el); t.kids.forEach(function (k) { el.appendChild(k); }); }
+      if (el.tagName === 'IMG') {
+        if (t.hadSrc) el.setAttribute('src', t.src); else el.removeAttribute('src');
+        if (t.hadAlt) el.setAttribute('alt', t.alt); else el.removeAttribute('alt');
+      }
+    });
+    touched = [];
+    // the page's own inline value comes back; a property it did not have goes
+    var style = document.documentElement.style;
+    varsBefore.forEach(function (v) {
+      if (v.had) style.setProperty(v.name, v.value, v.priority); else style.removeProperty(v.name);
+    });
+    varsBefore = [];
+  }
   window.addEventListener('message', function (e) {
     var d = e.data;
     if (e.source !== window.parent || !d || typeof d !== 'object') return;
     if (d.zen === 'mode') setMode(d.pick === true);
+    else if (d.zen === 'text') {
+      if (typeof d.elementId === 'string' && typeof d.text === 'string' && d.text.length <= 2000) { showText(d.elementId, d.text); draw(); }
+    } else if (d.zen === 'image') {
+      if (typeof d.elementId === 'string' && typeof d.src === 'string' && typeof d.alt === 'string' && IMAGE_SRC.test(d.src)) { showImage(d.elementId, d.src, d.alt); draw(); }
+    } else if (d.zen === 'vars') {
+      if (d.vars && typeof d.vars === 'object' && !Array.isArray(d.vars)) { showVars(d.vars); draw(); }
+    } else if (d.zen === 'reset') { resetAll(); draw(); }
     else if (d.zen === 'pins' && Array.isArray(d.pins)) {
       pins = d.pins.filter(function (p) { return p && typeof p === 'object'; })
         .map(function (p) { return { n: p.n, elementId: typeof p.elementId === 'string' ? p.elementId : '', selector: typeof p.selector === 'string' ? p.selector : '' }; });

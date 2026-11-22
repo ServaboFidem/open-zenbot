@@ -46,6 +46,14 @@ Working rules:
 - Put tokens on `:root` (`--bg`, `--surface`, `--fg`, `--muted`, `--border`,
   `--accent`) and use them everywhere. A design system in context overrides the
   defaults in the references.
+- Tweaks: offer 3 to 8 of those choices (accent colour, corner radius, spacing,
+  text size) as knobs the user moves in the app, in the two-element
+  `data-zen-tweaks` block your prompt shows: a `<style data-zen-tweaks>` with one
+  `:root` block, one declaration a line, and a
+  `<script type="application/json" data-zen-tweaks>` listing each knob. Declare a
+  tweak variable there only, use it throughout the page, and keep the block and
+  its values across revisions. The user may change texts, pictures or tweak
+  values in the app between your turns: read the file again and keep theirs.
 - Give every element that holds text (paragraphs, list items, labels, captions,
   headings, buttons) and each section, card, image and nav item a unique
   kebab-case `data-zen-id` (lowercase letters, digits, hyphens; at most 64

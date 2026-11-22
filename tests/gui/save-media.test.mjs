@@ -40,6 +40,14 @@ test('only harness media and attachment urls are fetched', () => {
   assert.ok(!allowedUrl('not a url', BASE));
 });
 
+test('a design\'s zip is fetched, and nothing else under its design route', () => {
+  assert.ok(allowedUrl(BASE + '/conversations/c1/design/export.zip', BASE));
+  assert.ok(!allowedUrl(BASE + '/conversations/c1/design/slots', BASE));
+  assert.ok(!allowedUrl(BASE + '/conversations/c1/design/export.zip/x', BASE));
+  assert.ok(!allowedUrl(BASE + '/conversations/c1/x/design/export.zip', BASE));
+  assert.ok(!allowedUrl('http://127.0.0.1:9999/conversations/c1/design/export.zip', BASE));
+});
+
 test('pictures for images and video, downloads for the rest', () => {
   const p = { pictures: 'P', downloads: 'D' };
   assert.equal(defaultFolder('a.JPEG', p), 'P'); assert.equal(defaultFolder('a.mp4', p), 'P');

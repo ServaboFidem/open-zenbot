@@ -1,7 +1,8 @@
-const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification, powerMonitor } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification, powerMonitor, session } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { saveMedia } = require('./save-media.cjs');
+const { exportDesign, pdfOptions, FREEZE_UNITS, TIMEOUT_MS: EXPORT_TIMEOUT_MS } = require('./export-design.cjs');
 const { loadEnvFile } = require('./env-file.cjs');
 const { createArrival } = require('./arrival.cjs');
 const { createIdleReport } = require('./idle-report.cjs');
@@ -88,6 +89,78 @@ function createWindow(page = 'index.html') {
   win.loadURL(`app://openzenbot/${page}`);
   return win;
 }
+// Export as PDF or PNG: an offscreen window for one bot-made page (export-design.cjs builds its URL, never the renderer).
+// Its scripts run as in the preview, under the harness's closed policy; the window has no preload, its own in-memory
+// session (no permission, no download), goes nowhere else and opens nothing. A load that fails, answers other than
+// 200 or takes longer than the limit closes it. Once loaded, the DevTools protocol pins the viewport at WIDTH x
+// VIEW_HEIGHT and scale 1, as in a normal window on any display, and it stays so: the PNG is captured beyond that
+// viewport (so vh is what it is on screen, and a 16,000 px page is not doubled on a display scaled above 1), and the
+// PDF, whose print layout would resolve vh against the whole page, is printed after vh-style units are fixed to their
+// on-screen pixels (FREEZE_UNITS). A hidden, non-offscreen window was tried first: a protocol screenshot never answered
+// there, and capturePage after a resize sometimes failed (UnknownVizError).
+const MEASURE = '(() => { const d = document.documentElement, b = document.body; return Math.max(d.scrollHeight, b ? b.scrollHeight : 0); })()';
+let exportSessionReady = false;
+function exportSession() {
+  const ses = session.fromPartition('export-design');  // no persist: prefix, so in memory only
+  if (!exportSessionReady) {
+    ses.setPermissionRequestHandler((_wc, _permission, answer) => answer(false));
+    ses.setPermissionCheckHandler(() => false);
+    ses.setDevicePermissionHandler(() => false);
+    ses.on('will-download', event => event.preventDefault());
+    exportSessionReady = true;
+  }
+  return ses;
+}
+async function makeExportWindow(url, { width, height }) {
+  const win = new BrowserWindow({
+    show: false, width, height, useContentSize: true,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, session: exportSession(), offscreen: true, backgroundThrottling: false },
+  });
+  const wc = win.webContents;
+  // One limit for everything this window does, from its making: when it passes the window is destroyed, whatever the
+  // page is doing (a page that blocks its main thread after load would otherwise hold any call that needs it), and
+  // every wait below races it (bounded), so none can outlive the window.
+  let timer;
+  const close = () => { clearTimeout(timer); if (!win.isDestroyed()) win.destroy(); };
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => { close(); reject(Object.assign(new Error('the export did not finish in time'), { name: 'TimeoutError' })); }, EXPORT_TIMEOUT_MS);
+  });
+  limit.catch(() => {});  // nobody may be waiting when it fires
+  const bounded = work => Promise.race([work, limit]);
+  const refuse = event => event.preventDefault();
+  wc.on('will-navigate', refuse);
+  wc.on('will-redirect', refuse);
+  wc.on('will-frame-navigate', refuse);
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const cdp = wc.debugger;
+  let status = 0;
+  wc.once('did-navigate', (_event, _url, code) => { status = code; });
+  try {
+    await bounded(wc.loadURL(url));
+    if (status !== 200) throw new Error(`the page answered ${status}`);
+    // the viewport the page is measured, captured and frozen at, whatever size and scale the display gives the window
+    // (with the display at scale 2 the window alone came out about 700 px tall)
+    cdp.attach('1.3');
+    await bounded(cdp.sendCommand('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }));
+  } catch (e) { close(); throw e; }
+  return {
+    // measured in a world of its own, so the page's scripts cannot replace what measures it; still only a number
+    height: () => bounded(wc.executeJavaScriptInIsolatedWorld(1001, [{ code: MEASURE }])),
+    pdf: async size => {
+      await bounded(wc.executeJavaScriptInIsolatedWorld(1001, [{ code: FREEZE_UNITS }]));
+      return bounded(wc.printToPDF(pdfOptions(size)));
+    },
+    png: async ({ width: w, height: h }) => {
+      const shot = await bounded(cdp.sendCommand('Page.captureScreenshot',
+        { format: 'png', clip: { x: 0, y: 0, width: w, height: h, scale: 1 }, captureBeyondViewport: true }));
+      const png = Buffer.from(String(shot?.data || ''), 'base64');
+      if (!png.length) throw new Error('the capture came back empty');
+      return png;
+    },
+    close,
+  };
+}
+
 // IPC from this app's own pages only (never a framed page or another origin)
 const fromApp = (event, page = '') => String(event.senderFrame?.url || '').startsWith(`app://openzenbot/${page}`);
 // The update check, on GitHub Releases: Settings checks by hand in every run; the installed app also checks at launch
@@ -188,6 +261,19 @@ app.whenReady().then(() => {
     paths: { pictures: app.getPath('pictures'), downloads: app.getPath('downloads') },
     fs: require('node:fs'),
   }));
+  // Export as PDF or PNG: the page sends two ids, a kind and a title; the URL is built here and the dialog names the path
+  ipcMain.handle('export-design', (event, args) => {
+    if (!fromApp(event)) throw new Error('not allowed');
+    const { convId, attId, kind, name } = args || {};
+    return exportDesign({ convId, attId, kind, name }, {
+      harnessBase: harnessBase(),
+      dialog: { showSaveDialog: opts => dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), opts) },
+      makeWindow: makeExportWindow,
+      storePath: path.join(app.getPath('userData'), 'media-save.json'),
+      paths: { pictures: app.getPath('pictures'), downloads: app.getPath('downloads') },
+      fs: require('node:fs'),
+    });
+  });
   handleUpdates();
   if (managed) {
     require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling });

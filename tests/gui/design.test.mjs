@@ -31,10 +31,10 @@ test('ready counts only from the pane\'s own frame and in its exact shape', () =
     assert.equal(acceptReady({ source: win, data: bad }, win), false);
 });
 test('revisions come oldest first and skip plain attachments', () => {
-  const ex = [{ attachments: [{ id: 'a', title: 'L', design: 'landing', version: 1 }, { id: 'p', title: 'doc' }] },
-              { attachments: [{ id: 'b', title: 'L', design: 'landing', version: 2 }] }];
+  const ex = [{ attachments: [{ id: 'a', title: 'L', name: 'index.html', design: 'landing', version: 1 }, { id: 'p', title: 'doc' }] },
+              { attachments: [{ id: 'b', title: 'L', name: 'index.html', design: 'landing', version: 2 }] }];
   assert.deepEqual(designRevisions(ex).map(r => r.attId), ['a', 'b']);
-  assert.deepEqual(designRevisions(ex)[1], { attId: 'b', title: 'L', design: 'landing', version: 2 });
+  assert.deepEqual(designRevisions(ex)[1], { attId: 'b', title: 'L', design: 'landing', name: 'index.html', version: 2 });
   assert.deepEqual(designRevisions([{ text: 'no attachments' }]), []);
 });
 test('an unchanged file attached again is one revision, under its latest attachment', () => {
@@ -47,6 +47,12 @@ test('two files in one design with the same version number are separate revision
   const ex = [{ attachments: [{ id: 'a', title: 'Home', name: 'index.html', design: 'site', version: 1 }, { id: 'b', title: 'Details', name: 'details.html', design: 'site', version: 1 }] },
               { attachments: [{ id: 'c', title: 'Home', name: 'index.html', design: 'site', version: 1 }] }];
   assert.deepEqual(designRevisions(ex).map(r => r.attId), ['b', 'c']);
+});
+test('a version the user saved (an edit exchange, no user text) is the newest revision', () => {
+  const ex = [{ user: 'Make a landing page', outcome: 'done', attachments: [{ id: 'a', title: 'L', name: 'index.html', design: 'landing', version: 1 }] },
+              { user: '', outcome: 'edit', reply: 'You changed 1 text.', attachments: [{ id: 'e', title: 'L', name: 'index.html', design: 'landing', version: 2 }] }];
+  assert.deepEqual(designRevisions(ex).map(r => r.attId), ['a', 'e']);
+  assert.deepEqual(designRevisions(ex).at(-1), { attId: 'e', title: 'L', design: 'landing', name: 'index.html', version: 2 });
 });
 test('the studio frame url adds studio=1', () => {
   assert.equal(studioFrameUrl('http://h/conversations/c/attachments/a'), 'http://h/conversations/c/attachments/a?studio=1');

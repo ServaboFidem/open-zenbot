@@ -88,6 +88,28 @@ def load(folder: Path, name: str) -> tuple[str, bytes]:
     return kind, data
 
 
+def same_bytes(folder: Path, data: bytes) -> str | None:
+    """The name of a picture in `folder/images/` holding exactly `data`, the first in name order; None when
+    there is none. Only a file `load` reads counts: a regular picture under one name, never through a link."""
+    d = folder / IMAGES
+    try:
+        if not d.exists() and not d.is_symlink():
+            return None
+        d = _images_dir(folder)
+        names = sorted(p.name for p in d.iterdir())
+    except (ImageRefused, OSError):
+        return None
+    for name in names:
+        try:
+            if not NAME.fullmatch(name) or (d / name).lstat().st_size != len(data):
+                continue  # a quick look only: `load` checks the file it opens
+            if load(folder, name)[1] == data:
+                return name
+        except (ImageRefused, OSError):
+            continue
+    return None
+
+
 def embed(html: bytes, folder: Path, budget: int = PAGE_MAX_BYTES) -> tuple[bytes, list[tuple[str, str]]]:
     """Put each `images/<name>` picture into its `<img src>` as a data URI. Returns the new bytes and
     `(src, reason)` for each picture left as written. A picture whose data URI would take the output past

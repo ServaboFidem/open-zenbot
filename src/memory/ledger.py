@@ -61,6 +61,7 @@ class Kind(StrEnum):
     routine = "routine"
     delegate = "delegate"
     design_part = "design_part"
+    design_edit = "design_edit"
     calendar = "calendar"
     dream = "dream"
     mail = "mail"

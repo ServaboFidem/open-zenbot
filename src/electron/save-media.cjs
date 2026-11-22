@@ -7,7 +7,8 @@ const { pipeline } = require('node:stream/promises');
 
 const MAX_NAME = 120;
 const PICTURES = /\.(jpe?g|png|gif|webp|avif|svg|mp4|webm|mov)$/i;
-const ROUTES = [/^\/media$/, /^\/rooms\/[^/]+\/attachments\/[^/]+$/, /^\/conversations\/[^/]+\/attachments\/[^/]+$/];
+const ROUTES = [/^\/media$/, /^\/rooms\/[^/]+\/attachments\/[^/]+$/, /^\/conversations\/[^/]+\/attachments\/[^/]+$/,
+  /^\/conversations\/[^/]+\/design\/export\.zip$/];
 
 /** The name's last segment, without characters Windows refuses, trimmed, at most 120 characters with its extension kept. */
 function safeName(name) {
@@ -19,7 +20,7 @@ function safeName(name) {
   return base.slice(0, MAX_NAME - ext.length) + ext;
 }
 
-/** Only the harness's media route and attachment routes, on the harness's own origin. */
+/** Only the harness's media route, attachment routes and a design's zip, on the harness's own origin. */
 function allowedUrl(url, harnessBase) {
   let u, base;
   try { u = new URL(url); base = new URL(harnessBase); } catch { return false; }
@@ -28,11 +29,20 @@ function allowedUrl(url, harnessBase) {
 
 const defaultFolder = (name, paths) => (PICTURES.test(name) ? paths.pictures : paths.downloads);
 
+/** The folder of the last save, when it is remembered and still there; else null. */
 function lastDir(fs, storePath) {
   try {
     const dir = JSON.parse(fs.readFileSync(storePath, 'utf8')).lastDir;
     return typeof dir === 'string' && dir && fs.existsSync(dir) ? dir : null;
   } catch { return null; }
+}
+
+/** Remember the folder of `saved` for the next dialog; a failure only loses the memory. */
+function rememberDir(fs, storePath, saved) {
+  try {
+    fs.mkdirSync(path.dirname(storePath), { recursive: true });
+    fs.writeFileSync(storePath, JSON.stringify({ lastDir: path.dirname(saved) }));
+  } catch { /* the save worked; only the folder memory did not */ }
 }
 
 /** Show the save dialog, fetch `url` from the harness, write it where the user chose. */
@@ -53,11 +63,8 @@ async function saveMedia({ url, name } = {}, deps) {
     try { fs.rmSync(chosen, { force: true }); } catch { /* nothing more to clean */ }
     return { error: `The file could not be saved (${e.code || e.message}).` };
   }
-  try {
-    fs.mkdirSync(path.dirname(storePath), { recursive: true });
-    fs.writeFileSync(storePath, JSON.stringify({ lastDir: path.dirname(chosen) }));
-  } catch { /* the save worked; only the folder memory did not */ }
+  rememberDir(fs, storePath, chosen);
   return { saved: chosen };
 }
 
-module.exports = { safeName, allowedUrl, defaultFolder, saveMedia };
+module.exports = { safeName, allowedUrl, defaultFolder, lastDir, rememberDir, saveMedia };

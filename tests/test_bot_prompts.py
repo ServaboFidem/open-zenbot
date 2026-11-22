@@ -5,11 +5,13 @@ directory at start and writes it on every create or edit through the API."""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import httpx
 import pytest
 
+from src.harness import design_tweaks
 from src.harness.api import Harness, create_app
 from src.harness.bot import Bot
 from src.harness.bot_prompts import BotPrompt, load_dir, parse, render, save
@@ -209,6 +211,19 @@ def test_the_designer_bot_file_is_a_studio_bot():
     for must in ("designs/", "data-zen-id", "attach_file", "question-form", "create_directory", "edit_file", "every element that holds text"):
         assert must in p.instructions
     assert "When `design_add_image` is not among your tools (in a room), save the picture into the design's `images/` folder" in p.instructions
+
+
+def test_the_designers_tweaks_example_parses():
+    """The block the Designer is shown is one the harness reads: at least 3 knobs, the most it keeps at most."""
+    p = parse(Path("bot-prompts/designer.md").read_text(encoding="utf-8"), "designer")
+    assert "data-zen-tweaks" in p.instructions
+    blocks = [b for b in re.findall(r"```html\n(.*?)```", p.instructions, re.S) if "data-zen-tweaks" in b]
+    assert len(blocks) == 1
+    found = design_tweaks.knobs(blocks[0])
+    assert 3 <= len(found) <= design_tweaks.MAX_KNOBS
+    assert {k.type for k in found} == {"color", "range"}
+    skill = Path("skills/design-studio/SKILL.md").read_text(encoding="utf-8")
+    assert "data-zen-tweaks" in skill
 
 
 def test_the_copywriter_bot_file_works_from_the_conversation_alone():
