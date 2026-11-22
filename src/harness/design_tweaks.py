@@ -42,7 +42,12 @@ class Knob:
 
 
 def _real(x: object) -> bool:
-    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+    if isinstance(x, bool) or not isinstance(x, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(x))  # an int too big for a float is no number here
+    except OverflowError:
+        return False
 
 
 def _label(raw: object) -> str:

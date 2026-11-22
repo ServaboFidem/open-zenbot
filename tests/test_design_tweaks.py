@@ -52,7 +52,7 @@ def test_view_gives_numbers_for_ranges():
 
 
 @pytest.mark.parametrize("value", [
-    "12px; color: red", "red", "#fff", float("nan"), float("inf"), 25, -1, True, None, "12"])
+    "12px; color: red", "red", "#fff", float("nan"), float("inf"), 10**400, -(10**400), 25, -1, True, None, "12"])
 def test_a_bad_range_value_is_refused(value):
     with pytest.raises(PartRefused):
         fmt(knobs(PAGE)[1], value)
@@ -128,3 +128,13 @@ def test_no_manifest_or_garbage_never_raises():
     assert knobs("") == []
     assert knobs("<style data-zen-tweaks>") == []
     assert knobs("<<<>>>") == []
+
+
+def test_a_huge_whole_number_never_raises_anything_but_part_refused():
+    with pytest.raises(PartRefused):
+        fmt(knobs(PAGE)[1], 10**400)
+
+
+def test_a_huge_manifest_bound_drops_only_that_knob():
+    huge = page([bad(max=10**400), ACCENT])
+    assert [k.var for k in knobs(huge)] == ["--accent"]
