@@ -249,7 +249,7 @@ async def test_the_guard_fixture_is_not_swallowed_as_engine_failed():
 async def test_a_verify_error_is_engine_failed_naming_the_class_only():
     class Locked(FakeModel):
         async def verify(self):
-            raise PermissionError("C:\secret\path")
+            raise PermissionError(r"C:\secret\path")
 
     e, _, loads = make(model=Locked())
     with pytest.raises(EngineFailed) as info:
