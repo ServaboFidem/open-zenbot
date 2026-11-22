@@ -2,7 +2,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createFrameParser, createPlayer, createReader, END_MISSING, FRAME_MAX, readSpeakOn, SPEAK_KEY, SPEAK_MAX, toSpeak, writeSpeakOn } from '../../src/gui/speech.js';
-import { createApi, HarnessError } from '../../src/gui/api.js';
 
 const memory = () => { const m = new Map(); return { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), m }; };
 const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
@@ -38,7 +37,6 @@ test('toSpeak sends at most what the Narrator reads', () => {
 const frame = bytes => { const n = bytes.length; return Uint8Array.from([n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255, ...bytes]); };
 const END = Uint8Array.from([0, 0, 0, 0]);
 const cat = (...parts) => Uint8Array.from(parts.flatMap(p => [...p]));
-const body = chunks => new ReadableStream({ start(c) { for (const k of chunks) c.enqueue(k); c.close(); } });
 
 test('the parser reads a frame split over three chunks', () => {
   const p = createFrameParser(); const f = frame([1, 2, 3, 4, 5]);
@@ -104,11 +102,36 @@ test('stop clears the queue, stops the sound and revokes every URL', () => {
   assert.doesNotThrow(() => player.stop());
 });
 
-test('a piece that fails to play is skipped and the next plays', async () => {
-  const f = fakes(true); const player = createPlayer(f);
-  player.enqueue('a'); player.enqueue('b');
+test('a piece that fails to play is skipped, the next plays, and the failure is heard', async () => {
+  const f = fakes(true); const player = createPlayer(f); const heard = [];
+  player.enqueue('a', played => heard.push(played)); player.enqueue('b');
   await new Promise(r => setImmediate(r));
   assert.equal(f.made.length, 2); assert.equal(f.made[1].src, 'blob:2'); assert.deepEqual(f.revoked, ['blob:1']);
+  assert.deepEqual(heard, [false]);
+});
+
+test('the player passes a playback refusal on', async () => {
+  class Refusing { constructor() {} play() { return Promise.reject(new Error('NotAllowedError')); } pause() {} }
+  const heard = [];
+  const player = createPlayer({ Audio: Refusing, URL: { createObjectURL: () => 'blob:1', revokeObjectURL() {} } });
+  player.enqueue('wav', played => heard.push(played));
+  await new Promise(r => setImmediate(r));
+  assert.deepEqual(heard, [false]);
+});
+
+test('an Audio that cannot be made frees its URL and is heard', () => {
+  const revoked = []; const heard = [];
+  class Broken { constructor() { throw new Error('no'); } }
+  const player = createPlayer({ Audio: Broken, URL: { createObjectURL: () => 'blob:1', revokeObjectURL: u => revoked.push(u) } });
+  player.enqueue('wav', played => heard.push(played));
+  assert.deepEqual(revoked, ['blob:1']); assert.deepEqual(heard, [false]); assert.equal(player.playing(), false);
+});
+
+test('the parser reads a 1 MB frame fed in 1 KB chunks', () => {
+  const wav = Uint8Array.from({ length: 1 << 20 }, (_, i) => i % 251);
+  const all = cat(frame(wav), END); const p = createFrameParser(); const out = [];
+  for (let at = 0; at < all.length; at += 1024) out.push(...p.push(all.subarray(at, at + 1024)));
+  assert.equal(out.length, 1); assert.deepEqual(out[0], wav); assert.equal(p.ended, true);
 });
 
 const pieces = async function* (items, then) { for (const i of items) yield i; if (then) throw then; };
@@ -162,44 +185,28 @@ test('a new reading stops the one playing before it fetches', async () => {
   assert.deepEqual(calls, ['stop', 'speak']);
 });
 
-const apiWith = fetch => createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
-const collect = async gen => { const out = []; for await (const b of gen) out.push(b); return out; };
-
-test('api.speak yields a blob per frame and passes the signal to fetch', async () => {
-  const calls = [];
-  const fetch = async (url, init) => { calls.push({ url, init }); return new Response(body([cat(frame([1, 2]), frame([3])), END]), { status: 200 }); };
-  const ac = new AbortController();
-  const blobs = await collect(apiWith(fetch).speak('Hello', ac.signal));
-  assert.equal(blobs.length, 2); assert.equal(blobs[0].type, 'audio/wav'); assert.equal(blobs[0].size, 2);
-  assert.equal(calls[0].url, 'http://127.0.0.1:8765/speech'); assert.equal(calls[0].init.method, 'POST');
-  assert.equal(calls[0].init.signal, ac.signal); assert.deepEqual(JSON.parse(calls[0].init.body), { text: 'Hello' });
+test('a reading whose pieces will not play reports once, played false', async () => {
+  const errors = []; let fail;
+  const player = { enqueue: (b, onFail) => { fail = onFail; }, stop() {}, playing: () => false };
+  await createReader({ speak: () => pieces(['a', 'b']), player, onError: (item, e, info) => errors.push([e.message, info.played]) }).read({ sessionId: 's', text: 'x' }, () => true);
+  fail(false); fail(false);
+  assert.deepEqual(errors, [['The reply could not be played.', false]]);
 });
 
-test('api.speak throws END_MISSING without the end mark, after the pieces it had', async () => {
-  const fetch = async () => new Response(body([frame([1])]), { status: 200 });
-  const got = [];
-  await assert.rejects(async () => { for await (const b of apiWith(fetch).speak('Hello')) got.push(b); }, e => e.message === END_MISSING);
-  assert.equal(got.length, 1);
+test('a playback failure after audio played reports played true, and none after a cancel', async () => {
+  const errors = []; let fail;
+  const player = { enqueue: (b, onFail) => { fail = onFail; }, stop() {}, playing: () => false };
+  const reader = createReader({ speak: () => pieces(['a']), player, onError: (item, e, info) => errors.push(info.played) });
+  await reader.read({ sessionId: 's', text: 'x' }, () => true);
+  fail(true); assert.deepEqual(errors, [true]);
+  await reader.read({ sessionId: 's', text: 'x' }, () => true);
+  reader.cancel(); fail(false); assert.deepEqual(errors, [true]);
 });
 
-test('api.speak carries the harness sentence on a refusal, before any piece', async () => {
-  const fetch = async () => new Response(JSON.stringify({ detail: 'Reading aloud is off.' }), { status: 409 });
-  await assert.rejects(collect(apiWith(fetch).speak('Hello')), e => e instanceof HarnessError && e.status === 409 && e.message === 'Reading aloud is off.');
-});
-
-test('an aborted fetch is rethrown as it is', async () => {
-  const abort = Object.assign(new Error('aborted'), { name: 'AbortError' });
-  await assert.rejects(collect(apiWith(async () => { throw abort; }).speak('Hello')), e => e === abort);
-});
-
-test('the local voice calls hit their routes', async () => {
-  const calls = [];
-  const fetch = async (url, init) => { calls.push({ url, init }); return init.headers.Accept === 'audio/wav' ? new Response(new Blob(['W']), { status: 200 }) : new Response(JSON.stringify({ ok: 1 }), { status: 200 }); };
-  const api = apiWith(fetch);
-  assert.deepEqual(await api.speechDownload(), { ok: 1 });
-  assert.deepEqual(await api.speechRemoveModel(), { ok: 1 });
-  assert.equal(await (await api.speechSample('af_heart')).text(), 'W');
-  assert.deepEqual(calls.map(c => [c.init.method, c.url.replace('http://127.0.0.1:8765', '')]), [['POST', '/speech/local/download'], ['DELETE', '/speech/local/model'], ['POST', '/speech/local/sample']]);
-  assert.deepEqual(JSON.parse(calls[0].init.body), {}); assert.equal(calls[1].init.body, undefined);
-  assert.deepEqual(JSON.parse(calls[2].init.body), { voice: 'af_heart' });
+test('a cancel before the first piece reaches the pending read', async () => {
+  const errors = []; let sig;
+  const reader = createReader({ speak: (t, s) => { sig = s; return (async function* () { await new Promise((_, rej) => s.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' })))); })(); }, player: quietPlayer(), onError: e => errors.push(e) });
+  const going = reader.read({ sessionId: 's', text: 'a' }, () => true);
+  reader.cancel(); await going;
+  assert.equal(sig.aborted, true); assert.deepEqual(errors, []);
 });

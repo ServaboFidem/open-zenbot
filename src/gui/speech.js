@@ -31,23 +31,27 @@ export const END_MISSING = 'The speech ended early.';
 // Reads POST /speech's body: frames of a 4-byte big-endian length and that many bytes of one WAV file; a frame of
 // length 0 is the end mark. `push` takes the chunks as they arrive and answers the WAVs completed by each.
 export function createFrameParser() {
-  let buf = new Uint8Array(0);
+  const head = new Uint8Array(4); let hlen = 0;
+  let cur = null; let filled = 0;  // the frame being filled, allocated once its length is known
   const parser = {
     ended: false,
     push(chunk) {
       const out = [];
-      if (parser.ended || !chunk?.length) return out;
-      const joined = new Uint8Array(buf.length + chunk.length);
-      joined.set(buf); joined.set(chunk, buf.length);
-      buf = joined;
-      for (;;) {
-        if (buf.length < 4) break;
-        const n = ((buf[0] * 256 + buf[1]) * 256 + buf[2]) * 256 + buf[3];
-        if (n > FRAME_MAX) throw new Error('The speech was not in the expected form.');
-        if (n === 0) { parser.ended = true; buf = new Uint8Array(0); break; }
-        if (buf.length < 4 + n) break;
-        out.push(buf.slice(4, 4 + n));
-        buf = buf.slice(4 + n);
+      let at = 0;
+      while (!parser.ended && chunk && at < chunk.length) {
+        if (cur === null) {
+          head[hlen++] = chunk[at++];
+          if (hlen < 4) continue;
+          hlen = 0;
+          const n = ((head[0] * 256 + head[1]) * 256 + head[2]) * 256 + head[3];
+          if (n > FRAME_MAX) throw new Error('The speech was not in the expected form.');
+          if (n === 0) parser.ended = true; else { cur = new Uint8Array(n); filled = 0; }
+        } else {
+          const take = Math.min(cur.length - filled, chunk.length - at);
+          cur.set(chunk.subarray(at, at + take), filled);
+          filled += take; at += take;
+          if (filled === cur.length) { out.push(cur); cur = null; }
+        }
       }
       return out;
     },
@@ -56,24 +60,33 @@ export function createFrameParser() {
 }
 
 // A queue of pieces: one plays at once when nothing is playing, otherwise after the piece before it. A piece that
-// cannot play is skipped. `stop` clears the queue, stops the sound and frees every object URL.
+// cannot play is skipped, and its `onFail(played)` hears it (played: some piece has started since the last stop).
+// `stop` clears the queue, stops the sound and frees every object URL.
 export function createPlayer({ Audio, URL } = {}) {
-  let queue = []; let audio = null; let url = '';
+  let queue = []; let audio = null; let url = ''; let started = false;
   function free() { if (url) { URL.revokeObjectURL(url); url = ''; } audio = null; }
   function next() {
     if (audio || !queue.length) return;
     const piece = queue.shift();
-    url = piece;
-    const a = new Audio(piece); audio = a;
-    const done = () => { if (audio === a) { free(); next(); } };
-    a.onended = done; a.onerror = done;
-    try { Promise.resolve(a.play()).catch(done); } catch { done(); }
+    url = piece.url;
+    let a = null;
+    const done = failed => () => {
+      if (a && audio !== a) return;
+      free();
+      if (failed) piece.onFail?.(started);
+      next();
+    };
+    try {
+      a = new Audio(piece.url); audio = a;
+      a.onended = done(false); a.onerror = done(true);
+      Promise.resolve(a.play()).then(() => { started = true; }, done(true));
+    } catch { audio = a; done(true)(); }
   }
   return {
-    enqueue(blob) { queue.push(URL.createObjectURL(blob)); next(); },
+    enqueue(blob, onFail) { queue.push({ url: URL.createObjectURL(blob), onFail }); next(); },
     stop() {
-      for (const u of queue) URL.revokeObjectURL(u);
-      queue = [];
+      for (const q of queue) URL.revokeObjectURL(q.url);
+      queue = []; started = false;
       if (audio) { try { audio.pause(); } catch { /* already gone */ } }
       free();
     },
@@ -94,12 +107,13 @@ export function createReader({ speak, player, onError }) {
       abort();
       player.stop();  // a newer reply: the last one stops now, not when this one arrives
       const own = new AbortController(); controller = own;
-      let played = false;
+      let played = false; let reported = false;
+      const failed = playedAudio => { if (mine === seq && !reported) { reported = true; onError(item, new Error('The reply could not be played.'), { played: playedAudio }); } };
       try {
         for await (const blob of speak(item.text, own.signal)) {
           if (mine !== seq) return;
           if (!isOn()) { own.abort(); return; }
-          player.enqueue(blob); played = true;
+          player.enqueue(blob, failed); played = true;
         }
       } catch (e) {
         if (mine === seq && !own.signal.aborted && e?.name !== 'AbortError') onError(item, e, { played });
