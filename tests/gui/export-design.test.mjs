@@ -154,6 +154,36 @@ test('a write failure answers an error, leaves no file and closes the window', a
   assert.equal(win.closed, 1); assert.ok(!fs.existsSync(deps.storePath));
 });
 
+test('a failed save leaves the file the user chose to overwrite as it was, and no temporary file', async () => {
+  for (const fail of ['write', 'rename']) {
+    const { deps, paths } = setup();
+    const file = path.join(paths.downloads, 'P.pdf');
+    fs.writeFileSync(file, 'the old file');
+    const broken = Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+    deps.fs = {
+      ...fs,
+      writeFileSync: (p, data, opts) => {
+        if (fail === 'write' && p !== deps.storePath) { fs.writeFileSync(p, 'half', opts); throw broken; }
+        return fs.writeFileSync(p, data, opts);
+      },
+      renameSync: (a, b) => { if (fail === 'rename') throw broken; return fs.renameSync(a, b); },
+    };
+    const out = await exportDesign({ convId: 'c1', attId: 'a1', kind: 'pdf', name: 'P' }, deps);
+    assert.deepEqual(out, { error: 'The file could not be saved (ENOSPC).' }, fail);
+    assert.equal(fs.readFileSync(file, 'utf8'), 'the old file', fail);
+    assert.deepEqual(fs.readdirSync(paths.downloads), ['P.pdf'], fail);
+  }
+});
+
+test('a save over an existing file replaces it whole', async () => {
+  const { deps, paths } = setup();
+  const file = path.join(paths.downloads, 'P.pdf');
+  fs.writeFileSync(file, 'the old file, longer than the new one');
+  assert.deepEqual(await exportDesign({ convId: 'c1', attId: 'a1', kind: 'pdf', name: 'P' }, deps), { saved: file });
+  assert.equal(fs.readFileSync(file, 'utf8'), '%PDF-fake');
+  assert.deepEqual(fs.readdirSync(paths.downloads), ['P.pdf']);
+});
+
 test('the suggested name is the title made safe, ending .pdf or .png', async () => {
   for (const [name, kind, want] of [['..\\..\\evil', 'pdf', 'evil.pdf'], ['a:b?', 'png', 'ab.png'], ['???', 'pdf', 'design.pdf'],
     ['', 'png', 'design.png'], [undefined, 'pdf', 'design.pdf'], ['x'.repeat(300), 'pdf', null]]) {

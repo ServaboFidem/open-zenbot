@@ -4,6 +4,7 @@
 // (deps.makeWindow) lays the page out at WIDTH x VIEW_HEIGHT, as in a normal window, and renders it whole: 1440 px wide
 // at its own height, capped at 16,000 px. The PDF is one page of that size. The page's own answer for its height is
 // untrusted: only a number or a numeric string counts.
+const crypto = require('node:crypto');
 const path = require('node:path');
 const { safeName, defaultFolder, lastDir, rememberDir } = require('./save-media.cjs');
 
@@ -116,10 +117,14 @@ async function exportDesign({ convId, attId, kind, name } = {}, deps) {
     warn(`export-design: ${kind} failed: ${late ? 'TimeoutError: the time limit passed' : `${e?.name || 'Error'}: ${e?.message || e}`}`);
     return { error: late ? 'The design took too long to export.' : 'The design could not be exported.' };
   }
+  // Written whole to a new file beside the chosen one, then renamed over it: a failed save leaves a file the user
+  // chose to overwrite as it was, and removes only the temporary file.
+  const temp = path.join(path.dirname(chosen), `.${path.basename(chosen)}.${crypto.randomBytes(8).toString('hex')}.part`);
   try {
-    fs.writeFileSync(chosen, bytes);
+    fs.writeFileSync(temp, bytes, { flag: 'wx' });
+    fs.renameSync(temp, chosen);
   } catch (e) {
-    try { fs.rmSync(chosen, { force: true }); } catch { /* nothing more to clean */ }
+    try { fs.rmSync(temp, { force: true }); } catch { /* nothing more to clean */ }
     return { error: `The file could not be saved (${e.code || e.message}).` };
   }
   rememberDir(fs, storePath, chosen);
