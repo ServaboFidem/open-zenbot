@@ -82,6 +82,7 @@ class KokoroModel:
         self._free_bytes = free_bytes
         self._task: asyncio.Task[None] | None = None
         self._running = False
+        self._active = False  # inside download(): a second call while one works returns at once
         self._done = 0
         self._error = ""
         self._verified: set[str] = set()
@@ -132,6 +133,9 @@ class KokoroModel:
 
     async def download(self) -> None:
         """Fetch what is missing. Never raises: the outcome is the state and one ledger entry."""
+        if self._active:
+            return
+        self._active = True
         self._running = True
         self._error = ""
         self._done = 0
@@ -148,6 +152,7 @@ class KokoroModel:
             log.warning("kokoro download failed: %s", type(e).__name__)
             error = "provider"
         finally:
+            self._active = False
             self._running = False
             self._clear_parts()
         self._error = error

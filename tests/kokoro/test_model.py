@@ -190,6 +190,16 @@ async def test_start_download_twice_runs_once(tmp_path: Path):
     assert m.start_download() is False  # ready
 
 
+async def test_a_second_download_while_one_runs_does_nothing(tmp_path: Path):
+    m, s = build(tmp_path)
+    assert m.start_download()
+    await asyncio.sleep(0)  # the task has begun
+    await m.download()  # returns at once, touching nothing
+    await m._task
+    assert m.ready() and len(s.requests) == 2
+    assert m.path("a.onnx").read_bytes() == A and m.path("b.bin").read_bytes() == B
+
+
 async def test_close_cancels_and_removes_the_part_file(tmp_path: Path):
     started = asyncio.Event()
 
