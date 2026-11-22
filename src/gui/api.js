@@ -6,6 +6,7 @@ import { createCalendarApi } from './calendar-api.js';
 import { createDiscoverApi } from './discover-api.js';
 import { createMailApi } from './mail-api.js';
 import { createSonosApi } from './sonos-api.js';
+import { createSpeakersApi } from './speakers-api.js';
 import { dreamApi } from './dream.js';
 
 export const DEFAULT_HARNESS = 'http://127.0.0.1:8765';
@@ -76,6 +77,7 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     discover: createDiscoverApi(call),
     mail: createMailApi(call),
     sonos: createSonosApi(call),
+    speakers: createSpeakersApi(call),
     dream: dreamApi(call),
     // routines (the Music digest schedule is one; a managed routine keeps managed_by on every save)
     routines: () => get('/routines'),
