@@ -45,6 +45,30 @@ export function voiceGroups(voices) {
   return groups;
 }
 
+/** What the hidden live region says: the status line, except while downloading, when it says only that it is
+ *  downloading, so a screen reader hears the start, the end and a failure but not every 2 s progress tick. */
+export function liveLine(local) {
+  return local && local.state === 'downloading' ? 'Downloading…' : localLine(local);
+}
+
+/** The card's error line is cleared whenever this changes: the model's state or the picked voice. */
+export const errorKey = (local, voice) => `${(local && local.state) || ''}|${voice || ''}`;
+
+/** A guard that lets one call through at a time (a fast double click sends one request). `run` is called with the
+ *  function given to the guard; a second call while the first is out answers undefined and runs nothing. */
+export function oneAtATime(run) {
+  let out = false;
+  return async fn => {
+    if (out) return undefined;
+    out = true;
+    try { return await run(fn); } finally { out = false; }
+  };
+}
+
+/** Whether the card says the saved provider cannot speak: keyed on the saved tool, never on the pick in the select,
+ *  and never for Kokoro, whose own line says to download it. */
+export const showsNoSpeakerAlert = t => !!t && !!t.enabled && !t.active && t.provider !== LOCAL;
+
 export const canSample = (local, busy) => !!local && local.state === 'ready' && !busy;
 export const shouldPoll = local => !!local && local.state === 'downloading';
 

@@ -1,7 +1,7 @@
 // The Read aloud card's local-voice decisions.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ERROR_LINES, LOCAL, LOCAL_LABEL, LOCAL_MODEL, NOTE, REMOVE_ASK, canSample, localAction, localLine, mb, shouldPoll, voiceFor, voiceGroups } from '../../src/gui/speech-settings.js';
+import { ERROR_LINES, LOCAL, LOCAL_LABEL, LOCAL_MODEL, NOTE, REMOVE_ASK, canSample, errorKey, liveLine, localAction, localLine, mb, oneAtATime, shouldPoll, showsNoSpeakerAlert, voiceFor, voiceGroups } from '../../src/gui/speech-settings.js';
 
 const make = (n, accent, gender, p) => Array.from({ length: n }, (_, i) => ({ name: `${p}${i}`, label: `${p}${i}`, accent, gender }));
 const VOICES = [...make(11, 'American', 'female', 'af_'), ...make(9, 'American', 'male', 'am_'), ...make(4, 'British', 'female', 'bf_'), ...make(4, 'British', 'male', 'bm_')];
@@ -90,4 +90,47 @@ test('the sampler drops a late or superseded sample', async () => {
   const b = s.play('b'); const c = s.play('c'); waits.c('C'); waits.b('B');
   assert.equal(await c, true); assert.equal(await b, false);
   assert.deepEqual(played, ['C']);
+});
+
+// -- final review: the alert keyed on the saved provider, the announcer, the error line, one download at a time --
+
+test('the no-speaker alert follows the saved tool, never the pick, and never shows for Kokoro', () => {
+  assert.equal(showsNoSpeakerAlert({ provider: 'kokoro', enabled: true, active: false }), false);
+  assert.equal(showsNoSpeakerAlert({ provider: 'gone', enabled: true, active: false }), true);
+  assert.equal(showsNoSpeakerAlert({ provider: 'gone', enabled: false, active: false }), false);
+  assert.equal(showsNoSpeakerAlert({ provider: 'openrouter', enabled: true, active: true }), false);
+  assert.equal(showsNoSpeakerAlert(null), false);
+});
+
+test('the announcer says each state once: no progress ticks while downloading', () => {
+  const a = liveLine(local({ state: 'downloading', done: 1_000_000 }));
+  assert.equal(a, liveLine(local({ state: 'downloading', done: 300_000_000 })));
+  assert.equal(a, 'Downloading…');
+  assert.equal(liveLine(local({ state: 'ready' })), 'Downloaded.');
+  assert.equal(liveLine(local({ state: 'failed', error: 'disk' })), ERROR_LINES.disk);
+  assert.equal(liveLine(local()), 'The voice is not downloaded yet (354 MB).');
+});
+
+test('the error line is cleared when the state or the picked voice changes, not on a progress tick', () => {
+  const k = errorKey(local({ state: 'downloading', done: 1 }), 'af_heart');
+  assert.equal(k, errorKey(local({ state: 'downloading', done: 2 }), 'af_heart'));
+  assert.notEqual(k, errorKey(local({ state: 'ready' }), 'af_heart'));
+  assert.notEqual(k, errorKey(local({ state: 'downloading' }), 'bf_emma'));
+  assert.equal(errorKey(undefined, undefined), errorKey({}, undefined));
+});
+
+test('oneAtATime lets one call through until it ends', async () => {
+  const guard = oneAtATime(f => f());
+  let calls = 0; let release;
+  const slow = () => { calls += 1; return new Promise(r => { release = r; }); };
+  const first = guard(slow);
+  assert.equal(await guard(slow), undefined);
+  assert.equal(calls, 1);
+  release('done');
+  assert.equal(await first, 'done');
+  await guard(() => { calls += 1; });
+  assert.equal(calls, 2);
+  await assert.rejects(guard(() => Promise.reject(new Error('x'))));
+  await guard(() => { calls += 1; });
+  assert.equal(calls, 3);  // a failed call frees the guard
 });
