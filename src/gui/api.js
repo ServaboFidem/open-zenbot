@@ -142,6 +142,10 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     newConversation: botId => post(`/bots/${enc(botId)}/conversations`),
     designSystems: async () => (await get('/design-systems'))?.design_systems ?? [],  // [{slug, name, source: 'shipped' | 'yours', summary}]
     setDesignSystem: (convId, slug) => put(`/conversations/${enc(convId)}/design-system`, { slug: slug ?? null }),
+    designSlots: convId => get(`/conversations/${enc(convId)}/design/slots`),
+    saveDesignChanges: (convId, body) => post(`/conversations/${enc(convId)}/design/changes`, body),
+    restoreDesign: (convId, version, newest) => post(`/conversations/${enc(convId)}/design/restore`, { version, newest }),
+    designZipUrl: convId => `${base}/conversations/${enc(convId)}/design/export.zip`,
     selectConversation: (botId, id) => post(`/bots/${enc(botId)}/conversations/${enc(id)}/current`),
     conversationAttachmentUrl: (convId, attId) => `${base}/conversations/${enc(convId)}/attachments/${enc(attId)}`,
     // a single-use token that opens one attachment (conversation or room) with its scripts' network reach; the viewer asks on the user's click
