@@ -60,8 +60,8 @@ export function createFrameParser() {
 }
 
 // A queue of pieces: one plays at once when nothing is playing, otherwise after the piece before it. A piece that
-// cannot play is skipped, and its `onFail(played)` hears it (played: some piece has started since the last stop).
-// `stop` clears the queue, stops the sound and frees every object URL.
+// cannot play is skipped, and its `onFail(played)` hears it (played: some piece has started since the last stop, which
+// `started()` also answers). `stop` clears the queue, stops the sound and frees every object URL.
 export function createPlayer({ Audio, URL } = {}) {
   let queue = []; let audio = null; let url = ''; let started = false;
   function free() { if (url) { URL.revokeObjectURL(url); url = ''; } audio = null; }
@@ -79,7 +79,7 @@ export function createPlayer({ Audio, URL } = {}) {
     try {
       a = new Audio(piece.url); audio = a;
       a.onended = done(false); a.onerror = done(true);
-      Promise.resolve(a.play()).then(() => { started = true; }, done(true));
+      Promise.resolve(a.play()).then(() => { if (audio === a) started = true; }, done(true));  // a stopped or older piece counts for nothing
     } catch { audio = a; done(true)(); }
   }
   return {
@@ -91,12 +91,14 @@ export function createPlayer({ Audio, URL } = {}) {
       free();
     },
     playing() { return audio !== null || queue.length > 0; },
+    started() { return started; },
   };
 }
 
 // Fetches a reading piece by piece and queues each piece, unless it was cancelled (a new message, a newer reply,
 // the toggle off, another chat) while on its way; cancelling aborts the request, which stops the harness making
-// more. `onError(item, error, { played })` hears a reading that failed; an abort is never an error.
+// more. `onError(item, error, { played })` hears a reading that failed, once (played: some of it was heard, from the
+// player's `started()`); an abort is never an error, nor a reading a newer one replaced.
 export function createReader({ speak, player, onError }) {
   let seq = 0; let controller = null;
   function abort() { if (controller) { controller.abort(); controller = null; } }
@@ -107,16 +109,17 @@ export function createReader({ speak, player, onError }) {
       abort();
       player.stop();  // a newer reply: the last one stops now, not when this one arrives
       const own = new AbortController(); controller = own;
-      let played = false; let reported = false;
-      const failed = playedAudio => { if (mine === seq && !reported) { reported = true; onError(item, new Error('The reply could not be played.'), { played: playedAudio }); } };
+      let reported = false;
+      const report = (e, played) => { if (mine === seq && !reported) { reported = true; onError(item, e, { played }); } };
+      const failed = played => report(new Error('The reply could not be played.'), played);
       try {
         for await (const blob of speak(item.text, own.signal)) {
           if (mine !== seq) return;
           if (!isOn()) { own.abort(); return; }
-          player.enqueue(blob, failed); played = true;
+          player.enqueue(blob, failed);
         }
       } catch (e) {
-        if (mine === seq && !own.signal.aborted && e?.name !== 'AbortError') onError(item, e, { played });
+        if (!own.signal.aborted && e?.name !== 'AbortError') report(e, player.started());
       }
     },
   };

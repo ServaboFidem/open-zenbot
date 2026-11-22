@@ -135,7 +135,7 @@ test('the parser reads a 1 MB frame fed in 1 KB chunks', () => {
 });
 
 const pieces = async function* (items, then) { for (const i of items) yield i; if (then) throw then; };
-const quietPlayer = () => { const log = []; return { log, enqueue: b => log.push(['enqueue', b]), stop: () => log.push(['stop']), playing: () => false }; };
+const quietPlayer = (started = false) => { const log = []; return { log, enqueue: b => log.push(['enqueue', b]), stop: () => log.push(['stop']), playing: () => false, started: () => started }; };
 const enqueued = player => player.log.filter(l => l[0] === 'enqueue');
 
 test('a newer reading aborts the older request and none of its late pieces play', async () => {
@@ -168,14 +168,78 @@ test('the toggle off mid-stream stops enqueuing', async () => {
   assert.deepEqual(enqueued(player), [['enqueue', 'a']]);
 });
 
-test('an error reports whether any audio was queued, and an abort reports nothing', async () => {
+test('an error reports whether any audio started playing, and an abort reports nothing', async () => {
   const errors = [];
   const onError = (item, e, info) => errors.push([e.message, info.played]);
-  const run = speak => createReader({ speak, player: quietPlayer(), onError }).read({ sessionId: 's', text: 'x' }, () => true);
+  const run = (speak, started) => createReader({ speak, player: quietPlayer(started), onError }).read({ sessionId: 's', text: 'x' }, () => true);
   await run(() => pieces([], new Error('off')));
-  await run(() => pieces(['a', 'b'], new Error(END_MISSING)));
-  await run(() => pieces(['a'], Object.assign(new Error('aborted'), { name: 'AbortError' })));
+  await run(() => pieces(['a', 'b'], new Error(END_MISSING)), true);
+  await run(() => pieces(['a'], Object.assign(new Error('aborted'), { name: 'AbortError' })), true);
   assert.deepEqual(errors, [['off', false], [END_MISSING, true]]);
+});
+
+test('a missing end mark after pieces were queued but before any played reports played false', async () => {
+  const f = fakes(); const pending = [];
+  f.Audio.prototype.play = function () { return new Promise(r => { pending.push(r); }); };
+  const player = createPlayer(f); const errors = [];
+  const reader = createReader({ speak: () => pieces(['a', 'b'], new Error(END_MISSING)), player, onError: (item, e, info) => errors.push([e.message, info.played]) });
+  await reader.read({ sessionId: 's', text: 'x' }, () => true);
+  assert.deepEqual(errors, [[END_MISSING, false]]);  // two frames queued, nothing heard
+  pending[0](); await new Promise(r => setImmediate(r));
+  assert.equal(player.started(), true);  // the first piece starts after the error: it plays on
+  await reader.read({ sessionId: 's', text: 'x' }, () => true);
+  assert.deepEqual(errors, [[END_MISSING, false], [END_MISSING, false]]);  // a new reading stopped the old sound first
+});
+
+test('the player says when a piece has started, and stop forgets it', async () => {
+  const f = fakes(); const player = createPlayer(f);
+  assert.equal(player.started(), false);
+  player.enqueue('a');
+  assert.equal(player.started(), false);  // play() has not resolved yet
+  await new Promise(r => setImmediate(r));
+  assert.equal(player.started(), true);
+  player.stop();
+  assert.equal(player.started(), false);
+});
+
+test('a reading that failed after a piece started reports played true', async () => {
+  const f = fakes(); const player = createPlayer(f); const errors = [];
+  let go;
+  const speak = async function* () { yield 'a'; await new Promise(r => { go = r; }); throw new Error(END_MISSING); };
+  const going = createReader({ speak, player, onError: (item, e, info) => errors.push(info.played) }).read({ sessionId: 's', text: 'x' }, () => true);
+  await new Promise(r => setImmediate(r));
+  assert.equal(player.started(), true);
+  go(); await going;
+  assert.deepEqual(errors, [true]);
+});
+
+test('an old element\'s play resolving after stop and a new piece does not count as played', async () => {
+  const made = []; const resolvers = []; const heard = [];
+  class Held {
+    constructor(src) { this.src = src; made.push(this); }
+    play() { return new Promise((res, rej) => { resolvers.push({ res, rej }); }); }
+    pause() {}
+  }
+  const player = createPlayer({ Audio: Held, URL: { createObjectURL: () => `blob:${made.length + 1}`, revokeObjectURL() {} } });
+  player.enqueue('a');
+  player.stop();
+  player.enqueue('b', played => heard.push(played));
+  resolvers[0].res(); await new Promise(r => setImmediate(r));  // the stopped element's play() resolves late
+  assert.equal(player.started(), false);
+  resolvers[1].rej(new Error('no')); await new Promise(r => setImmediate(r));
+  assert.deepEqual(heard, [false]);
+});
+
+test('a playback failure then a missing end mark reports once', async () => {
+  const errors = []; let fail;
+  const player = { enqueue: (b, onFail) => { fail = onFail; }, stop() {}, playing: () => false, started: () => false };
+  let go;
+  const speak = async function* () { yield 'a'; await new Promise(r => { go = r; }); throw new Error(END_MISSING); };
+  const going = createReader({ speak, player, onError: (item, e, info) => errors.push(e.message) }).read({ sessionId: 's', text: 'x' }, () => true);
+  await new Promise(r => setImmediate(r));
+  fail(false);
+  go(); await going;
+  assert.deepEqual(errors, ['The reply could not be played.']);
 });
 
 test('a new reading stops the one playing before it fetches', async () => {

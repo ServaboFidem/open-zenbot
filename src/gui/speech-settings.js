@@ -93,7 +93,7 @@ export function speechPatch(t, form) {
     if (at > 0) { patch.provider = form.choice.slice(0, at); patch.model = form.choice.slice(at + 2); }
   }
   const v = typeof form.voice === 'string' ? form.voice.trim() : '';
-  if (v && v !== t.voice) patch.voice = v;
+  if (v && (v !== t.voice || t.provider === LOCAL)) patch.voice = v;  // leaving Kokoro: its saved voice is no provider's
   return patch;
 }
 
@@ -102,7 +102,17 @@ export function speechDirty(t, form) {
   if (form.choice !== savedChoice(t)) return true;
   if (isLocal(form.choice)) return voiceFor(t.local, form.localVoice) !== t.voice;
   const v = typeof form.voice === 'string' ? form.voice.trim() : '';
-  return !!v && v !== t.voice;
+  return !!v && (v !== t.voice || t.provider === LOCAL);
+}
+
+/** The tools as they are, with only the speech tool's `local` block (the download's progress) taken from a poll's
+ *  answer: a poll that was out while the user saved must not put the older settings back. Its `active` (which turns
+ *  true for Kokoro once the download ends) is taken too, but only when the poll saw the same switch, provider and model. */
+export function withLocal(tools, polled) {
+  const fresh = (polled || []).find(p => p && p.kind === 'tts');
+  if (!tools || !fresh || !fresh.local) return tools;
+  const same = t => t.enabled === fresh.enabled && t.provider === fresh.provider && t.model === fresh.model;
+  return tools.map(t => (t && t.kind === 'tts' ? { ...t, local: fresh.local, ...(same(t) ? { active: fresh.active } : {}) } : t));
 }
 
 /** Play a sample: a blob that arrives after stop() or after a newer play() is dropped. */

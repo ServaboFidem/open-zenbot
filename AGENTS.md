@@ -1123,7 +1123,9 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   kept. Error kinds: `network`, `refused` (403, 429), `source_changed`, `disk` (an `OSError`, or under 1 GB free on the
   drive) and `provider` (any other status). "Ready" means both files in place with the pinned sizes; the hash is checked
   again the first time the engine loads them in a harness run (a mismatch deletes the file and the state goes back to
-  absent). `voices-v1.0.bin` is a numpy archive that `kokoro-onnx` loads with pickle off (numpy's default): do not
+  absent). A file whose hash matched is remembered with its size and mtime (`_verified`, the stat taken before hashing
+  and kept only when it is the same after), and `verify()` and a download's "already in place" check hash it again
+  whenever either has changed since. `voices-v1.0.bin` is a numpy archive that `kokoro-onnx` loads with pickle off (numpy's default): do not
   change that.
 - **The engine** (`src/kokoro/engine.py`, `KokoroEngine`). The only module that imports `kokoro_onnx` and `onnxruntime`,
   and only inside its load function (`real_load`), so a harness that never speaks locally never imports them; numpy too
@@ -1167,12 +1169,12 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   piece.
 - **The pause between pieces** (`Speech._local_pieces`). `kokoro_onnx` trims the silence at both ends of what it makes
   (it puts its own pause only between sentences inside a piece), and the app starts the next piece when one ends, so
-  every Kokoro piece but the last of the reading ends in `PIECE_PAUSE_S` (0.25 s) of silence: 6,000 zero samples
-  (12,000 bytes) added to the PCM before it is wrapped as a WAV, so `Reading.wav()` carries them too. "Last" is the
-  last piece of the list `read` made; a piece the engine answers empty for is skipped with its pause, so the pause is
-  never a piece of its own (`read` drops pieces that clean to nothing, so the last listed piece is never empty in
-  practice). OpenRouter's one piece is untouched. The 0.25 s is a controller's choice, made without listening, for the
-  owner to tune.
+  every Kokoro piece the reading yields but the first begins with `PIECE_PAUSE_S` (0.25 s) of silence: 6,000 zero
+  samples (12,000 bytes) put before the PCM before it is wrapped as a WAV, so `Reading.wav()` carries them too. The
+  pause goes before a piece, not after one, so the reading never ends on a pause, even when the pieces after the last
+  one yielded come back empty, and no piece waits for the next to be made. A piece the engine answers empty for is
+  skipped with its pause, so the pause is never a piece of its own. OpenRouter's one piece is untouched. The 0.25 s is
+  a controller's choice, made without listening, for the owner to tune.
 - **A reading** (`Speech.read`, awaited, then `Reading.pieces()`). `read` does every check and the Narrator call before
   the answer starts, so a failure with a known cause is a plain refusal with its sentence: off, no Narrator, no key
   (not asked for `kokoro`), the Narrator failing or answering nothing (502); for `kokoro` a model not ready is 409 "The
@@ -1213,9 +1215,11 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   "Already downloading."; at once when ready. `DELETE /speech/local/model`: unloads the engine (waiting for a load or
   synthesis in flight), removes both files and any part file, answers the status; 409 "Wait for the download to
   finish." while one runs, and 409 "The voice could not be removed. Close anything using it and try again." when a
-  file remains. `POST /speech/local/sample` (`{voice}`, at most 40 characters): speaks one fixed sentence
+  file remains. `POST /speech/local/sample` (`{voice}`): speaks one fixed sentence
   held in code ("Good morning. Here is how this voice sounds when it reads a reply aloud.") with no Narrator and answers
-  `audio/wav` with `nosniff` and `no-store`; 422 "Pick a voice from the list." for a voice not in the table; 409 with
+  `audio/wav` with `nosniff` and `no-store`; 422 "Pick a voice from the list." for a voice not in the table, and for a
+  voice that is missing, not a string, empty or over 40 characters (checked in the route, not by the body's model, so
+  the 422 never echoes the body, an extra `text` field included); 409 with
   the not-downloaded sentence; it works whether Read aloud is on or off and takes no text.
 - **The GUI** (`src/gui/speech.js`, `speech-settings.js`, `ReadAloudLocal.jsx`, wired in `app.jsx`). The toggle is
   remembered in `localStorage` (`openzenbot.speakReplies`). Only a session started from that chat while the toggle is on
@@ -1225,15 +1229,20 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   reply, a new message, turning the toggle off or changing bot or conversation stops playback, frees every object URL
   and aborts the request, which ends the making of the rest. The page plays blob URLs, so `index.html`'s CSP allows
   `blob:` in `media-src`. A failure before any audio shows "Could not read this reply aloud." under the reply; one after
-  some audio played shows "The rest of this reply could not be read aloud."; a piece the browser cannot play is reported
-  once. The card: "Speech model" is one select with a first group "On this computer" holding "Kokoro (free, no key)",
+  some audio played shows "The rest of this reply could not be read aloud." ("played" is the player's `started()`: a
+  piece of this reading began playing, not merely arrived; a late `play()` of a stopped piece counts for nothing); a
+  reading reports one failure at most, a piece the browser cannot play and a stream that then ends early included. The card: "Speech model" is one select with a first group "On this computer" holding "Kokoro (free, no key)",
   then the provider groups. With Kokoro picked, a status line and button by state (not downloaded: Download; "Downloading…
-  120 of 354 MB", read from the tools settings every 2 s; failed: a sentence per error kind and Try again; ready:
+  120 of 354 MB", read from the tools settings every 2 s, of which only the speech tool's `local` block is taken, and
+  its `active` when the poll saw the same switch, provider and model (`withLocal`; a poll answer is dropped when a save,
+  download, removal or newer poll came after it was sent, `toolSeq` in `app.jsx`); failed: a sentence per error kind and Try again; ready:
   "Downloaded." and Remove, which asks "Remove the downloaded voice? Read aloud will need it again."), a voice select of
   the 28 voices (American then British, female then male), **Play a sample** (the picked voice, saved or not; off until
   the model is ready) and a line saying the Narrator still rewrites the reply on its own model. The Kokoro voice and a
-  provider's free-text voice are kept apart in the form (`speechForm`, `speechPatch`, `speechDirty`), and a sample that
-  arrives after the card is gone is dropped (`createSampler`). The status line is not a live region: a visually hidden
+  provider's free-text voice are kept apart in the form (`speechForm`, `speechPatch`, `speechDirty`; leaving a saved
+  Kokoro for a provider model, any voice typed is sent, even one spelled like the Kokoro voice, and a blank one is left
+  to the route's default), and a sample that arrives after the card is gone or another voice is picked is dropped, and
+  one playing then stops (`createSampler`, stopped by `ReadAloudLocal.jsx`). The status line is not a live region: a visually hidden
   one (`.sr-only`, `role="status"`) says `liveLine`, which is the status line except "Downloading…" while downloading,
   so a screen reader hears the start, the end and a failure but not each 2 s progress tick. The voice select takes its
   accessible name from its Field only. The card's error line is cleared when the model's state or the picked voice
@@ -1264,8 +1273,10 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   - `split` still ends a sentence at an abbreviation, and only text under 12 characters is joined to a neighbour:
     "Please call Dr. Smith about the results." gives the pieces "Please call Dr." and "Smith about the results.", so a
     pause falls after "Dr.".
-  - The pause goes by position in the list, not by what was made: had the last listed piece come back empty, the
-    reading would end on a pause (`read` drops such pieces before it starts, so this is not expected).
+  - Stopping while `Speech.read` is still awaiting the Narrator, or while the engine's start waits its turn, does not
+    cancel that work: the response that notices the app closing the connection does not exist until `read` returns. The
+    Narrator's call completes (one chat-model call) and the engine may load; nothing is spoken and no audio is sent.
+    This was so for the Narrator before local speech too. Watching for the disconnect during `read` is not built.
   - The 354 MB hash is computed, and the file written, on the event loop in 1 MiB steps while downloading.
   - In a screen reader's browse mode the status is read twice: the visible line and the hidden live region.
   - Remove unloads the engine first, but a new reading or sample between the unload and the delete can load it again

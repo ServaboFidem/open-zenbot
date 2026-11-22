@@ -134,3 +134,40 @@ test('oneAtATime lets one call through until it ends', async () => {
   await guard(() => { calls += 1; });
   assert.equal(calls, 3);  // a failed call frees the guard
 });
+
+// -- PR review: the poll's merge, the Kokoro voice typed for a provider model --
+
+import { withLocal } from '../../src/gui/speech-settings.js';
+
+test('a poll replaces only the speech tool\'s download progress', () => {
+  const image = { id: 'images', kind: 'image', enabled: true, model: 'm' };
+  const speech = { id: 'speech', kind: 'tts', enabled: false, provider: 'kokoro', voice: 'bf_emma', local: local({ state: 'downloading', done: 1 }) };
+  const tools = [image, speech];
+  const polled = [{ ...image, enabled: false, model: 'other' }, { ...speech, enabled: true, provider: 'openrouter', voice: 'Zephyr', local: local({ state: 'downloading', done: 9 }) }];
+  const got = withLocal(tools, polled);
+  assert.equal(got[0], image);
+  assert.deepEqual({ ...got[1], local: undefined }, { ...speech, local: undefined });
+  assert.equal(got[1].local.done, 9);
+  assert.equal(speech.local.done, 1);  // the state given is not changed in place
+  assert.equal(withLocal(tools, [image]), tools);
+  assert.equal(withLocal(tools, [{ ...speech, local: undefined }]), tools);
+  assert.equal(withLocal(tools, null), tools);
+  assert.equal(withLocal(null, polled), null);
+});
+
+test('a poll that saw the same settings also brings the tool\'s active flag (Kokoro is on once downloaded)', () => {
+  const speech = { id: 'speech', kind: 'tts', enabled: true, provider: 'kokoro', model: 'kokoro-v1.0', voice: 'af_heart', active: false, local: local({ state: 'downloading' }) };
+  const done = { ...speech, active: true, local: local({ state: 'ready' }) };
+  assert.equal(withLocal([speech], [done])[0].active, true);
+  assert.equal(withLocal([{ ...speech, enabled: false }], [done])[0].active, false);  // switched off since: not taken
+  assert.equal(withLocal([{ ...speech, enabled: false }], [done])[0].local.state, 'ready');
+});
+
+test('saved Kokoro to a provider model: a typed voice is sent even when it equals the Kokoro voice', () => {
+  const f = { ...speechForm(kok), choice: 'openrouter::m', voice: 'af_heart' };
+  assert.deepEqual(speechPatch(kok, f), { provider: 'openrouter', model: 'm', voice: 'af_heart' });
+  assert.equal(speechDirty(kok, f), true);
+  assert.deepEqual(speechPatch(kok, { ...f, voice: '  ' }), { provider: 'openrouter', model: 'm' });  // blank: the route's default
+  assert.deepEqual(speechPatch(prov, { ...speechForm(prov), voice: 'Zephyr' }), {});  // same provider: an unchanged voice is not sent
+  assert.equal(speechDirty(prov, { ...speechForm(prov), voice: 'Zephyr' }), false);
+});

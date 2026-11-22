@@ -16,7 +16,8 @@ export function ReadAloudLocal({ api, tool, voice, online, onVoice, onStatus, no
   if (!sampler.current) sampler.current = createSampler({ fetchSample: v => api.speechSample(v), player: player.current });
   const downloadOnce = useRef(null);
   if (!downloadOnce.current) downloadOnce.current = oneAtATime(f => f());  // a fast double click sends one request
-  useEffect(() => () => sampler.current.stop(), []);
+  const picked = voiceFor(local, voice);
+  useEffect(() => () => sampler.current.stop(), [picked]);  // another voice, or the card gone: the old sample stops
   const key = errorKey(local, voice);
   useEffect(() => { setError(''); }, [key]);  // a new state or voice makes the old error line stale
 
@@ -32,7 +33,7 @@ export function ReadAloudLocal({ api, tool, voice, online, onVoice, onStatus, no
   async function sample() {
     setBusy('sample'); setError('');
     try {
-      await sampler.current.play(voiceFor(local, voice), () => setError('The sample could not be played.'));
+      await sampler.current.play(picked, () => setError('The sample could not be played.'));
     } catch (e) { setError(e && e.message ? e.message : 'The sample could not be made.'); }
     finally { setBusy(''); }
   }
@@ -54,7 +55,7 @@ export function ReadAloudLocal({ api, tool, voice, online, onVoice, onStatus, no
     {error && <p className="form-error" role="alert">{error}</p>}
     <Field label="Voice">
       {control => <div className="od-row">
-        <select {...control} value={voiceFor(local, voice)} disabled={!online} onChange={e => onVoice(e.target.value)}>
+        <select {...control} value={picked} disabled={!online} onChange={e => onVoice(e.target.value)}>
           {voiceGroups(local.voices).map(g => <optgroup key={g.label} label={g.label}>{g.voices.map(v => <option key={v.name} value={v.name}>{v.label}</option>)}</optgroup>)}
         </select>
         <Button type="button" appearance="secondary" disabled={!online || !canSample(local, busy === 'sample')} onClick={sample}>Play a sample</Button>
