@@ -18,14 +18,15 @@ name each top-level system and run the harness and the tests.
 | `src/mail/` | AgentMail, ZenBot's own email address (read-only): settings and the owner-only key (`settings.py`), the plain-`httpx` client (`agentmail.py`), the service (`service.py`) and the `/agentmail` routes (`routes.py`); see `### AgentMail` |
 | `src/sonos/` | Sonos control over SoCo: settings (`settings.py`), the device boundary (`devices.py`), the service that finds speakers (`service.py`), the `sonos_*` tools and the volume ceiling (`tools.py`) and the `/sonos` routes (`routes.py`); see `### Sonos` |
 | `src/speakers/` | Wi-Fi speakers (finding only, nothing played): settings and the speaker record (`settings.py`), the three finders behind one `Finder` protocol (`finders.py`, the only importer of pyatv, pychromecast, async_upnp_client and zeroconf), the service with a look per speaker type and the one default (`service.py`) and the `/speakers` routes (`routes.py`); see `### Wi-Fi speakers` |
+| `src/kokoro/` | Speech made on this computer by Kokoro on onnxruntime, for Read aloud: the pinned model files, their download and removal (`model.py`: `KokoroModel`), and the engine with the 28 English voices (`engine.py`: `KokoroEngine`, the only importer of `kokoro_onnx` and `onnxruntime`); see `### Reading replies aloud`. The splitting into pieces and the reading itself are in `src/generation/speech.py`, the routes in `src/harness/speech_routes.py` |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, with the editor `DesignEditor.jsx`, `TweaksPanel.jsx`, `DesignPendingBar.jsx`, `DesignCompare.jsx` and `ExportMenu.jsx`, and its unsaved changes decided in `design-edits.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, the approval dialog `ApprovalDialog.jsx` + `approval-dialog.js` (any pending approval opens it over whatever page is open, oldest first; `app.jsx` reads `GET /approvals` every 5 s while online and on a live `approval_request` event; closing it or Decide later decides nothing and puts that request off until a reload; it does not open on the Approvals page; never seen on screen with a real approval), program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; `export-design.cjs` renders a design as PDF or PNG in an offscreen window (`makeExportWindow` and `exportSession` in `main.cjs`); `open-vault.cjs` opens the vault's root in the OS file manager for the home page's Browse your vault button, shown in the desktop app only: the page sends no path, the folder is `ZEN_VAULT` as the main process reads it, checked by `tests/gui/open-vault.test.mjs`; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (AgentMail: the section at the top of Settings > Connected apps `MailSettings.jsx`, the AgentMail page `MailPage.jsx` (shown in the navigation below Conversations once a key is saved and an inbox chosen), their decisions in `mail.js` and styles in `mail.css`, through `mail-api.js`) (Sonos: the section of Settings > Connected apps `SonosSettings.jsx`, its decisions in `sonos.js`, and the Music > Sonos page `SonosPage.jsx` with its decisions in `sonos-panel.js` and styles in `sonos.css`, both through `sonos-api.js`) (Wi-Fi speakers: the Settings > Wi-Fi speakers panel `WifiSpeakers.jsx`, its decisions in `wifi-speakers.js`, through `speakers-api.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, with the editor `DesignEditor.jsx`, `TweaksPanel.jsx`, `DesignPendingBar.jsx`, `DesignCompare.jsx` and `ExportMenu.jsx`, and its unsaved changes decided in `design-edits.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, the approval dialog `ApprovalDialog.jsx` + `approval-dialog.js` (any pending approval opens it over whatever page is open, oldest first; `app.jsx` reads `GET /approvals` every 5 s while online and on a live `approval_request` event; closing it or Decide later decides nothing and puts that request off until a reload; it does not open on the Approvals page; never seen on screen with a real approval), program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; `export-design.cjs` renders a design as PDF or PNG in an offscreen window (`makeExportWindow` and `exportSession` in `main.cjs`); `open-vault.cjs` opens the vault's root in the OS file manager for the home page's Browse your vault button, shown in the desktop app only: the page sends no path, the folder is `ZEN_VAULT` as the main process reads it, checked by `tests/gui/open-vault.test.mjs`; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (AgentMail: the section at the top of Settings > Connected apps `MailSettings.jsx`, the AgentMail page `MailPage.jsx` (shown in the navigation below Conversations once a key is saved and an inbox chosen), their decisions in `mail.js` and styles in `mail.css`, through `mail-api.js`) (Sonos: the section of Settings > Connected apps `SonosSettings.jsx`, its decisions in `sonos.js`, and the Music > Sonos page `SonosPage.jsx` with its decisions in `sonos-panel.js` and styles in `sonos.css`, both through `sonos-api.js`) (Wi-Fi speakers: the Settings > Wi-Fi speakers panel `WifiSpeakers.jsx`, its decisions in `wifi-speakers.js`, through `speakers-api.js`) (Read aloud: the card on Settings > Harness Tools, its voice on this computer in `ReadAloudLocal.jsx`, its decisions in `speech-settings.js`, and the player and reader in `speech.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) |
 | `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`); a prompt can also set `closed: true` (only the tool groups in its `mcps`, no built-in tool, never in a room: `event-scout.md`), or `narrates: true` (the Narrator, `narrator.md`: asked directly to rewrite replies for speech, never given a task) |
 | `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+), and `fetch-uv.mjs` (downloads the pinned uv into `build/bin/` for the installers). Packaging itself is `electron-builder.yml`, `build/` (icon, the .deb's AppArmor profile `apparmor-profile`, the NSIS include `installer.nsh`) and `packaging/harness/` (the CPU-only `pyproject.toml` and `uv.lock` the installed app uses) |
 | `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`); `skills/events-digest/` (the scout's weekly run); `skills/sonos-morning/` (ZenBot's morning music routine) |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
-| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`; direct changes in `tests/test_studio_edits.py`, `tests/test_studio_edit_routes.py` and `tests/test_design_tweaks.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `design-edits.test.mjs`, `design-bridge.test.mjs`, `export-design.test.mjs`, `save-media.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_findlocal.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` and the FindLocal stand-in `FakeFindLocal` are in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `all-events.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs`; dreaming in `tests/test_dream.py` and `tests/test_dream_routes.py`, GUI `tests/gui/dream.test.mjs` and `idle-report.test.mjs`; the approval dialog's rules in `tests/gui/approval-dialog.test.mjs`; AgentMail in `tests/mail/` (its stand-in `FakeAgentMail` is in `tests/mail/conftest.py`), GUI `tests/gui/mail.test.mjs` and `mail-api.test.mjs`; Sonos in `tests/sonos/` (its stand-in `FakeSpeakers` is in `tests/sonos/conftest.py`), GUI `tests/gui/sonos.test.mjs`, `sonos-panel.test.mjs` and `sonos-api.test.mjs`; Wi-Fi speakers in `tests/speakers/` (finders get stand-ins and an `httpx.MockTransport`, the service a `FakeFinder`), GUI `tests/gui/wifi-speakers.test.mjs` and `speakers-api.test.mjs` |
+| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`; direct changes in `tests/test_studio_edits.py`, `tests/test_studio_edit_routes.py` and `tests/test_design_tweaks.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `design-edits.test.mjs`, `design-bridge.test.mjs`, `export-design.test.mjs`, `save-media.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_findlocal.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` and the FindLocal stand-in `FakeFindLocal` are in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `all-events.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs`; dreaming in `tests/test_dream.py` and `tests/test_dream_routes.py`, GUI `tests/gui/dream.test.mjs` and `idle-report.test.mjs`; the approval dialog's rules in `tests/gui/approval-dialog.test.mjs`; AgentMail in `tests/mail/` (its stand-in `FakeAgentMail` is in `tests/mail/conftest.py`), GUI `tests/gui/mail.test.mjs` and `mail-api.test.mjs`; Sonos in `tests/sonos/` (its stand-in `FakeSpeakers` is in `tests/sonos/conftest.py`), GUI `tests/gui/sonos.test.mjs`, `sonos-panel.test.mjs` and `sonos-api.test.mjs`; Wi-Fi speakers in `tests/speakers/` (finders get stand-ins and an `httpx.MockTransport`, the service a `FakeFinder`), GUI `tests/gui/wifi-speakers.test.mjs` and `speakers-api.test.mjs`; local speech in `tests/kokoro/` (`test_model.py`: the download through an `httpx.MockTransport`; `test_engine.py`: a fake library object, never `kokoro_onnx`) and `tests/test_speech.py`, GUI `tests/gui/speech.test.mjs` and `speech-settings.test.mjs` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
 | `.github/` | Workflows: `stale.yml`, and `release.yml` (a `v*` tag builds the .deb and the Windows installer and opens a draft release; a manual run only builds them; see `## Installed app`) |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
@@ -127,8 +128,8 @@ Read-Only one, a Read-Only folder holding a Full Access one, or a folder inside 
 (Full Access inside the vault or `ZEN_FS_ROOT` too) is refused with the reason. Going the other way, a
 new parent with the same access as folders already inside it replaces them, since it covers them. Don't
 write user folders into `mcp.json`. Broad folders (a drive root, the home folder or above it, system
-folders) are refused by `allowed_folders.check`, and so are the harness's settings, ledger, music and calendar
-folders, anything inside them, and anything holding them (`private_folders`); keep both rules when adding
+folders) are refused by `allowed_folders.check`, and so are the harness's settings, ledger, music, calendar and
+models folders, anything inside them, and anything holding them (`private_folders`); keep both rules when adding
 other ways in (`allowed_folders.reachable` gives the same readable, writable and private lists).
 
 ### What bots can and cannot reach
@@ -136,15 +137,16 @@ other ways in (`allowed_folders.reachable` gives the same readable, writable and
 The `files` server is rooted at the vault, so a bot can read **and write** anything inside it. Keep
 nothing there a bot must not see or change. The harness's own folders sit beside the vault instead. The
 vault is `ZEN_VAULT` (default `~/.zen-agents/vault`), and the others take its name: `ZEN_VAULT=~/x/notes`
-gives `notes-ledger/`, `notes-music/`, `notes-calendar/` and `notes-settings/`.
+gives `notes-ledger/`, `notes-music/`, `notes-calendar/`, `notes-models/` and `notes-settings/`.
 
 | Folder (default under `~/.zen-agents/`) | Holds | Owned by |
 | --- | --- | --- |
 | `vault/` | Work docs (`docs/`), `delegated/` (job folders for `delegate`), uploads, browser output (`browser/`), anything bots save; `designs/` (studio designs; each folder also holds `images/` and `.versions/`, whose `before-<n>.<name>` files are the working file as it was before a helper's change) and `design-systems/` (the user's own); `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
 | `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations, `dreams.json` (dreaming progress) | `src/memory/ledger.py` `ledger_path_for` |
+| `vault-models/` | `kokoro/`: the Kokoro model (`kokoro-v1.0.onnx`) and voices (`voices-v1.0.bin`), fetched by `POST /speech/local/download`; a `.part` file only while a download runs | `src/vault_settings.py` `models_dir`; a private folder (`allowed_folders.private_folders`), so no bot tool reaches it |
 | `vault-music/` | Music database (`music.db`), the Soundlore atlas, cover images | `src/music/settings.py` `music_dir`; bots never reach it (`allowed_folders.private_folders`) |
 | `vault-calendar/` | Calendar database (`calendar.db`: events, calendars, sync state) | `src/events/settings.py` `calendar_dir`; a private folder (`allowed_folders.private_folders`), so no bot tool reaches the file. The `/calendar` routes are another matter: see "Bots and the calendar" under `### The calendar and Google`; also holds `discover.db` (the discovered events, digests, cards and the events added from the pool) and `discover-images/` (card pictures, and pool pictures in `discover-images/pool/`), private like `calendar.db` |
-| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths and image generation), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `events.json` (event discovery: place, ticked categories, interests, on or off, the FindLocal city and its time zone), `events_keys.json` (the FindLocal key, owner-only), `agentmail.json` (ZenBot's chosen AgentMail inbox: its id and address; no secret), `agentmail_keys.json` (the AgentMail API key, owner-only), `sonos.json` (Sonos: on or off, the volume ceiling, the speaker addresses last found; no secret), `wifi_speakers.json` (Wi-Fi speakers: the three switches, the default speaker's key, the speakers each type last found with their addresses; no secret), `dream.json` (dreaming: on or off and the idle minutes), `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
+| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths, image generation and Read aloud), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `events.json` (event discovery: place, ticked categories, interests, on or off, the FindLocal city and its time zone), `events_keys.json` (the FindLocal key, owner-only), `agentmail.json` (ZenBot's chosen AgentMail inbox: its id and address; no secret), `agentmail_keys.json` (the AgentMail API key, owner-only), `sonos.json` (Sonos: on or off, the volume ceiling, the speaker addresses last found; no secret), `wifi_speakers.json` (Wi-Fi speakers: the three switches, the default speaker's key, the speakers each type last found with their addresses; no secret), `dream.json` (dreaming: on or off and the idle minutes), `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
 
 A new setting goes in `settings_dir(vault_root) / "<name>.json"`, never under the vault. Secrets and
 `allowed_folders.json` (which decides what `files` may reach) must stay out of the vault: a bot that could
@@ -1084,9 +1086,13 @@ finders for ones that find nothing, and `tests/speakers/` passes its own. Tests:
 ### Reading replies aloud
 
 A Read aloud button in the chat header reads each new reply aloud on the computer's own speakers. The Narrator bot
-rewrites the reply for the ear, then OpenRouter's text-to-speech speaks it. Wi-Fi speakers (AirPlay, Chromecast,
-DLNA) are found (`### Wi-Fi speakers`) but not yet played to. Design: `docs/superpowers/specs/2026-11-21-narrator-speech-design.md` (git-ignored, on the
-computer the work was done on).
+rewrites the reply for the ear, then a voice speaks it: a speech model on a provider (OpenRouter's text-to-speech), or
+Kokoro, a voice made on this computer. Wi-Fi speakers (AirPlay, Chromecast, DLNA) are found (`### Wi-Fi speakers`) but
+not yet played to. Designs: `docs/superpowers/specs/2026-11-21-narrator-speech-design.md` and
+`docs/superpowers/specs/2026-11-22-local-speech-kokoro-design.md` (both git-ignored, on the computer the work was done
+on). `docs/superpowers/specs/2026-11-22-airplay-read-aloud-design.md` (playing on a Wi-Fi speaker) is not built; it will
+sit on `Reading.wav()` and needs the two edits the Kokoro design lists. A Credits panel in Settings linking Kokoro,
+kokoro-onnx and phonemizer with their licences is planned and not built.
 
 - **The Narrator** (`bot-prompts/narrator.md`, `narrates: true`, set only in the file; `bot_prompts.parse` refuses it
   beside `studio`, `places`, `closed`, skills or mcps). It is asked directly with one completion
@@ -1094,36 +1100,167 @@ computer the work was done on).
   as content, the fence longer than any backtick run in the reply), on its own model (Edit bot) or the chat model
   (`Harness._model_for`). No task, session, tools or conversation, so dreaming never reads a reply as the user's words.
   `POST /bots/{id}/tasks` answers 409 for it, a routine on it fails, the orchestrator never asks about it and it never
-  joins a room (`RoomService.joinable`). Its chat page shows a note instead of the composer.
-- **Speech** (`src/providers/speech.py` `OpenRouterSpeech`): `POST /api/v1/audio/speech` with `response_format: "pcm"`
-  (Gemini TTS answers only PCM), wrapped in a WAV header (`pcm_to_wav`: 24 kHz, 16-bit, mono, assumed). A 200 answer
-  with a JSON content type is refused as no audio (`OpenRouterHttp.post_bytes`).
-- **Settings** in `vault-settings/tools.json` under `speech` (`SpeechConfig`: `provider` `openrouter`, `model`
-  `google/gemini-3.8-flash-lite-tts`, `voice` `Zephyr` (`VOICE_RE`), `enabled`), the Read aloud card on Settings >
-  Harness Tools; the key is the speech provider's, resolved per call (`Harness._speech_key_ref`).
-- **Routes** (`src/harness/speech_routes.py`): `POST /speech` (`{text}`, 1 to 20,000 characters, else 422; the
-  Narrator gets at most 12,000 and its answer is cut to 4,000) answers `audio/wav` with `nosniff` and `no-store`; 409
-  with a sentence when off, without a Narrator or without a key, 502 when the Narrator or the speech model fails or the
-  Narrator answers nothing. `PUT /settings/tools/speech` (`{enabled?, provider?, model?, voice?}`; a new model must be an
-  enabled `tts` model). `GET /settings/tools` lists it with `kind: "tts"` beside image generation (`kind: "image"`).
-- **The GUI** (`src/gui/speech.js`, wired in `app.jsx`): the toggle is remembered in `localStorage`
-  (`openzenbot.speakReplies`). Only a session started from that chat while the toggle is on is read (`toSpeak`), never
-  an old reply, a routine run or a room. A newer reply, a new message, turning the toggle off or changing bot or
-  conversation stops playback. The page plays a blob URL, so `index.html`'s CSP allows `blob:` in `media-src`. A failure
-  shows "Could not read this reply aloud." under the reply.
-- **Ledger.** Kind `speech`: `chars_in`, `chars_out`, `bytes`, `model`, `voice`, `narrator_model`, and on failure
-  `stage` (`narrate` or `speak`) and `error` (a `failure_kind`, or `empty`). Never the text. With tracing on, the
-  Narrator's call and the speech call are traced like every model call, the reply and the spoken text with them.
-- **Unverified.** No request has reached OpenRouter's speech endpoint: the tests use a mock transport. Whether
-  `google/gemini-3.8-flash-lite-tts` answers 24 kHz mono PCM, and takes `Zephyr`, is from OpenRouter's docs, not a call.
-  The Narrator prompt has never run with a model. The button, the playback and the settings card have not been seen on
-  screen: only `npm test` and the build have run them.
+  joins a room (`RoomService.joinable`). Its chat page shows a note instead of the composer. With Kokoro the Narrator
+  still runs on its model, so the reply's text still goes to that model's provider.
+- **Speech models** (`SpeechConfig.provider`). `openrouter` (any provider-store entry of kind `openrouter`):
+  `src/providers/speech.py` `OpenRouterSpeech`, `POST /api/v1/audio/speech` with `response_format: "pcm"` (Gemini TTS
+  answers only PCM), wrapped in a WAV header (`pcm_to_wav`: 24 kHz, 16-bit, mono, assumed); a 200 answer with a JSON
+  content type is refused as no audio (`OpenRouterHttp.post_bytes`). `kokoro`: a reserved provider id
+  (`generation/speech.py` `LOCAL`), never looked up in `providers.json` (a provider entry of that id changes nothing),
+  with the fixed model `kokoro-v1.0` and no key. Both speak 24 kHz mono 16-bit audio.
+- **The Kokoro model files** (`src/kokoro/model.py`, `KokoroModel`), two files in `<vault>-models/kokoro/`, pinned in
+  code by URL, size and SHA-256, from `https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/`:
+  `kokoro-v1.0.onnx` (325,505,369 bytes, `beb0d1848dee9a49da392cc3df26958d46cfa35d321edf434f52949153f0df3a`) and
+  `voices-v1.0.bin` (28,214,398 bytes, `bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d`). Download:
+  one at a time, in the background, `httpx` streaming with the harness's own client and 30 s timeouts; redirects are
+  followed by hand, at most 5, only to `https` on `github.com`, `objects.githubusercontent.com` or
+  `release-assets.githubusercontent.com`, anything else fails as `source_changed`; written to `<name>.part` (new, not
+  through a link), stopped the moment it passes the pinned size, hashed as written, renamed into place only when size
+  and hash both match, the part file removed on any failure; a file already in place with the right size and hash is
+  kept. Error kinds: `network`, `refused` (403, 429), `source_changed`, `disk` (an `OSError`, or under 1 GB free on the
+  drive) and `provider` (any other status). "Ready" means both files in place with the pinned sizes; the hash is checked
+  again the first time the engine loads them in a harness run (a mismatch deletes the file and the state goes back to
+  absent). `voices-v1.0.bin` is a numpy archive that `kokoro-onnx` loads with pickle off (numpy's default): do not
+  change that.
+- **The engine** (`src/kokoro/engine.py`, `KokoroEngine`). The only module that imports `kokoro_onnx` and `onnxruntime`,
+  and only inside its load function, so a harness that never speaks locally never imports them. `speak(text, voice)`
+  makes one piece of text as 16-bit mono 24 kHz PCM, in `asyncio.to_thread` under one lock: one synthesis at a time,
+  harness-wide. The model loads on first use (CPU provider only) and is dropped after `IDLE_S` (10 minutes) without a
+  call; unloading and removing wait for a synthesis in flight. A synthesis in a thread cannot be cancelled: when a
+  reading stops, the piece in flight finishes, its audio is thrown away and nothing further starts. The voices are a
+  fixed table of Kokoro's 28 English voices (American `a*`, British `b*`, female `*f_`, male `*m_`); nothing reads names
+  from the voices file, and a voice not in the table is refused before the engine is touched. A failure of the library
+  is a `ProviderError`, logged by class name only. Text is cleaned first (control characters removed, whitespace
+  collapsed); a piece empty after that is skipped.
+- **Splitting** (`generation/speech.py` `split`). The Narrator's answer (at most 4,000 characters) is split at sentence
+  ends and line breaks, in order: the first piece is the first sentence alone so speech starts fast, later pieces join
+  sentences up to about `PIECE_AIM` (300) characters, no piece is over `PIECE_MAX` (400) (a longer sentence is cut at a
+  comma, else a space), and nothing is dropped. OpenRouter's one WAV is its reading's only piece.
+- **A reading** (`Speech.read`, awaited, then `Reading.pieces()`). `read` does every check and the Narrator call before
+  the answer starts, so a failure with a known cause is a plain refusal with its sentence: off, no Narrator, no key
+  (not asked for `kokoro`), the Narrator failing or answering nothing (502); for `kokoro` a model not ready is 409 "The
+  voice for this computer is not downloaded. Download it in Settings > Harness Tools."; the engine is made ready inside
+  `read` (library imported, hashes checked the first time, model loaded), a hash mismatch being that 409 and any other
+  failure to start 502 "The voice on this computer could not be started. Remove it and download it again in Settings >
+  Harness Tools."; a narration that is empty after cleaning is 502; for OpenRouter the speech call itself runs inside
+  `read`, so a lapsed key or a rate limit still answers 502 `SPEAK_FAILED`. Only the synthesis of Kokoro's pieces
+  happens in the stream. `Reading.pieces()` yields one complete WAV per piece for both providers; a failure after the
+  first piece ends it by raising. `Reading.wav()` awaits every piece and answers one WAV (the PCM under one header),
+  which `Speech.speak` returns and the AirPlay design will hand to a speaker. `active` is `enabled`, a provider that can
+  speak, and for `kokoro` the model ready.
+- **Settings** in `vault-settings/tools.json` under `speech` (`SpeechConfig`: `provider` (default `openrouter`),
+  `model` (`google/gemini-3.8-flash-lite-tts`, or `kokoro-v1.0` for `kokoro`), `voice` (default `Zephyr`; `VOICE_RE`;
+  for `kokoro` it must be in the voice table), `enabled`), the Read aloud card on Settings > Harness Tools; the key is
+  the speech provider's, resolved per call (`Harness._speech_key_ref`). `PUT /settings/tools/speech` takes
+  `provider: "kokoro"` without a provider-store entry, fixes the model, and may save it before the model is downloaded
+  (Read aloud is then not active); a voice in the body is checked and never replaced, and the swap happens only when
+  the provider changes and the body sends no voice: to Kokoro a non-Kokoro voice becomes `af_heart`, back to a provider
+  a Kokoro voice becomes `Zephyr` (and a model left with Kokoro goes back to the default). The voice of the other side
+  is not remembered. `GET /settings/tools` lists the tool with `kind: "tts"`, `providers` (the ids that can speak,
+  `kokoro` first) and a `local` block: `state` (`absent`, `downloading`, `ready` or `failed`), `done`, `total`
+  (353,719,767), `error` (a kind), `voices` (`name`, `label`, `accent`, `gender`) and `default_voice`.
+- **Routes** (`src/harness/speech_routes.py`). `POST /speech` (`{text}`, 1 to 20,000 characters, else 422; the Narrator
+  gets at most 12,000 and its answer is cut to 4,000) answers `200 application/x-zenbot-speech` with `nosniff` and
+  `no-store`, whichever provider: a body of frames, each a 4-byte big-endian length then that many bytes of one WAV,
+  and a frame of length 0 as the end mark, always the last thing on success; a body that ends without it means the
+  reading failed part-way. No frame is over `FRAME_MAX` (64,000,000 bytes) and the app refuses a larger length as a
+  broken stream. Refusals come before the response starts as a plain 409, 422, 502 or 503 with their sentences. When
+  the app closes the connection the body is cancelled and no further piece is made (`SpeechResponse` finishes the
+  reading's ledger entry whichever way the response ends). `POST /speech/local/download` (`NothingIn`): starts the
+  download in the background and answers the status; 409 "Already downloading."; at once when ready.
+  `DELETE /speech/local/model`: unloads the engine, removes both files and any part file, answers the status; 409 "Wait
+  for the download to finish." while one runs, and 409 "The voice could not be removed. Close anything using it and try
+  again." when a file remains. `POST /speech/local/sample` (`{voice}`, at most 40 characters): speaks one fixed sentence
+  held in code ("Good morning. Here is how this voice sounds when it reads a reply aloud.") with no Narrator and answers
+  `audio/wav` with `nosniff` and `no-store`; 422 "Pick a voice from the list." for a voice not in the table; 409 with
+  the not-downloaded sentence; it works whether Read aloud is on or off and takes no text.
+- **The GUI** (`src/gui/speech.js`, `speech-settings.js`, `ReadAloudLocal.jsx`, wired in `app.jsx`). The toggle is
+  remembered in `localStorage` (`openzenbot.speakReplies`). Only a session started from that chat while the toggle is on
+  is read (`toSpeak`), never an old reply, a routine run or a room. `api.js` `speak(text, signal)` reads the framed body
+  with the fetch reader (a linear parser, so chunk boundaries do not matter), yields one `Blob` per frame and throws when
+  the body ends without the end mark; the player is a queue that plays a piece when the one before it ends. A newer
+  reply, a new message, turning the toggle off or changing bot or conversation stops playback, frees every object URL
+  and aborts the request, which ends the making of the rest. The page plays blob URLs, so `index.html`'s CSP allows
+  `blob:` in `media-src`. A failure before any audio shows "Could not read this reply aloud." under the reply; one after
+  some audio played shows "The rest of this reply could not be read aloud."; a piece the browser cannot play is reported
+  once. The card: "Speech model" is one select with a first group "On this computer" holding "Kokoro (free, no key)",
+  then the provider groups. With Kokoro picked, a status line and button by state (not downloaded: Download; "Downloading…
+  120 of 354 MB", read from the tools settings every 2 s; failed: a sentence per error kind and Try again; ready:
+  "Downloaded." and Remove, which asks "Remove the downloaded voice? Read aloud will need it again."), a voice select of
+  the 28 voices (American then British, female then male), **Play a sample** (the picked voice, saved or not; off until
+  the model is ready) and a line saying the Narrator still rewrites the reply on its own model. The Kokoro voice and a
+  provider's free-text voice are kept apart in the form (`speechForm`, `speechPatch`, `speechDirty`), and a sample that
+  arrives after the card is gone is dropped (`createSampler`). The Settings search finds the card by "Kokoro" and "on
+  this computer" through the tool's `summary` (`liveSections`).
+- **Ledger.** Kind `speech`: `chars_in`, `chars_out`, `bytes`, `model`, `voice`, `provider`, `pieces` (made), `narrator_model`,
+  `stopped: true` when the app closed the connection first, and on failure `stage` (`narrate` or `speak`) and `error`
+  (a `failure_kind`, or `empty`). Event `model` for a download or removal: `action` (`download`, `remove`), `bytes`,
+  `ok`, `error`. A sample writes `sample: true`, the voice and `bytes`. Never the text, a path or a URL. With tracing on,
+  the Narrator's call and the speech call are traced like every model call, the reply and the spoken text with them: a
+  Kokoro piece's text goes in the trace's input (`Speech._synthesise`) with the voice.
+- **Packaging.** `kokoro-onnx==0.6.1` and `onnxruntime==1.32.0` in both `pyproject.toml` files and both locks
+  (`tests/test_packaged_deps.py` keeps them equal); `kokoro-onnx` brings `phonemizer` (GPLv3, which the owner accepted
+  shipping), `espeakng-loader` (espeak-ng bundled in its wheel, nothing installed on the host) and `dlinfo`. `src/kokoro`
+  is listed in `electron-builder.yml` `extraResources`. The model is fetched by the harness at the owner's request, not
+  by setup, so `pins.json` is not involved.
+- **Bots and local speech (a known residual risk).** The harness API has no authentication, so a bot with `shell` (curl)
+  or the `browser` server can start the 354 MB download, remove the model, change the voice or the provider, and call
+  `POST /speech` or the sample route, which uses the CPU for as long as the text lasts (bounded by the 4,000-character
+  narration, one synthesis at a time). It cannot make the harness fetch anything but the two pinned files, and the
+  sample route speaks only its fixed sentence. Do not describe local speech as out of bots' reach.
+- **Known limits.**
+  - A synthesis in a thread is not cancelled: after a stop, one piece (a sentence or about 300 characters) is still
+    finished and thrown away, and the engine is busy until then.
+  - `split` breaks at "Dr." and at list numerals ("1."), so a piece can be a bare abbreviation or number.
+  - The download checks a redirect's host, not its port. The 354 MB hash is computed, and the file written, on the
+    event loop in 1 MiB steps while downloading.
+  - Remove unloads the engine first, but a new reading or sample between the unload and the delete can load it again
+    (the result is a 409 or a failed piece).
+  - A client that goes away just after the end mark is sent can be logged as `stopped`.
+  - Synthesis is not byte-for-byte repeatable: two samples of one voice had the same length and different bytes (seen
+    on 2026-11-22).
+  - With an older harness or an empty voice list the voice select has no options.
+- **Measured on 2026-11-22**, one run by hand against the real harness on a Windows 11 machine with 80 logical CPUs
+  (the times flatter a laptop), a throwaway vault, Python 3.13.9 from `uv run` and the owner's OpenRouter chat model for
+  the Narrator: the download of both files took 33 s (31 s the second time; GitHub answered the onnx file's release URL
+  with a redirect to `release-assets.githubusercontent.com`) and both files had the pinned sizes and hashes with no part
+  file left; a sample of 4.3 to 4.9 s of audio took 5.5 s the first time (model load and hash check) and 1.3 to 1.8 s
+  after; a 1,254-character message read aloud came as 7 pieces and 71.6 s of audio in 27.8 s, with the response headers
+  after 11.7 s (the Narrator's call and the engine's start; 8.3 s in a second reading, with the engine already loaded),
+  the first frame 0.8 s later, and 3.6 s of audio in the first piece; stopping after the first frame left the harness
+  healthy, a sample answered in 1.6 s straight after, and the ledger entry said `pieces: 1, stopped: true`; Remove
+  deleted the files, a sample then answered 409 with the not-downloaded sentence, and a new download worked. Nothing of
+  the feature was written inside the vault folder.
+- **Unverified.** Nothing was heard: the audio was checked by its WAV header and duration, not by a person (the voices'
+  quality, whether pieces join without a gap or a click, and whether the narration reads at a natural pace are not
+  known). Not tried: a laptop-class CPU (speed, and the memory use, about 420 MB loaded in the spike), Linux, the
+  installed app's environment (`kokoro-onnx` and `espeakng-loader` inside it, a user folder with non-ASCII characters,
+  the .deb and Windows installer with `src/kokoro`), any language but English, and the Electron shell. In a plain
+  browser against the real harness the card was seen in its not-downloaded, downloading and downloaded states, Play a
+  sample made its request (200) with no error line, and Remove asked its confirmation (answered No). With no speech
+  model enabled on a provider in that vault the select held only Kokoro, so the switch to a provider model and back (the
+  voice field) was not seen on screen, and neither were the in-chat Read aloud button, the player and its queue, the
+  stop on a new message, the two error lines or the Settings search. The app's player has never run against the real
+  stream. No request reached OpenRouter's speech endpoint, so `google/gemini-3.8-flash-lite-tts` answering 24 kHz mono
+  PCM and taking `Zephyr` is still from OpenRouter's docs. The Narrator prompt ran with a model for two readings, and
+  its rewritten text was not read by anyone. Which Kokoro voices the owner likes is not known. The redirect host for
+  `voices-v1.0.bin` was not recorded.
 
 Rules for contributors: never give the Narrator a task, tools or a conversation, and never put the reply in its
-system message. No text in a `speech` ledger entry or a log line. Keep `speech` in `vault-settings/tools.json`. Every
-POST takes a required JSON body. Tests never touch the network. Tests: `tests/test_speech.py`, the `narrates` checks in
-`tests/test_bot_prompts.py`, `tests/test_rooms.py` and `tests/test_orchestrator.py`; GUI `tests/gui/speech.test.mjs`
-and the CSP check in `tests/gui/shell.test.mjs`.
+system message. No text, spoken text, path or URL in a `speech` ledger entry, a log line or an error message; where the
+text may be in a call's frames, log the exception's class name only. Keep `speech` in `vault-settings/tools.json` and the
+model in `<vault>-models/`, in `private_folders`, never in the vault. Only `src/kokoro/engine.py` imports `kokoro_onnx`
+or `onnxruntime`, only inside its load function, and the harness must start without them. Never use a model file whose
+size and SHA-256 do not match the pin; keep the redirect rule and the part-file-then-rename download; never add a
+second source for the files or a way to fetch anything else. `kokoro` stays a reserved provider id, and the voice sent
+in a `PUT` is checked and never replaced. One synthesis at a time. The framed stream (media type, 4-byte length, end
+mark, `FRAME_MAX`) is one format for the app and the route: change both sides and their tests together. Every POST takes a
+required JSON body (`NothingIn` where it needs nothing). Tests never touch the network, never import `kokoro_onnx`,
+never load a model and never download: `tests/conftest.py` `_kokoro_inert` makes the engine a harness builds load and
+speak nothing, and `tests/kokoro/` passes a fake library. Tests: `tests/test_speech.py`, `tests/kokoro/test_model.py`,
+`tests/kokoro/test_engine.py`, the `narrates` checks in `tests/test_bot_prompts.py`, `tests/test_rooms.py` and
+`tests/test_orchestrator.py`; GUI `tests/gui/speech.test.mjs`, `speech-settings.test.mjs`, `api.test.mjs` and the CSP
+check in `tests/gui/shell.test.mjs`.
 
 ### Design studio
 
@@ -1522,10 +1659,10 @@ The `shell` tool runs any command line as the user's account, so it gets three g
   `ZEN_SHELL_CWD` overrides), with a scrubbed environment (the same one stdio MCP servers get), and
   generated images land in its `generated-images/`. `attach_file` takes a file in the
   workspace or anywhere a bot may read (`Harness.attachable`: the vault, `ZEN_FS_ROOT`, Allowed Folders of
-  either access, never the settings, ledger, music or calendar folders), and serving an attachment checks the same
+  either access, never the settings, ledger, music, calendar or models folders), and serving an attachment checks the same
   again. So a bot never needs to copy a file somewhere else to show it. It works only in a conversation
   or a room turn, not in a routine.
-- **Protected folders.** The settings, ledger, music and calendar folders (`allowed_folders.private_folders`) hold
+- **Protected folders.** The settings, ledger, music, calendar and models folders (`allowed_folders.private_folders`) hold
   keys and private data, and `files` never reaches them, but `shell` could. Before a `shell` call that no
   skill approval rule already caught, a command whose text names one of them (full path or folder name,
   any case or slash) opens an approval at once, without the decider (rule `shell:reaches-protected-folders`).
@@ -1632,7 +1769,7 @@ and every call goes through `src/harness/magick_guard.py` first (`McpRegistry.ca
 Layer 1, the gate, is fixed rules and only refuses:
 
 - Paths: inputs inside the vault, `ZEN_FS_ROOT` or an allowed folder (either access); outputs inside a
-  Full Access one, not a Read-Only one; never the settings, ledger, music or calendar folders. The same folders the
+  Full Access one, not a Read-Only one; never the settings, ledger, music, calendar or models folders. The same folders the
   `files` server gets, read on every call (`guard_folders` in `api.py`); unlike the shell check this does
   not add the shell workspace, so a `ZEN_SHELL_CWD` outside those folders is out of magick's reach.
   Symlinks are resolved; `..`, `~`, quotes and shell characters are refused. Relative paths need a
