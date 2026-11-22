@@ -1308,7 +1308,11 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     copy (`design_studio.is_current`: the Designer changed it and was stopped before attaching, or a picture changed in
     place), the harness first takes a numbered copy of it as it is and records it ("Changes the Designer had not shown
     are now Version N."). A working file that is gone, a link or not a file, or a copy that cannot be taken, answers
-    409 "Ask the Designer to show the design again."
+    409 "Ask the Designer to show the design again." So the two GET routes (`slots` and `export.zip`) can write: a
+    numbered copy and an exchange. That departs from the rule that a change of state needs a POST with a JSON body;
+    a page on another site that knew a conversation id could start a catch-up, whose only effect is a version of
+    what is already in the working file. The pane learns of a catch-up made by the slots read at once
+    (`slotsBehind`), but of one made by the ZIP only when it next reads the conversation.
   - *The routes.* `GET /conversations/{id}/design/slots` answers `{version, texts: [{id, text}], images: [{id, name,
     alt}], tweaks: [{var, label, type, min, max, step, unit, value}]}` (texts as the helpers' worksheet shows them, a
     newline for each `<br>`; a picture's `name` under `images/`, empty while it is still embedded; through
@@ -1357,32 +1361,44 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     the app, not through you: ...)"), and the fixed reply `EDIT_ACK` with the attachment line, in the history and in a
     fold alike. Dreaming reads only `Exchange.user`, which is empty here, so it reads nothing of it. The chat draws
     it as one plain line, and the scope check's "last task" skips it. The conversation's turn note is stale after an
-    edit; the Designer's prompt says to read the file again before each revision.
-  - *The GUI* (`DesignPane.jsx`, decisions in `design-edits.js`). Comment, Edit and Tweaks are exclusive modes, Edit
-    and Tweaks only on the newest version with the frame ready, no task running, Compare off and the slots read
-    (`canChange`, `whyNot`). An Edit pick on a slot opens `DesignEditor.jsx` with the text from the slots answer, never
-    from the pick; any other element gives "This element can't be edited directly. Comment on it instead." Changes
-    collect as pending in GUI memory only (`designChanges` in `app.jsx`, cleared when the bot, the conversation or
-    the newest revision changes) and are shown live in the frame; the bar offers Discard and "Save as Version N".
-    While any are pending, sending a message, a form's answers and Redo are held with "Save or discard your changes
-    first." Restore is offered on an older version of the same file (`restorable`), not while a task runs or changes
-    are pending, after "Make Version N the newest version?". Compare shows two closed frames, each with its own
-    Version dropdown (`compareDefaults`: the previous and the newest), posts nothing to them, and turns the modes and
-    Export off. A slots answer for a newer version than the pane holds reloads the conversation (`slotsBehind`).
+    edit; the Designer's prompt says to read the file again before each revision. The new copy keeps the title of
+    the newest revision of the same file (`_record_version`: the name the Designer gave the design, as the pane's
+    header and the Design page show it), else the file name. Once the user saves a change on top of a helper's
+    version, "Redo with the Designer" is no longer offered for that helper's change: its exchange is no longer the
+    newest (`redoTarget`).
+  - *The GUI* (`DesignPane.jsx`, decisions in `design-edits.js`). Comment, Edit and Tweaks are exclusive modes, Edit and
+    Tweaks only on the newest version with the frame ready, no task running, Compare off and the slots read
+    (`canChange`, `whyNot`; a frame that loaded but never became ready, as a file over 5 MB is served without the
+    bridge, gives "Changing is off for this file: it is too large."). An Edit pick on a slot opens `DesignEditor.jsx`
+    with the text from the slots answer, never from the pick; any other element gives "This element can't be edited
+    directly. Comment on it instead." Changes collect as pending in the page's memory only, kept per conversation
+    (`designChangesByConv` in `app.jsx`, by `pendingFor`, `withPending`, `dropPending` and `dropStale`, each entry with
+    the newest revision it was made on): switching bot or conversation and coming back shows them again with the bar; a
+    new newest revision in that conversation (a save, a restore, the Designer's) or Discard ends them, and a reload of
+    the app loses them. They are shown live in the frame; the bar offers Discard and "Save as Version N". While the
+    conversation on screen has any, sending a message, a form's answers and Redo are held with "Save or discard your
+    changes first.", and a hidden pane is shown again (its show button also names the count). Restore is offered on an
+    older version of the same file (`restorable`), not while a task runs or changes are pending, after "Make Version N
+    the newest version?". Compare shows two closed frames, each with its own Version dropdown (`compareDefaults`: the
+    previous and the newest), posts nothing to them, and turns the modes and Export off. A slots answer for a newer
+    version than the pane holds reloads the conversation (`slotsBehind`).
   - *The bridge* (`design_bridge.js`) takes, from the parent window only, display-only messages besides `mode` and
     `pins`: `text` (an element by `data-zen-id`, at most 2,000 characters, built as text nodes and `<br>` elements,
     never `innerHTML`; a `<textarea>`'s value), `image` (an `<img>` only, a `src` of
-    `data:image/(png|jpeg|webp|gif);base64,`, and an alt), `vars` (at most 8 names of `--[a-z][a-z0-9-]{0,40}`, each
-    a string of at most 32 characters, all or none, set with `style.setProperty` on the root element) and `reset`
-    (puts back what the others changed). The GUI builds each tweak value from the knob's type (`cssValue`), so the
+    `data:image/(png|jpeg|webp|gif);base64,`, and an alt), `vars` (at most 8 names of `--[a-z][a-z0-9-]{0,40}`, each a
+    string of at most 32 characters, all or none, set with `style.setProperty` on the root element) and `reset` (puts
+    back what the others changed). `text` skips a `<style>`, `<script>`, `<img>` or `<svg>`, and anything inside an SVG
+    drawing, whatever its id (`takesText`). The GUI builds each tweak value from the knob's type (`cssValue`), so the
     frame never receives free CSS. Nothing from the frame is saved: the frame still sends only `ready` and `pick`.
-  - *Export* (`ExportMenu.jsx`, on the version shown; hidden while comparing). The menu's choices are `exportItems`
-    in `design-edits.js`: HTML always; "ZIP (page and pictures)" only on the newest version, disabled with "Wait for
-    the task to finish." while a task runs; PDF and PNG only when the preload offers `openzenbot.exportDesign` (the
-    desktop app). HTML is the numbered copy as it is. ZIP (runs catch-up first) is the working file and each
-    regular, single-link file directly in its `images/` of at most 1,500,000 bytes; no link followed, no subfolder,
-    nothing else. In the desktop app both go through Save… (`save-media.cjs`, whose `ROUTES` include the ZIP route),
-    in a browser they download. A result ("Saved to <path>") or a refusal shows as a line under the menu.
+  - *Export* (`ExportMenu.jsx`, on the version shown; hidden while comparing). The menu's choices are `exportItems` in
+    `design-edits.js`: HTML always; "ZIP (page and pictures)" only on the newest version, disabled with "Wait for the
+    task to finish." while a task runs; PDF and PNG only when the preload offers `openzenbot.exportDesign` (the desktop
+    app). HTML is the numbered copy as it is. ZIP (runs catch-up first) is the working file and each regular,
+    single-link file directly in its `images/` of at most 1,500,000 bytes whose name a design picture may have
+    (`design_images.NAME`); no link followed, no subfolder, nothing else. A title that is a file name loses its `.html`
+    or `.htm` before an extension is added, so no suggested name ends in two. In the desktop app both go through Save…
+    (`save-media.cjs`, whose `ROUTES` include the ZIP route), in a browser they download. A result ("Saved to <path>")
+    or a refusal shows as a line under the menu.
     - *PDF and PNG.* The renderer sends the two ids, the kind and a title over IPC `export-design` (refused unless
       from the app's own pages); the main process builds the closed attachment URL on the harness's own origin
       (`export-design.cjs` `pageUrl`, ids `[A-Za-z0-9_-]{1,80}`; served under `PREVIEW_CSP`, without the bridge),
@@ -1412,7 +1428,8 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     picture slot ids changed), `restore` (`from`, `to`), `catch_up` (version), `refused` (`action`: `slots`,
     `changes`, `restore` or `export`; `reason`: the HTTP status) and `export` (`format` `zip`, version). Never a text,
     a label, a tweak's value or name, or a disk path. A 404, the task-running 409 and a malformed body's 422 are not
-    ledgered, nor is a PDF or PNG export (the main process writes no ledger).
+    ledgered, nor are the picture count and size checks and the 422 "That picture could not be read.", which run
+    before the design is read (`_pictures`), nor is a PDF or PNG export (the main process writes no ledger).
   - *Known limits.*
     - The harness API has no authentication, so a bot with `shell` or `browser` can call these routes. It can
       already write the design file through `files`, so this adds no reach, but a version saved this way is not
@@ -1422,15 +1439,15 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     - A tweak declared on the same line as `:root {` (`:root { --a: 1px; }`) is no knob, a declaration inside a CSS
       comment in the `:root` block can become a knob's span, and a tweak variable declared again in another
       `<style>` is not caught and may override the saved value.
-    - The `text` message would set the content of any element with that `data-zen-id`, a `<style>` or `<script>`
-      included (display only, never saved), and `reset` removes a custom property the page itself set inline on its
-      root rather than putting it back.
+    - `reset` removes a custom property the page itself set inline on its root rather than putting it back.
     - A refused save or restore can leave pictures already written into `images/`. The ZIP leaves out pictures over
       1,500,000 bytes and has no cap on the working file's size. The slots and the ZIP also answer 409 while a task
       runs.
     - The Compare frames do not follow a new version; the editor closes when the slots are read again; a refusal
       sentence stays under the frame until the next mode click, save or restore; the picture editor can overlap the
-      pending bar; a picture's `data:` URL is posted to the frame again on every keystroke.
+      pending bar; while a picture is pending, every keystroke posts its `data:` URL to the frame again.
+    - Edit has no keyboard path: a slot can only be picked by clicking in the frame, as with Comment. A refused save
+      names the reason but not which text it was about.
     - The PDF is one page (`pageRanges: '1'`): a page whose print layout runs taller than its screen height loses
       the overflow. In the PDF, sizes that come from `height: 100%` chains, scripts that read `innerHeight`, and
       `@media (min-height: ...)` rules can still differ from the screen (the PNG is not affected), and the freeze
@@ -1448,8 +1465,9 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     save refused with "The design has changed. Reload and try again." after a restore made behind the pane, and
     Discard. One click on Save landed on the frame during a layout shift; the cause was not found. The later fixes
     (Redo held, the pane reset per conversation, Restore of the shown file, inputs off while saving, the reload after
-    a 409, colour case) ran only under `npm test` and the build. Nothing was seen in the Electron app, at narrow
-    widths, in the dark theme, by keyboard alone on the colour input, or with a task running. PDF and PNG were
+    a 409, colour case), and the pending changes kept per conversation, the hidden pane shown again when a message is
+    held and the too-large sentence, ran only under `npm test` and the build. Nothing was seen in the Electron app, at
+    narrow widths, in the dark theme, by keyboard alone on the colour input, or with a task running. PDF and PNG were
     produced and looked at by running the real `makeExportWindow` (sliced from `main.cjs`) and `export-design.cjs` in
     Electron 45.2.3 from a scratch script against a stand-in server sending the harness's preview policy, not the
     harness: `vh` pages at scale 1 and with the scale forced to 2, a 40,000 px page capped at 16,000, a 404 page and
