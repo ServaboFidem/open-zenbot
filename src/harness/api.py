@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi import Request
 from starlette.background import BackgroundTask
 from uuid import uuid4
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictFloat, StrictInt, StrictStr
 
 from src.decider.fit import FitConfig, FitEngine
 from src.decider.interface import BandConfig, ConfirmState, Scorer
@@ -68,7 +68,8 @@ from . import allowed_folders, tracing_settings
 from .allowed_folders import AllowedFolders
 from .magick_guard import Folders as GuardFolders, MagickGuard, MagickRunner
 from .write_guard import ShellWriteCheck
-from . import agent_clis, design_images, design_parts, design_studio, design_systems, studio_help, studio_helpers, tool_paths
+from . import (agent_clis, design_images, design_parts, design_studio, design_systems, studio_edits, studio_help,
+               studio_helpers, tool_paths)
 from .studio_helpers import PartTurn
 from .agent_clis import Agents
 from .delegation import Delegator, Runner as DelegateRunner
@@ -1267,6 +1268,24 @@ class DesignCommentIn(BaseModel):
 
 class DesignSystemIn(BaseModel):
     slug: str | None
+
+
+class DesignPictureIn(BaseModel):
+    name: StrictStr
+    data: StrictStr  # base64, decoded by the route after its size is checked
+    alt: StrictStr | None = None
+
+
+class DesignChangesIn(BaseModel):
+    version: StrictInt
+    texts: dict[str, StrictStr] = {}
+    images: dict[str, DesignPictureIn] = {}
+    tweaks: dict[str, StrictStr | StrictInt | StrictFloat] = {}
+
+
+class DesignRestoreIn(BaseModel):
+    version: StrictInt
+    newest: StrictInt
 
 
 class TaskIn(BaseModel):
@@ -2716,6 +2735,125 @@ def create_app(h: Harness) -> FastAPI:
                 raise HTTPException(422, str(e)) from None
         h.conversations.set_design_system(conv_id, body.slug or "", source)
         return {"design_system": body.slug or ""}
+
+    # The user's own changes to a design (studio_edits): each new version is recorded as an `edit` exchange, so
+    # the pane and GET /designs find it as they find any revision. No route holds an `await` between its first
+    # check and its last write; a body is decoded and checked before the first check.
+
+    def _studio_design(conv_id: str) -> Any:
+        """A studio bot's own conversation that has a design (else 404) and no task under way (else 409)."""
+        conv = h.conversations.get(conv_id)
+        owner = h.bots.get(conv.owner) if conv is not None else None
+        if (conv is None or owner is None or not owner.studio or conv.kind != "bot"
+                or studio_helpers.newest_revision(h.config.vault_root, conv) is None):
+            raise HTTPException(404, "no such design")
+        if any(ex.outcome == "pending" for ex in conv.exchanges):
+            raise HTTPException(409, "Wait for the task to finish.")
+        return conv
+
+    def _edit_refused(conv: Any, action: str, e: studio_edits.EditRefused) -> HTTPException:
+        h.ledger.append(Kind.design_edit, conv.owner, "", event="refused", action=action, reason=e.status)
+        message = "The design would be too large." if e.message == studio_edits.TOO_LARGE else e.message
+        return HTTPException(e.status, message)
+
+    def _record_version(conv: Any, copy: Path, reply: str) -> tuple[Any, int]:
+        """Attach a new numbered copy in a finished `edit` exchange, as a helper's apply attaches one."""
+        _slug, version, name = design_studio.revision_of(h.config.vault_root, copy) or ("", 0, copy.name)
+        ex = h.conversations.record_edit(conv.id, reply, {"id": uuid4().hex[:10], "title": name, "path": str(copy)})
+        return ex, version
+
+    def _catch_up(conv: Any, action: str) -> None:
+        """A working file the Designer changed without attaching it becomes a version first."""
+        try:
+            copy = studio_edits.catch_up(h.config.vault_root, conv)
+        except studio_edits.EditRefused as e:
+            raise _edit_refused(conv, action, e) from None
+        if copy is not None:
+            n = design_studio.revision_of(h.config.vault_root, copy)[1]  # catch_up returns only a numbered copy
+            ex, _ = _record_version(conv, copy, f"Changes the Designer had not shown are now Version {n}.")
+            h.ledger.append(Kind.design_edit, conv.owner, ex.session_id, event="catch_up", version=n)
+
+    def _changed_reply(made: studio_edits.Made) -> str:
+        counts = [(len(made.texts), "text"), (len(made.images), "picture"), (len(made.tweaks), "tweak")]
+        parts = [f"{n} {word}{'' if n == 1 else 's'}" for n, word in counts if n]
+        if not parts:
+            return "You changed the design."
+        return "You changed " + (parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]) + "."
+
+    def _pictures(body: DesignChangesIn) -> dict[str, studio_edits.Picture]:
+        """The body's pictures decoded, each checked for size before it is decoded; else 422."""
+        if len(body.images) > studio_edits.MAX_IMAGES:
+            raise HTTPException(422, f"At most {studio_edits.MAX_IMAGES} pictures can be saved at once.")
+        out: dict[str, studio_edits.Picture] = {}
+        for sid, pic in body.images.items():
+            padding = len(pic.data) - len(pic.data.rstrip("="))
+            if len(pic.data) // 4 * 3 - padding > design_images.PICTURE_MAX_BYTES:
+                raise HTTPException(422, f"A picture can be at most {design_images.PICTURE_MAX_BYTES:,} bytes.")
+            try:
+                data = base64.b64decode(pic.data, validate=True)
+            except (binascii.Error, ValueError):
+                raise HTTPException(422, "That picture could not be read.") from None
+            out[sid] = studio_edits.Picture(pic.name, data, pic.alt)
+        return out
+
+    @app.get("/conversations/{conv_id}/design/slots")
+    async def design_slots(conv_id: str) -> dict[str, Any]:
+        conv = _studio_design(conv_id)
+        _catch_up(conv, "slots")
+        try:
+            view = studio_edits.slots_view(h.config.vault_root, conv)
+        except studio_edits.EditRefused as e:
+            raise _edit_refused(conv, "slots", e) from None
+        out, _ = exclusion.redact_obj(view)
+        return out
+
+    @app.post("/conversations/{conv_id}/design/changes")
+    async def save_design_changes(conv_id: str, body: DesignChangesIn) -> dict[str, Any]:
+        pictures = _pictures(body)
+        conv = _studio_design(conv_id)
+        _catch_up(conv, "changes")
+        try:
+            made = studio_edits.save(h.config.vault_root, conv, body.version, dict(body.texts), pictures,
+                                     dict(body.tweaks))
+        except studio_edits.EditRefused as e:
+            raise _edit_refused(conv, "changes", e) from None
+        if made is None:
+            return {"version": None, "conversation": _conversation_view(conv)}
+        ex, version = _record_version(conv, made.copy, _changed_reply(made))
+        h.ledger.append(Kind.design_edit, conv.owner, ex.session_id, event="save", version=version,
+                        texts=len(made.texts), pictures=len(made.images), tweaks=len(made.tweaks),
+                        ids=made.texts + made.images)
+        return {"version": version, "conversation": _conversation_view(conv)}
+
+    @app.post("/conversations/{conv_id}/design/restore")
+    async def restore_design_version(conv_id: str, body: DesignRestoreIn) -> dict[str, Any]:
+        conv = _studio_design(conv_id)
+        _catch_up(conv, "restore")
+        try:
+            made = studio_edits.restore(h.config.vault_root, conv, body.version, body.newest)
+        except studio_edits.EditRefused as e:
+            raise _edit_refused(conv, "restore", e) from None
+        if made is None:
+            return {"version": None, "conversation": _conversation_view(conv)}
+        ex, version = _record_version(conv, made.copy, f"You restored Version {body.version} as Version {made.version}.")
+        h.ledger.append(Kind.design_edit, conv.owner, ex.session_id, event="restore", **{"from": body.version},
+                        to=version)
+        return {"version": version, "conversation": _conversation_view(conv)}
+
+    @app.get("/conversations/{conv_id}/design/export.zip")
+    async def export_design_zip(conv_id: str) -> Response:
+        conv = _studio_design(conv_id)
+        _catch_up(conv, "export")
+        try:
+            data = studio_edits.zip_bytes(h.config.vault_root, conv)
+        except studio_edits.EditRefused as e:
+            raise _edit_refused(conv, "export", e) from None
+        _att, (slug, version, _name) = studio_helpers.newest_revision(h.config.vault_root, conv)
+        h.ledger.append(Kind.design_edit, conv.owner, "", event="export", format="zip", version=version)
+        filename = re.sub(r"[^A-Za-z0-9._-]", "", slug) or "design"
+        return Response(data, media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{filename}.zip"',
+                                 "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
     # Open tokens. A page served closed (PREVIEW_CSP) cannot obtain one: its fetch and XHR are blocked by
     # `default-src 'none'`, and the sandbox (no allow-forms) refuses its form posts. So a closed page cannot

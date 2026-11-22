@@ -387,3 +387,52 @@ def test_a_restore_whose_copy_cannot_be_taken_puts_the_file_back(studio, monkeyp
     monkeypatch.setattr(studio_edits.design_studio, "snapshot", refuse)
     e = _restore_refused(studio, 409, 1, 2)
     assert ".versions" not in e.message and studio.live.read_bytes() == live
+
+
+def _zipped(s: SimpleNamespace) -> dict[str, bytes]:
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(studio_edits.zip_bytes(s.vault, s.conv))) as z:
+        return {n: z.read(n) for n in z.namelist()}
+
+
+def test_zip_bytes_holds_the_working_file_and_its_pictures_only(studio):
+    (studio.folder / "images" / "b.gif").write_bytes(b"GIF89a" + b"\0" * 8)
+    (studio.folder / "images" / "sub").mkdir()
+    (studio.folder / "images" / "sub" / "c.png").write_bytes(PNG)
+    (studio.folder / "notes.txt").write_text("not the page", encoding="utf-8")
+    assert _zipped(studio) == {"index.html": PAGE.encode("utf-8"), "images/a.png": PNG,
+                               "images/b.gif": b"GIF89a" + b"\0" * 8}
+
+
+def test_zip_bytes_follows_no_link(studio, tmp_path):
+    outside = tmp_path / "secret.png"
+    outside.write_bytes(PNG2)
+    try:
+        (studio.folder / "images" / "linked.png").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks cannot be created here")
+    hard = studio.folder / "images" / "hard.png"
+    try:
+        hard.hardlink_to(outside)
+    except OSError:
+        pass
+    assert set(_zipped(studio)) == {"index.html", "images/a.png"}
+
+
+def test_zip_bytes_with_images_as_a_link_holds_the_page_alone(studio, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    (studio.folder / "images").rename(elsewhere)
+    try:
+        (studio.folder / "images").symlink_to(elsewhere, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks cannot be created here")
+    assert set(_zipped(studio)) == {"index.html"}
+
+
+def test_zip_bytes_without_a_design_is_refused(studio):
+    studio.conv.exchanges.clear()
+    with pytest.raises(EditRefused) as e:
+        studio_edits.zip_bytes(studio.vault, studio.conv)
+    assert e.value.status == 409

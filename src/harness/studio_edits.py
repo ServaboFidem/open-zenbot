@@ -9,9 +9,11 @@ value only as `design_tweaks.fmt` formats it. Plain functions, no `await`: a rou
 first check and its last write."""
 from __future__ import annotations
 
+import io
 import os
 import re
 import stat
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -247,24 +249,12 @@ def _read_copy(folder: Path, name: str, version: int) -> bytes | None:
     """The bytes of numbered copy `version` of the design file `name`: a regular file under one name only,
     opened without following a link, in a `.versions` that is a real folder. None otherwise."""
     vdir = folder / ".versions"
-    p = vdir / f"{version}.{name}"
     try:
         if vdir.is_symlink() or not vdir.is_dir() or vdir.resolve() != vdir:
             return None
-        if not hasattr(os, "O_NOFOLLOW") and p.is_symlink():  # Windows: no O_NOFOLLOW, so look first
-            return None
-        fd = os.open(p, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-                     | getattr(os, "O_BINARY", 0))
     except OSError:
         return None
-    with os.fdopen(fd, "rb") as f:  # every check is on the file that was opened
-        try:
-            st = os.fstat(f.fileno())
-            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
-                return None
-            return f.read()
-        except OSError:
-            return None
+    return _read_plain(vdir / f"{version}.{name}")
 
 
 def _unembed(folder: Path, page: str) -> str:
@@ -328,6 +318,55 @@ def restore(vault_root: Path, conv: Any, version: int, newest: int) -> Made | No
         return None
     copy, n = made
     return Made(copy, n, texts=[], images=[], tweaks=[])
+
+
+def _read_plain(p: Path, limit: int | None = None) -> bytes | None:
+    """The bytes of `p` when it is a regular file under one name only, opened without following a link (and,
+    with `limit`, no larger than it). None otherwise."""
+    try:
+        if not hasattr(os, "O_NOFOLLOW") and p.is_symlink():  # Windows: no O_NOFOLLOW, so look first
+            return None
+        fd = os.open(p, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+                     | getattr(os, "O_BINARY", 0))
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as f:  # every check is on the file that was opened
+        try:
+            st = os.fstat(f.fileno())
+            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or (limit is not None and st.st_size > limit):
+                return None
+            data = f.read() if limit is None else f.read(limit + 1)
+        except OSError:
+            return None
+    return data if limit is None or len(data) <= limit else None
+
+
+def zip_bytes(vault_root: Path, conv: Any) -> bytes:
+    """A ZIP of the newest design's working file and each regular, single-link file directly in its `images/`
+    folder (no picture over the picture limit). No link is followed, no subfolder read, nothing else taken."""
+    found = _design(vault_root, conv)
+    if found is None:
+        raise EditRefused(409, SHOW_AGAIN)
+    folder, live, _copy, _version = found
+    page = _read_plain(live)
+    if page is None:
+        raise EditRefused(409, SHOW_AGAIN)
+    pictures: list[tuple[str, bytes]] = []
+    d = folder / design_images.IMAGES
+    try:
+        names = sorted(p.name for p in design_images._images_dir(folder).iterdir()) if d.exists() else []
+    except (design_images.ImageRefused, OSError):
+        names = []  # a link or an unreadable folder: the page alone
+    for name in names:
+        data = _read_plain(d / name, design_images.PICTURE_MAX_BYTES)
+        if data is not None:
+            pictures.append((name, data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(live.name, page)
+        for name, data in pictures:
+            z.writestr(f"{design_images.IMAGES}/{name}", data)
+    return out.getvalue()
 
 
 def _write_version(vault_root: Path, d: _Design, new: bytes) -> tuple[Path, int] | None:
