@@ -75,6 +75,11 @@ def reply_text(ex: Exchange) -> str:
     return text
 
 
+def edit_note(ex: Exchange) -> str:
+    """The user side of an `edit` exchange: what the user changed in the app, as a note to the model."""
+    return f"(The user changed the design in the app, not through you: {ex.reply})"
+
+
 def _reply_text(ex: Exchange) -> str:
     if ex.outcome == "edit":
         return EDIT_ACK
@@ -131,7 +136,7 @@ class Conversation:
             if exclude and ex.session_id == exclude:
                 continue
             if ex.outcome == "edit":
-                msgs.append(Message("user", f"(The user changed the design in the app, not through you: {ex.reply})"))
+                msgs.append(Message("user", edit_note(ex)))
             else:
                 msgs.append(Message("user", f"{ex.user}\n\n{ex.addendum}" if ex.addendum else ex.user))
             msgs.append(Message("assistant", reply_text(ex)))
@@ -349,7 +354,7 @@ class Conversations:
         call per fold. The exchanges stay in the record for display; only
         the history drops them. On a generator error the history is kept
         as it was and the failure goes to the ledger."""
-        sizes = [len(ex.user) + len(reply_text(ex)) for ex in conv.exchanges]
+        sizes = [len(edit_note(ex) if ex.outcome == "edit" else ex.user) + len(reply_text(ex)) for ex in conv.exchanges]
         unfolded = sum(sizes[conv.folded :])
         if unfolded <= budget_chars:
             return False
@@ -368,7 +373,7 @@ class Conversations:
             return False
         before = history_chars(conv.history())
         old = conv.exchanges[conv.folded : end]
-        msgs = [m for ex in old for m in (Message("user", ex.user), Message("assistant", reply_text(ex)))]
+        msgs = [m for ex in old for m in (Message("user", edit_note(ex) if ex.outcome == "edit" else ex.user), Message("assistant", reply_text(ex)))]
         try:
             latest = await generator.compact(render_transcript(msgs), goal=conv.title or None)
             summary = await generator.fold(conv.summary, latest)

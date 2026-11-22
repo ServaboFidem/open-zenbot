@@ -347,3 +347,14 @@ def test_an_edit_exchange_survives_a_reload(tmp_path, ledger):
     convs.record_edit(c.id, "You changed 2 texts.", {"id": "a1", "title": "index.html", "path": "/v/5.index.html"})
     ex = make(tmp_path, ledger).get(c.id).exchanges[-1]
     assert ex.outcome == "edit" and ex.attachments[0]["id"] == "a1"
+
+
+async def test_a_fold_keeps_the_note_of_an_edit_exchange(tmp_path, ledger):
+    convs = make(tmp_path, ledger)
+    conv = _fill(convs, 2)
+    convs.record_edit(conv.id, "You changed 2 texts.", {"id": "a1", "title": "index.html", "path": "/v/5.index.html"})
+    _fill(convs, 6)
+    gen = FakeGenerator()
+    assert await convs.fold_if_needed(conv, gen, budget_chars=1000, keep=2) is True
+    rendered, _ = gen.compacted[0]
+    assert "(The user changed the design in the app, not through you: You changed 2 texts.)" in rendered
