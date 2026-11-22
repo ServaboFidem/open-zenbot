@@ -117,36 +117,42 @@ async function makeExportWindow(url, { width, height }) {
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, session: exportSession(), offscreen: true, backgroundThrottling: false },
   });
   const wc = win.webContents;
-  const close = () => { if (!win.isDestroyed()) win.destroy(); };
+  // One limit for everything this window does, from its making: when it passes the window is destroyed, whatever the
+  // page is doing (a page that blocks its main thread after load would otherwise hold any call that needs it), and
+  // every wait below races it (bounded), so none can outlive the window.
+  let timer;
+  const close = () => { clearTimeout(timer); if (!win.isDestroyed()) win.destroy(); };
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => { close(); reject(Object.assign(new Error('the export did not finish in time'), { name: 'TimeoutError' })); }, EXPORT_TIMEOUT_MS);
+  });
+  limit.catch(() => {});  // nobody may be waiting when it fires
+  const bounded = work => Promise.race([work, limit]);
   const refuse = event => event.preventDefault();
   wc.on('will-navigate', refuse);
   wc.on('will-redirect', refuse);
   wc.on('will-frame-navigate', refuse);
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
   const cdp = wc.debugger;
-  let status = 0, timer;
+  let status = 0;
   wc.once('did-navigate', (_event, _url, code) => { status = code; });
   try {
-    const limit = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(Object.assign(new Error('the page did not load in time'), { name: 'TimeoutError' })), EXPORT_TIMEOUT_MS);
-    });
-    await Promise.race([wc.loadURL(url), limit]);
+    await bounded(wc.loadURL(url));
     if (status !== 200) throw new Error(`the page answered ${status}`);
     // the viewport the page is measured, captured and frozen at, whatever size and scale the display gives the window
     // (with the display at scale 2 the window alone came out about 700 px tall)
     cdp.attach('1.3');
-    await cdp.sendCommand('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
-  } catch (e) { close(); throw e; } finally { clearTimeout(timer); }
+    await bounded(cdp.sendCommand('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }));
+  } catch (e) { close(); throw e; }
   return {
     // measured in a world of its own, so the page's scripts cannot replace what measures it; still only a number
-    height: () => wc.executeJavaScriptInIsolatedWorld(1001, [{ code: MEASURE }]),
+    height: () => bounded(wc.executeJavaScriptInIsolatedWorld(1001, [{ code: MEASURE }])),
     pdf: async size => {
-      await wc.executeJavaScriptInIsolatedWorld(1001, [{ code: FREEZE_UNITS }]);
-      return wc.printToPDF(pdfOptions(size));
+      await bounded(wc.executeJavaScriptInIsolatedWorld(1001, [{ code: FREEZE_UNITS }]));
+      return bounded(wc.printToPDF(pdfOptions(size)));
     },
     png: async ({ width: w, height: h }) => {
-      const shot = await cdp.sendCommand('Page.captureScreenshot',
-        { format: 'png', clip: { x: 0, y: 0, width: w, height: h, scale: 1 }, captureBeyondViewport: true });
+      const shot = await bounded(cdp.sendCommand('Page.captureScreenshot',
+        { format: 'png', clip: { x: 0, y: 0, width: w, height: h, scale: 1 }, captureBeyondViewport: true }));
       const png = Buffer.from(String(shot?.data || ''), 'base64');
       if (!png.length) throw new Error('the capture came back empty');
       return png;

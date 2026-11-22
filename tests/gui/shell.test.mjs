@@ -141,6 +141,16 @@ test('the export window is offscreen, sandboxed, without a preload, in its own i
   assert.ok(fn.includes('catch (e) { close(); throw e; }'));  // a failed, refused or slow load closes the window
   assert.ok(fn.includes('deviceScaleFactor: 1'));  // the PNG is 1440 px wide whatever the display's scale
   assert.ok(fn.includes('FREEZE_UNITS'));  // the PDF keeps vh as on screen
+  // one limit from the window's making destroys it, and every wait races that limit, so a page that blocks its main
+  // thread after load (which holds any call into it) cannot leave the window open
+  assert.match(fn, /setTimeout\(\(\) => \{ close\(\); reject\(/);
+  assert.ok(fn.includes('const bounded = work => Promise.race([work, limit]);'));
+  const waits = fn.match(/\bawait\b[^;]*/g);
+  assert.ok(waits.length >= 4);
+  for (const w of waits) assert.match(w, /^await bounded\(/, w);
+  for (const call of ['wc.loadURL(', "cdp.sendCommand('Emulation.setDeviceMetricsOverride'", 'wc.executeJavaScriptInIsolatedWorld(1001, [{ code: MEASURE }])', 'wc.printToPDF(', "cdp.sendCommand('Page.captureScreenshot'"]) {
+    assert.ok(fn.includes(`bounded(${call}`), call);
+  }
   const ses = body('function exportSession');
   assert.ok(ses.includes("session.fromPartition('export-design')"));  // no persist: prefix: in memory only
   assert.ok(ses.includes('setPermissionRequestHandler((_wc, _permission, answer) => answer(false))'));

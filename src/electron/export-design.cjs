@@ -44,15 +44,22 @@ const pdfOptions = ({ width, height }) => ({
  * Run in the page (as FREEZE_UNITS, in an isolated world) before printing: every vh, vb, vmin and vmax (and their
  * s, l and d forms) in the style sheets and style attributes becomes the pixels it is in the window now. Chromium's
  * print layout resolves those units against the page box, which is the whole page here, so a 60vh hero would
- * otherwise grow with the page and push the end of the design off the single page. Uses only the page's globals.
+ * otherwise grow with the page and push the end of the design off the single page. Quoted strings and url(...) are
+ * passed over whole (a "60vh" label, a font name or a data: URI stays as written), a number is at most 12 digits on
+ * each side of its point (the pattern stays linear on long digit runs), and an element with a style attribute but no
+ * style property (a foreign namespace) is skipped. Not reached: shadow roots and document.adoptedStyleSheets.
+ * Uses only the page's globals.
  */
 function freezeViewportUnits() {
   const h = innerHeight / 100, w = innerWidth / 100;
   const size = { vh: h, vb: h, vmin: Math.min(h, w), vmax: Math.max(h, w) };
-  const unit = /(?<![\w#.])(-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)[sld]?(vh|vb|vmin|vmax)\b/gi;
+  // a quoted string, a url(...), or a number with a viewport unit; only the last is rewritten
+  const token = /("(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|\burl\(\s*(?:"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[^)]*)\s*\))|(?<![\w#.\-])(-?(?:\d{1,12}(?:\.\d{1,12})?|\.\d{1,12})(?:e[+-]?\d{1,3})?)[sld]?(vh|vb|vmin|vmax)\b/gi;
   let fixed = 0;
   const fix = style => {
-    const was = style.cssText, now = was.replace(unit, (_, n, u) => `${+(Number(n) * size[u.toLowerCase()]).toFixed(3)}px`);
+    if (!style || typeof style.cssText !== 'string') return;
+    const was = style.cssText;
+    const now = was.replace(token, (all, kept, n, u) => (kept ? all : `${+(Number(n) * size[u.toLowerCase()]).toFixed(3)}px`));
     if (now !== was) { style.cssText = now; fixed += 1; }
   };
   const walk = rules => { for (const r of rules) { if (r.style) fix(r.style); if (r.cssRules) walk(r.cssRules); } };

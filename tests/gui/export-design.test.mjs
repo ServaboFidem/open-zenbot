@@ -172,7 +172,7 @@ function fakePage(sheets, inline, { width = 1440, height = 900 } = {}) {
   const saved = { document: globalThis.document, innerWidth: globalThis.innerWidth, innerHeight: globalThis.innerHeight };
   globalThis.innerWidth = width; globalThis.innerHeight = height;
   const rules = sheets.map(list => ({ cssRules: list.map(r => (Array.isArray(r) ? { cssRules: r.map(t => ({ style: style(t) })) } : { style: style(r) })) }));
-  const els = inline.map(t => ({ style: style(t) }));
+  const els = inline.map(t => (t === null ? {} : { style: style(t) }));  // null: an element with no style property (SVG, MathML)
   globalThis.document = { styleSheets: [...rules, { get cssRules() { throw new Error('SecurityError'); } }], querySelectorAll: () => els };
   return { rules, els, restore: () => Object.assign(globalThis, saved) };
 }
@@ -191,11 +191,53 @@ test('before printing, vh-style units become the pixels they are in the 1440 x 9
 });
 
 test('nothing else that ends in vh is touched, and an unchanged rule is not written', () => {
-  const page = fakePage([['content: "a"; animation-name: fade60vh; color: #60vh0a;', 'grid-area: x.5vh;']], []);
+  const page = fakePage([['content: "a"; animation-name: fade60vh; color: #60vh0a;', 'grid-area: x.5vh; animation-name: fade-1vh;']], []);
   try {
     const before = page.rules[0].cssRules.map(r => r.style.cssText);
     assert.equal(freezeViewportUnits(), 0);
     assert.deepEqual(page.rules[0].cssRules.map(r => r.style.cssText), before);
+  } finally { page.restore(); }
+});
+
+test('quoted strings and url(...) stay as written, data: URIs included; the units around them are still fixed', () => {
+  const data = 'url("data:image/png;base64,iVBORw0KGgo/12vh/AAAA+3vh==")';
+  const kept = [
+    'content: "60vh";',
+    "content: 'label 60vh';",
+    'content: "a \\"60vh\\" b";',
+    'font-family: "Grid 3vh", sans-serif;',
+    'background: url("a-1vh.png");',
+    "background: url('a-1vh.png');",
+    'background: url(a-1vh.png);',
+    'background: URL( a 2vh.png );',
+    `background-image: ${data};`,
+    'background-image: url(data:image/svg+xml;utf8,<svg height=%2212vh%22/>);',
+  ];
+  const page = fakePage([[...kept, `min-height: 60vh; background: ${data} 0 0 / 100% 10vh; content: "10vh";`]], []);
+  try {
+    assert.equal(freezeViewportUnits(), 1);
+    const texts = page.rules[0].cssRules.map(r => r.style.cssText);
+    assert.deepEqual(texts.slice(0, kept.length), kept);
+    assert.equal(texts.at(-1), `min-height: 540px; background: ${data} 0 0 / 100% 90px; content: "10vh";`);
+  } finally { page.restore(); }
+});
+
+test('an element whose style attribute has no style property is skipped, not a failure', () => {
+  const page = fakePage([[]], [null, 'height: 10vh;', null]);
+  try {
+    assert.equal(freezeViewportUnits(), 1);
+    assert.deepEqual(page.els.map(e => e.style?.cssText), [undefined, 'height: 90px;', undefined]);
+  } finally { page.restore(); }
+});
+
+test('a long run of digits is passed over quickly, and a number longer than 12 digits is left alone', () => {
+  const run = '1'.repeat(200000);
+  const page = fakePage([[`--x: ${run}x;`, 'height: 1234567890123vh;']], []);
+  try {
+    const t = Date.now();
+    assert.equal(freezeViewportUnits(), 0);
+    assert.ok(Date.now() - t < 1000, `${Date.now() - t} ms`);
+    assert.equal(page.rules[0].cssRules[1].style.cssText, 'height: 1234567890123vh;');
   } finally { page.restore(); }
 });
 
