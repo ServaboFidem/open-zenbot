@@ -1,8 +1,8 @@
-const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification, powerMonitor } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification, powerMonitor, session } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { saveMedia } = require('./save-media.cjs');
-const { exportDesign, pdfOptions, TIMEOUT_MS: EXPORT_TIMEOUT_MS } = require('./export-design.cjs');
+const { exportDesign, pdfOptions, FREEZE_UNITS, TIMEOUT_MS: EXPORT_TIMEOUT_MS } = require('./export-design.cjs');
 const { loadEnvFile } = require('./env-file.cjs');
 const { createArrival } = require('./arrival.cjs');
 const { createIdleReport } = require('./idle-report.cjs');
@@ -89,15 +89,32 @@ function createWindow(page = 'index.html') {
   win.loadURL(`app://openzenbot/${page}`);
   return win;
 }
-// Export as PDF or PNG: a hidden window for one bot-made page (export-design.cjs builds its URL, never the renderer).
+// Export as PDF or PNG: an offscreen window for one bot-made page (export-design.cjs builds its URL, never the renderer).
 // Its scripts run as in the preview, under the harness's closed policy; the window has no preload, its own in-memory
-// session, goes nowhere else, opens nothing and is given no permission. A load that fails, answers other than 200
-// or takes longer than the limit closes it.
+// session (no permission, no download), goes nowhere else and opens nothing. A load that fails, answers other than
+// 200 or takes longer than the limit closes it. Once loaded, the DevTools protocol pins the viewport at WIDTH x
+// VIEW_HEIGHT and scale 1, as in a normal window on any display, and it stays so: the PNG is captured beyond that
+// viewport (so vh is what it is on screen, and a 16,000 px page is not doubled on a display scaled above 1), and the
+// PDF, whose print layout would resolve vh against the whole page, is printed after vh-style units are fixed to their
+// on-screen pixels (FREEZE_UNITS). A hidden, non-offscreen window was tried first: a protocol screenshot never answered
+// there, and capturePage after a resize sometimes failed (UnknownVizError).
 const MEASURE = '(() => { const d = document.documentElement, b = document.body; return Math.max(d.scrollHeight, b ? b.scrollHeight : 0); })()';
-async function makeExportWindow(url, { width }) {
+let exportSessionReady = false;
+function exportSession() {
+  const ses = session.fromPartition('export-design');  // no persist: prefix, so in memory only
+  if (!exportSessionReady) {
+    ses.setPermissionRequestHandler((_wc, _permission, answer) => answer(false));
+    ses.setPermissionCheckHandler(() => false);
+    ses.setDevicePermissionHandler(() => false);
+    ses.on('will-download', event => event.preventDefault());
+    exportSessionReady = true;
+  }
+  return ses;
+}
+async function makeExportWindow(url, { width, height }) {
   const win = new BrowserWindow({
-    show: false, width, height: 900, useContentSize: true, paintWhenInitiallyHidden: true,
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'export-design', backgroundThrottling: false },
+    show: false, width, height, useContentSize: true,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, session: exportSession(), offscreen: true, backgroundThrottling: false },
   });
   const wc = win.webContents;
   const close = () => { if (!win.isDestroyed()) win.destroy(); };
@@ -106,7 +123,7 @@ async function makeExportWindow(url, { width }) {
   wc.on('will-redirect', refuse);
   wc.on('will-frame-navigate', refuse);
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-  wc.session.setPermissionRequestHandler((_wc, _permission, answer) => answer(false));
+  const cdp = wc.debugger;
   let status = 0, timer;
   wc.once('did-navigate', (_event, _url, code) => { status = code; });
   try {
@@ -115,16 +132,24 @@ async function makeExportWindow(url, { width }) {
     });
     await Promise.race([wc.loadURL(url), limit]);
     if (status !== 200) throw new Error(`the page answered ${status}`);
+    // the viewport the page is measured, captured and frozen at, whatever size and scale the display gives the window
+    // (with the display at scale 2 the window alone came out about 700 px tall)
+    cdp.attach('1.3');
+    await cdp.sendCommand('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
   } catch (e) { close(); throw e; } finally { clearTimeout(timer); }
   return {
     // measured in a world of its own, so the page's scripts cannot replace what measures it; still only a number
     height: () => wc.executeJavaScriptInIsolatedWorld(1001, [{ code: MEASURE }]),
-    pdf: size => wc.printToPDF(pdfOptions(size)),
+    pdf: async size => {
+      await wc.executeJavaScriptInIsolatedWorld(1001, [{ code: FREEZE_UNITS }]);
+      return wc.printToPDF(pdfOptions(size));
+    },
     png: async ({ width: w, height: h }) => {
-      win.setContentSize(w, h);
-      const shot = await wc.capturePage({ x: 0, y: 0, width: w, height: h }, { stayHidden: true });
-      if (shot.isEmpty()) throw new Error('the capture came back empty');
-      return (shot.getSize().width === w ? shot : shot.resize({ width: w })).toPNG();  // device scale factor 1
+      const shot = await cdp.sendCommand('Page.captureScreenshot',
+        { format: 'png', clip: { x: 0, y: 0, width: w, height: h, scale: 1 }, captureBeyondViewport: true });
+      const png = Buffer.from(String(shot?.data || ''), 'base64');
+      if (!png.length) throw new Error('the capture came back empty');
+      return png;
     },
     close,
   };

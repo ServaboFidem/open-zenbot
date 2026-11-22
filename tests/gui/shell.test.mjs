@@ -129,18 +129,24 @@ test('main registers the app scheme, loads the preload, and keeps the sandbox', 
   assert.match(src, /contextIsolation: true, sandbox: true/);
 });
 
-test('the export window is hidden, sandboxed, without a preload, in its own in-memory session, and goes nowhere', () => {
+test('the export window is offscreen, sandboxed, without a preload, in its own in-memory session, and goes nowhere', () => {
   const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-  const start = src.indexOf('async function makeExportWindow');
-  const fn = src.slice(start, src.indexOf('\n}\n', start));
-  assert.ok(start > 0);
+  const body = name => { const start = src.indexOf(name); assert.ok(start > 0, name); return src.slice(start, src.indexOf('\n}\n', start)); };
+  const fn = body('async function makeExportWindow');
   assert.match(fn, /show: false/);
-  assert.match(fn, /webPreferences: \{ sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'export-design'/);  // no persist: prefix
+  assert.match(fn, /webPreferences: \{ sandbox: true, contextIsolation: true, nodeIntegration: false, session: exportSession\(\), offscreen: true/);
   assert.doesNotMatch(fn, /preload/);
   for (const ev of ['will-navigate', 'will-redirect', 'will-frame-navigate']) assert.ok(fn.includes(`wc.on('${ev}', refuse)`), ev);
   assert.ok(fn.includes("setWindowOpenHandler(() => ({ action: 'deny' }))"));
-  assert.ok(fn.includes('setPermissionRequestHandler((_wc, _permission, answer) => answer(false))'));
   assert.ok(fn.includes('catch (e) { close(); throw e; }'));  // a failed, refused or slow load closes the window
+  assert.ok(fn.includes('deviceScaleFactor: 1'));  // the PNG is 1440 px wide whatever the display's scale
+  assert.ok(fn.includes('FREEZE_UNITS'));  // the PDF keeps vh as on screen
+  const ses = body('function exportSession');
+  assert.ok(ses.includes("session.fromPartition('export-design')"));  // no persist: prefix: in memory only
+  assert.ok(ses.includes('setPermissionRequestHandler((_wc, _permission, answer) => answer(false))'));
+  assert.ok(ses.includes('setPermissionCheckHandler(() => false)'));
+  assert.ok(ses.includes('setDevicePermissionHandler(() => false)'));
+  assert.ok(ses.includes("ses.on('will-download', event => event.preventDefault())"));
 });
 
 test('csp lets media and frames come from the harness only, with no wildcard', () => {

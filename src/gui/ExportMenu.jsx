@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { Menu, MenuButton, MenuItem, MenuList, MenuPopover, MenuTrigger } from '@fluentui/react-components';
 import { ArrowDownload20Regular } from '@fluentui/react-icons';
+import { exportItems } from './design-edits.js';
 
-// Export on the version shown. HTML is the numbered copy as it is; ZIP (newest version only) is the working file and
-// its pictures. In the desktop app both go through the Save dialog (saveMedia), in a browser they download. PDF and
-// PNG need the desktop app: the page sends the two ids and the main process renders the page (export-design.cjs).
-// A result or a refusal shows as a sentence under the menu, never a dialog.
+// Export on the version shown (which items show: design-edits.js exportItems). HTML is the numbered copy as it is;
+// ZIP is the working file and its pictures. In the desktop app both go through the Save dialog (saveMedia), in a
+// browser they download. PDF and PNG need the desktop app: the page sends the two ids and the main process renders the
+// page (export-design.cjs). A result or a refusal shows as a sentence under the menu, never a dialog.
 async function download(url, name) {
   const res = await fetch(url);
   if (!res.ok) {
@@ -21,11 +22,11 @@ async function download(url, name) {
   setTimeout(() => URL.revokeObjectURL(href), 1000);
 }
 
-export default function ExportMenu({ api, convId, shown, onNewest, disabled }) {
+export default function ExportMenu({ api, convId, shown, isNewest, disabled }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const bridge = typeof window !== 'undefined' ? window.openzenbot : null;
-  const title = String(shown.title || '').trim() || 'design';
+  const items = exportItems({ isNewest, hasBridge: !!bridge?.exportDesign, disabled, title: shown.title });
 
   const run = async work => {
     if (busy) return;
@@ -39,7 +40,11 @@ export default function ExportMenu({ api, convId, shown, onNewest, disabled }) {
     } finally { setBusy(false); }
   };
   const save = (url, name) => run(() => (bridge?.saveMedia ? bridge.saveMedia(url, name) : download(url, name)));
-  const render = kind => run(() => bridge.exportDesign(convId, shown.attId, kind, title));
+  const start = item => {
+    if (item.kind === 'html') save(api.conversationAttachmentUrl(convId, shown.attId), item.name);
+    else if (item.kind === 'zip') save(api.designZipUrl(convId), item.name);
+    else run(() => bridge.exportDesign(convId, shown.attId, item.kind, item.name));
+  };
 
   return <>
     <Menu>
@@ -48,11 +53,7 @@ export default function ExportMenu({ api, convId, shown, onNewest, disabled }) {
       </MenuTrigger>
       <MenuPopover>
         <MenuList>
-          <MenuItem onClick={() => save(api.conversationAttachmentUrl(convId, shown.attId), `${title}.html`)}>HTML</MenuItem>
-          {onNewest && <MenuItem disabled={disabled} title={disabled ? 'Wait for the task to finish.' : undefined}
-            onClick={() => save(api.designZipUrl(convId), `${title}.zip`)}>ZIP (page and pictures)</MenuItem>}
-          {bridge?.exportDesign && <MenuItem onClick={() => render('pdf')}>PDF</MenuItem>}
-          {bridge?.exportDesign && <MenuItem onClick={() => render('png')}>PNG</MenuItem>}
+          {items.map(item => <MenuItem key={item.kind} disabled={!!item.why} title={item.why} onClick={() => start(item)}>{item.label}</MenuItem>)}
         </MenuList>
       </MenuPopover>
     </Menu>

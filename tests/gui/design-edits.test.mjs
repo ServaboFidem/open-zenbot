@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { EMPTY, HOLD, body, canChange, compareDefaults, count, cssValue, frameMessages, holdsSend, pictureProblem, restorable, saveLabel, setImage, setText, setTweak, slotFor, slotsBehind, whyNot } from '../../src/gui/design-edits.js';
+import { EMPTY, HOLD, WAIT_FOR_TASK, body, canChange, compareDefaults, count, cssValue, exportItems, frameMessages, holdsSend, pictureProblem, restorable, saveLabel, setImage, setText, setTweak, slotFor, slotsBehind, whyNot } from '../../src/gui/design-edits.js';
 
 const slots = { version: 5, texts: [{ id: 'hero', text: 'Hello' }], images: [{ id: 'logo', name: 'logo.png', alt: 'Logo' }],
   tweaks: [{ var: '--accent', label: 'Accent', type: 'color', value: '#2f6feb' }, { var: '--gap', label: 'Gap', type: 'range', min: 0, max: 40, step: 1, unit: 'px', value: 8 }] };
@@ -88,4 +88,22 @@ test('slotsBehind: the slots name another version than the newest the pane holds
   assert.equal(slotsBehind({ version: 4 }, newest), true);
   assert.equal(slotsBehind({ version: 3 }, newest), false);
   assert.equal(slotsBehind(null, newest), false);
+});
+
+test('exportItems: HTML always, ZIP on the newest version only, PDF and PNG only with the desktop bridge', () => {
+  const kinds = o => exportItems({ title: 'Bakery', ...o }).map(i => i.kind);
+  assert.deepEqual(kinds({ isNewest: true, hasBridge: true }), ['html', 'zip', 'pdf', 'png']);
+  assert.deepEqual(kinds({ isNewest: false, hasBridge: true }), ['html', 'pdf', 'png']);
+  assert.deepEqual(kinds({ isNewest: true, hasBridge: false }), ['html', 'zip']);
+  assert.deepEqual(kinds({ isNewest: false, hasBridge: false }), ['html']);
+  assert.deepEqual(exportItems({ isNewest: true, hasBridge: true, title: 'Bakery' }).map(i => [i.label, i.name]),
+    [['HTML', 'Bakery.html'], ['ZIP (page and pictures)', 'Bakery.zip'], ['PDF', 'Bakery'], ['PNG', 'Bakery']]);
+});
+
+test('exportItems: ZIP waits while a task runs, and an empty title names the files "design"', () => {
+  const zip = disabled => exportItems({ isNewest: true, hasBridge: false, disabled, title: '' }).find(i => i.kind === 'zip');
+  assert.deepEqual(zip(true), { kind: 'zip', label: 'ZIP (page and pictures)', name: 'design.zip', why: WAIT_FOR_TASK });
+  assert.equal(WAIT_FOR_TASK, 'Wait for the task to finish.');
+  assert.equal(zip(false).why, undefined);
+  assert.equal(exportItems({ title: '  ' })[0].name, 'design.html');
 });

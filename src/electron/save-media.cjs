@@ -29,11 +29,20 @@ function allowedUrl(url, harnessBase) {
 
 const defaultFolder = (name, paths) => (PICTURES.test(name) ? paths.pictures : paths.downloads);
 
+/** The folder of the last save, when it is remembered and still there; else null. */
 function lastDir(fs, storePath) {
   try {
     const dir = JSON.parse(fs.readFileSync(storePath, 'utf8')).lastDir;
     return typeof dir === 'string' && dir && fs.existsSync(dir) ? dir : null;
   } catch { return null; }
+}
+
+/** Remember the folder of `saved` for the next dialog; a failure only loses the memory. */
+function rememberDir(fs, storePath, saved) {
+  try {
+    fs.mkdirSync(path.dirname(storePath), { recursive: true });
+    fs.writeFileSync(storePath, JSON.stringify({ lastDir: path.dirname(saved) }));
+  } catch { /* the save worked; only the folder memory did not */ }
 }
 
 /** Show the save dialog, fetch `url` from the harness, write it where the user chose. */
@@ -54,11 +63,8 @@ async function saveMedia({ url, name } = {}, deps) {
     try { fs.rmSync(chosen, { force: true }); } catch { /* nothing more to clean */ }
     return { error: `The file could not be saved (${e.code || e.message}).` };
   }
-  try {
-    fs.mkdirSync(path.dirname(storePath), { recursive: true });
-    fs.writeFileSync(storePath, JSON.stringify({ lastDir: path.dirname(chosen) }));
-  } catch { /* the save worked; only the folder memory did not */ }
+  rememberDir(fs, storePath, chosen);
   return { saved: chosen };
 }
 
-module.exports = { safeName, allowedUrl, defaultFolder, saveMedia };
+module.exports = { safeName, allowedUrl, defaultFolder, lastDir, rememberDir, saveMedia };

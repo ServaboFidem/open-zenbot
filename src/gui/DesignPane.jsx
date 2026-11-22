@@ -138,7 +138,7 @@ export default function DesignPane({ api, convId, revisions, urlFor, picks, onPi
         {!comparing && <Dropdown className="design-version" aria-label="Version" value={versionLabel(shown, many)} selectedOptions={[shown.attId]} onOptionSelect={(e, d) => d.optionValue && setShownId(d.optionValue === newest.attId ? null : d.optionValue)}>{[...revisions].reverse().map(r => <Option key={r.attId} value={r.attId} text={versionLabel(r, many)}>{versionLabel(r, many)}</Option>)}</Dropdown>}
         {revisions.length > 1 && <Button appearance={comparing ? 'primary' : 'subtle'} icon={<SplitVertical20Regular/>} aria-pressed={comparing} title="Show two versions side by side" onClick={() => { setComparing(v => !v); setEditing(null); }}>Compare</Button>}
         {canRestore && <Button appearance="outline" icon={<History20Regular/>} disabledFocusable={!!restoreWhy || saving} title={restoreWhy || `Make Version ${shown.version} the newest version`} onClick={restore}>Restore</Button>}
-        {!comparing && <ExportMenu key={shown.attId} api={api} convId={convId} shown={shown} onNewest={onNewest} disabled={disabled}/>}
+        {!comparing && <ExportMenu key={shown.attId} api={api} convId={convId} shown={shown} isNewest={onNewest} disabled={disabled}/>}
         <Button appearance="subtle" icon={<PanelRightContract20Regular/>} aria-label="Hide the design" title="Hide the design" onClick={() => setOpen(false)}/>
       </div>
       <div className="od-row design-modes" role="toolbar" aria-label="Design tools">

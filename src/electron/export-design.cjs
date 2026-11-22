@@ -1,12 +1,14 @@
 // Export a design as PDF or PNG. The renderer sends two ids, a kind and a title, never a URL or a path: this module
 // builds the closed attachment URL on the harness's own origin (served under the preview policy, so the page loads
-// nothing and has no pick bridge), the OS save dialog picks the path, and a hidden window the main process makes
-// (deps.makeWindow) renders the page 1440 px wide at its own height, capped at 16,000 px. The PDF is one page of that
-// size. The page's own answer for its height is untrusted: only a number or a numeric string counts.
+// nothing and has no pick bridge), the OS save dialog picks the path, and a window the main process makes
+// (deps.makeWindow) lays the page out at WIDTH x VIEW_HEIGHT, as in a normal window, and renders it whole: 1440 px wide
+// at its own height, capped at 16,000 px. The PDF is one page of that size. The page's own answer for its height is
+// untrusted: only a number or a numeric string counts.
 const path = require('node:path');
-const { safeName, defaultFolder } = require('./save-media.cjs');
+const { safeName, defaultFolder, lastDir, rememberDir } = require('./save-media.cjs');
 
 const WIDTH = 1440;
+const VIEW_HEIGHT = 900;  // the window height the page is laid out at; vh resolves against it
 const MAX_HEIGHT = 16000;
 const TIMEOUT_MS = 20_000;  // making the window, loading, measuring and rendering, all together
 const ID = /^[A-Za-z0-9_-]{1,80}$/;
@@ -38,12 +40,27 @@ const pdfOptions = ({ width, height }) => ({
   pageRanges: '1',
 });
 
-function lastDir(fs, storePath) {
-  try {
-    const dir = JSON.parse(fs.readFileSync(storePath, 'utf8')).lastDir;
-    return typeof dir === 'string' && dir && fs.existsSync(dir) ? dir : null;
-  } catch { return null; }
+/**
+ * Run in the page (as FREEZE_UNITS, in an isolated world) before printing: every vh, vb, vmin and vmax (and their
+ * s, l and d forms) in the style sheets and style attributes becomes the pixels it is in the window now. Chromium's
+ * print layout resolves those units against the page box, which is the whole page here, so a 60vh hero would
+ * otherwise grow with the page and push the end of the design off the single page. Uses only the page's globals.
+ */
+function freezeViewportUnits() {
+  const h = innerHeight / 100, w = innerWidth / 100;
+  const size = { vh: h, vb: h, vmin: Math.min(h, w), vmax: Math.max(h, w) };
+  const unit = /(?<![\w#.])(-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)[sld]?(vh|vb|vmin|vmax)\b/gi;
+  let fixed = 0;
+  const fix = style => {
+    const was = style.cssText, now = was.replace(unit, (_, n, u) => `${+(Number(n) * size[u.toLowerCase()]).toFixed(3)}px`);
+    if (now !== was) { style.cssText = now; fixed += 1; }
+  };
+  const walk = rules => { for (const r of rules) { if (r.style) fix(r.style); if (r.cssRules) walk(r.cssRules); } };
+  for (const sheet of document.styleSheets) { try { walk(sheet.cssRules); } catch { /* a sheet it may not read */ } }
+  for (const el of document.querySelectorAll('[style]')) fix(el.style);
+  return fixed;
 }
+const FREEZE_UNITS = `(${freezeViewportUnits.toString()})()`;
 
 function suggestedName(name, kind) {
   const file = safeName(`${String(name ?? '').trim()}.${kind}`);
@@ -54,7 +71,7 @@ function suggestedName(name, kind) {
 async function render(url, kind, makeWindow, ms) {
   let win = null, over = false, timer;
   const work = (async () => {
-    const w = await makeWindow(url, { width: WIDTH });
+    const w = await makeWindow(url, { width: WIDTH, height: VIEW_HEIGHT });
     if (over) { w.close(); throw new TimedOut(); }
     win = w;
     const size = { width: WIDTH, height: pageHeight(await w.height()) };
@@ -73,7 +90,7 @@ async function render(url, kind, makeWindow, ms) {
 
 /** Ask where to save, render the design, write it there. Answers {saved}, {canceled: true} or {error}. */
 async function exportDesign({ convId, attId, kind, name } = {}, deps) {
-  const { harnessBase, dialog, makeWindow, fs, storePath, paths, timeoutMs = TIMEOUT_MS } = deps;
+  const { harnessBase, dialog, makeWindow, fs, storePath, paths, timeoutMs = TIMEOUT_MS, warn = console.warn } = deps;
   let url;
   try { url = pageUrl(harnessBase, convId, attId); } catch { return { error: 'That design cannot be exported.' }; }
   if (!KINDS.has(kind)) return { error: 'That design cannot be exported.' };
@@ -88,6 +105,8 @@ async function exportDesign({ convId, attId, kind, name } = {}, deps) {
   } catch (e) {
     // makeWindow's own load limit names its error TimeoutError
     const late = e instanceof TimedOut || e?.name === 'TimeoutError';
+    // for whoever reads the main process's log: the cause (the URL in it holds only the two ids)
+    warn(`export-design: ${kind} failed: ${late ? 'TimeoutError: the time limit passed' : `${e?.name || 'Error'}: ${e?.message || e}`}`);
     return { error: late ? 'The design took too long to export.' : 'The design could not be exported.' };
   }
   try {
@@ -96,11 +115,8 @@ async function exportDesign({ convId, attId, kind, name } = {}, deps) {
     try { fs.rmSync(chosen, { force: true }); } catch { /* nothing more to clean */ }
     return { error: `The file could not be saved (${e.code || e.message}).` };
   }
-  try {
-    fs.mkdirSync(path.dirname(storePath), { recursive: true });
-    fs.writeFileSync(storePath, JSON.stringify({ lastDir: path.dirname(chosen) }));
-  } catch { /* the export worked; only the folder memory did not */ }
+  rememberDir(fs, storePath, chosen);
   return { saved: chosen };
 }
 
-module.exports = { WIDTH, MAX_HEIGHT, TIMEOUT_MS, pageUrl, pageHeight, pdfOptions, exportDesign };
+module.exports = { WIDTH, VIEW_HEIGHT, MAX_HEIGHT, TIMEOUT_MS, FREEZE_UNITS, pageUrl, pageHeight, pdfOptions, freezeViewportUnits, exportDesign };

@@ -100,3 +100,16 @@ export function compareDefaults(revisions) {
   const previous = same[same.length - 2] || newest;
   return [previous.attId, newest.attId];
 }
+
+// The Export menu on the version shown: HTML always; ZIP (the working file and its pictures) only on the newest
+// version, and not while a task runs (the harness answers 409 then); PDF and PNG only in the desktop app. `name` is the
+// suggested file name (for PDF and PNG the main process adds the extension to the title).
+export const WAIT_FOR_TASK = 'Wait for the task to finish.';
+export function exportItems({ isNewest, hasBridge, disabled, title }) {
+  const base = String(title || '').trim() || 'design';
+  return [
+    { kind: 'html', label: 'HTML', name: `${base}.html` },
+    ...(isNewest ? [{ kind: 'zip', label: 'ZIP (page and pictures)', name: `${base}.zip`, ...(disabled ? { why: WAIT_FOR_TASK } : {}) }] : []),
+    ...(hasBridge ? [{ kind: 'pdf', label: 'PDF', name: base }, { kind: 'png', label: 'PNG', name: base }] : []),
+  ];
+}
