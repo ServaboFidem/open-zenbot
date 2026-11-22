@@ -320,3 +320,276 @@ async def test_the_narrator_takes_no_mcps_through_edit_bot(vault, tmp_path):
         assert r.status_code == 422 and r.json()["detail"] == "The Narrator has no tool groups."
         assert (await c.patch("/bots/narrator", json={"mcps": [], "role": "Reads."})).status_code == 200
     assert h.bots["narrator"].mcps == [] and h.bots["narrator"].role == "Reads."
+
+
+# -- local speech: pieces, the Kokoro engine and the model's state ---------------------------------------
+
+from contextlib import contextmanager  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+
+from src.generation.speech import (  # noqa: E402
+    LOCAL,
+    LOCAL_FAILED,
+    NOT_DOWNLOADED,
+    PIECE_MAX,
+    SAMPLE_TEXT,
+    SUMMARY,
+    split,
+)
+from src.kokoro.engine import EngineFailed, NotDownloaded  # noqa: E402
+from src.providers.speech import wav_data  # noqa: E402
+
+
+class FakeEngine:
+    def __init__(self, *, ensure_error=None, fail_on=None, empty=()):
+        self.calls: list = []
+        self.ensure_error = ensure_error
+        self.fail_on = fail_on
+        self.empty = empty
+
+    async def ensure(self):
+        if self.ensure_error:
+            raise self.ensure_error
+
+    async def speak(self, text, voice):
+        self.calls.append((text, voice))
+        if self.fail_on == len(self.calls):
+            raise EngineFailed("RuntimeError")
+        return b"" if text in self.empty else b"\x01\x00" * len(text)
+
+
+class FakeModel:
+    def __init__(self, ready=True):
+        self._ready = ready
+
+    def ready(self):
+        return self._ready
+
+    def status(self):
+        return {"state": "ready" if self._ready else "absent", "done": 5, "total": 5, "error": ""}
+
+
+def _no_key():
+    raise AssertionError("local speech never asks for a key")
+
+
+def _local(tmp_path, *, engine=None, model=None, voice="af_heart", resolved=None):
+    ledger = Ledger(tmp_path / "vault")
+
+    def resolve(ref):
+        if resolved is not None:
+            resolved.append(ref)
+        raise AssertionError("local speech never resolves a key")
+    engine = engine or FakeEngine()
+    s = Speech(SpeechConfig(provider=LOCAL, model="kokoro-v1.0", voice=voice), key_ref=_no_key,
+               ledger=ledger, resolve=resolve, local=engine, local_model=model or FakeModel())
+    return s, engine, ledger
+
+
+def _narrate(text):
+    return lambda bot: (ScriptedProvider([completion(text)]), None)
+
+
+def test_the_first_piece_is_the_first_sentence_alone():
+    assert split("One short one. Two is here. Three follows.")[0] == "One short one."
+
+
+def test_later_pieces_join_sentences_up_to_about_300():
+    sentences = [f"Sentence number {i} is a fairly ordinary one." for i in range(30)]
+    pieces = split(" ".join(sentences))
+    assert pieces[0] == sentences[0]
+    assert all(len(p) <= 300 for p in pieces[1:]) and len(pieces[1]) > 200 and len(pieces) < 10
+
+
+def test_no_piece_is_over_400_even_without_a_full_stop():
+    pieces = split("and then " * 200)
+    assert len(pieces) > 3 and all(0 < len(p) <= PIECE_MAX for p in pieces)
+
+
+def test_a_long_sentence_is_cut_at_a_comma_when_there_is_one():
+    sentence = "word " * 70 + "end, " + "more " * 30
+    assert split(sentence)[0].endswith("end,")
+
+
+def test_nothing_is_dropped_or_reordered():
+    t = "Hello there.\nDr. Smith paid 3.14 dollars! Really?! Yes.\n\nA last line, with a comma. " + "and so on " * 80
+    assert " ".join(split(t)).split() == t.split()
+
+
+@pytest.mark.parametrize("text", ["", "   ", "\n\n"])
+def test_empty_and_blank_text_give_no_pieces(text):
+    assert split(text) == []
+
+
+async def test_kokoro_needs_no_key_and_never_resolves_one(tmp_path):
+    resolved: list = []
+    s, engine, _ = _local(tmp_path, resolved=resolved)
+    await s.speak("hello", NARRATOR, _narrate("Hi there."))
+    assert resolved == [] and engine.calls == [("Hi there.", "af_heart")]
+
+
+async def test_kokoro_reads_one_wav_per_piece_in_order(tmp_path):
+    s, engine, _ = _local(tmp_path)
+    narration = "First one. Second one. Third one."
+    reading = await s.read("hello", NARRATOR, _narrate(narration))
+    wavs = [w async for w in reading.pieces()]
+    assert len(wavs) == len(split(narration)) == reading.made
+    assert [c[0] for c in engine.calls] == split(narration)
+    for w in wavs:
+        assert w[:4] == b"RIFF" and struct.unpack("<I", w[24:28])[0] == 24000
+
+
+async def test_wav_joins_the_pieces_under_one_header(tmp_path):
+    s, engine, _ = _local(tmp_path)
+    narration = "First one. Second one."
+    wav = await (await s.read("hello", NARRATOR, _narrate(narration))).wav()
+    assert wav[:4] == b"RIFF" and wav.count(b"RIFF") == 1
+    assert wav[44:] == b"".join(b"\x01\x00" * len(p) for p in split(narration))
+    assert struct.unpack("<I", wav[40:44])[0] == len(wav) - 44
+
+
+async def test_openrouter_speaks_inside_read_and_is_one_piece(tmp_path):
+    seen: list = []
+    s, _ = _speech(tmp_path, _ok_tts(seen))
+    reading = await s.read("hello", NARRATOR, _narrate("One. Two."))
+    assert len(seen) == 1 and seen[0]["input"] == "One. Two."
+    assert [w async for w in reading.pieces()] == [pcm_to_wav(PCM)] and reading.made == 1
+
+
+async def test_an_openrouter_failure_is_still_502_from_read(tmp_path):
+    s, _ = _speech(tmp_path, lambda r: httpx.Response(401, json={"error": "no"}))
+    with pytest.raises(SpeechError) as e:
+        await s.read("hello", NARRATOR, _narrate("hi"))
+    assert e.value.status == 502
+    assert str(e.value) == "The speech model could not read this reply. Check its key and limits in Settings."
+
+
+async def test_speak_answers_the_same_bytes_as_before_for_openrouter(tmp_path):
+    s, ledger = _speech(tmp_path, _ok_tts([]))
+    assert await s.speak("hello", NARRATOR, _narrate("hi")) == pcm_to_wav(PCM)
+    [entry] = [e for e in ledger.iter() if e.kind == "speech"]
+    assert entry.data["provider"] == "openrouter" and entry.data["pieces"] == 1
+
+
+async def test_a_model_that_is_not_downloaded_is_409_before_the_narrator_is_asked(tmp_path):
+    s, _, ledger = _local(tmp_path, model=FakeModel(ready=False))
+    narrator = ScriptedProvider([completion("hi")])
+    with pytest.raises(SpeechError) as e:
+        await s.read("hello", NARRATOR, lambda bot: (narrator, None))
+    assert e.value.status == 409 and str(e.value) == NOT_DOWNLOADED and narrator.calls == []
+    assert [x for x in ledger.iter() if x.kind == "speech"] == []
+
+
+async def test_an_engine_that_cannot_start_is_502_with_its_sentence(tmp_path):
+    s, _, ledger = _local(tmp_path, engine=FakeEngine(ensure_error=EngineFailed("ImportError")))
+    with pytest.raises(SpeechError) as e:
+        await s.read("hello", NARRATOR, _narrate("hi"))
+    assert e.value.status == 502 and str(e.value) == LOCAL_FAILED
+    [entry] = [x for x in ledger.iter() if x.kind == "speech"]
+    assert entry.data["stage"] == "speak" and entry.data["error"]
+
+
+async def test_a_hash_mismatch_at_start_is_the_not_downloaded_409(tmp_path):
+    s, _, _ = _local(tmp_path, engine=FakeEngine(ensure_error=NotDownloaded("gone")))
+    with pytest.raises(SpeechError) as e:
+        await s.read("hello", NARRATOR, _narrate("hi"))
+    assert e.value.status == 409 and str(e.value) == NOT_DOWNLOADED
+
+
+async def test_a_failure_on_the_third_piece_raises_after_two_were_yielded(tmp_path):
+    s, _, _ = _local(tmp_path, engine=FakeEngine(fail_on=3))
+    narration = ("A" * 250 + ". ") + ("B" * 250 + ". ") + ("C" * 250 + ". ") + ("D" * 250 + ".")
+    reading = await s.read("hello", NARRATOR, _narrate(narration))
+    got = []
+    with pytest.raises(ProviderError):
+        async for w in reading.pieces():
+            got.append(w)
+    assert len(got) == 2 and reading.made == 2
+    s.finish(reading, error="other")
+    [entry] = [x for x in s.ledger.iter() if x.kind == "speech"]
+    assert entry.data["pieces"] == 2 and entry.data["error"] == "other"
+
+
+async def test_a_piece_empty_after_cleaning_is_skipped(tmp_path):
+    s, engine, _ = _local(tmp_path, engine=FakeEngine(empty=("Second.",)))
+    reading = await s.read("hello", NARRATOR, _narrate("First. Second. Third."))
+    wavs = [w async for w in reading.pieces()]
+    assert reading.made == len(wavs) and len(engine.calls) == len(split("First. Second. Third."))
+    assert all(wav_data(w) for w in wavs)
+
+
+async def test_a_settings_change_during_a_reading_does_not_change_its_voice(tmp_path):
+    s, engine, _ = _local(tmp_path, voice="af_heart")
+    narration = "First one. " + "Second one is longer. " * 3
+    reading = await s.read("hello", NARRATOR, _narrate(narration))
+    s.reconfigure(SpeechConfig(provider=LOCAL, voice="bm_george"))
+    [w async for w in reading.pieces()]
+    assert {v for _, v in engine.calls} == {"af_heart"}
+
+
+def test_status_carries_the_local_block_and_lists_kokoro_first(tmp_path):
+    s, _, _ = _local(tmp_path)
+    st = s.status()
+    assert st["providers"][0] == "kokoro" and "openrouter" in st["providers"]
+    assert st["local"]["state"] == "ready" and st["local"]["default_voice"] == "af_heart"
+    assert {"name", "label", "accent", "gender"} <= set(st["local"]["voices"][0]) and st["active"] is True
+    bare = Speech(SpeechConfig(), key_ref=lambda: None).status()
+    assert bare["local"]["state"] == "absent" and bare["local"]["total"] == 0 and bare["local"]["voices"]
+    assert Speech(SpeechConfig(provider=LOCAL), key_ref=lambda: None, local=FakeEngine(), local_model=FakeModel(ready=False)).active is False
+
+
+async def test_sample_speaks_the_fixed_sentence_and_refuses_an_unknown_voice_and_a_missing_model(tmp_path):
+    s, engine, ledger = _local(tmp_path)
+    wav = await s.sample("bf_emma")
+    assert engine.calls == [(SAMPLE_TEXT, "bf_emma")] and wav[:4] == b"RIFF"
+    [entry] = [x for x in ledger.iter() if x.kind == "speech"]
+    assert entry.data == {"sample": True, "voice": "bf_emma", "bytes": len(wav)}
+    with pytest.raises(SpeechError) as e:
+        await s.sample("nobody")
+    assert e.value.status == 422 and len(engine.calls) == 1
+    s.local_model._ready = False
+    with pytest.raises(SpeechError) as e:
+        await s.sample("af_heart")
+    assert e.value.status == 409 and str(e.value) == NOT_DOWNLOADED
+    s.local_model._ready = True
+    s.local.ensure_error = EngineFailed("X")
+    with pytest.raises(SpeechError) as e:
+        await s.sample("af_heart")
+    assert e.value.status == 502
+
+
+async def test_finish_logs_provider_pieces_and_stopped_and_never_text(tmp_path):
+    s, _, ledger = _local(tmp_path)
+    reading = await s.read("a private reply", NARRATOR, _narrate("Secretive words. More secretive words."))
+    pieces = reading.pieces()
+    await pieces.__anext__()
+    await pieces.aclose()
+    s.finish(reading, stopped=True)
+    [entry] = [x for x in ledger.iter() if x.kind == "speech"]
+    assert entry.data["provider"] == "kokoro" and entry.data["pieces"] == 1 and entry.data["stopped"] is True
+    assert entry.data["model"] == "kokoro-v1.0" and entry.data["voice"] == "af_heart"
+    assert "ecretive" not in json.dumps(entry.data) and "private" not in json.dumps(entry.data)
+
+
+def test_the_summary_names_kokoro_and_this_computer():
+    assert "Kokoro" in SUMMARY and "on this computer" in SUMMARY
+
+
+async def test_a_kokoro_piece_is_traced_like_a_speech_call(tmp_path):
+    s, _, _ = _local(tmp_path)
+    seen: list = []
+
+    @contextmanager
+    def observe(name, **kw):
+        seen.append((name, kw))
+
+        class Gen:
+            def update(self, **u):
+                seen.append(("update", u))
+        yield Gen()
+    with patch("src.providers.tracing.observe", observe):
+        await s.speak("hello", NARRATOR, _narrate("One. Two."))
+    calls = [kw for n, kw in seen if n == "speak"]
+    assert len(calls) == len(split("One. Two."))
+    assert all(c["model"] == "kokoro-v1.0" and c["model_parameters"] == {"voice": "af_heart"}
+               and c["as_type"] == "generation" for c in calls)
