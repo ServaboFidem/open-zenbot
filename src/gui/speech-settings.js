@@ -53,3 +53,46 @@ export function voiceFor(local, voice) {
   const l = local || {};
   return (l.voices || []).some(v => v.name === voice) ? voice : l.default_voice;
 }
+
+const isLocal = choice => (choice || '').startsWith(`${LOCAL}::`);
+const savedChoice = t => (t.provider && t.model ? `${t.provider}::${t.model}` : '');
+
+/** The card's form for a saved tool: the provider model's free-text voice and the Kokoro picker's voice are kept apart. */
+export const speechForm = t => ({ choice: savedChoice(t), voice: t.provider === LOCAL ? '' : (t.voice || ''), localVoice: t.provider === LOCAL ? t.voice : undefined });
+
+/** The body of PUT /settings/tools/speech for the form: only what changed, never one side's voice on the other's model. */
+export function speechPatch(t, form) {
+  if (isLocal(form.choice)) return { provider: LOCAL, model: LOCAL_MODEL, voice: voiceFor(t.local, form.localVoice) };
+  const patch = {};
+  if (form.choice !== savedChoice(t)) {
+    const at = form.choice.indexOf('::');
+    if (at > 0) { patch.provider = form.choice.slice(0, at); patch.model = form.choice.slice(at + 2); }
+  }
+  const v = typeof form.voice === 'string' ? form.voice.trim() : '';
+  if (v && v !== t.voice) patch.voice = v;
+  return patch;
+}
+
+/** Whether Save is enabled. */
+export function speechDirty(t, form) {
+  if (form.choice !== savedChoice(t)) return true;
+  if (isLocal(form.choice)) return voiceFor(t.local, form.localVoice) !== t.voice;
+  const v = typeof form.voice === 'string' ? form.voice.trim() : '';
+  return !!v && v !== t.voice;
+}
+
+/** Play a sample: a blob that arrives after stop() or after a newer play() is dropped. */
+export function createSampler({ fetchSample, player }) {
+  let gen = 0;
+  return {
+    async play(voice, onFail) {
+      const mine = ++gen;
+      const blob = await fetchSample(voice);
+      if (mine !== gen) return false;
+      player.stop();
+      player.enqueue(blob, onFail);
+      return true;
+    },
+    stop() { gen += 1; player.stop(); },
+  };
+}

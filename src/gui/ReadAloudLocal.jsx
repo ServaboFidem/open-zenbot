@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Field } from '@fluentui/react-components';
 import { createPlayer } from './speech.js';
-import { NOTE, REMOVE_ASK, canSample, localAction, localLine, voiceFor, voiceGroups } from './speech-settings.js';
+import { NOTE, REMOVE_ASK, canSample, createSampler, localAction, localLine, voiceFor, voiceGroups } from './speech-settings.js';
 
 // The Kokoro part of the Read aloud card: the download status and its button, the voice picker, Play a sample, the note.
 // The status object each call answers goes up through onStatus, which replaces the tool's entry.
@@ -12,7 +12,9 @@ export function ReadAloudLocal({ api, tool, voice, online, onVoice, onStatus, no
   const [error, setError] = useState('');
   const player = useRef(null);
   if (!player.current) player.current = createPlayer({ Audio: window.Audio, URL: window.URL });
-  useEffect(() => () => player.current.stop(), []);
+  const sampler = useRef(null);
+  if (!sampler.current) sampler.current = createSampler({ fetchSample: v => api.speechSample(v), player: player.current });
+  useEffect(() => () => sampler.current.stop(), []);
 
   async function run(label, call, done) {
     setBusy(label); setError('');
@@ -26,9 +28,7 @@ export function ReadAloudLocal({ api, tool, voice, online, onVoice, onStatus, no
   async function sample() {
     setBusy('sample'); setError('');
     try {
-      const blob = await api.speechSample(voiceFor(local, voice));
-      player.current.stop();
-      player.current.enqueue(blob, () => setError('The sample could not be played.'));
+      await sampler.current.play(voiceFor(local, voice), () => setError('The sample could not be played.'));
     } catch (e) { setError(e && e.message ? e.message : 'The sample could not be made.'); }
     finally { setBusy(''); }
   }

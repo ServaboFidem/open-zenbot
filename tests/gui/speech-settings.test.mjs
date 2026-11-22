@@ -57,3 +57,37 @@ test('voiceFor keeps a Kokoro voice, else the default', () => {
   assert.equal(voiceFor(local(), 'Zephyr'), 'af_heart');
   assert.equal(voiceFor(local(), undefined), 'af_heart');
 });
+
+import { createSampler, speechDirty, speechForm, speechPatch } from '../../src/gui/speech-settings.js';
+const prov = { provider: 'openrouter', model: 'google/gemini-tts', voice: 'Zephyr', local: local({ state: 'ready' }) };
+const kok = { provider: 'kokoro', model: 'kokoro-v1.0', voice: 'af_heart', local: local({ state: 'ready' }) };
+
+test('a Kokoro voice never reaches a provider model', () => {
+  const f = { ...speechForm(prov), choice: 'kokoro::kokoro-v1.0', localVoice: 'am_adam' };
+  const back = { ...f, choice: 'openrouter::google/gemini-tts' };
+  assert.equal(speechDirty(prov, back), false);
+  assert.deepEqual(speechPatch(prov, back), {});
+  assert.equal(speechForm(prov).voice, 'Zephyr');
+});
+test('Kokoro: a picked voice is dirty and sent; switching sends the default', () => {
+  assert.equal(speechDirty(kok, speechForm(kok)), false);
+  const f = { ...speechForm(kok), localVoice: 'bm_george' };
+  assert.equal(speechDirty(kok, { ...f, localVoice: 'bm_0' }), true);
+  assert.deepEqual(speechPatch(kok, { ...f, localVoice: 'bm_0' }), { provider: 'kokoro', model: 'kokoro-v1.0', voice: 'bm_0' });
+  assert.deepEqual(speechPatch(prov, { ...speechForm(prov), choice: 'kokoro::kokoro-v1.0' }), { provider: 'kokoro', model: 'kokoro-v1.0', voice: 'af_heart' });
+});
+test('saved Kokoro to a provider model: no Kokoro voice name sent', () => {
+  const f = { ...speechForm(kok), choice: 'openrouter::m' };
+  assert.deepEqual(speechPatch(kok, f), { provider: 'openrouter', model: 'm' });
+  assert.deepEqual(speechPatch(kok, { ...f, voice: ' Puck ' }), { provider: 'openrouter', model: 'm', voice: 'Puck' });
+});
+test('the sampler drops a late or superseded sample', async () => {
+  const played = []; const player = { stop() {}, enqueue: b => played.push(b) };
+  const waits = {};
+  const s = createSampler({ player, fetchSample: v => new Promise(r => { waits[v] = r; }) });
+  const a = s.play('a'); s.stop(); waits.a('A');
+  assert.equal(await a, false);
+  const b = s.play('b'); const c = s.play('c'); waits.c('C'); waits.b('B');
+  assert.equal(await c, true); assert.equal(await b, false);
+  assert.deepEqual(played, ['C']);
+});
