@@ -19,7 +19,7 @@ name each top-level system and run the harness and the tests.
 | `src/sonos/` | Sonos control over SoCo: settings (`settings.py`), the device boundary (`devices.py`), the service that finds speakers (`service.py`), the `sonos_*` tools and the volume ceiling (`tools.py`) and the `/sonos` routes (`routes.py`); see `### Sonos` |
 | `src/speakers/` | Wi-Fi speakers (finding only, nothing played): settings and the speaker record (`settings.py`), the three finders behind one `Finder` protocol (`finders.py`, the only importer of pyatv, pychromecast, async_upnp_client and zeroconf), the service with a look per speaker type and the one default (`service.py`) and the `/speakers` routes (`routes.py`); see `### Wi-Fi speakers` |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, with the editor `DesignEditor.jsx`, `TweaksPanel.jsx`, `DesignPendingBar.jsx`, `DesignCompare.jsx` and `ExportMenu.jsx`, and its unsaved changes decided in `design-edits.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, the approval dialog `ApprovalDialog.jsx` + `approval-dialog.js` (any pending approval opens it over whatever page is open, oldest first; `app.jsx` reads `GET /approvals` every 5 s while online and on a live `approval_request` event; closing it or Decide later decides nothing and puts that request off until a reload; it does not open on the Approvals page; never seen on screen with a real approval), program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; `export-design.cjs` renders a design as PDF or PNG in a hidden window (`makeExportWindow` in `main.cjs`); `open-vault.cjs` opens the vault's root in the OS file manager for the home page's Browse your vault button, shown in the desktop app only: the page sends no path, the folder is `ZEN_VAULT` as the main process reads it, checked by `tests/gui/open-vault.test.mjs`; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (AgentMail: the section at the top of Settings > Connected apps `MailSettings.jsx`, the AgentMail page `MailPage.jsx` (shown in the navigation below Conversations once a key is saved and an inbox chosen), their decisions in `mail.js` and styles in `mail.css`, through `mail-api.js`) (Sonos: the section of Settings > Connected apps `SonosSettings.jsx`, its decisions in `sonos.js`, and the Music > Sonos page `SonosPage.jsx` with its decisions in `sonos-panel.js` and styles in `sonos.css`, both through `sonos-api.js`) (Wi-Fi speakers: the Settings > Wi-Fi speakers panel `WifiSpeakers.jsx`, its decisions in `wifi-speakers.js`, through `speakers-api.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, with the editor `DesignEditor.jsx`, `TweaksPanel.jsx`, `DesignPendingBar.jsx`, `DesignCompare.jsx` and `ExportMenu.jsx`, and its unsaved changes decided in `design-edits.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, the approval dialog `ApprovalDialog.jsx` + `approval-dialog.js` (any pending approval opens it over whatever page is open, oldest first; `app.jsx` reads `GET /approvals` every 5 s while online and on a live `approval_request` event; closing it or Decide later decides nothing and puts that request off until a reload; it does not open on the Approvals page; never seen on screen with a real approval), program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; `export-design.cjs` renders a design as PDF or PNG in an offscreen window (`makeExportWindow` and `exportSession` in `main.cjs`); `open-vault.cjs` opens the vault's root in the OS file manager for the home page's Browse your vault button, shown in the desktop app only: the page sends no path, the folder is `ZEN_VAULT` as the main process reads it, checked by `tests/gui/open-vault.test.mjs`; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (AgentMail: the section at the top of Settings > Connected apps `MailSettings.jsx`, the AgentMail page `MailPage.jsx` (shown in the navigation below Conversations once a key is saved and an inbox chosen), their decisions in `mail.js` and styles in `mail.css`, through `mail-api.js`) (Sonos: the section of Settings > Connected apps `SonosSettings.jsx`, its decisions in `sonos.js`, and the Music > Sonos page `SonosPage.jsx` with its decisions in `sonos-panel.js` and styles in `sonos.css`, both through `sonos-api.js`) (Wi-Fi speakers: the Settings > Wi-Fi speakers panel `WifiSpeakers.jsx`, its decisions in `wifi-speakers.js`, through `speakers-api.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) |
 | `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`); a prompt can also set `closed: true` (only the tool groups in its `mcps`, no built-in tool, never in a room: `event-scout.md`), or `narrates: true` (the Narrator, `narrator.md`: asked directly to rewrite replies for speech, never given a task) |
 | `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+), and `fetch-uv.mjs` (downloads the pinned uv into `build/bin/` for the installers). Packaging itself is `electron-builder.yml`, `build/` (icon, the .deb's AppArmor profile `apparmor-profile`, the NSIS include `installer.nsh`) and `packaging/harness/` (the CPU-only `pyproject.toml` and `uv.lock` the installed app uses) |
@@ -1376,22 +1376,38 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     a string of at most 32 characters, all or none, set with `style.setProperty` on the root element) and `reset`
     (puts back what the others changed). The GUI builds each tweak value from the knob's type (`cssValue`), so the
     frame never receives free CSS. Nothing from the frame is saved: the frame still sends only `ready` and `pick`.
-  - *Export* (`ExportMenu.jsx`, on the version shown; hidden while comparing). HTML is the numbered copy as it is.
-    ZIP (newest version only; runs catch-up first) is the working file and each regular, single-link file directly
-    in its `images/` of at most 1,500,000 bytes; no link followed, no subfolder, nothing else. In the desktop app
-    both go through Save… (`save-media.cjs`, whose `ROUTES` include the ZIP route), in a browser they download. PDF
-    and PNG need the desktop app (shown only when the preload offers `openzenbot.exportDesign`). The renderer sends
-    the two ids, the kind and a title over IPC `export-design` (refused unless from the app's own pages); the main
-    process builds the closed attachment URL on the harness's own origin (`export-design.cjs` `pageUrl`, ids
-    `[A-Za-z0-9_-]{1,80}`; served under `PREVIEW_CSP`, without the bridge), asks the Save dialog for the path, and
-    renders the page in a hidden window (`makeExportWindow`): sandboxed, context isolation, no node integration, no
-    preload, its own in-memory session (`partition: 'export-design'`), every navigation, redirect and frame
-    navigation refused, window opening denied, every permission refused, closed on a load that fails or answers
-    other than 200. Its height is measured in an isolated world, so a page script cannot replace what measures it,
-    and is still clamped (`pageHeight`). PNG is a capture `WIDTH` (1440) px wide; PDF is one continuous page of that
-    width, sized to the content, backgrounds on, no margins; both at most `MAX_HEIGHT` (16,000) px tall. Making the
-    window, loading, measuring and rendering share one time limit (`TIMEOUT_MS`). The sentences shown are in
-    `export-design.cjs` and `ExportMenu.jsx`; see the code.
+  - *Export* (`ExportMenu.jsx`, on the version shown; hidden while comparing). The menu's choices are `exportItems`
+    in `design-edits.js`: HTML always; "ZIP (page and pictures)" only on the newest version, disabled with "Wait for
+    the task to finish." while a task runs; PDF and PNG only when the preload offers `openzenbot.exportDesign` (the
+    desktop app). HTML is the numbered copy as it is. ZIP (runs catch-up first) is the working file and each
+    regular, single-link file directly in its `images/` of at most 1,500,000 bytes; no link followed, no subfolder,
+    nothing else. In the desktop app both go through Save… (`save-media.cjs`, whose `ROUTES` include the ZIP route),
+    in a browser they download. A result ("Saved to <path>") or a refusal shows as a line under the menu.
+    - *PDF and PNG.* The renderer sends the two ids, the kind and a title over IPC `export-design` (refused unless
+      from the app's own pages); the main process builds the closed attachment URL on the harness's own origin
+      (`export-design.cjs` `pageUrl`, ids `[A-Za-z0-9_-]{1,80}`; served under `PREVIEW_CSP`, without the bridge),
+      asks the Save dialog for the path (the last folder is shared with Save…: `save-media.cjs` `lastDir`,
+      `rememberDir`), and renders the page in an offscreen window (`main.cjs` `makeExportWindow`): sandboxed, context
+      isolation, no node integration, no preload, the in-memory session `exportSession()` (partition
+      `export-design`; every permission request, permission check and device permission refused, every download
+      cancelled), every navigation, redirect and frame navigation refused, window opening denied, closed on a load
+      that fails or answers other than 200. Once loaded, its viewport is pinned at `WIDTH` x `VIEW_HEIGHT` (1440 x
+      900) at scale 1 through the DevTools protocol (`Emulation.setDeviceMetricsOverride`), so a design looks as it
+      does on screen whatever the display's scale. Its height is measured in an isolated world, so a page script
+      cannot replace what measures it, and is still clamped to 1 to `MAX_HEIGHT` (16,000) px (`pageHeight`).
+    - PNG is a DevTools-protocol screenshot (`Page.captureScreenshot`, `captureBeyondViewport`) of the whole page,
+      1440 px wide, beyond that viewport; an empty capture is refused. PDF is one page (`pdfOptions`: 1440 px wide,
+      sized to the measured height, backgrounds on, no margins, `pageRanges: '1'`); before printing,
+      `freezeViewportUnits` (run in an isolated world as `FREEZE_UNITS`) fixes every `vh`, `vb`, `vmin` and `vmax`
+      length (and their `s`, `l` and `d` forms) in the page's style sheets and style attributes to its on-screen
+      pixels, leaving quoted strings and `url(...)` alone, since print layout would resolve them against the whole
+      page.
+    - One time limit (`TIMEOUT_MS`, 20 s) set when the window is made bounds every wait on it (each races it) and
+      destroys the window when it passes, so a page that never stops running cannot leave a window open;
+      `exportDesign` holds the same limit over the whole render. A failed export logs the error's name and message in
+      the main process (`export-design: <kind> failed: ...`) and shows the user a fixed sentence: "The design took too
+      long to export." after the limit, else "The design could not be exported."; "That design cannot be exported."
+      for ids or a kind it refuses; "The file could not be saved (<code>)." when the file cannot be written.
   - *Ledger.* Kind `design_edit`, events `save` (version; counts of texts, pictures and tweaks; `ids`, the text and
     picture slot ids changed), `restore` (`from`, `to`), `catch_up` (version), `refused` (`action`: `slots`,
     `changes`, `restore` or `export`; `reason`: the HTTP status) and `export` (`format` `zip`, version). Never a text,
@@ -1416,7 +1432,13 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
       sentence stays under the frame until the next mode click, save or restore; the picture editor can overlap the
       pending bar; a picture's `data:` URL is posted to the frame again on every keystroke.
     - The PDF is one page (`pageRanges: '1'`): a page whose print layout runs taller than its screen height loses
-      the overflow.
+      the overflow. In the PDF, sizes that come from `height: 100%` chains, scripts that read `innerHeight`, and
+      `@media (min-height: ...)` rules can still differ from the screen (the PNG is not affected), and the freeze
+      does not reach shadow roots or `document.adoptedStyleSheets`. Each PDF page is about 1 px taller than
+      measured, which leaves a 1 px white line at the bottom.
+    - One PNG failed once in about 70 real exports, with the earlier `capturePage` capture, and no cause was found
+      (a later run saw `capturePage` fail with `UnknownVizError`). The capture is now a DevTools-protocol screenshot;
+      an empty one is refused with "The design could not be exported." and the cause is logged.
   - *Unverified.* The pane's controls were exercised by hand once (with the first version of the pane, `da5b20f`) in
     Playwright Chromium, a plain browser, against a throwaway harness with a conversation seeded by script (no
     model): an Edit pick on a heading opening the editor with the harness's text, typing shown live, Escape putting
@@ -1427,12 +1449,13 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     Discard. One click on Save landed on the frame during a layout shift; the cause was not found. The later fixes
     (Redo held, the pane reset per conversation, Restore of the shown file, inputs off while saving, the reload after
     a 409, colour case) ran only under `npm test` and the build. Nothing was seen in the Electron app, at narrow
-    widths, in the dark theme, by keyboard alone on the colour input, or with a task running. PDF and PNG were made
-    in Electron 45 by a scratch script that ran the real `export-design.cjs` and `makeExportWindow` against a
-    stand-in server serving pages under `PREVIEW_CSP` (a 3200 px page, a 40,000 px page capped at 16,000, a hostile
-    page, a 404 and a page that never finishes), not through the harness, the app's Export menu, the IPC channel or
-    the Save dialog; one PNG in the first run failed with the cause unknown and did not recur in about 70 later
-    exports. The Export menu, HTML and ZIP export through Save… and the browser download were not seen on screen.
+    widths, in the dark theme, by keyboard alone on the colour input, or with a task running. PDF and PNG were
+    produced and looked at by running the real `makeExportWindow` (sliced from `main.cjs`) and `export-design.cjs` in
+    Electron 45.2.3 from a scratch script against a stand-in server sending the harness's preview policy, not the
+    harness: `vh` pages at scale 1 and with the scale forced to 2, a 40,000 px page capped at 16,000, a 404 page and
+    a page that never stops running. The Export menu in the workspace, the `export-design` IPC channel with the OS
+    Save dialog, HTML and ZIP through Save…, and the browser download path for HTML and ZIP have not been seen on
+    screen by anyone.
     The React components (`DesignPane.jsx`, `DesignEditor.jsx`, `TweaksPanel.jsx`, `DesignPendingBar.jsx`,
     `DesignCompare.jsx`, `ExportMenu.jsx`) have no unit tests. No model has declared tweaks: whether the Designer
     writes a usable block is untested.
@@ -1443,7 +1466,8 @@ design, shown live in the docked pane beside the chat (`src/gui/DesignPane.jsx`)
     numbered copy, and never write one, the working file or a picture through a link. No `await` between a route's
     first check and its last write; every POST takes a required JSON body; no disk path in an answer; no text, label
     or value in a `design_edit` entry. Keep PDF and PNG rendering in the main process, from ids only, in a window
-    with no preload. Tests: `tests/test_studio_edits.py`, `test_studio_edit_routes.py`, `test_design_tweaks.py`,
+    with no preload. Every wait on the export window must race its one time limit, and nothing from the page or the
+    renderer is ever put into code run in that window. Tests: `tests/test_studio_edits.py`, `test_studio_edit_routes.py`, `test_design_tweaks.py`,
     `test_conversations.py`, `test_design_images.py`, `test_bot_prompts.py` (the Designer's tweaks example parses);
     GUI `tests/gui/design-edits.test.mjs`, `design-bridge.test.mjs`, `design.test.mjs`, `export-design.test.mjs`,
     `save-media.test.mjs`, `shell.test.mjs`, `api.test.mjs`.
