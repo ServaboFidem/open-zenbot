@@ -46,6 +46,23 @@ export const acceptReady = (event, frameWindow) =>
 export const MAX_PICKS = 20;
 export const addPick = (picks, pick) => picks.length >= MAX_PICKS ? picks : [...picks, { ...pick, note: '' }];
 
+// The picks of each conversation, with the newest revision they were made on ({ [convId]: { picks, newest } }), kept in
+// the page's memory: leaving for another page or conversation and coming back shows them again, and a new revision
+// there ends them (design-edits.js `dropStale` clears its entry).
+const NO_PICKS = Object.freeze([]);
+export function picksFor(map, convId, newest) {
+  const entry = convId && Object.hasOwn(map, convId) ? map[convId] : null;
+  return entry && entry.newest === newest ? entry.picks : NO_PICKS;
+}
+export function withPicks(map, convId, newest, next) {
+  if (!convId) return map;
+  const picks = typeof next === 'function' ? next(picksFor(map, convId, newest)) : next;
+  if (picks.length) return { ...map, [convId]: { picks, newest } };
+  if (!Object.hasOwn(map, convId)) return map;
+  const { [convId]: _gone, ...rest } = map;
+  return rest;
+}
+
 // The picks as the task's design_comments on that revision. A pick with no note takes `fallback` (when the
 // user wrote a message, the note points at it) or, with no fallback, is left out.
 export function commentsFor(attId, picks, { fallback } = {}) {

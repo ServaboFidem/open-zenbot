@@ -550,8 +550,8 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
   time means all-day; a timed event whose end is missing or not after its start is kept with no end. Text is capped on
   storage: name 300, venue and address together 500, summary 1,000 characters, control characters removed.
 - **The pool** (`DiscoverStore`). A refresh inserts or updates the rows it reads and deletes none of Eventbrite's (the page
-  cap reads only part of a ranked list, so an unseen row is not a gone row); rows whose start date has passed are dropped
-  (`drop_past`). Each row has a `source`, `eventbrite` or `findlocal` (a row from before FindLocal counts as `eventbrite`).
+  cap reads only part of a ranked list, so an unseen row is not a gone row); rows whose last day (`end_date`, else
+  `start_date`) has passed are dropped (`drop_past`), so a row still running today stays for the morning digest. Each row has a `source`, `eventbrite` or `findlocal` (a row from before FindLocal counts as `eventbrite`).
   `Discovery.refresh` reads Eventbrite and then FindLocal under one lock. Eventbrite is skipped while its last good refresh
   is under 12 hours old (`REFRESH_AFTER_S`) unless forced, and a refresh that failed is not tried again for 10 minutes
   (`RETRY_AFTER_S`) unless forced (no caller passes `force` today). After both sources, once the refresh lock is released,
@@ -606,7 +606,8 @@ online), with no sign-in or challenge page and no refusal. Rows in the real page
     `MAX_CALLS` saw, in date order, everything before the day of its last row: it deletes only the rows it did not store
     that start before that day, and a row past the cap stays (not seen is not gone); if its rows were not in date order
     it deletes nothing. A failed or partial read deletes nothing. A row that starts before today is
-    never listed or a candidate, and is deleted by the next good Eventbrite refresh (`drop_past` takes every source's).
+    never listed or a candidate, and is deleted by the next good Eventbrite refresh once its last day has passed
+    (`drop_past` takes every source's).
     So a mid-week on-demand run and the All Events grid see the weekly read's FindLocal rows all week.
   - *When it is read* (`Discovery._refresh_findlocal`). The first time it is set up (no last read), and after that only on the
     weekly routine's run, once the last read is over 20 hours old (`FINDLOCAL_AFTER_S`): `events_candidates` passes

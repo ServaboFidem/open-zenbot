@@ -14,6 +14,9 @@ from src.mail.morning_delivery import MorningDelivery
 
 log = logging.getLogger(__name__)
 
+SYNC_WAIT_S = 30  # how long the email waits for Google Calendar; the sync itself goes on after it
+SYNC_STALE = "Google Calendar could not be synced, so appointments added elsewhere may be missing."
+
 
 def _line(value: str) -> str:
     return " ".join(value.split())
@@ -58,10 +61,27 @@ class MorningDigest:
     async def edition(self, now: datetime) -> tuple[str, str]:
         # The scheduler supplies the machine's wall time. Keep its local timezone rules for both ends of a DST day.
         local = now.replace(tzinfo=None)
+        stale = await self._synced()
         today = agenda(self.h, local)
+        if stale:
+            today["warnings"].append(stale)
         forecast, recommendations = await asyncio.gather(
             self.weather.forecast(local.date()), self._recommendations(local, today))
         return email_text(today, forecast, recommendations)
+
+    async def _synced(self) -> str | None:
+        """With Google connected, run a sync (or join the one in flight, such as the first after start) so the
+        email holds appointments made elsewhere. Answers a warning when it failed or took too long."""
+        calendar = self.h.calendar
+        if calendar.conn.state() != "connected":
+            return None
+        try:
+            status = await asyncio.wait_for(calendar.sync(), SYNC_WAIT_S)
+        except Exception as exc:
+            # Class name only: a traceback through the Google client holds its secret and tokens.
+            log.warning("Morning calendar sync unavailable (%s)", type(exc).__name__)
+            return SYNC_STALE
+        return SYNC_STALE if (status or {}).get("sync", {}).get("error") else None
 
     async def _recommendations(self, local: datetime, today: dict) -> list[dict]:
         try:

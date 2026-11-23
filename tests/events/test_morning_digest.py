@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock
@@ -6,6 +7,7 @@ import httpx
 import pytest
 
 from src.harness.api import Harness, create_app
+from src.events import morning_digest
 from src.events.morning_digest import MorningDigest
 from src.events.morning_weather import WeatherSettings
 from src.harness.config import HarnessConfig
@@ -99,3 +101,53 @@ async def test_daily_tick_delivers_shared_agenda_plus_a_verified_pick_once(works
     assert all(text in body for text in ("Clear sky", "Maya", "Volunteer shift", "Gallery open house",
                                          "You like local printmakers.", show["url"]))
     assert body.index("Volunteer shift") < body.index("Events you might enjoy today") < body.index("Gallery open house")
+
+
+def _connected(h, monkeypatch, sync):
+    monkeypatch.setattr(h.calendar.conn, "state", lambda: "connected")
+    monkeypatch.setattr(h.calendar, "sync", sync)
+
+
+async def test_edition_reads_the_calendar_after_googles_sync(workspace, monkeypatch):
+    # started after the send time, the app emails before its first sync would have finished on its own
+    h, _ = workspace
+    now = datetime(2026, 11, 23, 8).astimezone()
+    day = now.date().isoformat()
+
+    async def sync():
+        await asyncio.sleep(0)
+        h.calendar.store.add({"title": "Dentist", "all_day": True, "start": day, "end": "2026-11-24"})
+        return h.calendar.status()
+
+    _connected(h, monkeypatch, sync)
+    _, text = await MorningDigest(h).edition(now)
+    assert "Dentist" in text and morning_digest.SYNC_STALE not in text
+
+
+async def test_edition_warns_when_the_sync_takes_too_long(workspace, monkeypatch):
+    h, _ = workspace
+    monkeypatch.setattr(morning_digest, "SYNC_WAIT_S", 0.01)
+
+    async def sync():
+        await asyncio.Event().wait()
+
+    _connected(h, monkeypatch, sync)
+    _, text = await MorningDigest(h).edition(datetime(2026, 11, 23, 8).astimezone())
+    assert morning_digest.SYNC_STALE in text
+
+
+async def test_edition_warns_when_the_sync_failed(workspace, monkeypatch):
+    # a failed run does not raise: it is recorded in the status the sync answers
+    h, _ = workspace
+    _connected(h, monkeypatch, AsyncMock(return_value={"sync": {"error": "network"}}))
+    _, text = await MorningDigest(h).edition(datetime(2026, 11, 23, 8).astimezone())
+    assert morning_digest.SYNC_STALE in text
+
+
+async def test_edition_does_not_sync_without_google(workspace, monkeypatch):
+    h, _ = workspace
+    sync = AsyncMock()
+    monkeypatch.setattr(h.calendar, "sync", sync)
+    _, text = await MorningDigest(h).edition(datetime(2026, 11, 23, 8).astimezone())
+    sync.assert_not_awaited()
+    assert morning_digest.SYNC_STALE not in text

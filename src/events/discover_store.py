@@ -126,9 +126,11 @@ class DiscoverStore:
         return n
 
     def drop_past(self, today: str) -> int:
-        """Delete pool rows starting before ``today`` (a day key). Returns how many went."""
+        """Delete pool rows whose last day is before ``today`` (a day key); a row still running today stays,
+        as ``morning_listings`` offers it. Returns how many went."""
         with self._lock, self._db:
-            return self._db.execute("DELETE FROM pool WHERE start_date < ?", (today,)).rowcount
+            return self._db.execute("DELETE FROM pool WHERE COALESCE(NULLIF(end_date,''),start_date) < ?",
+                                    (today,)).rowcount
 
     def clear_pool(self, source: str | None = None) -> int:
         """Delete every pool row, or only those of ``source`` (the place changed). Saved cards are snapshots and
