@@ -2,7 +2,7 @@
 // which picks become comments on the task.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptPick, acceptReady, addPick, clearsComposer, commentsFor, designRevisions, MAX_PICKS, picksSent, redoTarget, startedFrom, studioFrameUrl } from '../../src/gui/design.js';
+import { acceptPick, acceptReady, addPick, clearsComposer, commentsFor, designRevisions, MAX_PICKS, picksFor, picksSent, withPicks, redoTarget, startedFrom, studioFrameUrl } from '../../src/gui/design.js';
 
 const win = {};
 const ok = { zen: 'pick', elementId: 'hero', selector: 'body > h1', tag: 'h1', text: 'Hi', rect: { x: 1, y: 2, w: 3, h: 4 } };
@@ -132,4 +132,26 @@ test('a form answer sends none of the pending picks; a message sends them all', 
   assert.deepEqual(picksSent(picks, { answersTo: 's3' }), []);
   assert.equal(picksSent(picks, {}), picks);
   assert.equal(picksSent(picks), picks);
+});
+
+test('picks are kept per conversation and revision, so leaving a page and coming back keeps them', () => {
+  const a = [{ selector: 'h1', note: 'bigger' }];
+  let m = withPicks({}, 'c1', 'v1', a);
+  assert.equal(picksFor(m, 'c1', 'v1'), a);
+  assert.deepEqual(picksFor(m, '', undefined), []);  // no conversation loaded (Settings open): none shown, none lost
+  assert.deepEqual(picksFor(m, 'c2', 'v9'), []);
+  m = withPicks(m, 'c2', 'v9', [{ selector: 'p', note: '' }]);
+  assert.equal(picksFor(m, 'c1', 'v1'), a);  // another conversation's picks do not touch these
+  assert.deepEqual(picksFor(m, 'c1', 'v2'), []);  // a new revision there: they were made on the old one
+});
+
+test('withPicks takes an updater, drops an emptied entry and ignores no conversation', () => {
+  const a = { selector: 'h1', note: '' }, b = { selector: 'p', note: '' };
+  let m = withPicks({}, 'c1', 'v1', [a, b]);
+  m = withPicks(m, 'c1', 'v1', now => now.filter(p => p !== a));
+  assert.deepEqual(picksFor(m, 'c1', 'v1'), [b]);
+  assert.deepEqual(withPicks(m, 'c1', 'v1', []), {});
+  assert.equal(withPicks(m, '', 'v1', [a]), m);
+  // an updater for a revision the entry was not made on starts from none
+  assert.deepEqual(picksFor(withPicks(m, 'c1', 'v2', now => [...now, a]), 'c1', 'v2'), [a]);
 });

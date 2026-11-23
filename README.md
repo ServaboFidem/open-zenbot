@@ -234,10 +234,23 @@ Good to know:
 - **Signed out?** The Facebook tab says the helper is not ready. Sign back in to Facebook in that Chrome, and the helper picks up on its next read.
 - More detail, including the report format it sends, is in [`src/helper/README.md`](src/helper/README.md). Its tests run with `node --test src/helper/helper.test.mjs`.
 
+### Morning digest
+
+Start a new chat with ZenBot to see **Today** above the conversation. It shows the local forecast,
+today’s known birthdays, and commitments from My Calendar. Starting another chat reads the latest
+calendar, including appointments added after breakfast. In **Settings > Calendar > Morning digest**,
+choose a weather city and °F or °C. Forecasts come from [Open-Meteo](https://open-meteo.com/).
+
+For the email edition, connect AgentMail, then use **Morning digest** in the desktop app to save
+your recipient address and a morning delivery time. The default is 7 a.m. on this computer. If the
+harness was closed or the computer asleep, it can send on waking before noon. Clear the recipient to
+turn email off. With event discovery enabled, the email also includes up to five local events
+that fit your interests and schedule, with a reason and source link for each.
+
 ## AgentMail
 
-ZenBot can have an email address of its own through [AgentMail](https://agentmail.to). For now you can only read what
-arrives: nothing is sent, and no bot is given the mail. Digests by mail and newsletter sign-up are planned.
+ZenBot can have an email address of its own through [AgentMail](https://agentmail.to). You can read incoming
+mail and use the inbox to send the [morning digest](#morning-digest) to your saved address.
 
 1. Make an AgentMail account and copy an API key from its console (an organization key, which can list inboxes).
 2. In OpenZenBot open Settings > Connected apps and paste the key under **AgentMail**. The harness checks it with
@@ -370,7 +383,7 @@ OPENROUTER_API_KEY=... uv run pytest -k live   # opt-in live check
 | `src/music/` | Music discovery: Discogs scan, taste profile, album gate, digests |
 | `src/events/` | The built-in calendar and Google sync; event discovery: the Eventbrite and FindLocal readers, the event pool, digests |
 | `src/helper/` | The Facebook browser helper: an observe-only Chrome extension that reads your Facebook events, invites and birthdays and sends them to the harness on this computer (see [Facebook browser helper](#facebook-browser-helper)) |
-| `src/mail/` | AgentMail: ZenBot's own email address, read-only (see [AgentMail](#agentmail)) |
+| `src/mail/` | ZenBot's AgentMail inbox and scheduled morning digest delivery (see [AgentMail](#agentmail)) |
 | `src/sonos/` | Sonos: finding speakers, the `sonos_*` tools, the volume ceiling and the Sonos page's routes (see [Sonos](#sonos)) |
 | `src/speakers/` | Wi-Fi speakers: finding AirPlay, Chromecast and DLNA speakers and the default speaker (see [Wi-Fi speakers](#wi-fi-speakers)) |
 | `src/kokoro/` | The Kokoro voice made on this computer for Read aloud: the pinned model download and the engine (see [Read aloud](#read-aloud)) |

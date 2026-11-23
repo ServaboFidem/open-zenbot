@@ -34,9 +34,9 @@ function loadPreload(env, argv = []) {
   return { exposed, invoked, listeners };
 }
 
-const KEYS = ['exportDesign', 'harnessUrl', 'managed', 'onOpenMusic', 'openVault', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'updates', 'version'];
+const KEYS = ['exportDesign', 'harnessUrl', 'managed', 'morningEmail', 'onOpenMusic', 'openVault', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'updates', 'version'];
 
-test('preload exposes the harness url, the directory and file pickers, save, export, the version and two narrow groups, nothing else', async () => {
+test('preload exposes only the workspace controls and named settings groups', async () => {
   const { exposed, invoked } = loadPreload({ ZEN_HARNESS_URL: '' });
   assert.deepEqual(Object.keys(exposed), ['openzenbot']);
   assert.deepEqual(Object.keys(exposed.openzenbot).sort(), KEYS);
@@ -49,6 +49,15 @@ test('preload exposes the harness url, the directory and file pickers, save, exp
   assert.deepEqual(invoked, [['pick-directory'], ['pick-file'], ['save-media', { url: 'http://127.0.0.1:8765/media?url=x&ok=1', name: 'a.png' }],
     ['export-design', { convId: 'c1', attId: 'a1', kind: 'pdf', name: 'Page' }]]);
   assert.equal(loadPreload({ ZEN_HARNESS_URL: 'http://127.0.0.1:9000' }).exposed.openzenbot.harnessUrl, 'http://127.0.0.1:9000');
+});
+
+test('morning email bridge passes just the recipient and time', async () => {
+  const { exposed, invoked } = loadPreload({});
+  const bridge = exposed.openzenbot.morningEmail;
+  assert.deepEqual(Object.keys(bridge).sort(), ['get', 'save']);
+  await bridge.get();
+  await bridge.save({ recipient: 'owner@example.com', time: '07:00', path: 'other', send: true });
+  assert.deepEqual(invoked, [['morning-email:get'], ['morning-email:save', { recipient: 'owner@example.com', time: '07:00' }]]);
 });
 
 test('preload reads the version and the managed switch from the main process\'s --zen-* arguments', () => {

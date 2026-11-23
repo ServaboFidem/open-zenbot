@@ -30,6 +30,10 @@ contextBridge.exposeInMainWorld('openzenbot', Object.freeze({
   pickFile: () => ipcRenderer.invoke('pick-file'),
   // Browse your vault: no path is sent; answers '' or a sentence to show
   openVault: () => ipcRenderer.invoke('open-vault'),
+  morningEmail: Object.freeze({
+    get: () => ipcRenderer.invoke('morning-email:get'),
+    save: ({ recipient, time }) => ipcRenderer.invoke('morning-email:save', { recipient, time }),
+  }),
   saveMedia: (url, name) => ipcRenderer.invoke('save-media', { url, name }),
   // a design as PDF or PNG: two ids, never a URL; the main process builds the URL and the dialog picks the path
   exportDesign: (convId, attId, kind, name) => ipcRenderer.invoke('export-design', { convId, attId, kind, name }),

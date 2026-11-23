@@ -6,7 +6,8 @@ const { exportDesign, pdfOptions, FREEZE_UNITS, TIMEOUT_MS: EXPORT_TIMEOUT_MS } 
 const { loadEnvFile } = require('./env-file.cjs');
 const { createArrival } = require('./arrival.cjs');
 const { createIdleReport } = require('./idle-report.cjs');
-const { applySavedDsn } = require('./tracing-settings.cjs');
+const { applySavedDsn, settingsDir } = require('./tracing-settings.cjs');
+const { registerMorningEmail } = require('./morning-email.cjs');
 const { allowFrameNavigation } = require('./frame-nav.cjs');
 const { createUpdateChecker } = require('./update-check.cjs');
 const { runtimePaths } = require('./runtime-paths.cjs');
@@ -62,6 +63,7 @@ function serveApp(request) {
   return net.fetch(pathToFileURL(file).toString());
 }
 
+const appWindows = new WeakSet();
 // page: index.html (the workspace) or setup.html (the installed app's setup and start screen)
 function createWindow(page = 'index.html') {
   const win = new BrowserWindow({
@@ -73,6 +75,7 @@ function createWindow(page = 'index.html') {
       additionalArguments: [`--zen-version=${app.getVersion()}`, `--zen-managed=${managed ? '1' : '0'}`],
     }
   });
+  appWindows.add(win.webContents);
   // links in a bot's reply (target=_blank) open in the system browser; only http(s), never a new app window
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
@@ -274,6 +277,7 @@ app.whenReady().then(() => {
       fs: require('node:fs'),
     });
   });
+  registerMorningEmail(ipcMain, appWindows, settingsDir(process.env, vaultBase));
   handleUpdates();
   if (managed) {
     require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling });

@@ -113,7 +113,7 @@ async def test_two_refreshes_at_once_fetch_once(discovery, fake_site):
 
 
 async def test_refresh_drops_past_events_and_does_nothing_when_not_active(discovery, fake_site):
-    discovery.store.upsert_pool([ev(PAST, start_date="2026-11-01")], "x")
+    discovery.store.upsert_pool([ev(PAST, start_date="2026-11-01", end_date="2026-11-01")], "x")
     await discovery.refresh()
     assert discovery.store.pool_row(PAST) is None
     discovery.settings.enabled = False

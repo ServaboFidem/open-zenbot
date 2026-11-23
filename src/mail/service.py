@@ -41,6 +41,12 @@ class MailService:
     def enabled(self) -> bool:
         return bool(self.keys.api_key) and bool(self.settings.inbox_id)
 
+    def morning_client(self) -> AgentMail:
+        """A client for the internal scheduler, using the currently configured account."""
+        if not self.enabled:
+            raise LookupError("not set up")
+        return self._client()
+
     def status(self) -> dict:
         inbox = ({"inbox_id": self.settings.inbox_id, "email": self.settings.email}
                  if self.settings.inbox_id else None)

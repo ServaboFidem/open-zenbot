@@ -54,6 +54,12 @@ export function rememberPayload(session) {
 // The onboarding card: an empty shared graph, the shipped assistant present, not dismissed.
 export const ONBOARDING_DISMISSED = 'openzenbot-onboarding-dismissed';
 export const ASSISTANT_ID = 'personal-assistant';
+// A chat task sent with no conversation id joins the bot's current conversation on the harness, which is still the old
+// one while the picker's switch ({ botId }) is out: such a task waits. A routine (no conversation) or a task given its
+// conversation outright does not.
+export const WAIT_FOR_SWITCH = 'Wait for the conversation to open, then send again.';
+export const waitsForSwitch = (switching, botId, { conversation = true, into } = {}) =>
+  !!conversation && !into && switching?.botId === botId;
 export function showOnboarding({ facts, bots, dismissed }) {
   return (facts || []).length === 0 && (bots || []).some(b => b.id === ASSISTANT_ID) && !dismissed;
 }

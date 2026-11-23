@@ -140,3 +140,14 @@ test('directSessions includes a helper turn in the bot\'s own conversation', () 
   ];
   assert.deepEqual(actions.directSessions(sessions, 'designer').map(s => s.id), ['own', 'helper']);
 });
+
+test('a chat task waits while the picker is switching the conversation of its bot', () => {
+  const { waitsForSwitch } = actions;
+  const switching = { botId: 'designer' };
+  assert.equal(waitsForSwitch(switching, 'designer'), true);  // no id: the harness would use the old conversation
+  assert.equal(waitsForSwitch(switching, 'designer', { conversation: true }), true);
+  assert.equal(waitsForSwitch(switching, 'designer', { into: 'c2' }), false);  // its conversation named outright
+  assert.equal(waitsForSwitch(switching, 'designer', { conversation: false }), false);  // a routine joins none
+  assert.equal(waitsForSwitch(switching, 'personal-assistant'), false);  // another bot's switch
+  assert.equal(waitsForSwitch(null, 'designer'), false);
+});

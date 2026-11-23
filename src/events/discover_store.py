@@ -126,9 +126,11 @@ class DiscoverStore:
         return n
 
     def drop_past(self, today: str) -> int:
-        """Delete pool rows starting before ``today`` (a day key). Returns how many went."""
+        """Delete pool rows whose last day is before ``today`` (a day key); a row still running today stays,
+        as ``morning_listings`` offers it. Returns how many went."""
         with self._lock, self._db:
-            return self._db.execute("DELETE FROM pool WHERE start_date < ?", (today,)).rowcount
+            return self._db.execute("DELETE FROM pool WHERE COALESCE(NULLIF(end_date,''),start_date) < ?",
+                                    (today,)).rowcount
 
     def clear_pool(self, source: str | None = None) -> int:
         """Delete every pool row, or only those of ``source`` (the place changed). Saved cards are snapshots and
@@ -180,6 +182,33 @@ class DiscoverStore:
     def pool_row(self, id: str) -> dict | None:
         with self._lock:
             return _pool(self._db.execute("SELECT * FROM pool WHERE id=?", (id,)).fetchone())
+
+    def names_on(self, source: str, day: str) -> list[str]:
+        with self._lock:
+            return [r[0] for r in self._db.execute(
+                "SELECT name FROM pool WHERE source=? AND start_date=? ORDER BY name", (source, day))]
+
+    def morning_listings(self, first: str, last: str) -> list[dict]:
+        """Current public listings overlapping a range of source dates, with their scout history.
+
+        A refreshed or removed listing takes precedence over a saved card's snapshot. Remember suppressed
+        names even after their original pool rows are gone (another source may list the same event).
+        """
+        with self._lock:
+            rows = [_unpack(dict(row)) for row in self._db.execute(
+                "SELECT p.*, EXISTS(SELECT 1 FROM added a WHERE a.event_id=p.id)"
+                " OR EXISTS(SELECT 1 FROM cards c WHERE c.event_id=p.id"
+                " AND (c.state IN ('dismissed','added') OR c.calendar_event_id != '')) AS suppressed,"
+                " (SELECT c.why FROM cards c WHERE c.event_id=p.id AND c.state='new'"
+                " AND c.name=p.name AND c.start_date=p.start_date ORDER BY c.rowid DESC LIMIT 1) AS why"
+                " FROM pool p WHERE COALESCE(NULLIF(p.source,''),'eventbrite') IN ('eventbrite','findlocal')"
+                " AND p.start_date <= ? AND COALESCE(NULLIF(p.end_date,''),p.start_date) >= ?"
+                " ORDER BY p.start_date,p.start_time,p.id", (last, first))]
+            blocked = {(name_key(r["name"]), r["start_date"]) for r in rows if r["suppressed"]}
+            blocked.update((name_key(r[0]), r[1]) for r in self._db.execute(
+                "SELECT name,start_date FROM cards WHERE (state IN ('dismissed','added') OR calendar_event_id != '')"
+                " AND start_date <= ? AND COALESCE(NULLIF(end_date,''),start_date) >= ?", (last, first)))
+        return [r for r in rows if (name_key(r["name"]), r["start_date"]) not in blocked]
 
     @staticmethod
     def _wanted(row: dict, ticked: set[str]) -> bool:

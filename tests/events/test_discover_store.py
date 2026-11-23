@@ -33,12 +33,23 @@ def test_upsert_updates_known_id_and_deletes_no_other(store):
 
 
 def test_drop_past_keeps_today(store):
-    store.upsert_pool([ev("old", start_date="2026-11-17"), ev("today", start_date="2026-11-18"),
-                       ev("later", start_date="2026-12-01")], "t")
+    store.upsert_pool([ev("old", start_date="2026-11-17", end_date="2026-11-17"),
+                       ev("today", start_date="2026-11-18", end_date="2026-11-18"),
+                       ev("later", start_date="2026-12-01", end_date="2026-12-01")], "t")
     assert store.drop_past("2026-11-18") == 1
     assert store.pool_row("old") is None
     assert store.pool_row("today") is not None
     assert store.pool_size() == 2
+
+
+def test_drop_past_keeps_a_row_still_running_today(store):
+    # the morning digest offers an event that started earlier and ends today; a refresh must not delete it first
+    store.upsert_pool([ev("ongoing", start_date="2026-11-16", end_date="2026-11-18"),
+                       ev("ended", start_date="2026-11-16", end_date="2026-11-17"),
+                       ev("no-end", start_date="2026-11-17", end_date="", end_time="")], "t")
+    assert store.drop_past("2026-11-18") == 2
+    assert store.pool_row("ongoing") is not None
+    assert store.pool_row("ended") is None and store.pool_row("no-end") is None
 
 
 def test_candidates_skip_rows_on_any_saved_card(store):

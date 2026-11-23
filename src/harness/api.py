@@ -90,6 +90,7 @@ from src.decider.supervisor import LoopSupervisor
 from src.generation.generator import Generator
 from src.events.discover_routes import discover_router
 from src.events.facebook_routes import facebook_router
+from src.events.morning_digest import MorningDigest, morning_router
 from src.events.routes import calendar_router
 from src.events.service import CalendarService
 from src.events.discovery import MANAGED_BY as EVENTS_MANAGED_BY, Discovery
@@ -1569,7 +1570,8 @@ def create_app(h: Harness) -> FastAPI:
     scheduler.verifiers[EVENTS_MANAGED_BY] = h.discover.run_failure  # a scout run that saved no digest failed
     h.music.routines, h.music.scheduler = routines, scheduler
     h.discover.routines, h.discover.scheduler = routines, scheduler
-    app_routers = [music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h),
+    morning = MorningDigest(h)
+    app_routers = [morning_router(morning), music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h),
                    facebook_router(h.discover, h), dream_router(h), speech_router(h), mail_router(h.mail),
                    sonos_router(h.sonos, h.sonos_tools), speakers_router(h.speakers)]
 
@@ -1614,9 +1616,12 @@ def create_app(h: Harness) -> FastAPI:
         stop = asyncio.Event()
         extracting = asyncio.create_task(h.extract_queue.run(stop)) if h.extract_queue else None
         dreaming = asyncio.create_task(h.dreamer.run(stop))  # a pass when the machine is idle and nothing is under way
+        morning_mail = asyncio.create_task(morning.delivery.run())
         try:
             yield
         finally:
+            morning_mail.cancel()
+            await asyncio.gather(morning_mail, return_exceptions=True)
             warming.cancel()
             refreshing.cancel()
             await h.delegator.stop_all()  # every hand-off in flight ends, its tree killed and its end logged

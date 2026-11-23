@@ -45,3 +45,17 @@ def test_migrate_moves_the_old_folder_out_and_keeps_a_newer_copy(tmp_path: Path)
     (old / "harness.json").unlink()
     assert migrate(vault) == [] and not old.exists()  # an emptied old folder is removed
     assert migrate(vault) == []  # nothing to do
+
+
+def test_morning_delivery_settings_cannot_come_from_the_old_vault(tmp_path: Path):
+
+    vault = tmp_path / "vault"
+    old = vault / "settings"
+    old.mkdir(parents=True)
+    names = ["MORNING_EMAIL.JSON", "morning_delivery.sqlite3", "morning_delivery.sqlite3-wal",
+             "morning_delivery.sqlite3-shm", "morning_delivery.sqlite3-journal", "morning_weather.json.tmp"]
+    for name in names:
+        (old / name).write_bytes(b"untrusted")
+    migrate(vault)
+    assert all((old / name).exists() for name in names)
+    assert all(not (settings_dir(vault) / name).exists() for name in names)
