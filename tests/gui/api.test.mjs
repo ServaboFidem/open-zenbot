@@ -2,7 +2,8 @@
 // errors carry the harness detail, the key is sent once and never kept.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createApi, harnessUrl } from '../../src/gui/api.js';
+import { createApi, harnessUrl, HarnessError } from '../../src/gui/api.js';
+import { END_MISSING } from '../../src/gui/speech.js';
 
 function fakeFetch(responses = {}) {
   const calls = [];
@@ -298,4 +299,61 @@ test('startTask sends route, answers_to and redo_of only when given', async () =
   assert.equal(calls[1].body.route, 'owner');
   assert.equal(calls[1].body.answers_to, 's9');
   assert.equal(calls[1].body.redo_of, 's8');
+});
+
+const frame = bytes => { const n = bytes.length; return Uint8Array.from([n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255, ...bytes]); };
+const END = Uint8Array.from([0, 0, 0, 0]);
+const cat = (...parts) => Uint8Array.from(parts.flatMap(p => [...p]));
+const body = chunks => new ReadableStream({ start(c) { for (const k of chunks) c.enqueue(k); c.close(); } });
+const apiWith = fetch => createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+const collect = async gen => { const out = []; for await (const b of gen) out.push(b); return out; };
+
+test('api.speak yields a blob per frame and passes the signal to fetch', async () => {
+  const calls = [];
+  const fetch = async (url, init) => { calls.push({ url, init }); return new Response(body([cat(frame([1, 2]), frame([3])), END]), { status: 200 }); };
+  const ac = new AbortController();
+  const blobs = await collect(apiWith(fetch).speak('Hello', ac.signal));
+  assert.equal(blobs.length, 2); assert.equal(blobs[0].type, 'audio/wav'); assert.equal(blobs[0].size, 2);
+  assert.equal(calls[0].url, 'http://127.0.0.1:8765/speech'); assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.signal, ac.signal); assert.deepEqual(JSON.parse(calls[0].init.body), { text: 'Hello' });
+});
+
+test('api.speak throws END_MISSING without the end mark, after the pieces it had', async () => {
+  const fetch = async () => new Response(body([frame([1])]), { status: 200 });
+  const got = [];
+  await assert.rejects(async () => { for await (const b of apiWith(fetch).speak('Hello')) got.push(b); }, e => e.message === END_MISSING);
+  assert.equal(got.length, 1);
+});
+
+test('api.speak carries the harness sentence on a refusal, before any piece', async () => {
+  const fetch = async () => new Response(JSON.stringify({ detail: 'Reading aloud is off.' }), { status: 409 });
+  await assert.rejects(collect(apiWith(fetch).speak('Hello')), e => e instanceof HarnessError && e.status === 409 && e.message === 'Reading aloud is off.');
+});
+
+test('an aborted fetch is rethrown as it is', async () => {
+  const abort = Object.assign(new Error('aborted'), { name: 'AbortError' });
+  await assert.rejects(collect(apiWith(async () => { throw abort; }).speak('Hello')), e => e === abort);
+});
+
+test('the local voice calls hit their routes', async () => {
+  const calls = [];
+  const fetch = async (url, init) => { calls.push({ url, init }); return init.headers.Accept === 'audio/wav' ? new Response(new Blob(['W']), { status: 200 }) : new Response(JSON.stringify({ ok: 1 }), { status: 200 }); };
+  const api = apiWith(fetch);
+  assert.deepEqual(await api.speechDownload(), { ok: 1 });
+  assert.deepEqual(await api.speechRemoveModel(), { ok: 1 });
+  assert.equal(await (await api.speechSample('af_heart')).text(), 'W');
+  assert.deepEqual(calls.map(c => [c.init.method, c.url.replace('http://127.0.0.1:8765', '')]), [['POST', '/speech/local/download'], ['DELETE', '/speech/local/model'], ['POST', '/speech/local/sample']]);
+  assert.deepEqual(JSON.parse(calls[0].init.body), {}); assert.equal(calls[1].init.body, undefined);
+  assert.deepEqual(JSON.parse(calls[2].init.body), { voice: 'af_heart' });
+});
+
+test('api.speak cancels the response body when the consumer stops early', async () => {
+  let cancelled = false;
+  const stream = new ReadableStream({
+    start(c) { c.enqueue(frame([1])); c.enqueue(frame([2])); },
+    cancel() { cancelled = true; },
+  });
+  const fetch = async () => new Response(stream, { status: 200 });
+  for await (const b of apiWith(fetch).speak('Hello')) { assert.equal(b.size, 1); break; }
+  assert.equal(cancelled, true);
 });

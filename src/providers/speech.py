@@ -17,6 +17,7 @@ SPEECH_PATH = "/v1/audio/speech"  # OpenRouterHttp's base is https://openrouter.
 RATE = 24000
 CHANNELS = 1
 WIDTH = 2  # bytes a sample: 16-bit
+HEADER = 44  # bytes of the RIFF header `pcm_to_wav` writes
 
 
 def pcm_to_wav(pcm: bytes, rate: int = RATE, channels: int = CHANNELS, width: int = WIDTH) -> bytes:
@@ -25,6 +26,11 @@ def pcm_to_wav(pcm: bytes, rate: int = RATE, channels: int = CHANNELS, width: in
     header = struct.pack("<4sI4s4sIHHIIHH4sI", b"RIFF", 36 + len(pcm), b"WAVE", b"fmt ", 16, 1, channels, rate,
                          rate * block, block, width * 8, b"data", len(pcm))
     return header + pcm
+
+
+def wav_data(wav: bytes) -> bytes:
+    """The PCM of a WAV made by `pcm_to_wav`: everything after its 44-byte header, for joining pieces."""
+    return wav[HEADER:]
 
 
 class SpeechProvider(Protocol):

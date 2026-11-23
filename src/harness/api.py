@@ -103,7 +103,10 @@ from src.speakers.service import SpeakerService
 from src.music.routes import music_router
 from src.music.service import MANAGED_BY as MUSIC_MANAGED_BY, MusicService
 from src.generation.images import DEFAULT_MODEL as DEFAULT_IMAGE_MODEL, ImageConfig, ImageGenerator
+from src.generation.speech import LOCAL as LOCAL_SPEECH
 from src.generation.speech import Speech, SpeechConfig
+from src.kokoro.engine import KokoroEngine
+from src.kokoro.model import KokoroModel
 from src.providers.models import ModelInfo, ModelLister, guess_kinds
 from src.providers.probe import ProbeFailed, ProbeJobs
 from src.providers.openrouter import OpenRouterHttp
@@ -312,8 +315,10 @@ class Harness:
             if self.images.config.enabled and self.images.provider is None:
                 print(f"image generation off: unknown image provider {self.images.config.provider!r}", flush=True)
         if self.speech is None:
+            local_model = KokoroModel(c.vault_root, ledger=self.ledger)
             self.speech = Speech(SpeechConfig.load(c.vault_root), key_ref=self._speech_key_ref,
-                                 provider_kind=self._provider_kind, ledger=self.ledger)
+                                 provider_kind=self._provider_kind, ledger=self.ledger,
+                                 local=KokoroEngine(local_model), local_model=local_model)
         self.images.workspace = self.tools.cwd
         self.images.attach = self.tools.fn("attach_file")
         self.images.register(self.tools, self.catalog)  # idempotent, like the room tools
@@ -574,7 +579,8 @@ class Harness:
 
     def _speech_key_ref(self) -> str | None:
         """Reading aloud's key: its provider's, from providers.json."""
-        if self.speech is None or self.provider_store is None or self.speech.config.provider not in self.provider_store.entries:
+        if (self.speech is None or self.provider_store is None or self.speech.config.provider == LOCAL_SPEECH
+                or self.speech.config.provider not in self.provider_store.entries):  # `kokoro` is reserved: never an entry
             return None
         return self.provider_store.key_ref(self.speech.config.provider)
 
@@ -1629,6 +1635,11 @@ def create_app(h: Harness) -> FastAPI:
             await h.mail.close()
             await h.sonos.close()
             await h.speakers.close()
+            if h.speech is not None:
+                if h.speech.local is not None:
+                    await h.speech.local.close()
+                if h.speech.local_model is not None:
+                    await h.speech.local_model.close()
             await h.learner.drain(timeout=30)  # background learn writes land before memory closes; a hung one does not hold shutdown
             # after the worker: the store stops its server and closes; blocks, so off the loop
             await asyncio.to_thread(h.memory.close)
@@ -1677,7 +1688,7 @@ def create_app(h: Harness) -> FastAPI:
                 and (model_id is None or ch.model == model_id) and (r != "decision" or roles.scorer)]
         if h.images and h.images.config.enabled and h.images.config.provider == provider_id and model_id in (None, h.images.config.model):
             used.append("Image generation")
-        if h.speech and h.speech.config.enabled and h.speech.config.provider == provider_id and model_id in (None, h.speech.config.model):
+        if h.speech and h.speech.config.enabled and h.speech.config.provider == provider_id != LOCAL_SPEECH and model_id in (None, h.speech.config.model):
             used.append("Read aloud")
         used += [f"bot {h.bots[b].name}" for b, ch in (h.bot_models or {}).items()
                  if b in h.bots and ch.provider == provider_id and model_id in (None, ch.model)]

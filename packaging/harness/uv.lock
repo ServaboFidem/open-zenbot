@@ -962,6 +962,15 @@ wheels = [
 ]
 
 [[package]]
+name = "dlinfo"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/85/8e/8f2f94cd40af1b51e8e371a83b385d622170d42f98776441a6118f4dd682/dlinfo-2.0.0.tar.gz", hash = "sha256:88a2bc04f51d01bc604cdc9eb1c3cc0bde89057532ca6a3e71a41f6235433e17", size = 12727, upload-time = "2025-01-16T15:43:10.756Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/90/022c79d6e5e6f843268c10b84d4a021ee3afba0621d3c176d3ff2024bfc8/dlinfo-2.0.0-py3-none-any.whl", hash = "sha256:b32cc18e3ea67c0ca9ca409e5b41eed863bd1363dbc9dd3de90fedf11b61e7bc", size = 3654, upload-time = "2025-01-16T15:43:09.474Z" },
+]
+
+[[package]]
 name = "dnspython"
 version = "2.9.2"
 source = { registry = "https://pypi.org/simple" }
@@ -999,6 +1008,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c0/4d/f5e9d9de19f4b8f9e33d802fe3efb0ef96e88d4d6d45d604f335bef2f1ef/email_validator-2.4.0.tar.gz", hash = "sha256:be487bc50bc3bd832a98515a55a15649d9bec06d954fa178663190714b6c4ee1", size = 55168, upload-time = "2026-11-14T20:21:28.125Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b8/8b/99e715c59560afa0bf68f21ed16eec794d94293945f57934b70c5255d741/email_validator-2.4.0-py3-none-any.whl", hash = "sha256:4454e41c4e1c6b6caee34a1dc71d5e736791562be8fd179b02e298f796522684", size = 36810, upload-time = "2026-11-14T20:21:27.14Z" },
+]
+
+[[package]]
+name = "espeakng-loader"
+version = "0.2.4"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f8/92/f44ed7f531143c3c6c97d56e2b0f9be8728dc05e18b96d46eb539230ed46/espeakng_loader-0.2.4-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:b77477ae2ddf62a748e04e49714eabb2f3a24f344166200b00539083bd669904", size = 9938387, upload-time = "2025-01-17T01:22:42.064Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/26/258c0cd43b9bc1043301c5f61767d6a6c3b679df82790c9cb43a3277b865/espeakng_loader-0.2.4-py3-none-macosx_11_0_arm64.whl", hash = "sha256:d27cdca31112226e7299d8562e889d3e38a1e48055c9ee381b45d669072ee59f", size = 9892565, upload-time = "2025-01-17T01:22:40.365Z" },
+    { url = "https://files.pythonhosted.org/packages/de/1e/25ec5ab07528c0fbb215a61800a38eca05c8a99445515a02d7fa5debcb32/espeakng_loader-0.2.4-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:08721baf27d13d461f6be6eed9a65277e70d68234ff484fd8b9897b222cdcb6d", size = 10078484, upload-time = "2025-01-17T01:22:43.373Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/ad/1b768d8daffc2996e07bbcb6f534d8de3202cd75fce1f1c45eced1ce6465/espeakng_loader-0.2.4-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:d1e798141b46a050cdb75fcf3c17db969bb2c40394f3f4a48910655d547508b9", size = 10037736, upload-time = "2025-01-17T01:22:42.576Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/ed/a3d872fbad4f3a3f3db0e8c31768ab14e77cd77306de16b8b20b1e1df7ea/espeakng_loader-0.2.4-py3-none-win_amd64.whl", hash = "sha256:41f1e08ac9deda2efd1ea9de0b81dab9f5ae3c4b24284f76533d0a7b1dd7abd7", size = 9437292, upload-time = "2025-01-17T01:23:27.463Z" },
+    { url = "https://files.pythonhosted.org/packages/29/64/0b75bc50ec53b4e000bac913625511215aa96124adf5dba8c4baa17c02cd/espeakng_loader-0.2.4-py3-none-win_arm64.whl", hash = "sha256:d7a2928843eaeb2df82f99a370f44e8a630f59b02f9b0d1f168a03c4eeb76b89", size = 9426841, upload-time = "2025-01-17T01:23:21.766Z" },
 ]
 
 [[package]]
@@ -2200,6 +2222,21 @@ wheels = [
 ]
 
 [[package]]
+name = "kokoro-onnx"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "espeakng-loader" },
+    { name = "numpy" },
+    { name = "onnxruntime" },
+    { name = "phonemizer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6b/ef/b58dedba0a1417f16352352787fbcfcbaa0b907e284c2ea3ebaf5541109a/kokoro_onnx-0.6.1.tar.gz", hash = "sha256:7bbdb66dd53775f71088a99999a9aefdad240740daf54cb09410d8bb1e294e35", size = 69799, upload-time = "2026-08-19T00:40:37.021Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/60/e1/a27e5a70a525a5ee1fd5357596f07b724d02ff317f134e86cb6e3d9db968/kokoro_onnx-0.6.1-py3-none-any.whl", hash = "sha256:50c8de4950d601df41428ee5462a48c8a78bef441bf671f2492e070ef44d8a32", size = 26084, upload-time = "2026-08-19T00:40:35.746Z" },
+]
+
+[[package]]
 name = "langfuse"
 version = "5.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3095,9 +3132,11 @@ dependencies = [
     { name = "fastapi" },
     { name = "hindsight-all" },
     { name = "httpx" },
+    { name = "kokoro-onnx" },
     { name = "langfuse" },
     { name = "markitdown", extra = ["docx", "pdf", "pptx", "xlsx"] },
     { name = "mcp" },
+    { name = "onnxruntime" },
     { name = "pdfplumber" },
     { name = "pyatv" },
     { name = "pychromecast" },
@@ -3119,9 +3158,11 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "hindsight-all", specifier = "==1.2.0" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "kokoro-onnx", specifier = "==0.6.1" },
     { name = "langfuse", specifier = "==5.2.0" },
     { name = "markitdown", extras = ["docx", "pdf", "pptx", "xlsx"], specifier = ">=0.1.9" },
     { name = "mcp", specifier = ">=2.3.0" },
+    { name = "onnxruntime", specifier = "==1.32.0" },
     { name = "pdfplumber", specifier = ">=0.11.10" },
     { name = "pyatv", specifier = "==0.18.0" },
     { name = "pychromecast", specifier = "==14.1.1" },
@@ -3534,6 +3575,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f8/23/96aa38899fbf8e103766db608d6e42acac269a96e08f3003fe9da3396fed/pgvector-0.5.1.tar.gz", hash = "sha256:94998a54b801b1075d623b8fa677fcb8210a7977b88f8e2203ab115c155af2e4", size = 35714, upload-time = "2026-10-09T01:50:22.779Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a2/8d/a9c2a531da0ebb54b4a7174450e8534a39db112a141ae3a437de28420111/pgvector-0.5.1-py3-none-any.whl", hash = "sha256:ec5bcd5ffaefe6ecb2dcc9564ca921d284564b969183bc837a144604773af8ea", size = 31056, upload-time = "2026-10-09T01:50:21.614Z" },
+]
+
+[[package]]
+name = "phonemizer"
+version = "3.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "dlinfo" },
+    { name = "joblib" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/77/f8/6965b81854d1a5e4a0cb77a7b9df2ec97e2609e6c5d4e4c001232bc28635/phonemizer-3.6.0.tar.gz", hash = "sha256:9808c897773a23def58d89e1a3ac3506f56e8d04ee806d3ee80214880e2c9261", size = 109008, upload-time = "2026-11-02T23:28:52.302Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/70/681cea1684270c8d70b4e0fd7f17aaeb4e97fa9fc17b7bc2a6dee6a74e96/phonemizer-3.6.0-py3-none-any.whl", hash = "sha256:efb0703d3204f334756cafc9c97390c588446469c69214af4092836ca128cbab", size = 125087, upload-time = "2026-11-02T23:28:51.033Z" },
 ]
 
 [[package]]

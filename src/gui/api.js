@@ -7,6 +7,7 @@ import { createDiscoverApi } from './discover-api.js';
 import { createMailApi } from './mail-api.js';
 import { createSonosApi } from './sonos-api.js';
 import { createSpeakersApi } from './speakers-api.js';
+import { createFrameParser, END_MISSING } from './speech.js';
 import { dreamApi } from './dream.js';
 
 export const DEFAULT_HARNESS = 'http://127.0.0.1:8765';
@@ -28,12 +29,13 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     const clean = Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null && v !== '');
     return clean.length ? '?' + new URLSearchParams(clean.map(([k, v]) => [k, String(v)])).toString() : '';
   };
-  async function send(method, path, body, params, accept = 'application/json') {
+  async function send(method, path, body, params, accept = 'application/json', signal) {
     const init = { method, headers: { Accept: accept } };
+    if (signal) init.signal = signal;
     if (body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body); }
     let res;
     try { res = await doFetch(base + path + qs(params), init); }
-    catch (e) { throw new HarnessError(0, `The harness at ${base} did not answer. Start it with "uv run python -m src.harness.main".`); }
+    catch (e) { if (e?.name === 'AbortError') throw e; throw new HarnessError(0, `The harness at ${base} did not answer. Start it with "uv run python -m src.harness.main".`); }
     if (!res.ok) {
       let detail = '';
       try { const j = await res.json(); detail = typeof j?.detail === 'string' ? j.detail : JSON.stringify(j?.detail ?? j); } catch { detail = await res.text().catch(() => ''); }
@@ -107,8 +109,23 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     modelRoles: () => get('/settings/models'),
     setModelRoles: roles => put('/settings/models', roles),
     setTool: (id, patch) => put(`/settings/tools/${enc(id)}`, patch),
-    // a reply read aloud: the Narrator rewrites it and the speech model speaks it; answers a WAV blob
-    speak: async text => (await send('POST', '/speech', { text }, undefined, 'audio/wav')).blob(),
+    // a reply read aloud: the harness answers frames of WAV pieces (speech.js); yields a Blob for each, as it arrives
+    speak: async function* (text, signal) {
+      const res = await send('POST', '/speech', { text }, undefined, 'application/x-zenbot-speech', signal);
+      const parser = createFrameParser(); const reader = res.body.getReader();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          for (const wav of parser.push(value)) yield new Blob([wav], { type: 'audio/wav' });
+          if (parser.ended) return;
+        }
+        throw new Error(END_MISSING);
+      } finally { try { await reader.cancel(); } catch { /* already closed */ } }
+    },
+    speechDownload: () => post('/speech/local/download', {}),
+    speechRemoveModel: () => del('/speech/local/model'),
+    speechSample: async voice => (await send('POST', '/speech/local/sample', { voice }, undefined, 'audio/wav')).blob(),
     programPath: key => get(`/settings/tools/programs/${enc(key)}`),
     setProgramPath: (key, path) => put(`/settings/tools/programs/${enc(key)}`, { path }),
     clearProgramPath: key => del(`/settings/tools/programs/${enc(key)}`),

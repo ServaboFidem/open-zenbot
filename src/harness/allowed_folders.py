@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from src.vault_settings import settings_dir, user_bots_dir, user_skills_dir
+from src.vault_settings import models_dir, settings_dir, user_bots_dir, user_skills_dir
 
 FILE = "allowed_folders.json"
 VAR = "ZEN_ALLOWED_FOLDERS"  # Full Access folders, one arg each
@@ -58,7 +58,7 @@ def _norm(p: Path) -> Path:
 
 
 def private_folders(vault_root: Path) -> list[Path]:
-    """What the harness keeps from bots: its settings (keys, and this very list), its ledger, its music data and its calendar."""
+    """What the harness keeps from bots: its settings (keys, and this very list), its ledger, its music data, its calendar and its downloaded models."""
     from src.memory.ledger import ledger_path_for
     from src.events.settings import calendar_dir
     from src.music.settings import music_dir
@@ -66,7 +66,8 @@ def private_folders(vault_root: Path) -> list[Path]:
     # the user's bots and skills are private with the switch on or off: a bot that could write them could
     # grant itself a new identity or skill
     return [settings_dir(vault_root), ledger_path_for(vault_root), music_dir(vault_root),
-            calendar_dir(vault_root), user_bots_dir(vault_root), user_skills_dir(vault_root)]
+            calendar_dir(vault_root), user_bots_dir(vault_root), user_skills_dir(vault_root),
+            models_dir(vault_root)]
 
 
 def refusal(path: Path, home: Path | None = None, system: list[Path] | None = None,

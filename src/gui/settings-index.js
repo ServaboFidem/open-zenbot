@@ -13,7 +13,7 @@ import { NETWORK_LINE as SPEAKERS_LINE } from './wifi-speakers.js';
 export const PANELS = [
   { id: 'harness', name: 'Harness settings', description: 'The models your bots, summaries and the decider run on.' },
   { id: 'providers', name: 'Model providers', description: 'Where models come from: providers, their API keys and which models are enabled.' },
-  { id: 'tools', name: 'Harness Tools', description: 'Toolkits built into the harness: image generation and ImageMagick.' },
+  { id: 'tools', name: 'Harness Tools', description: 'Toolkits built into the harness: image generation, reading aloud and ImageMagick.' },
   { id: 'mcps', name: 'MCP servers', description: 'Tools your bots can reach: the servers in mcp.json, their API keys and what they need installed.' },
   { id: 'skills', name: 'Skills', description: 'Good work, worth repeating: the skills in the catalog and which bots carry them.' },
   { id: 'agents', name: 'Coding agents', description: 'Claude Code and Codex on this computer: found, signed in, and whether bots may hand work to them.' },
