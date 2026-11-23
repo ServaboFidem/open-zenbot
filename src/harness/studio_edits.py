@@ -332,11 +332,16 @@ def _read_plain(p: Path, limit: int | None = None) -> bytes | None:
                      | getattr(os, "O_BINARY", 0))
     except OSError:
         return None
-    with os.fdopen(fd, "rb") as f:  # every check is on the file that was opened
+    try:  # every check is on the file that was opened, before it is wrapped: on Linux a folder opens, and
+        st = os.fstat(fd)  # os.fdopen of it raises IsADirectoryError
+        plain = stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and (limit is None or st.st_size <= limit)
+    except OSError:
+        plain = False
+    if not plain:
+        os.close(fd)
+        return None
+    with os.fdopen(fd, "rb") as f:
         try:
-            st = os.fstat(f.fileno())
-            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or (limit is not None and st.st_size > limit):
-                return None
             data = f.read() if limit is None else f.read(limit + 1)
         except OSError:
             return None
