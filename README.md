@@ -6,7 +6,7 @@
 
 An open-source AI workspace for your desktop: local-first, self-learning, and actually useful for daily life. Bring your own keys.
 
-> **Just want to use it? [Download the installer (0.1.3 beta)](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.1.3)** for Windows or Ubuntu/Debian, then follow [Install](#install). No Python, Node.js or developer tools needed. To run it from the source code, see [Run from source](#run-from-source-development-builds).
+> **Just want to use it? [Download the installer (0.2.0 beta)](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.2.0)** for Windows or Ubuntu/Debian, then follow [Install](#install). No Python, Node.js or developer tools needed. To run it from the source code, see [Run from source](#run-from-source-development-builds).
 
 > **Status: experimental.** open-zenbot is a passion project, not a product. Expect rough edges, breaking changes and features that are half-built. For more information, see the [wiki](https://github.com/ServaboFidem/open-zenbot/wiki). It is a work in progress: a few pages so far, with more on the way. Where it has no answer yet, this README, `AGENTS.md` and `.env.example` are the best guides.
 
@@ -61,7 +61,7 @@ Routing is a scoring job, not a writing job. Before each task, the router asks t
 
 For people who just want to use OpenZenBot. You do not need Python, Node.js or any developer tools.
 
-1. Open the [0.1.3 beta release](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.1.3) and download the installer for your computer from its Assets list: the `.exe` for Windows, the `.deb` for Ubuntu or Debian. Later versions appear on the [Releases page](https://github.com/ServaboFidem/open-zenbot/releases).
+1. Open the [0.2.0 beta release](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.2.0) and download the installer for your computer from its Assets list: the `.exe` for Windows, the `.deb` for Ubuntu or Debian. Later versions appear on the [Releases page](https://github.com/ServaboFidem/open-zenbot/releases).
 2. **Windows:** run `OpenZenBot-Setup-<version>.exe`. The installer is not signed yet, so Windows SmartScreen warns about an unknown publisher: click "More info", then "Run anyway". **Ubuntu or Debian:** open a terminal in the download folder and run `sudo apt install ./OpenZenBot_<version>_amd64.deb`, then start OpenZenBot from your applications menu (or run `openzenbot`).
 3. The first time you start it, OpenZenBot sets itself up. It needs a connection to the internet and about 5 GB of free disk space: it checks first and does not start with less (an update over an existing install needs about 1 GB). The Python environment takes about 2 GB of that on Linux, and roughly 2 GB more is fetched the first time the app starts (models and tool servers). This can take several minutes. You see each step as it happens. This happens once, and again after an update that changes what it needs.
 4. It then asks for an [OpenRouter](https://openrouter.ai/) key. OpenZenBot needs an OpenRouter account for one thing: the decider model, which picks the right skills and tools for each task and checks shell commands before they run. Everything else can run on your own computer or through NVIDIA NIM: the models your bots talk with are your choice, in Settings. The key is kept in your OpenZenBot settings, not in the app.
@@ -163,6 +163,7 @@ Describe a web page, an app screen or a layout, and the Designer bot builds it w
 - **Questions as a form.** When the bot needs to know something before it starts (the audience, the tone, the sections you want), it asks in a short form you fill in, not a wall of text.
 - **Design systems.** Pick a design system for a conversation and every design there follows its look: colors, type, spacing. Two ship with the app. To add your own, make a folder in `~/.zen-agents/vault/design-systems/` with a `DESIGN.md` describing the look and, if you like, a `tokens.css`.
 - **Every version is kept.** Each revision is saved as a numbered copy, so version 1 is still there after version 5.
+- **Change it yourself.** New in 0.2.0: you no longer need a bot turn for small changes. **Edit** lets you click a heading or a picture in the preview and type new words or choose a new picture. **Tweaks** shows the colours and sizes the design offers as knobs. Your changes show live and are kept as a new version when you choose Save. **Restore** makes an older version the newest again, **Compare** shows two versions side by side, and **Export** saves the version on screen as HTML, or the newest as a ZIP with its pictures. In the desktop app it can also save PDF and PNG.
 - **One file you own.** A design is a single HTML file with everything inside it, saved under `~/.zen-agents/vault/designs/`. It opens in any browser, works offline and needs nothing else to go with it.
 - **All your designs in one place.** The Design page shows a card for each design; click one to go back to its conversation.
 
@@ -266,15 +267,48 @@ the rooms it found, a **Look again** button (which also searches the whole netwo
 it off, and **Highest volume ZenBot may set** (60 to start). When a speaker is louder than that, ZenBot turns it down
 before it plays, and it will not turn one up past it. The Sonos app itself is not limited.
 
+New in 0.2.0: **Music > Sonos** is a page of its own. Pick a Favorite and the speakers to play it on, and control
+each group with play, pause, skip and a volume slider per speaker. **Make this my morning routine** sets up ZenBot to
+play the Favorite you picked on those speakers every weekday at 7:00; you can change the days and time before you
+save it.
+
 Good to know:
 
-- **Playing is not tried on real speakers yet.** Finding speakers and reading Favorites have worked on one home
-  network; playing, pausing, grouping and volume changes have only run against a stand-in. On Windows the firewall
-  may ask whether the harness may use the network the first time it looks.
+- **Tried on one home network.** Finding speakers, reading Favorites, and playing a Favorite, pausing, skipping and
+  changing the volume from the Sonos page have worked on three speakers already grouped together. ZenBot's own Sonos
+  tools, regrouping speakers and the morning routine have only run in tests. On Windows the firewall may ask whether
+  the harness may use the network the first time it looks.
 - **Bots in a room never get the Sonos tools.** Talk to ZenBot one to one, or set up a routine for it.
 - **No login on the speakers.** Anything on your home network can control Sonos speakers, and the harness's local
   API has no login either, so a bot allowed to run shell commands or drive the browser could play music or change the
   volume. See `AGENTS.md`, `### Sonos`.
+
+## Read aloud
+
+New in 0.2.0. Turn on **Read aloud** in the chat header and each new reply in that chat is read aloud on your
+computer's speakers. The Narrator bot first rewrites the reply for listening (no tables or code read out), then a voice
+speaks it. Starting a new message, switching chats or turning the button off stops it.
+
+Choose the voice on Settings > Harness Tools > **Read aloud**:
+
+- **Kokoro (free, no key)** makes the voice on this computer. Pick it under Speech model and choose **Download** (about
+  354 MB, once). Then pick one of 28 English voices, American or British, and try it with **Play a sample**.
+- **A speech model on OpenRouter**, using your OpenRouter key.
+
+Good to know:
+
+- **The Narrator still uses a model.** It rewrites the reply on its own model, or your chat model, even with Kokoro, so
+  the reply's text still goes to that model's provider.
+- **New and lightly tried.** Kokoro has been downloaded and run on one Windows computer; Linux, slower laptops and the
+  OpenRouter voice have not been tried yet.
+
+## Wi-Fi speakers
+
+New in 0.2.0, and only a first step: Settings > **Wi-Fi speakers** finds the AirPlay, Chromecast and DLNA speakers
+on your home network and lets you pick one as the default. Nothing is played on them yet; reading replies and digests
+aloud through the default speaker comes later. Each speaker type has its own switch and all are off to start. Turning
+one on makes the harness listen on your home network, and Windows may ask whether to allow it. It has not been tried
+with real speakers yet.
 
 ## Dreaming
 
@@ -337,6 +371,9 @@ OPENROUTER_API_KEY=... uv run pytest -k live   # opt-in live check
 | `src/events/` | The built-in calendar and Google sync; event discovery: the Eventbrite and FindLocal readers, the event pool, digests |
 | `src/helper/` | The Facebook browser helper: an observe-only Chrome extension that reads your Facebook events, invites and birthdays and sends them to the harness on this computer (see [Facebook browser helper](#facebook-browser-helper)) |
 | `src/mail/` | AgentMail: ZenBot's own email address, read-only (see [AgentMail](#agentmail)) |
+| `src/sonos/` | Sonos: finding speakers, the `sonos_*` tools, the volume ceiling and the Sonos page's routes (see [Sonos](#sonos)) |
+| `src/speakers/` | Wi-Fi speakers: finding AirPlay, Chromecast and DLNA speakers and the default speaker (see [Wi-Fi speakers](#wi-fi-speakers)) |
+| `src/kokoro/` | The Kokoro voice made on this computer for Read aloud: the pinned model download and the engine (see [Read aloud](#read-aloud)) |
 | `src/rooms/` | Rooms, turns, handoff, the orchestrator that picks bots for a job |
 | `src/context/` | Compaction and the protected (pinned) task |
 | `src/skills/` | `SKILL.md` loader and the catalog |
@@ -346,7 +383,7 @@ OPENROUTER_API_KEY=... uv run pytest -k live   # opt-in live check
 | `src/harness/` | Bot, task loop, approvals, pause, tools, HTTP API, entry point; the folder and shell guards, the design studio, delegation to coding agents |
 | `skills/` | Shipped skills: a few of our own, plus vendored third-party skills (see [Credits](#credits)) |
 | `mcp.json` | MCP servers to connect at start (Claude Desktop shape); each tool registers as `<server>.<tool>` and the server is routed like a skill |
-| `bot-prompts/` | One markdown file per bot identity (nine ship, among them `personal-assistant`, `designer`, `music-librarian` and `event-scout`): `name` and `role` in frontmatter, optional `skills` refs, instructions in the body. The file stem is the bot id. The harness loads it at start and writes it when a bot is created or edited in the app |
+| `bot-prompts/` | One markdown file per bot identity (ten ship, among them `personal-assistant`, `designer`, `music-librarian` and `event-scout`): `name` and `role` in frontmatter, optional `skills` refs, instructions in the body. The file stem is the bot id. The harness loads it at start and writes it when a bot is created or edited in the app |
 | `src/gui/` | OpenZenBot workspace GUI: React + Fluent 2 renderer, built by `npm run build` into `dist/` |
 | `src/electron/` | Electron main and preload; serves `dist/` from the `app://openzenbot` origin |
 | `tests/gui/` | Node tests for the GUI client, adapters, and shell (`npm test`) |
@@ -389,6 +426,18 @@ are not in this repo: the harness downloads them from a pinned commit
 
 Because of the CC BY-NC-SA 3.0 part, the music feature is for non-commercial use.
 
+### Speech
+
+Read aloud's voice on this computer uses these. The model files are not in this repo: the harness downloads them, at
+your request, from the pinned kokoro-onnx release (`src/kokoro/model.py`) into `~/.zen-agents/vault-models/kokoro/`.
+
+| Part | Source | License |
+| --- | --- | --- |
+| Kokoro-82M model and voices, as ONNX | [hexgrad/Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M), converted by [thewh1teagle/kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx) (release `model-files-v1.1`) | Apache-2.0 |
+| `kokoro-onnx` (Python package) | [thewh1teagle/kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx) | MIT |
+| `phonemizer` (Python package) | [bootphon/phonemizer](https://github.com/bootphon/phonemizer) | GPL-3.0-or-later |
+| espeak-ng, bundled by `espeakng-loader` | [espeak-ng/espeak-ng](https://github.com/espeak-ng/espeak-ng) | GPL-3.0-or-later |
+
 ## License
 
-[MIT](LICENSE), except the vendored skills and the downloaded data above, which keep their own licenses.
+[MIT](LICENSE), except the vendored skills, the downloaded data and the speech parts above, which keep their own licenses.
