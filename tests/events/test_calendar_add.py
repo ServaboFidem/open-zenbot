@@ -51,6 +51,7 @@ async def service(cfg):
 def harness(cfg, service):
     h = Harness(config=cfg, provider=ScriptedProvider(), ledger=service.ledger, catalog=Catalog(), calendar=service)
     h.discover.today = lambda: "2026-11-18"
+    h.discover.now = lambda: "2026-11-18T12:00:00Z"    # the clock too, or a listing's end passes in real time
     return h
 
 

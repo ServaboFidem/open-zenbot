@@ -447,10 +447,11 @@ class TestHelperIsNoBot:
                            'GROUP = "facebook"', "GROUP = 'facebook'",
                            "facebook_router", "events_facebook"):
                 if needle in src and "test_facebook_helper" not in src:
-                    hits.append(f"{path.relative_to(REPO)}: {needle}")
+                    hits.append(f"{path.relative_to(REPO).as_posix()}: {needle}")
         allowed = {"src/events/facebook_routes.py"}
+        mounted = "src/harness/api.py: facebook_router"  # api.py mounting the HTTP routes: no bot's tool
         unexpected = [h for h in hits
-                      if not any(h.startswith(a + ":") for a in allowed)]
+                      if h != mounted and not any(h.startswith(a + ":") for a in allowed)]
         assert unexpected == []
 
     def test_friend_check_writes_nothing(self, people):
