@@ -81,6 +81,13 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     sonos: createSonosApi(call),
     speakers: createSpeakersApi(call),
     dream: dreamApi(call),
+    morning: {
+      agenda: () => get('/morning/agenda'),
+      forecast: () => get('/morning/forecast'),
+      settings: () => get('/morning/settings'),
+      locations: q => get('/morning/locations', { q }),
+      saveWeather: ({ location, unit }) => put('/morning/settings', { location, unit }),
+    },
     // routines (the Music digest schedule is one; a managed routine keeps managed_by on every save)
     routines: () => get('/routines'),
     saveRoutine: ({ id, name, bot, skill, enabled, schedule, managed_by = '' }) => {

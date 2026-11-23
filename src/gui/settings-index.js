@@ -82,6 +82,7 @@ export const SECTIONS = [
   section('calendar', 'Your Google app', [
     ...APP_STEPS, 'Redirect address', 'Client ID', 'Client secret',
   ]),
+  section('calendar', 'Morning digest', ['Today', 'weather location', 'Open-Meteo forecast', 'temperature unit', 'daily email recipient', 'delivery time', 'birthdays', 'agenda']),
   section('calendar', 'Google Calendar', ['Connect Google Calendar', 'Reconnect', 'Disconnect', 'OpenZenBot asks to see your calendars and their events. It does not ask to change anything yet.', 'Google sign-in has expired.']),
   section('calendar', 'Calendars to bring in', ['Choose which of your Google calendars show their events here.', 'view only']),
   section('calendar', 'Send events to Google', ['Send events made here to Google', 'Destination calendar', 'Allow sending to Google']),

@@ -1,4 +1,4 @@
-"""The AgentMail connector: ZenBot's inbox through AgentMail's REST API, read-only but for creating an inbox.
+"""The AgentMail connector: ZenBot's inbox through AgentMail's REST API and the scheduled morning edition.
 
 It knows AgentMail and nothing else. Everything in an answer is untrusted text (mail is written by strangers), so
 three rules hold:
@@ -41,11 +41,15 @@ class MailError(Exception):
     """A failed AgentMail request. ``kind``: network, key, permission, not_found, taken, refused, invalid,
     provider. ``code`` and ``detail`` are AgentMail's own (cleaned); neither ever holds the key."""
 
-    def __init__(self, kind: str, code: str = "", detail: str = ""):
+    def __init__(self, kind: str, code: str = "", detail: str = "", *, status: int = 0,
+                 retry_after: int = 0, before_request: bool = False):
         super().__init__(kind)
         self.kind = kind
         self.code = code
         self.detail = detail
+        self.status = status
+        self.retry_after = retry_after
+        self.before_request = before_request
 
 
 def clean_line(value: object, limit: int) -> str:
@@ -136,15 +140,19 @@ class AgentMail:
         return "AgentMail()"
 
     async def _call(self, method: str, parts: tuple[str, ...], *, params: dict | None = None,
-                    body: dict | None = None, creating: bool = False) -> Any:
+                    body: dict | None = None, creating: bool = False, idempotency_key: str = "") -> Any:
         url = BASE + "/" + "/".join(quote(p, safe="") for p in parts)
+        headers = {"Authorization": f"Bearer {self._key}", "Accept": "application/json"}
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
         try:
             async with self._http.stream(method, url, params=params, json=body, timeout=TIMEOUT_S,
-                                         follow_redirects=False,
-                                         headers={"Authorization": f"Bearer {self._key}",
-                                                  "Accept": "application/json"}) as response:
+                                         follow_redirects=False, headers=headers) as response:
                 status = response.status_code
+                delay = response.headers.get("Retry-After", "")
                 data = await _body(response, PAGE_LIMIT)
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout):
+            raise MailError("network", before_request=True) from None
         except httpx.HTTPError:
             raise MailError("network") from None
         if data is None:
@@ -160,7 +168,36 @@ class AgentMail:
         found = payload if isinstance(payload, dict) else {}
         code = clean_line(found.get("code"), 100)
         detail = clean_line(found.get("message"), DETAIL_MAX)
-        raise MailError(_kind(status, code, detail, creating), code, detail)
+        retry_after = int(delay) if delay.isascii() and delay.isdigit() and len(delay) <= 9 else 0
+        raise MailError(_kind(status, code, detail, creating), code, detail, status=status, retry_after=retry_after)
+
+    async def morning_draft(self, inbox: str, client_id: str, recipient: str, subject: str, text: str) -> str:
+        row = await self._call("POST", ("inboxes", inbox, "drafts"),
+                               body={"client_id": client_id, "to": [recipient], "subject": subject, "text": text})
+        draft_id = clean_line(row.get("draft_id"), LINE_MAX) if isinstance(row, dict) else ""
+        if not draft_id:
+            raise MailError("provider")
+        return draft_id
+
+    async def send_morning_draft(self, inbox: str, draft_id: str, label: str) -> str:
+        row = await self._call("POST", ("inboxes", inbox, "drafts", draft_id, "send"),
+                               body={"add_labels": [label]}, idempotency_key=label)
+        message_id = clean_line(row.get("message_id"), LINE_MAX) if isinstance(row, dict) else ""
+        if not message_id:
+            raise MailError("provider")
+        return message_id
+
+    async def morning_receipt(self, inbox: str, label: str) -> str:
+        row = await self._call("GET", ("inboxes", inbox, "messages"),
+                               params={"labels": [label, "sent"], "limit": 1})
+        messages = row.get("messages") if isinstance(row, dict) else None
+        if not isinstance(messages, list):
+            raise MailError("provider")
+        for message in messages:
+            labels = message.get("labels") if isinstance(message, dict) else None
+            if isinstance(labels, list) and label in labels and "sent" in labels:
+                return clean_line(message.get("message_id"), LINE_MAX)
+        return ""
 
     async def list_inboxes(self, limit: int = 100) -> list[dict]:
         payload = await self._call("GET", ("inboxes",), params={"limit": limit})

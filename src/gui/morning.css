@@ -1,0 +1,39 @@
+.chat-panel:has(.today-card) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.chat-panel:has(.today-card) .composer-bottom {
+  flex-wrap: wrap;
+}
+.today-card {
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.today-card > header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  background: #edf4fa;
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: #17476c;
+}
+.today-card time { margin-left: auto; font-size: var(--small); }
+.today-body { display: grid; gap: var(--s3); padding: var(--s4); font-size: var(--small); }
+.today-body h3 { font-size: var(--small); margin-bottom: var(--s1); }
+.today-weather strong { color: var(--ink); margin-right: var(--s1); }
+.today-weather a { font-size: var(--tiny); white-space: nowrap; }
+.today-events { list-style: none; margin: 0; padding: 0; }
+.today-events li { display: grid; grid-template-columns: minmax(6em, max-content) 1fr; gap: var(--s3); padding-block: var(--s1); }
+.today-events li + li { border-top: 1px solid var(--line); }
+.today-events li span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.today-events li strong { font-weight: 500; }
+.today-body summary { color: var(--brand); padding-block: var(--s1); }
+.morning-settings form { max-width: 38rem; }
+.morning-locations { margin: 0; padding-left: var(--s5); }
+.morning-locations li + li { margin-top: var(--s2); }
+@container (max-width: 390px) {
+  .today-card time { flex-basis: 100%; margin-left: 0; }
+}

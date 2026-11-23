@@ -15,7 +15,7 @@ name each top-level system and run the harness and the tests.
 | `src/music/` | Music discovery: Discogs scan, taste profile, the Soundlore atlas, MusicBrainz and YouTube Music lookups, candidates, the album gate, digests, `music_*` tools, `/music` routes |
 | `src/events/` | The built-in calendar: settings and Google keys (`settings.py`), the SQLite store (`store.py`), the Google client (`google.py`), conversion to and from Google's shape (`convert.py`), sign-in (`connect.py`), pull and push (`sync.py`), the service that runs them (`service.py`) and the `/calendar` routes (`routes.py`); discovery of local events: settings and the Eventbrite address check (`discover_settings.py`), the Eventbrite reader (`eventbrite.py`), the FindLocal reader (`findlocal.py`), the pool, digests, cards and events added from the pool (`discover_store.py`), the service that refreshes, checks, saves and fetches pool pictures (`discovery.py`), the scout's tools (`discover_tools.py`) and the `/discover` routes (`discover_routes.py`) |
 | `src/skills/` | `SKILL.md` loader and catalog; recorder |
-| `src/mail/` | AgentMail, ZenBot's own email address (read-only): settings and the owner-only key (`settings.py`), the plain-`httpx` client (`agentmail.py`), the service (`service.py`) and the `/agentmail` routes (`routes.py`); see `### AgentMail` |
+| `src/mail/` | AgentMail inbox settings, client, service, `/agentmail` routes and scheduled digest delivery (`morning_delivery.py`); see `### AgentMail` |
 | `src/sonos/` | Sonos control over SoCo: settings (`settings.py`), the device boundary (`devices.py`), the service that finds speakers (`service.py`), the `sonos_*` tools and the volume ceiling (`tools.py`) and the `/sonos` routes (`routes.py`); see `### Sonos` |
 | `src/speakers/` | Wi-Fi speakers (finding only, nothing played): settings and the speaker record (`settings.py`), the three finders behind one `Finder` protocol (`finders.py`, the only importer of pyatv, pychromecast, async_upnp_client and zeroconf), the service with a look per speaker type and the one default (`service.py`) and the `/speakers` routes (`routes.py`); see `### Wi-Fi speakers` |
 | `src/kokoro/` | Speech made on this computer by Kokoro on onnxruntime, for Read aloud: the pinned model files, their download and removal (`model.py`: `KokoroModel`), and the engine with the 28 English voices (`engine.py`: `KokoroEngine`, the only importer of `kokoro_onnx` and `onnxruntime`); see `### Reading replies aloud`. The splitting into pieces and the reading itself are in `src/generation/speech.py`, the routes in `src/harness/speech_routes.py` |
@@ -807,12 +807,18 @@ routes (`POST /discover/cards/{id}/add`, `/events/{id}/add`) are the only way di
 
 ### AgentMail
 
-ZenBot has an email address of its own through [AgentMail](https://agentmail.to). This first slice only reads it: the
-owner saves an AgentMail API key on Settings > Connected apps, picks one of the account's inboxes or creates one by
-name, and the AgentMail page (in the navigation below Conversations once both are done) shows the address with a Copy
-button and the inbox, newest first. Nothing is sent, and no bot is given the mail. Digests by mail and newsletter
-sign-up come later. Design: `docs/superpowers/specs/2026-11-20-agentmail-inbox-design.md` (git-ignored, on the
-computer the work was done on).
+ZenBot has an email address of its own through [AgentMail](https://agentmail.to). The owner connects the key
+and inbox in Settings > Connected apps and reads incoming messages on the AgentMail page. The morning digest
+sender uses this inbox when a recipient is set in desktop Settings > Calendar > Morning digest.
+
+- **Morning digest.** `src/events/morning_agenda.py` reads today’s commitments and birthday observations.
+  Email picks come from public discovery listings and the configured event scout. `morning_weather.py`
+  owns Open-Meteo search and forecasts, with the location and unit in `vault-settings/morning_weather.json`.
+  `morning_digest.py` builds the two editions and serves `GET /morning/agenda`, `/forecast`, `/locations`
+  and `GET/PUT /morning/settings` under the `/morning` prefix. Opening chat only reads.
+  Electron owns the recipient and time in `vault-settings/morning_email.json`. Keep recipient changes out
+  of the harness HTTP routes. `src/mail/morning_delivery.py` tracks attempts by local day and is started and
+  cancelled in the harness lifespan. The weather and mail clients are exercised offline using HTTP stand-ins.
 
 - **Where things live.** `vault-settings/agentmail.json` (`MailSettings`: `inbox_id`, `email`; no secret) and
   `vault-settings/agentmail_keys.json` (`MailKeys`: `api_key`, mode `0o600`, tmp-then-replace, registered with the

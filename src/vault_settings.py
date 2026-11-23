@@ -54,6 +54,10 @@ def migrate(vault_root: Path) -> list[str]:
     new.mkdir(parents=True, exist_ok=True)
     notes: list[str] = []
     for src in sorted(old.iterdir()):
+        # Digest preferences and send receipts first shipped after this migration. Only their trusted
+        # writers may create them, including temporary files and SQLite sidecars.
+        if src.name.casefold().startswith(("morning_email.", "morning_delivery.", "morning_weather.")):
+            continue
         dest = new / src.name
         if not dest.exists():
             shutil.move(str(src), str(dest))

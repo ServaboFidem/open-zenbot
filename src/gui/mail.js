@@ -44,7 +44,7 @@ export function errorLine(err) {
 }
 
 /** The line under the AgentMail heading in Settings (also in the settings search). */
-export const MAIL_LINE = "ZenBot's own email address. For now you can read what arrives; nothing is sent, and no bot is given this mail.";
+export const MAIL_LINE = "Read mail at ZenBot’s address. Incoming messages stay private from bots. To receive a daily morning digest, set a recipient in Settings → Calendar.";
 
 // The inbox radios only mark a pick (arrow keys move it); "Use this inbox" makes the change, and only for an
 // active inbox in the list that is not ZenBot's already.
