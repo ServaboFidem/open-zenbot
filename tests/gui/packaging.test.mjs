@@ -63,11 +63,13 @@ test('nothing in the packaging turns the sandbox off', () => {
   for (const f of files) assert.doesNotMatch(readFileSync(f, 'latin1'), /no-sandbox|executableArgs/, f);
 });
 
-test('every Python package under src/ ships with the harness, and the GUI and shell do not', () => {
+test('every Python package under src/ ships with the harness, and the GUI, shell and browser helper do not', () => {
   const from = new Set(lines().filter(l => l.startsWith('- from: src/')).map(l => l.slice('- from: src/'.length)));
-  const shipped = readdirSync(join(root, 'src')).filter(n => !['gui', 'electron', 'assets', '__pycache__'].includes(n));
+  // helper: the Facebook Chrome extension, loaded unpacked into Chrome by the user; the harness never reads it
+  const notPython = ['gui', 'electron', 'assets', 'helper'];
+  const shipped = readdirSync(join(root, 'src')).filter(n => ![...notPython, '__pycache__'].includes(n));
   for (const n of shipped) assert.ok(from.has(n), `src/${n} is not in extraResources`);
-  for (const n of ['gui', 'electron', 'assets']) assert.ok(![...from].some(f => f === n || f.startsWith(`${n}/`)), n);
+  for (const n of notPython) assert.ok(![...from].some(f => f === n || f.startsWith(`${n}/`)), n);
 });
 
 // "!node_modules/<package glob>/**" lines in files: the renderer libraries already bundled into dist/
