@@ -1545,9 +1545,10 @@ on; the plan is beside it in `docs/superpowers/plans/`).
   every save of a briefing (an edit, switching it on or off) calls `settings_saved`, which sets `since` to the later of
   now and the claimed slot, so an edit never yields a false late skip and never a second play that day; only a gap
   with the harness off or the computer asleep is a late skip. A time mark (the claim or `since`) that cannot be read
-  (a far-off year raises `OverflowError` or `OSError` on Windows, caught with `ValueError`) or lies later than
-  `now + PREP_LEAD` counts as none (`_mark`): a claim is never further ahead than that, so such a mark was written
-  while the clock read wrong, and the next save writes `since` afresh. A briefing switched off, removed or whose slot
+  (a far-off year raises `OverflowError` or `OSError` on Windows, caught with `ValueError`) or lies more than
+  `MARK_AHEAD` (24 hours) after now counts as none (`_mark`): such a mark was written while the clock read far ahead,
+  and the next save writes `since` afresh. A mark only a little ahead is kept, so a clock set back a few minutes after
+  a play (Windows correcting a drifted clock after the wake) never releases today's claim or plays that slot again. A briefing switched off, removed or whose slot
   changed while it was being made plays nothing, records nothing and gives its claim back (the previous claim is
   saved again, `BriefingState.restore_claim`), so a later slot that day can still play: a slot moved from 06:45 to
   07:00 during the build plays at 07:00, and one switched off and on again before 06:45 plays at 06:45. Every other

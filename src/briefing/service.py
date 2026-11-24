@@ -24,6 +24,7 @@ from src.sonos import tools as sonos_tools
 log = logging.getLogger(__name__)
 
 PREP_LEAD = timedelta(minutes=5)
+MARK_AHEAD = timedelta(hours=24)  # a time mark further ahead than this was written while the clock read wrong
 LATE_LIMIT = timedelta(minutes=15)
 INTERVAL_S = 30
 WAIT_STEP_S = 2.0  # while waiting for the slot, the settings are read again this often
@@ -129,11 +130,12 @@ class BriefingService:
             return None
 
     def _mark(self, raw: str | None, now: datetime) -> datetime | None:
-        """A saved time mark, or None when it cannot be read or lies later than `now + PREP_LEAD`: a claim is never
-        further ahead than that, so a later one was written while the clock read wrong and would silence briefings
-        until real time caught up with it."""
+        """A saved time mark, or None when it cannot be read or lies more than `MARK_AHEAD` (24 hours) after `now`:
+        such a mark was written while the clock read far ahead and would silence briefings until real time caught up
+        with it. A mark a little ahead is kept: right after a play, a clock set back a few minutes (Windows correcting
+        a drifted clock after the wake) must not release today's claim, or that slot would play again."""
         when = self._when(raw)
-        return when if when is not None and when <= now + PREP_LEAD else None
+        return when if when is not None and when <= now + MARK_AHEAD else None
 
     def _claimed(self, kind: str, now: datetime) -> datetime | None:
         return self._mark(self.state.claimed(kind), now)
@@ -145,7 +147,7 @@ class BriefingService:
         Slots count from the later of the claimed slot and the last settings save (`since`); with neither, from
         `now - LATE_LIMIT`. Only a save moves `since`, so a gap while the harness was off is still a late skip, but
         an edit, a switch-on or a switch-off is not. One briefing a day: never a slot on the claimed slot's date. A
-        mark that cannot be read, or lies later than `now + PREP_LEAD`, counts as none (`_mark`)."""
+        mark that cannot be read, or lies more than `MARK_AHEAD` after now, counts as none (`_mark`)."""
         claimed = self._claimed(kind, now)
         marks = [m for m in (claimed, self._mark(self.state.since(kind), now)) if m is not None]
         slot = next_slot(b, max(marks) if marks else now - LATE_LIMIT)

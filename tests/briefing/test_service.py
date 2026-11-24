@@ -557,3 +557,20 @@ async def test_a_run_that_reached_the_speakers_keeps_its_claim(vault):
     clock.now = at(6, 50)
     await svc.tick()
     assert len(f.announces) == 1  # one try a day
+
+
+async def test_a_clock_set_back_after_a_play_never_plays_today_twice(vault):
+    # the PC wakes for the briefing and Windows corrects a drifted clock a few minutes back
+    _marks(vault, claimed=at(6, 45, day=23).isoformat(), since=at(6, 0, day=20).isoformat())
+    clock = Clock(at(6, 40))
+    f = Fakes(vault, clock)
+    svc = make(vault, clock, f)
+    await svc.tick()
+    assert len(f.announces) == 1
+    clock.now = at(6, 39)
+    await svc.tick()
+    clock.now = at(6, 40, 30)
+    await svc.tick()
+    assert len(f.announces) == 1
+    st = BriefingState.load(vault)
+    assert st.claimed("morning") == at(6, 45).isoformat() and st.last_skip("morning") is None
