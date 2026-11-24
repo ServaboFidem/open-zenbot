@@ -1,0 +1,74 @@
+import time
+
+import httpx
+import pytest
+
+from src.sonos.clip_server import ClipServer, local_ip_toward
+
+WAV = bytes(range(256)) * 4
+
+
+def test_serves_the_clip_to_the_allowed_address():
+    with ClipServer(WAV, allowed="127.0.0.1", bind="127.0.0.1", life_s=30) as s:
+        r = httpx.get(s.url)
+        assert r.status_code == 200
+        assert r.content == WAV
+        assert r.headers["content-type"] == "audio/wav"
+        assert r.headers["content-length"] == str(len(WAV))
+        assert r.headers["cache-control"] == "no-store"
+        assert s.hits == 1
+
+
+def test_head_has_no_body():
+    with ClipServer(WAV, allowed="127.0.0.1", bind="127.0.0.1", life_s=30) as s:
+        r = httpx.head(s.url)
+        assert r.status_code == 200
+        assert r.headers["content-length"] == str(len(WAV))
+        assert r.content == b""
+
+
+def test_refuses_other_addresses():
+    with ClipServer(WAV, allowed="127.0.0.2", bind="127.0.0.1", life_s=30) as s:
+        assert httpx.get(s.url).status_code == 403
+        assert s.hits == 0
+
+
+def test_unknown_path_is_404():
+    with ClipServer(WAV, allowed="127.0.0.1", bind="127.0.0.1", life_s=30) as s:
+        base = s.url.rsplit("/", 1)[0]
+        assert httpx.get(base + "/nope.wav").status_code == 404
+
+
+def test_range_request_gets_206():
+    with ClipServer(WAV, allowed="127.0.0.1", bind="127.0.0.1", life_s=30) as s:
+        r = httpx.get(s.url, headers={"Range": "bytes=4-9"})
+        assert r.status_code == 206
+        assert r.content == WAV[4:10]
+        assert r.headers["content-range"] == f"bytes 4-9/{len(WAV)}"
+        r = httpx.get(s.url, headers={"Range": "bytes=1000-"})
+        assert r.status_code == 206
+        assert r.content == WAV[1000:]
+
+
+@pytest.mark.parametrize("rng", ["bytes=abc", "bytes=0-1,3-4", "bytes=9-4", "items=1-2"])
+def test_bad_range_gets_the_whole_file(rng):
+    with ClipServer(WAV, allowed="127.0.0.1", bind="127.0.0.1", life_s=30) as s:
+        r = httpx.get(s.url, headers={"Range": rng})
+        assert r.status_code == 200
+        assert r.content == WAV
+
+
+def test_post_is_refused():
+    with ClipServer(WAV, allowed="127.0.0.1", bind="127.0.0.1", life_s=30) as s:
+        assert httpx.post(s.url, content=b"x").status_code == 501
+
+
+def test_stops_after_its_life():
+    with ClipServer(WAV, allowed="127.0.0.1", bind="127.0.0.1", life_s=0.2) as s:
+        time.sleep(0.5)
+        with pytest.raises(httpx.TransportError):
+            httpx.get(s.url)
+
+
+def test_local_ip_toward_loopback():
+    assert local_ip_toward("127.0.0.1") == "127.0.0.1"
