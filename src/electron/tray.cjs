@@ -1,7 +1,7 @@
 // The system tray: closing the window hides it and ZenBot keeps running (the harness, reminders and the morning
 // briefing need it up). The tray's menu opens the window or quits. Electron's Tray, Menu and Notification arrive as
 // arguments, so tests stand them in.
-const NOTE = 'ZenBot is still running in the system tray. Right-click its icon to quit.';
+const NOTE = 'ZenBot is still running in the tray. Right-click its icon to open it or quit.';
 
 // seenStore: { read(): boolean, write(): void }. onHidden() tells the user once, ever, where the window went.
 function createTray({ Tray, Menu, icon, showWindow, quit, notify, seenStore }) {

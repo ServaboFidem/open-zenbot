@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-const { createTray, closeToTray, NOTE } = createRequire(import.meta.url)('../../src/electron/tray.cjs');
+const { createTray, closeToTray } = createRequire(import.meta.url)('../../src/electron/tray.cjs');
 
 class FakeTray {
   constructor(icon) { this.icon = icon; this.handlers = {}; this.menu = null; this.tip = null; }
@@ -67,7 +67,7 @@ test('closing during quit closes for real', () => {
 test('the tray note is shown once ever', () => {
   const { onHidden, calls } = make();
   onHidden(); onHidden();
-  assert.deepEqual(calls.notify, [NOTE]);
+  assert.deepEqual(calls.notify, ['ZenBot is still running in the tray. Right-click its icon to open it or quit.']);
   assert.equal(calls.write, 1);
   const again = make({ seenStore: { read: () => true, write: () => {} } });
   again.onHidden();
