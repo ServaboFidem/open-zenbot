@@ -6,7 +6,7 @@ import './styles.css';
 import KnowledgePanel from './KnowledgePanel';
 import Markdown from './Markdown';
 import { MediaGrid, MediaProvider } from './MediaCards';
-import { addChips, afterSend, blindLine, chipRefused, chipUploaded, DOCUMENT_SUFFIXES, holdLine, PICTURE_TYPES, removeChip, sendable, sentFiles, sizeLabel, toBase64, uploadName } from './chat-files.js';
+import { addChips, afterSend, blindLine, chipRefused, chipUploaded, DOCUMENT_SUFFIXES, holdLine, PICTURE_TYPES, removeChip, sendable, sentFiles, stillSendable, sizeLabel, toBase64, uploadName } from './chat-files.js';
 import { attachmentItem, previewFrameUrl } from './media.js';
 import ConversationPicker from './ConversationPicker';
 import { TodayCard } from './TodayCard';
@@ -623,7 +623,7 @@ function App() {
     const task = typed || (designComments.length ? 'See my comments on the design.' : '');
     // files go only with a message from the composer, never with a form's answers
     const files = answersTo || (interviewing && !interview.done) ? { held: false, ids: [] } : sendable(chipsRef.current);
-    const uploads = files.ids;
+    let uploads = files.ids;
     if (!bot || (!task && !uploads.length)) return;
     if (sendHeld) { holdForChanges(); return; }
     if (!answersTo && holdLine(chipsRef.current)) { setNotice(holdLine(chipsRef.current)); return; }
@@ -656,9 +656,12 @@ function App() {
     const lastTask = exchanges.findLast(x => x.session_id && x.outcome !== 'edit');  // a version the user saved is no task
     if (lastTask && harness.settings?.scorer && task) {
       const change = await guard(() => api.scopeCheck(lastTask.session_id, task), { quiet: true });
+      // a file removed while the scope check was out does not go (resolveScope does the same for the prompt)
+      uploads = stillSendable(uploads, chipsRef.current);
       if (change?.changed) { setScopePrompt({ sessionId: lastTask.session_id, change, text: task, botId: bot.id, uploads }); return; }
       // design changes made while the scope check was out hold the message too
       if (sendHeldRef.current) { holdForChanges(); return; }
+      if (!task && !uploads.length) return;
     }
     await start(bot.id, task, { uploads });
   }
@@ -719,7 +722,7 @@ function App() {
     const prev = sessions.find(s => s.id === p.sessionId);
     const block = prev?.protected || (prev ? { task: prev.task, constraints: [] } : null);
     // the files the message carried, less any the user removed while the prompt was up
-    const uploads = sendable(chipsRef.current).ids.filter(id => (p.uploads || []).includes(id));
+    const uploads = stillSendable(p.uploads, chipsRef.current);
     await start(p.botId, p.text, accept || !block ? { uploads } : { uploads, protected: { task: block.task, constraints: [...(block.constraints || []), `refine: ${p.text}`] } });
   }
   // -- onboarding and directory import ----------------------------------

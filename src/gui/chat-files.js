@@ -17,7 +17,12 @@ export const TOO_MANY_PICTURES = `At most ${MAX_PICTURES} pictures a message.`;
 export const WAIT_UPLOADS = 'Wait for the files to finish uploading.';
 
 const suffix = name => { const m = /\.[^./\\]+$/.exec(String(name || '')); return m ? m[0].toLowerCase() : ''; };
-const isPicture = file => Object.hasOwn(PICTURE_TYPES, String(file?.type || '').toLowerCase());
+const PICTURE_SUFFIXES = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
+// by its type; a file with no type (some systems give a picture none) by its name. The harness checks the bytes.
+const isPicture = file => {
+  const type = String(file?.type || '').toLowerCase();
+  return type ? Object.hasOwn(PICTURE_TYPES, type) : PICTURE_SUFFIXES.includes(suffix(file?.name));
+};
 
 /** The sentence a file is refused with before it is sent, or null when it may go to the harness. */
 export function precheck(file) {
@@ -64,6 +69,13 @@ export const afterSend = (chips, ids) => chips.filter(c => c.state !== 'refused'
 export function sendable(chips) {
   const ready = chips.filter(c => c.state === 'ready');
   return { held: chips.some(c => c.state === 'uploading'), ids: ready.map(c => c.id), pictures: ready.filter(c => c.kind === 'image').length };
+}
+
+/** Of the ids a send captured before an await, those still on a ready chip: a file removed meanwhile does not go,
+ * and one added meanwhile is not part of this message. */
+export function stillSendable(captured, chips) {
+  const ready = new Set(sendable(chips).ids);
+  return (captured || []).filter(id => ready.has(id));
 }
 
 /** Why Send waits for the files, or null. */

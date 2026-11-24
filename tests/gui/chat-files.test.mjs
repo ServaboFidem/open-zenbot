@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MAX_FILES, MAX_PICTURES, PICTURE_UPLOAD_MAX, DOCUMENT_MAX, DOCUMENT_SUFFIXES, REFUSED, TOO_LARGE, TOO_MANY, TOO_MANY_PICTURES, WAIT_UPLOADS,
-  precheck, addChips, chipUploaded, chipRefused, removeChip, afterSend, sendable, holdLine, blindLine, sizeLabel, toBase64, uploadName, sentFiles,
+  precheck, addChips, chipUploaded, chipRefused, removeChip, afterSend, sendable, stillSendable, holdLine, blindLine, sizeLabel, toBase64, uploadName, sentFiles,
 } from '../../src/gui/chat-files.js';
 
 const png = (name = 'a.png', size = 1000) => ({ name, size, type: 'image/png' });
@@ -123,4 +123,22 @@ test('sentFiles: pictures as image cards, documents as files to save, from the u
   assert.equal(out[0].kind, 'image'); assert.equal(out[0].src, 'http://h/uploads/p1'); assert.equal(out[0].name, 'cat.webp');
   assert.equal(out[1].kind, 'file'); assert.equal(out[1].href, 'http://h/uploads/d1'); assert.equal(out[1].name, 'report.pdf');
   assert.deepEqual(sentFiles(undefined, url), []);
+});
+
+test('precheck: a picture with no type is known by its name, under the picture limit', () => {
+  assert.equal(precheck({ name: 'shot.png', size: 30_000_000, type: '' }), null);
+  assert.equal(precheck({ name: 'IMG.JPEG', size: 10, type: '' }), null);
+  for (const name of ['a.jpg', 'a.webp', 'a.gif']) assert.equal(precheck({ name, size: 10, type: '' }), null);
+  assert.equal(precheck({ name: 'shot.png', size: 50_000_001, type: '' }), TOO_LARGE);
+  assert.equal(precheck({ name: 'setup.exe', size: 10, type: '' }), REFUSED);
+  assert.equal(precheck({ name: 'logo.svg', size: 10, type: '' }), REFUSED);
+});
+
+test('stillSendable: of the ids captured, only those still ready go; one added meanwhile does not', () => {
+  const ready = (key, id) => ({ key, name: key, size: 1, state: 'ready', id, kind: 'document' });
+  const chips = [ready('a', 'id-a'), ready('c', 'id-c')];
+  assert.deepEqual(stillSendable(['id-a', 'id-b'], chips), ['id-a']);  // id-b was removed during the await
+  assert.deepEqual(stillSendable([], chips), []);  // id-c was added meanwhile: not part of this message
+  assert.deepEqual(stillSendable(['id-a'], [{ key: 'a', state: 'uploading' }]), []);
+  assert.deepEqual(stillSendable(undefined, chips), []);
 });
