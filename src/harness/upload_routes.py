@@ -62,9 +62,8 @@ def upload_router(h) -> APIRouter:
     @r.get("/{upload_id}")
     async def get_upload(upload_id: str) -> Response:
         try:
-            up = chat_files.resolve(h.config.vault_root, upload_id)
-            data = up.path.read_bytes()
-        except (chat_files.FileRefused, OSError):
+            up, data = chat_files.read(h.config.vault_root, upload_id)
+        except chat_files.FileRefused:
             raise HTTPException(404, NO_FILE) from None
         headers = {"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"}
         if up.kind == "image":
@@ -76,8 +75,9 @@ def upload_router(h) -> APIRouter:
     async def delete_upload(upload_id: str) -> Response:
         if upload_id in h.sent_uploads():
             raise HTTPException(409, SENT)
-        if chat_files.remove(h.config.vault_root, upload_id):
-            log("removed")
+        if not chat_files.remove(h.config.vault_root, upload_id):
+            raise HTTPException(404, NO_FILE)
+        log("removed")
         return Response(status_code=204)
 
     return r

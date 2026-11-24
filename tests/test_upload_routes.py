@@ -107,3 +107,38 @@ async def test_ledger_never_holds_the_name_or_bytes(client, harness):
     text = (harness.config.vault_root.parent / f"{harness.config.vault_root.name}-ledger" / "ledger.jsonl").read_text()
     assert '"upload"' in text and "secret" not in text and "TOPSECRET" not in text
     assert json.loads(text.splitlines()[-1])["data"]["reason"] == "type"
+
+
+async def test_delete_of_an_unknown_or_malformed_id_is_404(client):
+    assert (await client.delete("/uploads/" + "5" * 32)).status_code == 404
+    assert (await client.delete("/uploads/nope")).status_code == 404
+
+
+async def test_get_refuses_a_stored_file_swapped_for_a_link(client, harness, tmp_path):
+    j = (await client.post("/uploads", json={"name": "a.txt", "data": _b64(b"hi")})).json()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP")
+    p = harness.config.vault_root / "uploads" / "chat" / j["id"] / "a.txt"
+    p.unlink()
+    p.symlink_to(secret)
+    assert (await client.get(f"/uploads/{j['id']}")).status_code == 404
+
+
+async def test_files_round_trip_through_the_conversation_store_and_survive_a_restart_sweep(harness):
+    import os, time
+    from src.harness.conversations import Conversation
+    up = await chat_files.save(harness.config.vault_root, "a.txt", b"hi")
+    conv = harness.conversations.start_new("bot1")
+    harness.conversations.begin("bot1", "hi", session_id="s1", conv_id=conv.id)
+    files = [{"id": up.id, "name": "a.txt", "kind": "document"}]
+    harness.conversations.get(conv.id).exchanges[-1].files = files
+    rec = harness.conversations.get(conv.id).to_record()
+    assert Conversation.from_record(json.loads(json.dumps(rec))).exchanges[-1].files == files
+    old = Conversation.from_record({k: v for k, v in rec.items() if k != "x"})
+    assert old.exchanges[-1].files == files
+    legacy = json.loads(json.dumps(rec))
+    for e in legacy["exchanges"]:
+        e.pop("files")
+    assert Conversation.from_record(legacy).exchanges[-1].files == []
+    os.utime(up.path.parent, (0, 0))
+    assert chat_files.sweep(harness.config.vault_root, harness.sent_uploads(), time.time()) == 0

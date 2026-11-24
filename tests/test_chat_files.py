@@ -185,3 +185,64 @@ def test_sweep_spares_kept_and_young_uploads(vault):
         os.utime(u.path.parent, (now - 90_000, now - 90_000))
     assert chat_files.sweep(vault, {kept.id}, now) == 1
     assert not old.path.parent.exists() and kept.path.parent.exists() and young.path.parent.exists()
+
+
+# --- fix round 1 -----------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", ["page.html", "page.htm", "data.xml"])
+def test_page_types_are_never_accepted(vault, name):
+    with pytest.raises(FileRefused):
+        asyncio.run(chat_files.save(vault, name, b"<p>hi</p>"))
+    folder = vault / "uploads" / "chat" / ("2" * 32)
+    folder.mkdir(parents=True)
+    (folder / name).write_bytes(b"<p>hi</p>")
+    with pytest.raises(FileRefused):
+        chat_files.resolve(vault, "2" * 32)
+
+
+def test_save_refuses_gif89a_and_two_frame_pictures(vault):
+    with pytest.raises(FileRefused):
+        asyncio.run(chat_files.save(vault, "a.gif", b"GIF89a" + b"\0" * 20))
+    a, b = Image.new("RGB", (8, 8), "red"), Image.new("RGB", (8, 8), "blue")
+    buf = io.BytesIO()
+    a.save(buf, "WEBP", save_all=True, append_images=[b], lossless=True)
+    with pytest.raises(FileRefused):
+        asyncio.run(chat_files.save(vault, "anim.webp", buf.getvalue()))
+
+
+def test_read_returns_the_bytes_it_checked_and_refuses_a_swapped_link(vault):
+    up = asyncio.run(chat_files.save(vault, "a.txt", b"hello"))
+    assert chat_files.read(vault, up.id)[1] == b"hello"
+    secret = vault.parent / "secret.txt"
+    secret.write_text("TOP")
+    up.path.unlink()
+    up.path.symlink_to(secret)
+    with pytest.raises(FileRefused):
+        chat_files.read(vault, up.id)
+
+
+def test_a_linked_uploads_folder_is_refused_and_never_swept_through(vault, tmp_path):
+    outside = tmp_path / "elsewhere"
+    victim = outside / "chat" / ("3" * 32)
+    victim.mkdir(parents=True)
+    (vault / "uploads").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(FileRefused):
+        asyncio.run(chat_files.save(vault, "a.txt", b"x"))
+    os.utime(victim, (0, 0))
+    assert chat_files.sweep(vault, set(), time.time()) == 0
+    assert chat_files.remove(vault, "3" * 32) is False
+    assert victim.exists()
+    with pytest.raises(FileRefused):
+        chat_files.read(vault, "3" * 32)
+
+
+def test_a_linked_chat_folder_is_refused(vault, tmp_path):
+    (vault / "uploads").mkdir()
+    (vault / "uploads" / "chat").symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(FileRefused):
+        asyncio.run(chat_files.save(vault, "a.txt", b"x"))
+
+
+def test_remove_is_false_for_unknown_and_malformed_ids(vault):
+    assert chat_files.remove(vault, "../x") is False
+    assert chat_files.remove(vault, "4" * 32) is False

@@ -136,7 +136,7 @@ PREVIEW_CSP = ("sandbox allow-scripts; default-src 'none'; script-src 'unsafe-in
                "img-src data: blob:; font-src data:")
 OPEN_POLICY = "sandbox allow-scripts"  # an opened page: off this origin, but its scripts may reach the network
 # every type a browser will run as a page (script, or markup that can carry it): served under PREVIEW_CSP unless opened
-CLOSED_SUFFIXES = (".html", ".htm", ".xhtml", ".xht", ".shtml", ".xml", ".svg", ".svgz", ".mht", ".mhtml")
+CLOSED_SUFFIXES = chat_files.CLOSED_SUFFIXES
 
 
 class OpenTokens:
