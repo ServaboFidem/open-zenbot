@@ -24,7 +24,7 @@ import httpx
 from src.memory.ledger import Kind
 from src.telnyx.client import TIMEOUT_S, Telnyx, TelnyxError
 from src.telnyx.due import reminders, rundown
-from src.telnyx.record import SendRecord
+from src.telnyx.record import MAX_ATTEMPTS, SendRecord
 from src.telnyx.settings import TelnyxKeys, TelnyxNumber, check_key, last4, read_texts
 from src.vault_settings import settings_dir
 
@@ -40,9 +40,12 @@ TEST_TEXT = "This is a test text from ZenBot."
 
 
 def _local(now: datetime | float | None) -> datetime:
+    """The clock the due rules read. Left naive (this computer's local time) so each instant is put in local time
+    with its own offset: an aware ``astimezone()`` carries today's fixed offset, which misprints tomorrow's times and
+    misplaces tomorrow's midnight on the evening before a clock change."""
     if isinstance(now, datetime):
         return now
-    return (datetime.fromtimestamp(now) if now is not None else datetime.now()).astimezone()
+    return datetime.fromtimestamp(now) if now is not None else datetime.now()
 
 
 class TelnyxService:
@@ -130,7 +133,8 @@ class TelnyxService:
             message_id = await self._client().send(self.number.phone, to, text)
         except TelnyxError as err:
             if err.before_request or err.status == 429:
-                state = "retry"
+                # tried once more on a later pass; out of tries, it failed (so Settings shows it, never stuck)
+                state = "retry" if self.record.attempts(key) < MAX_ATTEMPTS else "failed"
             elif err.kind in ("key", "invalid"):
                 state = "failed"
             else:

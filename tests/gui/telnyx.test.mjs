@@ -20,7 +20,7 @@ test('the status line says what is off, what is set up and when it last sent', (
 });
 
 test('each error kind has its own sentence, and a capped day says how many were skipped', () => {
-  for (const kind of ['network', 'key', 'refused', 'invalid', 'provider', 'uncertain']) {
+  for (const kind of ['network', 'key', 'refused', 'invalid', 'provider', 'uncertain', 'interrupted']) {
     assert.ok(ERRORS[kind]);
     assert.ok(statusLine({ ...ready, last_error: kind }).endsWith(ERRORS[kind]));
   }

@@ -16,7 +16,8 @@ export const ERRORS = {
   refused: 'Telnyx was busy and did not take the last text.',
   invalid: "Telnyx refused the last text. Check the number's messaging setup and registration.",
   provider: 'Telnyx answered the last text in a way ZenBot could not read. It may not have been sent.',
-  uncertain: 'The last text may not have been sent.',
+  uncertain: 'The last text may not have been sent. ZenBot will not send it again.',
+  interrupted: 'ZenBot stopped while a text was being sent. It may not have gone, and will not be sent again.',
 };
 const FALLBACK = 'Something went wrong. Try again.';
 

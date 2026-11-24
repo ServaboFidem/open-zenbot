@@ -61,3 +61,18 @@ def test_prune(record):
     record.mark("new", "sent", 100.0, kind="before", day=DAY)
     assert record.prune(50.0) == 1
     assert record.known("old") is None and record.known("new") == "sent"
+
+
+def test_settle_records_why(record):
+    record.claim("k", "before", DAY, 1.0)
+    record.settle()
+    assert record.last_error() == "interrupted"
+
+
+def test_a_pending_retry_shows_its_error_and_an_uncertain_one_says_so(record):
+    record.claim("a", "before", DAY, 1.0)
+    record.mark("a", "retry", 1.0, error="network")
+    assert record.last_error() == "network"
+    record.claim("b", "before", DAY, 2.0)
+    record.mark("b", "uncertain", 2.0, error="network")
+    assert record.last_error() == "uncertain"

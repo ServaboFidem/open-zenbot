@@ -33,10 +33,14 @@ async def calendar(cfg):
 
 
 @pytest.fixture
-def harness(cfg, calendar, fake_telnyx):
+async def harness(cfg, calendar, fake_telnyx):
     h = Harness(config=cfg, provider=ScriptedProvider(), ledger=calendar.ledger, catalog=Catalog(), calendar=calendar)
+    built = h.telnyx
     h.telnyx = TelnyxService(cfg.vault_root, h.ledger, lambda: calendar.store, http=fake_telnyx.client)
-    return h
+    yield h
+    await built.close()
+    await h.discover.close()
+    await h.mail.close()
 
 
 @pytest.fixture
@@ -127,3 +131,5 @@ async def test_harness_builds_its_own_service(cfg, calendar):
     assert isinstance(h.telnyx, TelnyxService)
     assert h.telnyx.calendar_store() is calendar.store
     await h.telnyx.close()
+    await h.discover.close()
+    await h.mail.close()

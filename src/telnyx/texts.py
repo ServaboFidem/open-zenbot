@@ -18,7 +18,19 @@ GSM = ("@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*
        "abcdefghijklmnopqrstuvwxyzäöñüà")
 GSM_EXT = "^{}\\[~]|€"
 _GSM, _EXT = frozenset(GSM), frozenset(GSM_EXT)
-LINK = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
+# A web address phones would make tappable: a scheme or "www." anywhere (glued to a word too), or a bare domain with
+# a common top-level domain ("evil.com/login", "bit.ly/x"). The list keeps "Dr.Smith" and "St.Louis" as they are;
+# a domain under a rarer top-level domain still passes.
+_TLDS = ("com|net|org|edu|gov|mil|int|info|biz|io|co|ly|me|app|dev|ai|gg|to|tv|sh|so|li|cc|ws|fm|xyz|link|site|"
+         "online|shop|store|top|live|click|page|news|club|us|uk|ca|au|nz|ie|de|fr|es|it|nl|be|ch|se|no|dk|fi|pl|"
+         "cz|ru|ua|cn|jp|kr|in|br|mx|ar|eu|gl|is|tk|ml|ga|cf|gq")
+LINK = re.compile(r"(?i)(?:https?://|www\.)\S+"
+                  rf"|\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.(?:{_TLDS})"
+                  r"(?![\w-])(?:[/?#:]\S*)?")
+# Typographic punctuation phones and calendars put in by default; any one of them would make the whole text UCS-2.
+PLAIN = str.maketrans({"‘": "'", "’": "'", "‚": "'", "‛": "'", "“": '"', "”": '"',
+                       "„": '"', "‟": '"', "–": "-", "—": "-", "‐": "-", "‑": "-",
+                       "−": "-", "…": "..."})
 _BREAKS = {" ", " "}
 
 
@@ -36,9 +48,10 @@ def fits(text: str, segments: int) -> bool:
 
 
 def clean(text: str) -> str:
-    """One plain line: control and format characters become spaces, whitespace is collapsed, links become [link]."""
+    """One plain line: control and format characters become spaces, whitespace is collapsed, typographic quotes and
+    dashes become plain ones, links become [link]."""
     flat = "".join(" " if c in _BREAKS or unicodedata.category(c) in ("Cc", "Cf") else c for c in text)
-    return LINK.sub("[link]", " ".join(flat.split()))
+    return LINK.sub("[link]", " ".join(flat.split()).translate(PLAIN))
 
 
 def cut(text: str, segments: int, tail: str = "") -> str:
@@ -58,9 +71,16 @@ def cut(text: str, segments: int, tail: str = "") -> str:
 
 
 def reminder(title: str, clock: str, location: str) -> str:
-    """"Reminder: <title> at <time> - <location>", in one segment."""
+    """"Reminder: <title> at <time> - <location>", in one segment. The time is never cut: a long location is cut first,
+    or dropped when too little of it would fit, then the title."""
     where = clean(location)
-    return cut(f"Reminder: {clean(title)} at {clock}" + (f" - {where}" if where else ""), 1)
+    base = f"Reminder: {clean(title)} at {clock}"
+    if not fits(base, 1):
+        return cut(f"Reminder: {clean(title)}", 1, tail=f" at {clock}")
+    if not where:
+        return base
+    full = cut(f"{base} - {where}", 1)
+    return full if len(full) >= len(base) + len(" - ") + 4 else base  # at least a character of it and "..."
 
 
 def rundown(items: list[str]) -> str:

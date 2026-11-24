@@ -37,6 +37,28 @@ def pulled(store, calendar, google_id, title, start):
                                              "tz": "America/New_York"}, etag="e", link="", series_id="")
 
 
+def test_rundown_across_a_clock_change(store):
+    from zoneinfo import ZoneInfo
+    eastern = ZoneInfo("America/New_York")
+    timed(store, "Dentist", datetime(2026, 11, 1, 9, 30, tzinfo=eastern))
+    timed(store, "Late", datetime(2026, 11, 1, 23, 30, tzinfo=eastern))
+    got = rundown(store, datetime(2026, 10, 31, 20, 30, tzinfo=eastern), "20:00")
+    assert got.text == "Tomorrow: 9:30 AM Dentist; 11:30 PM Late"
+
+
+def test_a_naive_clock_is_read_as_this_computer_s_time(store):
+    """The service passes a naive local clock, so each instant takes this computer's offset for that instant (a
+    fixed offset taken today would misprint tomorrow's times across a clock change)."""
+    start = datetime(2026, 11, 24, 15, 0, tzinfo=UTC)
+    timed(store, "Dentist", start)
+    local = start.astimezone()
+    clock = local.strftime("%I:%M %p").lstrip("0")
+    evening_before = datetime.combine(local.date() - timedelta(days=1), datetime.min.time()).replace(hour=23)
+    assert rundown(store, evening_before, "20:00").text == f"Tomorrow: {clock} Dentist"
+    soon = (start - timedelta(minutes=10)).astimezone().replace(tzinfo=None)
+    assert [d.text for d in reminders(store, soon, 30)] == [f"Reminder: Dentist at {clock}"]
+
+
 def test_due_window(store):
     timed(store, "Soon", NOW + timedelta(minutes=29), location="1 Main St")
     timed(store, "Later", NOW + timedelta(minutes=31))

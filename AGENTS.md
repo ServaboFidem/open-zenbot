@@ -916,17 +916,22 @@ Calls and webhooks (replies, delivery reports) are not built.
   <title>"), then timed ones in order ("<time> <title>"). A day with nothing is recorded `empty` and sends nothing.
   All-day events get no reminder.
 - **The text** (`texts.py`). Calendar text can be written by anyone who invites the owner, so it is flattened to one
-  line (control and format characters, U+2028 and U+2029 become spaces) and every web address becomes `[link]`.
+  line (control and format characters, U+2028 and U+2029 become spaces), typographic quotes, dashes and the ellipsis
+  become plain ones (one curly apostrophe would make the whole text UCS-2), and web addresses become `[link]`
+  (`LINK`): anything from `http://`, `https://` or `www.` on, glued to a word or not, and a bare domain under a common
+  top-level domain with what follows it (`evil.com/login`, `bit.ly/x`; the list is `_TLDS`, so "Dr.Smith" and
+  "St.Louis" stay, and a domain under a rarer top-level domain still passes).
   Length is counted in SMS segments as carriers bill it (GSM-7: 160, or 153 a segment when split, an extension
   character counting two; anything else UCS-2: 70, or 67, counted in UTF-16 units). A reminder ("Reminder: <title>
-  at <time> - <location>") is cut to one segment, a rundown ("Tomorrow: <item>; <item>"; "...and N more" when cut) to
+  at <time> - <location>") is cut to one segment without ever cutting its time: a long location is cut first, or
+  dropped when less than a character of it would fit, then the title. A rundown ("Tomorrow: <item>; <item>"; "...and N more" when cut) to
   two, with "..." where text was cut. Every fixed part is GSM-7.
 - **Never twice** (`record.py`, `service.py`). Each text's key is claimed in the send record, and the claim committed,
   before it is sent. A claim still `sending` at start (a crash or a kill mid-send) becomes `uncertain` (`settle`) and
   is never sent again: a text twice is worse than a text missed. Only a failure where Telnyx certainly never took the
-  text (`before_request`, or 429) becomes `retry`, tried once more on the next pass if still due (at most 2 attempts).
-  A timeout after the request left, a 5xx or an unreadable answer is `uncertain`; a refused key or text (`key`,
-  `invalid`) is `failed`. Rows older than 30 days are pruned.
+  text (`before_request`, or 429) becomes `retry`, tried once more on the next pass if still due (at most 2 attempts;
+  a second such failure is `failed`). A timeout after the request left, a 5xx or an unreadable answer is `uncertain`;
+  a refused key or text (`key`, `invalid`) is `failed`. `settle` records its rows with the error `interrupted`. Rows older than 30 days are pruned.
 - **The loop.** `TelnyxService.run` (started and cancelled in the `lifespan`, beside the morning mail) settles, then
   looks once a minute (`INTERVAL_S`) and sends only with a key, a number and `telnyx_texts.json` saying a phone and at
   least one kind on. One lock holds every send, so texts go one at a time. The loop outlives any exception (logged by
@@ -938,7 +943,9 @@ Calls and webhooks (replies, delivery reports) are not built.
   were sent today; N more were skipped."
 - **Routes** (`routes.py`, under `/telnyx`; no answer carries the key or the owner's full phone, and no route takes a
   destination or a text): `GET /status` (`key_set`, `key_hint`, `number`, `texts` or null, `last_sent_at`,
-  `last_error`, `sent_today`, `skipped_today`); `PUT /key` (`{key}`; checked by listing the numbers before it is saved;
+  `last_error`, `sent_today`, `skipped_today`; `last_error` is about the newest text counted toward the cap: empty
+  when it was sent, its error kind when it failed or waits to be tried again, `uncertain` when it may have gone, or
+  `interrupted` when the harness stopped mid-send); `PUT /key` (`{key}`; checked by listing the numbers before it is saved;
   422 "Telnyx did not accept this key.", 502 when unreachable, 500 "The key could not be saved." on any other
   exception, class name logged; a chosen number the new key cannot see is cleared); `DELETE /key` (forgets the key
   and the number; nothing changes at Telnyx); `GET /numbers` (409 "Save a Telnyx key first."); `PUT /number` (`{id}`;

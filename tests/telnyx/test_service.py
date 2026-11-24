@@ -141,7 +141,7 @@ async def test_a_timeout_is_uncertain(vault, ledger, store, fake_telnyx):
     event(store, "Dentist", NOW + timedelta(minutes=20))
     fake_telnyx.fail["POST /messages"] = httpx.ReadTimeout("slow")
     await service.tick(NOW)
-    assert service.status(NOW)["last_error"] == "network"
+    assert service.status(NOW)["last_error"] == "uncertain"  # it may have gone: never "could not reach"
     assert [e for e in entries(ledger) if e.get("event") == "uncertain"] == \
         [{"event": "uncertain", "type": "before", "error": "network"}]
 
@@ -155,6 +155,22 @@ async def test_a_retry_that_then_works_is_sent(vault, ledger, store, fake_telnyx
     await service.tick(NOW + timedelta(minutes=1))
     assert len(fake_telnyx.sent) == 1
     assert service.status(NOW)["sent_today"] == 1
+
+
+async def test_a_retry_that_fails_again_is_failed_and_shown(vault, ledger, store, fake_telnyx):
+    service = await ready(vault, ledger, store, fake_telnyx)
+    row = event(store, "Dentist", NOW + timedelta(minutes=20))
+    fake_telnyx.fail["POST /messages"] = httpx.ConnectError("down")
+    await service.tick(NOW)
+    assert service.status(NOW)["last_error"] == "network"  # waiting to be tried again: shown, not hidden
+    await service.tick(NOW + timedelta(minutes=1))
+    assert service.record.known(f"before:{row['id']}:{row['start']}") == "failed"
+    assert service.status(NOW)["last_error"] == "network"
+
+
+def test_the_service_clock_is_naive_local():
+    from src.telnyx.service import _local
+    assert _local(None).tzinfo is None and _local(1_800_000_000.0).tzinfo is None
 
 
 async def test_a_retry_is_not_sent_once_the_event_started(vault, ledger, store, fake_telnyx):

@@ -39,9 +39,9 @@ def test_reminder_short_and_cut():
     assert reminder("Dentist", "3:00 PM", "1 Main St") == "Reminder: Dentist at 3:00 PM - 1 Main St"
     assert reminder("Dentist", "3:00 PM", "  ") == "Reminder: Dentist at 3:00 PM"
     long = reminder("x" * 300, "3:00 PM", "")
-    assert units(long) == (True, 160) and long.endswith("...")
+    assert units(long) == (True, 160) and long.endswith("... at 3:00 PM")
     wide = reminder("ï" + "y" * 99, "3:00 PM", "")
-    assert units(wide)[1] <= 70 and wide.endswith("...")
+    assert units(wide)[1] <= 70 and wide.endswith("... at 3:00 PM")
     assert "[link]" in reminder("Join https://meet.test/x", "3:00 PM", "")
 
 
@@ -64,3 +64,23 @@ def test_rundown_more():
 def test_no_added_text_breaks_gsm():
     assert units(reminder("x" * 300, "3:00 PM", "y" * 50))[0] is True
     assert units(rundown([f"9:30 AM Meeting {n}" for n in range(40)]))[0] is True
+
+
+def test_a_cut_reminder_keeps_its_time():
+    got = reminder("Mom’s birthday dinner with the whole family at the new place", "7:00 PM", "Joe’s")
+    assert got.startswith("Reminder: Mom's birthday dinner") and " at 7:00 PM" in got and fits(got, 1)
+    assert units(got)[0] is True  # curly quotes are made plain, so the text stays GSM-7
+    got = reminder("Dentist", "3:00 PM", "z" * 300)
+    assert got.startswith("Reminder: Dentist at 3:00 PM - zzz") and got.endswith("...") and fits(got, 1)
+    got = reminder("t" * 150, "3:00 PM", "Main St")
+    assert got.endswith("... at 3:00 PM") and "Main St" not in got and fits(got, 1)
+
+
+def test_typographic_punctuation_is_made_plain():
+    assert clean("“Hi” ‘you’ – now—then…") == "\"Hi\" 'you' - now-then..."
+
+
+def test_bare_domains_and_glued_links_become_link():
+    assert clean("see evil.com/login or bit.ly/x or Xhttps://a.b") == "see [link] or [link] or X[link]"
+    assert clean("Go to Example.ORG now") == "Go to [link] now"
+    assert clean("Dr.Smith at St.Louis, 9.30 a.m. e.g. here") == "Dr.Smith at St.Louis, 9.30 a.m. e.g. here"

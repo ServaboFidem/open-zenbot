@@ -7,9 +7,9 @@ once in the rundown. An event made here is known by its own id. Hidden calendars
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 
-from src.events.morning_agenda import _bounds, _clock
+from src.events.morning_agenda import _clock
 from src.telnyx.texts import clean, reminder
 from src.telnyx.texts import rundown as rundown_text
 
@@ -46,12 +46,13 @@ def _rows(store, first, last) -> list[dict]:
 def reminders(store, now: datetime, lead_minutes: int) -> list[Due]:
     """Timed events whose reminder time has come and that have not started: ``start - lead <= now < start``."""
     lead = timedelta(minutes=lead_minutes)
+    instant = now.astimezone(UTC)  # a naive clock is this computer's local time
     due = []
     for row in _rows(store, now.date(), (now + lead).date()):
         if row["all_day"]:
             continue
         start = datetime.fromisoformat(row["start"])
-        if start - lead <= now < start:
+        if start - lead <= instant < start:
             due.append((start, Due(f"before:{event_id(row)}:{row['start']}", "before",
                                    reminder(row["title"], _clock(start, now), row["location"]))))
     due.sort(key=lambda pair: pair[0])
@@ -63,7 +64,9 @@ def rundown(store, now: datetime, evening: str) -> Due | None:
     if now.strftime("%H:%M") < evening:
         return None
     tomorrow = now.date() + ONE_DAY
-    begin, end = _bounds(datetime.combine(tomorrow, time(12), now.tzinfo))
+    # Each midnight is put in UTC on its own, so a clock change between now and tomorrow cannot move either one.
+    begin = datetime.combine(tomorrow, time.min, now.tzinfo).astimezone(UTC)
+    end = datetime.combine(tomorrow + ONE_DAY, time.min, now.tzinfo).astimezone(UTC)
     days, timed = [], []
     for row in _rows(store, tomorrow, tomorrow):
         title = clean(row["title"])

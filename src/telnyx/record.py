@@ -34,7 +34,7 @@ class SendRecord:
     def settle(self) -> int:
         """At start: every claim left ``sending`` becomes ``uncertain``. Answers how many."""
         with self._db() as db:
-            return db.execute("UPDATE texts SET state='uncertain' WHERE state='sending'").rowcount
+            return db.execute("UPDATE texts SET state='uncertain', error='interrupted' WHERE state='sending'").rowcount
 
     def count(self, day: str) -> int:
         with self._db() as db:
@@ -76,12 +76,23 @@ class SendRecord:
         with self._db() as db:
             return db.execute(f"SELECT MAX(at) FROM texts WHERE kind='test' AND state IN {_COUNTED}").fetchone()[0]
 
+    def attempts(self, key: str) -> int:
+        with self._db() as db:
+            row = db.execute("SELECT attempts FROM texts WHERE key=?", (key,)).fetchone()
+        return row[0] if row else 0
+
     def last_error(self) -> str:
-        """The error of the newest text when it failed or may not have gone; else empty."""
+        """Why the newest text did not certainly go; else empty. A text that failed, or waits to be tried again,
+        answers its error kind; one that may have gone answers ``uncertain`` (``interrupted`` when the harness
+        stopped mid-send), never a kind that would say it certainly did not go."""
         with self._db() as db:
             row = db.execute(f"SELECT state, error FROM texts WHERE state IN {_COUNTED} "
                              "ORDER BY at DESC, rowid DESC LIMIT 1").fetchone()
-        return row[1] if row and row[0] in ("failed", "uncertain") else ""
+        if not row or row[0] in ("sent", "sending"):
+            return ""
+        if row[0] == "uncertain":
+            return "interrupted" if row[1] == "interrupted" else "uncertain"
+        return row[1] or "provider"
 
     def prune(self, before: float) -> int:
         with self._db() as db:
