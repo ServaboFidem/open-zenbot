@@ -69,12 +69,17 @@ function taskXml({ hh, mm, days }) {
 `;
 }
 
+// The enabled briefings of a status; a status that is not an object, or entries that are not, count as none
+function enabledOf(status) {
+  const list = status && typeof status === 'object' && Array.isArray(status.briefings) ? status.briefings : [];
+  return list.filter(b => b && typeof b === 'object' && b.enabled === true);
+}
+
 // The enabled slot lines of every briefing, in order
 function lines(status) {
   const out = [];
-  for (const b of (status && status.briefings) || []) {
-    if (!b || b.enabled !== true) continue;
-    for (const s of b.slots || []) out.push({ days: s.days, time: s.time });
+  for (const b of enabledOf(status)) {
+    for (const s of Array.isArray(b.slots) ? b.slots : []) if (s && typeof s === 'object') out.push({ days: s.days, time: s.time });
   }
   return out.slice(0, MAX_LINES);
 }
@@ -83,6 +88,7 @@ function lines(status) {
 function createBriefingKeeper({ platform, fetchStatus, runSchtasks, writeTaskXml, powerSaveBlocker, setLoginItem, getLoginItem,
   managed, now = Date.now, setTimer = setInterval, clearTimer = clearInterval }) {
   let blockerId = null, wakeError = null, synced = null, timer = null, chain = Promise.resolve();
+  let deadline = null, ticking = false;  // deadline: the last good status's latest next_run + LATE_LIMIT
 
   async function applyTasks(wanted) {
     let failed = false;
@@ -108,6 +114,7 @@ function createBriefingKeeper({ platform, fetchStatus, runSchtasks, writeTaskXml
       if (platform !== 'win32') return;
       let status;
       try { status = await fetchStatus(); } catch { return; }  // the harness may not be up yet
+      if (!status || typeof status !== 'object') return;
       const wanted = lines(status);
       synced = JSON.stringify(wanted);
       await applyTasks(wanted);
@@ -121,15 +128,28 @@ function createBriefingKeeper({ platform, fetchStatus, runSchtasks, writeTaskXml
   }
 
   async function tick() {
-    let status;
-    try { status = await fetchStatus(); } catch { return; }
-    const on = (status.briefings || []).filter(b => b && b.enabled === true);
+    if (ticking) return;  // a read that hangs must not pile up ticks
+    ticking = true;
+    try { await tickOnce(); } finally { ticking = false; }
+  }
+
+  async function tickOnce() {
+    let status = null;
+    try { status = await fetchStatus(); } catch { status = null; }
+    if (!status || typeof status !== 'object') {
+      // the harness did not answer: keep what was held only until the last good status's deadline
+      if (blockerId !== null && (deadline === null || now() > deadline)) hold(false);
+      return;
+    }
+    const on = enabledOf(status);
     const busy = on.some(b => b.state === 'building' || b.state === 'playing');
     const t = now();
     const near = on.some(b => {
       const next = Date.parse(b.next_run || '');
       return Number.isFinite(next) && next - t <= WAKE_LEAD_MS && t <= next + LATE_LIMIT_MS;
     });
+    const nexts = on.map(b => Date.parse(b.next_run || '')).filter(Number.isFinite);
+    deadline = nexts.length || busy ? Math.max(busy ? t : 0, ...nexts) + LATE_LIMIT_MS : null;
     hold(busy || near);
     if (JSON.stringify(lines(status)) !== synced) await sync();
   }
@@ -148,8 +168,9 @@ function createBriefingKeeper({ platform, fetchStatus, runSchtasks, writeTaskXml
 
   function start() {
     if (timer !== null) return;
-    timer = setTimer(() => { tick(); }, TICK_MS);
-    tick();
+    const run = () => { tick().catch(() => {}); };
+    timer = setTimer(run, TICK_MS);
+    run();
   }
   function stop() {
     if (timer !== null) { clearTimer(timer); timer = null; }

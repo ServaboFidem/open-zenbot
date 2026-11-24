@@ -42,7 +42,7 @@ function trace(paths, winOf) {
 }
 
 // port: the harness's port, the one in ZEN_HARNESS_URL (main.cjs), so the page and the harness it starts agree.
-function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port = 8765, fromApp, startArrivalPolling }) {
+function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port = 8765, fromApp, startArrivalPolling, hidden = false }) {
   const platform = process.platform;
   const appVersion = app.getVersion();
   const lockHash = host.fileSha256(fs, path.join(paths.harness, 'uv.lock'));
@@ -88,7 +88,8 @@ function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, 
   }
 
   const ctl = createManaged({
-    checker, makeSetup, makeHarness, show,
+    checker, makeSetup, makeHarness, show, hidden,
+    reveal: () => { const w = winOf(); if (w) { if (w.isMinimized()) w.restore(); w.show(); } },
     needsSetup: async () => needsSetup({
       stamp: host.readStamp(fs, paths.stamp), appVersion, lockHash, pythonPresent: host.isFile(fs, paths.python),
     }),

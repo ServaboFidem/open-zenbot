@@ -13,7 +13,7 @@ function rig({ platform = 'win32', st = status([{ days: [0, 2], time: '06:45' }]
   const box = { st, now: Date.parse('2026-11-24T01:00:00'), login: false, loginArgs: null };
   const keeper = createBriefingKeeper({
     platform, managed,
-    fetchStatus: async () => box.st,
+    fetchStatus: async () => { if (box.fail) throw new Error('down'); return box.st; },
     runSchtasks: async args => {
       calls.push(args);
       if (failCreate && args[0] === '/Create') throw new Error('denied');
@@ -126,4 +126,50 @@ test('sign-in is only offered in the installed app', async () => {
 test('a hidden start opens no window', () => {
   assert.equal(shouldShowWindow(['app.exe', '--hidden']), false);
   assert.equal(shouldShowWindow(['app.exe']), true);
+});
+
+test('the blocker is released after the deadline even when the status read fails', async () => {
+  const at = '2026-11-24T06:45:00Z';
+  const r = rig({ st: status([{ days: [1], time: '06:45' }], { next_run: at }) });
+  const slot = Date.parse(at);
+  r.box.now = slot - 5 * MIN; await r.keeper.tick();
+  assert.equal(r.blocker.started, 1);
+  r.box.st = null;
+  const down = new Error('down');
+  const keeper = r.keeper;
+  r.box.fail = true;
+  r.box.now = slot + 5 * MIN; await keeper.tick();
+  assert.deepEqual(r.blocker.stopped, [], 'held until the deadline');
+  r.box.now = slot + LATE_LIMIT_MS + MIN; await keeper.tick();
+  assert.deepEqual(r.blocker.stopped, [1]);
+  assert.ok(down);
+});
+
+test('a status that is null or not an object does not throw', async () => {
+  const r = rig();
+  for (const bad of [null, undefined, 5, 'x', { briefings: 7 }, { briefings: [null, 3] }]) {
+    r.box.st = bad;
+    await r.keeper.tick();
+    await r.keeper.sync();
+  }
+  assert.equal(r.blocker.started, 0);
+});
+
+test('the timer callback never leaves an unhandled rejection', async () => {
+  let cb = null;
+  const rejections = [];
+  const onRej = e => rejections.push(e);
+  process.on('unhandledRejection', onRej);
+  const k = createBriefingKeeper({
+    platform: 'win32', managed: true,
+    fetchStatus: async () => { throw new Error('down'); },
+    runSchtasks: async () => {}, writeTaskXml: async () => ({ path: 'x', remove() {} }),
+    powerSaveBlocker: { start: () => 1, stop: () => { throw new Error('stop failed'); } },
+    setLoginItem() {}, getLoginItem: () => false, now: () => 0, setTimer: f => { cb = f; return 1; }, clearTimer() {},
+  });
+  k.start();
+  cb(); cb();
+  await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
+  process.off('unhandledRejection', onRej);
+  assert.deepEqual(rejections, []);
 });

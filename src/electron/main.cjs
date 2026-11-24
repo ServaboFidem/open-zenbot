@@ -273,6 +273,26 @@ function startTray() {
   });
 }
 // Wake tasks, the stay-awake hold and start at sign-in (briefing-keeper.cjs); the harness says when briefings are due
+// Start at sign-in: Electron's login item on Windows and macOS; on Linux an XDG autostart entry (autostart.cjs)
+function loginItem(fs) {
+  if (process.platform !== 'linux') {
+    return {
+      setLoginItem: o => app.setLoginItemSettings(o),
+      getLoginItem: () => app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin,
+    };
+  }
+  const a = require('./autostart.cjs').createAutostart({
+    env: process.env, home: app.getPath('home'), execPath: process.execPath, join: path.join,
+    fs: {
+      mkdir: d => fs.mkdirSync(d, { recursive: true }),
+      write: (f, t) => fs.writeFileSync(f, t, { mode: 0o644 }),
+      rename: (x, y) => fs.renameSync(x, y),
+      remove: f => fs.rmSync(f, { force: true }),
+      exists: f => fs.existsSync(f),
+    },
+  });
+  return { setLoginItem: o => (o.openAtLogin ? a.enable() : a.disable()), getLoginItem: () => a.enabled() };
+}
 let keeper = null;
 function startKeeper() {
   const fs = require('node:fs');
@@ -280,7 +300,7 @@ function startKeeper() {
   keeper = createBriefingKeeper({
     platform: process.platform, managed,
     fetchStatus: async () => {
-      const r = await net.fetch(`${harnessBase()}/briefings`);
+      const r = await net.fetch(`${harnessBase()}/briefings`, { signal: AbortSignal.timeout(10_000) });
       if (!r.ok) throw new Error(String(r.status));
       return r.json();
     },
@@ -294,8 +314,7 @@ function startKeeper() {
       return { path: file, remove: () => { try { fs.unlinkSync(file); } catch { /* gone */ } } };
     },
     powerSaveBlocker,
-    setLoginItem: o => app.setLoginItemSettings(o),
-    getLoginItem: () => app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin,
+    ...loginItem(fs),
   });
   const handle = (channel, fn) => ipcMain.handle(channel, (event, arg) => {
     if (!fromApp(event)) throw new Error('not allowed');
@@ -355,7 +374,7 @@ app.whenReady().then(() => {
   startTray();
   startKeeper();
   if (managed) {
-    require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling });
+    require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling, hidden: !shouldShowWindow(process.argv) });
     return;
   }
   createWindow();
