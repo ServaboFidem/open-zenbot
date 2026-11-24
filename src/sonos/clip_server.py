@@ -14,7 +14,7 @@ import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-_RANGE = re.compile(r"^bytes=(\d+)-(\d*)$")
+_RANGE = re.compile(r"^bytes=(\d{1,15})-(\d{0,15})$")
 
 
 def local_ip_toward(ip: str) -> str:
@@ -25,6 +25,15 @@ def local_ip_toward(ip: str) -> str:
         return s.getsockname()[0]
     finally:
         s.close()
+
+
+class _QuietServer(ThreadingHTTPServer):
+    """Never prints: the default handle_error writes the client's address."""
+
+    errors = 0
+
+    def handle_error(self, request, client_address):
+        self.errors += 1
 
 
 class ClipServer:
@@ -99,7 +108,7 @@ class ClipServer:
         return Handler
 
     def __enter__(self) -> "ClipServer":
-        self._httpd = ThreadingHTTPServer((self._bind, 0), self._handler())
+        self._httpd = _QuietServer((self._bind, 0), self._handler())
         self._httpd.daemon_threads = True
         self._port = self._httpd.server_address[1]
         threading.Thread(target=self._httpd.serve_forever, daemon=True).start()

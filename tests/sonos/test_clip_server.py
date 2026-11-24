@@ -72,3 +72,25 @@ def test_stops_after_its_life():
 
 def test_local_ip_toward_loopback():
     assert local_ip_toward("127.0.0.1") == "127.0.0.1"
+
+
+def test_handler_error_writes_nothing_to_stderr(capfd, monkeypatch):
+    def boom(self):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ClipServer, "_count", boom)
+    with ClipServer(WAV, allowed="127.0.0.1", bind="127.0.0.1", life_s=30) as s:
+        try:
+            httpx.get(s.url)
+        except httpx.TransportError:
+            pass
+        time.sleep(0.2)
+    out, err = capfd.readouterr()
+    assert err == "" and out == ""
+
+
+def test_huge_range_number_gets_the_whole_file():
+    with ClipServer(WAV, allowed="127.0.0.1", bind="127.0.0.1", life_s=30) as s:
+        r = httpx.get(s.url, headers={"Range": "bytes=" + "9" * 5000 + "-"})
+        assert r.status_code == 200
+        assert r.content == WAV
