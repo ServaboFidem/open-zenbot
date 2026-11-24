@@ -219,6 +219,7 @@ class Harness:
     telnyx: TelnyxService | None = None  # Telnyx: calendar reminders by text to the owner's phone, the /telnyx routes (no bot tool)
     sonos: SonosService | None = None  # Sonos: the speakers found on the home network, the sonos tools, the /sonos routes
     speakers: SpeakerService | None = None  # Wi-Fi speakers: AirPlay, Chromecast and DLNA found, the default speaker, /speakers
+    sonos_tools: SonosTools | None = field(default=None, repr=False)  # built once; a rebind keeps it (one lock)
     briefing: BriefingService | None = None  # the spoken morning briefing on the Sonos speakers (no bot tool)
     dreamer: Dreamer | None = None  # dreaming: learns facts from the user's own messages while idle; built once, a rebind keeps it
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
@@ -383,11 +384,14 @@ class Harness:
             self.telnyx = TelnyxService(c.vault_root, self.ledger, lambda: self.calendar.store)
         if self.sonos is None:
             self.sonos = SonosService(c.vault_root, self.ledger)  # no network until start() in the lifespan
-        # the sonos tools exist only while a speaker answers, and never in a bot room's turn
-        self.sonos_tools = SonosTools(self.sonos, in_room=lambda sid: bool((s := self.sessions.get(sid)) and s.room_id))
+        # the sonos tools exist only while a speaker answers, and never in a bot room's turn. Built once: the Sonos
+        # page's router, the bot tools and the briefing's announce share its one lock and settled event, so a rebind
+        # only registers them again
+        if self.sonos_tools is None:
+            self.sonos_tools = SonosTools(self.sonos, in_room=lambda sid: bool((s := self.sessions.get(sid)) and s.room_id))
         self.sonos.on_change = lambda _found: self.sonos_tools.register(self.tools, self.catalog)
         self.sonos_tools.register(self.tools, self.catalog)
-        if self.briefing is None:  # each dependency read at call time: a rebind replaces the sonos tools
+        if self.briefing is None:  # built once; each dependency is read at call time
             self.briefing = BriefingService(
                 c.vault_root, self.ledger,
                 build=lambda now, jokes: briefing_content.build(self, now, jokes),
