@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  scheduleLabel, overlap, validate, lastRunLine, readinessLine, hostedNote, defaultForm, canPlay, skippedLate, formBlocker, saveBlocked, KEEPER_LINUX,
+  scheduleLabel, overlap, validate, lastRunLine, readinessLine, hostedNote, defaultForm, canPlay, skippedLate, formBlocker, saveBlocked, KEEPER_LINUX, KEEPER_WAKE, keeperOf, offersSignIn, signInStart, keeperSentence, wakeWarning,
 } from '../../src/gui/briefings.js';
 
 const wk = { days: [0, 1, 2, 3, 4], time: '06:45' };
@@ -109,4 +109,33 @@ test('saveBlocked only for a ceiling below 1', () => {
   assert.equal(saveBlocked({ ready: false, reason: 'ceiling_zero', ceiling: 0 }), true);
   assert.equal(saveBlocked({ ready: true, reason: null, ceiling: 0 }), true);
   assert.equal(saveBlocked(null), false);
+});
+
+test('the keeper is the preload API or null', () => {
+  assert.equal(keeperOf({}), null);
+  assert.equal(keeperOf(undefined), null);
+  const k = { get() {}, setLogin() {}, refresh() {} };
+  assert.equal(keeperOf({ openzenbot: { briefingKeeper: k } }), k);
+});
+
+test('the sign-in box shows only in the installed app', () => {
+  assert.equal(offersSignIn({ managed: true, platform: 'win32' }), true);
+  assert.equal(offersSignIn({ managed: false, platform: 'win32' }), false);
+  assert.equal(offersSignIn(null), false);
+  assert.equal(signInStart({ managed: true, login: false }, false), true);
+  assert.equal(signInStart({ managed: true, login: false }, true), false);
+  assert.equal(signInStart({ managed: true, login: true }, true), true);
+});
+
+test('the keeper sentence follows the platform', () => {
+  assert.equal(keeperSentence({ platform: 'linux' }), KEEPER_LINUX);
+  assert.equal(keeperSentence({ platform: 'win32' }), KEEPER_WAKE);
+  assert.equal(keeperSentence({ platform: 'darwin' }), '');
+  assert.equal(keeperSentence(null), '');
+});
+
+test('the wake warning is the keeper sentence when set', () => {
+  assert.equal(wakeWarning({ wake_error: 'Windows would not set a wake-up time for the briefing.' }), 'Windows would not set a wake-up time for the briefing.');
+  assert.equal(wakeWarning({ wake_error: null }), '');
+  assert.equal(wakeWarning(null), '');
 });

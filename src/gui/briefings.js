@@ -144,8 +144,21 @@ export const skippedLate = lastRun => lastRun?.outcome === 'skipped_late';
 /** Play now is offered while nothing is under way and the briefing could play. */
 export const canPlay = b => b?.state === 'idle' && b?.ready === true;
 
-/** The desktop app's keeper (Task 12), or null in a plain browser. */
+/** The desktop app's keeper, window.openzenbot.briefingKeeper: { get(), setLogin(on), refresh() }; null in a plain browser. */
 export const keeperOf = win => win?.openzenbot?.briefingKeeper || null;
+
+/** What keeper.get() answers is { managed, platform, login, wake_error }; each decision below takes it (or null). */
+/** The sign-in box shows in the installed app only. */
+export const offersSignIn = state => state?.managed === true;
+
+/** The box starts as the setting is, and ticked when the first briefing is added. */
+export const signInStart = (state, hasBriefing) => (hasBriefing ? state?.login === true : true);
+
+/** The sentence about waking or staying awake: Linux cannot wake the computer; Windows needs wake timers on. */
+export const keeperSentence = state => (state?.platform === 'linux' ? KEEPER_LINUX : state?.platform === 'win32' ? KEEPER_WAKE : '');
+
+/** The warning on the briefing row when no wake task could be made. */
+export const wakeWarning = state => (typeof state?.wake_error === 'string' ? state.wake_error : '');
 
 /** What is missing, from the top-level status (it holds even before a briefing exists); a ceiling below 1 counts. */
 export function formBlocker(status) {

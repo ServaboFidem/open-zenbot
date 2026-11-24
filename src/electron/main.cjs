@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification, powerMonitor, session, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification, powerMonitor, session, Tray, Menu, nativeImage, powerSaveBlocker } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { saveMedia } = require('./save-media.cjs');
@@ -13,6 +13,7 @@ const { allowFrameNavigation } = require('./frame-nav.cjs');
 const { createUpdateChecker } = require('./update-check.cjs');
 const { runtimePaths } = require('./runtime-paths.cjs');
 const { createTray, closeToTray } = require('./tray.cjs');
+const { createBriefingKeeper, shouldShowWindow } = require('./briefing-keeper.cjs');
 
 // The installed app (or ZEN_MANAGED=1 from the repo) sets itself up, runs its own harness and checks for updates
 // (managed-app.cjs); a developer run does none of that. Its bundled uv and harness are in <resources>: from the repo
@@ -72,8 +73,13 @@ function serveApp(request) {
 
 const appWindows = new WeakSet();
 // page: index.html (the workspace) or setup.html (the installed app's setup and start screen)
+// started hidden (--hidden, at sign-in): the first window stays out of sight and the tray is all there is
+let firstWindow = true;
 function createWindow(page = 'index.html') {
+  const show = !firstWindow || shouldShowWindow(process.argv);
+  firstWindow = false;
   const win = new BrowserWindow({
+    show,
     width: 1440, height: 960, minWidth: 375, minHeight: 640,
     title: 'OpenZenBot', icon: path.join(__dirname, '..', 'assets', 'zenbot-enso-icon.png'), backgroundColor: '#f5f5f5', autoHideMenuBar: true,
     webPreferences: {
@@ -266,6 +272,43 @@ function startTray() {
     },
   });
 }
+// Wake tasks, the stay-awake hold and start at sign-in (briefing-keeper.cjs); the harness says when briefings are due
+let keeper = null;
+function startKeeper() {
+  const fs = require('node:fs');
+  const { execFile } = require('node:child_process');
+  keeper = createBriefingKeeper({
+    platform: process.platform, managed,
+    fetchStatus: async () => {
+      const r = await net.fetch(`${harnessBase()}/briefings`);
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    },
+    // schtasks.exe from an argument array, never a shell
+    runSchtasks: args => new Promise((resolve, reject) => {
+      execFile('schtasks.exe', args, { windowsHide: true, timeout: 20_000 }, err => (err ? reject(err) : resolve()));
+    }),
+    writeTaskXml: async xml => {
+      const file = path.join(app.getPath('temp'), `openzenbot-wake-${process.pid}-${Date.now()}.xml`);
+      fs.writeFileSync(file, String.fromCharCode(0xfeff) + xml, { encoding: 'utf16le', mode: 0o600 });  // schtasks reads UTF-16
+      return { path: file, remove: () => { try { fs.unlinkSync(file); } catch { /* gone */ } } };
+    },
+    powerSaveBlocker,
+    setLoginItem: o => app.setLoginItemSettings(o),
+    getLoginItem: () => app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin,
+  });
+  const handle = (channel, fn) => ipcMain.handle(channel, (event, arg) => {
+    if (!fromApp(event)) throw new Error('not allowed');
+    return fn(arg);
+  });
+  handle('briefing-keeper:get', () => keeper.loginState());
+  handle('briefing-keeper:set-login', on => {
+    if (typeof on !== 'boolean') throw new Error('on is true or false');
+    return keeper.setLogin(on);
+  });
+  handle('briefing-keeper:refresh', async () => { await keeper.sync(); return keeper.loginState(); });
+  keeper.start();
+}
 app.whenReady().then(() => {
   protocol.handle('app', serveApp);
   // The app's IPC channels (Sentry adds its own when the DSN is set): the renderer asks for a directory or a file, the user
@@ -310,6 +353,7 @@ app.whenReady().then(() => {
   registerTelnyxTexts(ipcMain, appWindows, settingsDir(process.env, vaultBase));
   handleUpdates();
   startTray();
+  startKeeper();
   if (managed) {
     require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling });
     return;
@@ -319,6 +363,6 @@ app.whenReady().then(() => {
   app.on('second-instance', showWindow);
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
 });
-app.on('before-quit', () => { if (idleReport) idleReport.stop(); });
+app.on('before-quit', () => { if (idleReport) idleReport.stop(); if (keeper) keeper.stop(); });
 // closing the last window leaves ZenBot in the tray; the tray's Quit (or the OS) ends it
 app.on('window-all-closed', () => {});

@@ -40,6 +40,13 @@ contextBridge.exposeInMainWorld('openzenbot', Object.freeze({
     save: ({ phone, lead_minutes, evening, before, rundown }) =>
       ipcRenderer.invoke('telnyx-texts:save', { phone, lead_minutes, evening, before, rundown }),
   }),
+  // keeping ZenBot ready at a briefing's time (briefing-keeper.cjs): get() is { managed, platform, login, wake_error },
+  // setLogin starts ZenBot at sign-in (the installed app only), refresh matches the wake tasks to the harness again
+  briefingKeeper: Object.freeze({
+    get: () => ipcRenderer.invoke('briefing-keeper:get'),
+    setLogin: on => ipcRenderer.invoke('briefing-keeper:set-login', on),
+    refresh: () => ipcRenderer.invoke('briefing-keeper:refresh'),
+  }),
   saveMedia: (url, name) => ipcRenderer.invoke('save-media', { url, name }),
   // a design as PDF or PNG: two ids, never a URL; the main process builds the URL and the dialog picks the path
   exportDesign: (convId, attId, kind, name) => ipcRenderer.invoke('export-design', { convId, attId, kind, name }),

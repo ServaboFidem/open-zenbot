@@ -34,7 +34,7 @@ function loadPreload(env, argv = []) {
   return { exposed, invoked, listeners };
 }
 
-const KEYS = ['exportDesign', 'harnessUrl', 'managed', 'morningEmail', 'onOpenMusic', 'openVault', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'telnyxTexts', 'updates', 'version'];
+const KEYS = ['briefingKeeper', 'exportDesign', 'harnessUrl', 'managed', 'morningEmail', 'onOpenMusic', 'openVault', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'telnyxTexts', 'updates', 'version'];
 
 test('preload exposes only the workspace controls and named settings groups', async () => {
   const { exposed, invoked } = loadPreload({ ZEN_HARNESS_URL: '' });
@@ -115,7 +115,7 @@ test('main starts sentry only from ZEN_GLITCHTIP_DSN, over classic ipc', () => {
 
 test('main registers the directory and file pickers, save, export, and the update check\'s five channels, from the app\'s own pages', () => {
   const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');  // checked out with CRLF on Windows
-  assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 6);  // five, and the updates:* helper
+  assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 7);  // five, the updates:* helper and the keeper's
   assert.match(src, /ipcMain\.handle\('export-design', \(event, args\) => \{\n    if \(!fromApp\(event\)\) throw/);
   assert.match(src, /require\('\.\/export-design\.cjs'\)/);
   assert.match(src, /ipcMain\.handle\('open-vault', event => \{\n    if \(!fromApp\(event\)\) throw/);

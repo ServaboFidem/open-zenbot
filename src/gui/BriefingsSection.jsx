@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Badge, Button, Switch } from '@fluentui/react-components';
 import { Add24Regular, Play24Regular, WeatherSunny24Regular } from '@fluentui/react-icons';
 import BriefingDialog from './BriefingDialog.jsx';
-import { POLL_MS, SECTION_LINE, canPlay, keeperOf, lastRunLine, readinessFix, readinessLine, scheduleLabel, skippedLate } from './briefings.js';
+import { POLL_MS, SECTION_LINE, canPlay, keeperOf, lastRunLine, readinessFix, readinessLine, scheduleLabel, skippedLate, wakeWarning } from './briefings.js';
 import { formatWhen } from './routine-schedule.js';
 
 // The Briefings section at the top of the Routines page: ZenBot speaking on the Sonos speakers. The status is read
@@ -15,7 +15,19 @@ export default function BriefingsSection({ api, online, notify, openSettings }) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const seq = useRef(0);
-  const keeper = keeperOf(typeof window === 'undefined' ? null : window);
+  const keeper = keeperOf(typeof window === 'undefined' ? null : window);  // the desktop app's, or null
+  const [keeperState, setKeeperState] = useState(null);  // keeper.get(): { managed, platform, login, wake_error }
+
+  async function readKeeper() {
+    if (!keeper) return;
+    try { setKeeperState(await keeper.get()); } catch { /* keep what was shown */ }
+  }
+  // the main process matches its wake tasks to the harness's briefings again, then says how that went
+  async function syncKeeper() {
+    if (!keeper) return;
+    try { await keeper.refresh(); } catch { /* the briefing is saved either way */ }
+    await readKeeper();
+  }
 
   async function refresh() {
     const mine = ++seq.current;
@@ -31,18 +43,19 @@ export default function BriefingsSection({ api, online, notify, openSettings }) 
     try { const s = await api.morning.settings(); setWeatherSet(!!s?.location); } catch { setWeatherSet(null); }
   }
   useEffect(() => { if (online) readWeather(); }, [online]);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { readKeeper(); }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const morning = status?.briefings?.find(b => b.kind === 'morning') || null;
   const reason = status?.reason || null;  // the top level holds even before a briefing exists
 
   async function guarded(fn) {
     setBusy(true); setError('');
-    try { await fn(); await refresh(); return true; } catch (e) { setError(e?.message || 'That did not work.'); return false; } finally { setBusy(false); }
+    try { await fn(); await refresh(); await syncKeeper(); return true; } catch (e) { setError(e?.message || 'That did not work.'); return false; } finally { setBusy(false); }
   }
-  async function save(body, loginItem) {
+  async function save(body, login) {
     await api.briefings.save('morning', body);
-    if (loginItem !== null && keeper?.setLoginItem) { try { await keeper.setLoginItem(loginItem); } catch { /* the briefing is saved */ } }
-    setDialog(null); notify('Morning briefing saved'); await refresh();
+    if (login !== null && keeper?.setLogin) { try { await keeper.setLogin(login); } catch { /* the briefing is saved */ } }
+    setDialog(null); notify('Morning briefing saved'); await refresh(); await syncKeeper();
   }
   const toggle = (b, enabled) => guarded(() => api.briefings.save('morning', { enabled, slots: b.slots, speakers: b.speakers, volume: b.volume }));
   const remove = () => { if (window.confirm('Delete the morning briefing?')) guarded(async () => { await api.briefings.remove('morning'); notify('Morning briefing deleted'); }); };
@@ -67,6 +80,7 @@ export default function BriefingsSection({ api, online, notify, openSettings }) 
         <p>{scheduleLabel(morning.slots)} · {morning.speakers ? morning.speakers.join(', ') : 'Every speaker'} · Volume {morning.volume}</p>
         <span>Next: {morning.enabled ? formatWhen(morning.next_run) || 'none' : 'paused'} · Last: {lastLine ? `${lastAt ? `${formatWhen(lastAt)}, ` : ''}${lastLine}` : 'never'}</span>
         {skippedLate(morning.last_run) && <span className="form-error" role="status">ZenBot was not running or the computer was asleep at the briefing time.</span>}
+        {wakeWarning(keeperState) && <span className="form-error" role="status">{wakeWarning(keeperState)}</span>}
         {notReady && <span className="form-error" role="status">{readinessLine(morning.reason)}{fix && <> <button type="button" className="text-link" onClick={() => openSettings(fix.panel, fix.title)}>Open settings</button></>}</span>}
       </div>
       <div className="routine-controls">
@@ -77,6 +91,6 @@ export default function BriefingsSection({ api, online, notify, openSettings }) 
       </div>
     </article></div>}
     {dialog && <BriefingDialog briefing={dialog.briefing || null} status={status} ready={!reason} reason={reason} weatherSet={weatherSet}
-      keeper={keeper} onSave={save} onClose={() => setDialog(null)} openSettings={(p, t) => { setDialog(null); openSettings(p, t); }}/>}
+      keeper={keeperState} onSave={save} onClose={() => setDialog(null)} openSettings={(p, t) => { setDialog(null); openSettings(p, t); }}/>}
   </section>;
 }

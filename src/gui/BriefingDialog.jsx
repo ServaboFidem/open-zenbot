@@ -1,42 +1,39 @@
 import React, { useEffect, useState } from 'react';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field } from '@fluentui/react-components';
-import { DAY_NAMES, KEEPER_LINUX, KEEPER_WAKE, LOGIN_LABEL, MAX_SLOTS, SAYS_LINE, WEATHER_SET, WEATHER_UNSET,
-  defaultForm, hostedNote, readinessFix, saveBlocked, validate, formBlocker } from './briefings.js';
+import { DAY_NAMES, LOGIN_LABEL, MAX_SLOTS, SAYS_LINE, WEATHER_SET, WEATHER_UNSET,
+  defaultForm, hostedNote, keeperSentence, offersSignIn, readinessFix, saveBlocked, signInStart, validate, formBlocker } from './briefings.js';
 import { toggleDay } from './routine-schedule.js';
 
 // Create or edit the morning briefing. `briefing` is the one to edit or null; `status` is GET /briefings (ceiling,
 // rooms, hosted); `ready`/`reason` say what is missing (Sonos off, no speaker, no voice) with a link to fix it;
-// `weatherSet` says whether a weather city is set (null while unknown); `keeper` is the desktop app's
-// window.openzenbot.briefingKeeper or null (then the sign-in box and the keeper sentences do not show).
-// Props: { briefing, status, ready, reason, weatherSet, keeper, onSave(body, loginItem), onClose, openSettings(panel, title) }
+// `weatherSet` says whether a weather city is set (null while unknown); `keeper` is what the desktop app's
+// briefingKeeper.get() answered ({ managed, platform, login, wake_error }) or null (a plain browser: no sign-in box,
+// no keeper sentence). The sign-in box shows only when `managed`.
+// Props: { briefing, status, ready, reason, weatherSet, keeper, onSave(body, login), onClose, openSettings(panel, title) }
 export default function BriefingDialog({ briefing, status, ready, reason, weatherSet, keeper, onSave, onClose, openSettings }) {
   const ceiling = status?.ceiling ?? 0;
   const rooms = status?.rooms || [];
   const [form, setForm] = useState(() => (briefing
     ? { enabled: briefing.enabled, slots: briefing.slots.map(s => ({ days: [...s.days], time: s.time })), speakers: briefing.speakers ? [...briefing.speakers] : null, volume: briefing.volume }
     : defaultForm(ceiling)));
-  const [login, setLogin] = useState(!briefing);  // ticked by default when the first briefing is added
+  const [login, setLogin] = useState(() => signInStart(keeper, !!briefing));  // ticked by default when the first briefing is added
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let active = true;
-    if (keeper?.getLoginItem && briefing) Promise.resolve(keeper.getLoginItem()).then(v => { if (active) setLogin(!!v); }).catch(() => {});
-    return () => { active = false; };
-  }, [keeper, briefing]);
+  useEffect(() => { setLogin(signInStart(keeper, !!briefing)); }, [keeper, briefing]);
   const set = patch => setForm(f => ({ ...f, ...patch }));
   const setSlot = (i, patch) => set({ slots: form.slots.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
   const hosted = hostedNote(status?.hosted);
   const blocker = formBlocker(status);
   const noVolume = saveBlocked(status);
   const fix = readinessFix(reason || (noVolume ? 'ceiling_zero' : null));
-  const linux = keeper && keeper.platform === 'linux';
-  const windows = keeper && keeper.platform === 'win32';
+  const signIn = offersSignIn(keeper);
+  const sentence = keeperSentence(keeper);
   async function submit(e) {
     e.preventDefault();
     const problem = validate(form, ceiling);
     if (problem) { setError(problem); return; }
     setBusy(true); setError('');
-    try { await onSave(form, keeper ? login : null); } catch (err) { setError(err?.message || 'The briefing could not be saved.'); } finally { setBusy(false); }
+    try { await onSave(form, signIn ? login : null); } catch (err) { setError(err?.message || 'The briefing could not be saved.'); } finally { setBusy(false); }
   }
   return <Dialog open onOpenChange={(e, v) => { if (!v.open) onClose(); }}><DialogSurface className="edit-dialog"><DialogBody>
     <DialogTitle>Morning briefing</DialogTitle>
@@ -70,11 +67,8 @@ export default function BriefingDialog({ briefing, status, ready, reason, weathe
       <p className="field-hint">{SAYS_LINE}</p>
       {weatherSet !== null && <p className="field-hint">{weatherSet ? WEATHER_SET : WEATHER_UNSET}</p>}
       {hosted && <p className="field-hint">{hosted}</p>}
-      {keeper && <>
-        <label className="od-row"><input type="checkbox" checked={login} onChange={e => setLogin(e.target.checked)}/> {LOGIN_LABEL}</label>
-        {windows && <p className="field-hint">{KEEPER_WAKE}</p>}
-        {linux && <p className="field-hint">{KEEPER_LINUX}</p>}
-      </>}
+      {signIn && <label className="od-row"><input type="checkbox" checked={login} onChange={e => setLogin(e.target.checked)}/> {LOGIN_LABEL}</label>}
+      {sentence && <p className="field-hint">{sentence}</p>}
     </form></DialogContent>
     <DialogActions><Button appearance="secondary" onClick={onClose}>Cancel</Button><Button appearance="primary" type="submit" form="briefing-form" disabled={busy || noVolume}>Save</Button></DialogActions>
   </DialogBody></DialogSurface></Dialog>;
