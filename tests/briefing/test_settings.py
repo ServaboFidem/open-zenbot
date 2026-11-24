@@ -92,3 +92,93 @@ def test_files_live_in_vault_settings(tmp_path):
     assert BriefingStore.load(vault).items["morning"].slots[0].time == "06:45"
     assert ToldJokes.load(vault).seen("a joke")
     assert store.delete("morning") and not store.delete("morning")
+
+
+def _entry(**kw):
+    d = {"id": "a", "kind": "morning", "enabled": True,
+         "slots": [{"days": [0, 1], "time": "06:45"}], "speakers": None, "volume": 25}
+    d.update(kw)
+    return d
+
+
+def _write_file(vault, doc):
+    import json
+    d = settings_dir(vault)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "briefings.json").write_text(json.dumps(doc) if not isinstance(doc, str) else doc, encoding="utf-8")
+    return d / "briefings.json"
+
+
+def test_broken_file_survives_save(tmp_path):
+    vault = tmp_path / "vault"
+    path = _write_file(vault, "{not json")
+    s = BriefingStore.load(vault)
+    s.put(make())
+    s.save(vault)
+    assert path.read_text(encoding="utf-8") == "{not json"
+    backups = list(path.parent.glob("briefings.json.bad-*"))
+    assert len(backups) == 1 and backups[0].read_text(encoding="utf-8") == "{not json"
+
+
+def test_one_bad_entry_keeps_the_good_and_survives_save(tmp_path):
+    import json
+    vault = tmp_path / "vault"
+    bad = {"kind": "evening", "junk": 1}
+    path = _write_file(vault, {"briefings": [bad, _entry()]})
+    s = BriefingStore.load(vault)
+    assert list(s.items) == ["morning"] and s.error
+    s.save(vault)
+    saved = json.loads(path.read_text(encoding="utf-8"))["briefings"]
+    assert bad in saved and any(x.get("kind") == "morning" for x in saved)
+    assert BriefingStore.load(vault).items["morning"].volume == 25
+
+
+@pytest.mark.parametrize("change", [
+    {"volume": True}, {"volume": 1.9}, {"volume": "25"}, {"volume": 0}, {"volume": 101},
+    {"enabled": "false"}, {"slots": []}, {"slots": "x"},
+    {"slots": [{"days": "12", "time": "06:45"}]},
+    {"slots": [{"days": [7], "time": "06:45"}]},
+    {"slots": [{"days": [True], "time": "06:45"}]},
+    {"slots": [{"days": [], "time": "06:45"}]},
+    {"slots": [{"days": [0], "time": "abc"}]},
+    {"slots": [{"days": [0, 1], "time": "06:45"}, {"days": [1], "time": "07:00"}]},
+    {"speakers": []}, {"speakers": ""}, {"speakers": [""]}, {"speakers": [1]},
+    {"speakers": ["a"] * 2}, {"speakers": [str(i) for i in range(33)]},
+    {"kind": "evening"}, {"id": ""},
+])
+def test_hostile_entries_are_bad(tmp_path, change):
+    vault = tmp_path / "vault"
+    _write_file(vault, {"briefings": [_entry(**change)]})
+    s = BriefingStore.load(vault)
+    assert s.items == {} and s.error
+
+
+def test_check_gives_sentences_not_type_errors():
+    with pytest.raises(ValueError):
+        check(make(slots="x"), 60)
+    with pytest.raises(ValueError):
+        check(make([Slot("12", "06:45")]), 60)
+    with pytest.raises(ValueError):
+        check(make(speakers=["a", ""]), 60)
+    with pytest.raises(ValueError):
+        check(make(speakers=["Den", "den"]), 60)
+
+
+def test_state_last_run_must_be_a_dict(tmp_path):
+    import json
+    vault = tmp_path / "vault"
+    d = settings_dir(vault)
+    d.mkdir(parents=True)
+    (d / "briefing_state.json").write_text(
+        json.dumps({"morning": {"last_run": "x", "last_skip": 3}}), encoding="utf-8")
+    st = BriefingState.load(vault)
+    assert st.last_run("morning") is None and st.last_skip("morning") is None
+
+
+def test_jokes_empty_normalised_and_long_text(tmp_path):
+    j = ToldJokes.load(tmp_path / "vault")
+    j.add("!!! ...", "2026-11-01")
+    assert j.recent() == [] and not j.seen("???")
+    j.add("x" * 900, "2026-11-01")
+    assert len(j.recent(1)[0]) == 500
+    assert j.seen("x" * 900)
