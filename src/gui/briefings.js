@@ -7,6 +7,7 @@
 export const POLL_MS = 15000;  // the status is read again this often while the Routines page is open
 export const MAX_SLOTS = 7;
 export const MAX_SPEAKERS = 32;
+export const VOLUME_MAX = 100;
 export const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];  // 0 = Monday, as routines
 
 export const SECTION_LINE = 'ZenBot speaks to you on your Sonos speakers.';
@@ -87,7 +88,11 @@ export function validate(form, ceiling) {
     if (new Set(s.days).size !== s.days.length || s.days.some(d => seen.has(d))) return 'Each day can have only one time.';
     s.days.forEach(d => seen.add(d));
   }
-  if (!Number.isInteger(form.volume) || form.volume < 1 || form.volume > ceiling) return `Pick a volume from 1 to ${ceiling}.`;
+  // an enabled briefing is held to the Sonos limit, a switched-off one to 1..100 only (so it can always be switched off)
+  const on = form.enabled !== false;
+  if (on && !(ceiling >= 1)) return READINESS.ceiling_zero;
+  const top = on ? Math.min(ceiling, VOLUME_MAX) : VOLUME_MAX;
+  if (!Number.isInteger(form.volume) || form.volume < 1 || form.volume > top) return `Pick a volume from 1 to ${top}.`;
   if (form.speakers !== null && form.speakers !== undefined) {
     const sp = form.speakers;
     if (!Array.isArray(sp) || sp.length < 1 || sp.length > MAX_SPEAKERS || sp.some(x => typeof x !== 'string' || !x.trim())) {
@@ -97,6 +102,12 @@ export function validate(form, ceiling) {
   }
   return null;
 }
+
+/** The body the row's switch saves: the saved volume to switch off, min(volume, limit) to switch on (it plays at that
+ * anyway). Under a zero limit the harness then refuses with 'Your Sonos volume limit is 0.'. */
+export const toggleBody = (b, enabled, ceiling) => ({
+  enabled, slots: b.slots, speakers: b.speakers, volume: enabled ? Math.min(b.volume, Math.max(0, ceiling ?? 0)) : b.volume,
+});
 
 /** Weekdays at 06:45 on every speaker, at volume min(25, ceiling). */
 export const defaultForm = ceiling => ({ enabled: true, slots: [{ days: [0, 1, 2, 3, 4], time: '06:45' }], speakers: null, volume: Math.min(25, ceiling) });

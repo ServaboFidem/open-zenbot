@@ -28,6 +28,7 @@ PART_MAX = 400
 TEXT_MAX = 3000
 MAX_EVENTS = 8
 MAX_BIRTHDAYS = 5
+TITLE_MAX = 120  # a calendar title is cut to this, at a word: anyone who invites the owner writes it
 SIGNOFF = "Have a good day."
 TOLD_SENT = 100
 
@@ -109,23 +110,45 @@ def birthday_line(names: list[str]) -> str | None:
     return f"Today is the birthday of {', '.join(shown[:-1])} and {shown[-1]}."
 
 
+def _cap(text: str, limit: int = TITLE_MAX) -> str:
+    """At most `limit` characters, cut at a word where there is one (a single long word is cut where it must be)."""
+    if len(text) <= limit:
+        return text
+    head = text[:limit + 1].rsplit(" ", 1)[0] if " " in text[:limit + 1] else ""
+    return (head or text[:limit]).rstrip(" ,;:")
+
+
 def _item(event: dict) -> str:
     said = spoken_time(str(event.get("time", "")))
     when = f"at {said}" if _BARE_CLOCK.fullmatch(said) else said
-    title = flatten(str(event.get("title", ""))) or "an event"
+    title = _cap(flatten(str(event.get("title", "")))) or "an event"
     return f"{when}, {title}" if when else title
 
 
-def calendar_line(events: list[dict]) -> str | None:
+def calendar_line(events: list[dict], room: int | None = None) -> str | None:
+    """The calendar section, built event by event: an event that would take the line past `room` characters is not
+    read, and neither is any after it; "and N more" says how many were left out. None when not even the count fits."""
     if not events:
-        return "Your calendar is clear today."
-    items = [_item(e) for e in events[:MAX_EVENTS]]
-    rest = len(events) - len(items)
-    if rest:
-        items.append(f"{rest} more")
-    body = items[0] if len(items) == 1 else "; ".join(items[:-1]) + "; and " + items[-1]
+        line = "Your calendar is clear today."
+        return line if room is None or len(line) <= room else None
     n = len(events)
-    return f"You have {_number(n)} {'thing' if n == 1 else 'things'} today: {body}."
+    head = f"You have {_number(n)} {'thing' if n == 1 else 'things'} today"
+
+    def said(items: list[str]) -> str:
+        if not items:  # nothing read: the count alone
+            return f"{head}."
+        parts = items + ([f"{n - len(items)} more"] if n > len(items) else [])
+        body = parts[0] if len(parts) == 1 else "; ".join(parts[:-1]) + "; and " + parts[-1]
+        return f"{head}: {body}."
+
+    items: list[str] = []
+    for e in events[:MAX_EVENTS]:
+        more = [*items, _item(e)]
+        if room is not None and len(said(more)) > room:
+            break
+        items = more
+    line = said(items)
+    return line if room is None or len(line) <= room else None
 
 
 def _first_name(h) -> str:
@@ -195,10 +218,12 @@ async def build(h, now: datetime, jokes: ToldJokes, weather: MorningWeather | No
     warnings = today.get("warnings", [])
     if "Birthdays unavailable." not in warnings and (line := birthday_line(today.get("birthdays", []))):
         parts.append(("birthdays", line))
-    if CALENDAR_UNAVAILABLE not in warnings and (line := calendar_line(today.get("events", []))):
-        parts.append(("calendar", line))
+    room = TEXT_MAX - len(SIGNOFF) - 1  # the sign-off is always kept
+    if CALENDAR_UNAVAILABLE not in warnings:
+        used = len("\n".join(text for _, text in parts)) + 1
+        if line := calendar_line(today.get("events", []), room - used):
+            parts.append(("calendar", line))
     body = "\n".join(text for _, text in parts)
-    room = TEXT_MAX - len(SIGNOFF) - 1
-    if len(body) > room:
+    if len(body) > room:  # only the parts before the calendar can still be this long
         body = body[:room].rsplit(" ", 1)[0].rstrip()
     return Built(f"{body}\n{SIGNOFF}", [k for k, _ in parts] + ["signoff"], joke)

@@ -152,6 +152,28 @@ def test_text_capped_at_3000():
     assert len(b.text) <= 3000 and b.text.endswith("Have a good day.")
 
 
+def test_a_long_title_is_cut_at_a_word_to_120_characters():
+    title = " ".join(f"word{i}" for i in range(60))  # about 400 characters
+    line = calendar_line([ev(title)])
+    said = line.removeprefix("You have one thing today: at 9 AM, ").removesuffix(".")
+    assert len(said) <= 120 and title.startswith(said) and title[len(said)] == " "
+    assert calendar_line([ev("x" * 300)]).count("x") == 120  # one long word is cut where it must be
+
+
+def test_calendar_stops_before_an_event_that_would_pass_the_cap_and_says_how_many_more():
+    names = [("N" * 290) + str(i) for i in range(5)]  # a long birthday line leaves little room for the calendar
+    titles = [f"Meeting {i} " + "about the plan " * 7 for i in range(8)]
+    b = run(make_h(FakeProvider({"greeting": "G" * 399, "joke": "J" * 399}), birthdays=names,
+                   events=[ev(t) for t in titles]))
+    assert len(b.text) <= 3000 and b.text.endswith(chr(10) + "Have a good day.")
+    cal = next(line for line in b.text.splitlines() if line.startswith("You have eight things today"))
+    shown = [i for i in range(8) if f"Meeting {i} " in cal]
+    assert 0 < len(shown) < 8 and shown == list(range(len(shown)))
+    assert cal.endswith(f"; and {8 - len(shown)} more.")
+    for i in shown:  # every event read is read whole (its title as capped)
+        assert content._cap(flatten(titles[i])) in cal
+
+
 def test_model_answer_with_control_characters_is_cleaned():
     b = run(make_h(FakeProvider({"greeting": "Good\x00 morning,  Sam.\x07", "joke": "A\tjoke\x1b here."})))
     assert b.text.startswith("Good morning, Sam.")

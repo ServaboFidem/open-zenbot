@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException
 
 from src.briefing.service import BUSY, Busy, BriefingService, NotReady
-from src.briefing.settings import KINDS, Briefing, BriefingStore, Slot, StoreReadOnly, check
+from src.briefing.settings import CEILING_ZERO, KINDS, Briefing, BriefingStore, Slot, StoreReadOnly, check
 from src.events.routes import NothingIn
 from src.memory.ledger import Kind
 
@@ -24,7 +24,7 @@ NOT_READY = {
     "sonos_off": "Sonos is off. Switch it on in Settings > Connected apps.",
     "no_speakers": "No Sonos speaker was found.",
     "no_voice": "Set up a voice in Settings > Harness Tools > Read aloud first.",
-    "ceiling_zero": "Your Sonos volume limit is 0.",
+    "ceiling_zero": CEILING_ZERO,
 }
 NO_BRIEFING = "There is no such briefing."
 BAD_BODY = "The briefing could not be read. Check the days, times, speakers and volume."

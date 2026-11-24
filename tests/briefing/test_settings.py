@@ -44,6 +44,26 @@ def test_volume_above_ceiling_refused():
     check(make(volume=60), 60)
 
 
+def test_a_switched_off_briefing_skips_the_ceiling_but_keeps_1_to_100():
+    check(make(enabled=False, volume=80), 30)  # switching off never depends on the Sonos limit
+    check(make(enabled=False, volume=25), 0)
+    for v in (0, 101, True, 2.5):
+        with pytest.raises(ValueError) as e:
+            check(make(enabled=False, volume=v), 30)
+        assert str(e.value) == "Pick a volume from 1 to 100."
+
+
+def test_an_enabled_briefing_under_a_zero_ceiling_names_the_limit():
+    for v in (0, 1, 25):
+        with pytest.raises(ValueError) as e:
+            check(make(volume=v), 0)
+        assert str(e.value) == "Your Sonos volume limit is 0."
+        assert "1 to 0" not in str(e.value)
+    with pytest.raises(ValueError) as e:
+        check(make(volume=31), 30)
+    assert str(e.value) == "Pick a volume from 1 to 30."
+
+
 def test_broken_file_reads_empty_with_error(tmp_path):
     vault = tmp_path / "vault"
     d = settings_dir(vault)

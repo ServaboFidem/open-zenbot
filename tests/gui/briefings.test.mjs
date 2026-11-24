@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  scheduleLabel, overlap, validate, lastRunLine, readinessLine, hostedNote, defaultForm, canPlay, skippedLate, formBlocker, saveBlocked, KEEPER_LINUX, KEEPER_WAKE, keeperOf, offersSignIn, signInStart, keeperSentence, wakeWarning,
+  scheduleLabel, overlap, validate, lastRunLine, readinessLine, hostedNote, defaultForm, canPlay, skippedLate, formBlocker, saveBlocked, KEEPER_LINUX, KEEPER_WAKE, keeperOf, offersSignIn, signInStart, keeperSentence, wakeWarning, toggleBody,
 } from '../../src/gui/briefings.js';
 
 const wk = { days: [0, 1, 2, 3, 4], time: '06:45' };
@@ -138,4 +138,26 @@ test('the wake warning is the keeper sentence when set', () => {
   assert.equal(wakeWarning({ wake_error: 'Windows would not set a wake-up time for the briefing.' }), 'Windows would not set a wake-up time for the briefing.');
   assert.equal(wakeWarning({ wake_error: null }), '');
   assert.equal(wakeWarning(null), '');
+});
+
+test('validate holds an enabled form to the Sonos limit and a switched-off one to 1..100', () => {
+  const ok = { enabled: true, slots: [wk], speakers: null, volume: 25 };
+  assert.equal(validate({ ...ok, volume: 50 }, 30), 'Pick a volume from 1 to 30.');
+  assert.equal(validate({ ...ok, enabled: false, volume: 50 }, 30), null);
+  assert.equal(validate({ ...ok, enabled: false, volume: 50 }, 0), null);
+  assert.equal(validate({ ...ok, enabled: false, volume: 0 }, 30), 'Pick a volume from 1 to 100.');
+  assert.equal(validate({ ...ok, enabled: false, volume: 101 }, 30), 'Pick a volume from 1 to 100.');
+  assert.equal(validate({ ...ok, volume: 0 }, 0), 'Your Sonos volume limit is 0.');
+  assert.equal(validate({ ...ok, volume: 25 }, 0), 'Your Sonos volume limit is 0.');
+  for (const v of [0, 25]) assert.ok(!String(validate({ ...ok, volume: v }, 0)).includes('1 to 0'));
+});
+
+test('toggleBody sends the saved volume to switch off and min(volume, limit) to switch on', () => {
+  const b = { enabled: true, slots: [wk], speakers: ['Den'], volume: 50, id: 'x', next_run: 'y' };
+  assert.deepEqual(toggleBody(b, false, 30), { enabled: false, slots: [wk], speakers: ['Den'], volume: 50 });
+  assert.deepEqual(toggleBody({ ...b, enabled: false }, true, 30), { enabled: true, slots: [wk], speakers: ['Den'], volume: 30 });
+  assert.deepEqual(toggleBody({ ...b, enabled: false }, true, 60), { enabled: true, slots: [wk], speakers: ['Den'], volume: 50 });
+  assert.equal(toggleBody(b, false, 0).volume, 50);
+  // switched on under a zero limit the harness answers 'Your Sonos volume limit is 0.'
+  assert.equal(validate(toggleBody({ ...b, enabled: false }, true, 0), 0), 'Your Sonos volume limit is 0.');
 });

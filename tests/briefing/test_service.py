@@ -466,3 +466,94 @@ async def test_start_play_now_refuses_at_once_and_runs_in_the_background(vault):
     f.sonos.rooms = []
     with pytest.raises(NotReady):
         svc.start_play_now("morning")
+
+
+def _marks(vault, claimed=None, since=None):
+    st = BriefingState.load(vault)
+    if claimed is not None:
+        st.claim("morning", claimed)
+    if since is not None:
+        st.set_since("morning", since)
+    st.save(vault)
+
+
+@pytest.mark.parametrize("raw", ["9999-12-31T23:59:59", "0001-01-01T00:00:00+14:00", "0001-01-01T00:00:00"])
+async def test_a_far_off_time_mark_never_breaks_the_status_or_the_loop(vault, raw):
+    _marks(vault, claimed=raw, since=raw)  # on Windows these raise OSError or OverflowError, not ValueError
+    clock = Clock(at(6, 40))
+    f = Fakes(vault, clock)
+    svc = make(vault, clock, f)
+    assert datetime.fromisoformat(svc.status()["briefings"][0]["next_run"]) == at(6, 45)
+    await svc.tick()
+    assert len(f.announces) == 1
+    svc.settings_saved("morning")  # does not raise either
+
+
+async def test_a_clock_once_set_forward_does_not_silence_the_briefing(vault):
+    # marks written while the clock read next year: ignored, and the next save repairs them
+    _marks(vault, claimed=at(6, 45, day=1).replace(year=2027).isoformat(),
+           since=at(7, 0, day=1).replace(year=2027).isoformat())
+    clock = Clock(at(6, 0))
+    f = Fakes(vault, clock)
+    svc = make(vault, clock, f)
+    assert datetime.fromisoformat(svc.status()["briefings"][0]["next_run"]) == at(6, 45)
+    svc.settings_saved("morning")
+    assert datetime.fromisoformat(BriefingState.load(vault).since("morning")) == at(6, 0)
+    clock.now = at(6, 40)
+    await svc.tick()
+    assert len(f.announces) == 1
+
+
+async def test_a_slot_moved_during_the_build_releases_the_claim_and_plays_at_the_new_time(vault):
+    clock = Clock(at(6, 40))
+    f = Fakes(vault, clock)
+    svc = make(vault, clock, f)
+
+    async def moved():
+        save(vault, time="07:00")
+        svc.settings_saved("morning")
+
+    f.build_hook = moved
+    await svc.tick()
+    assert f.announces == [] and BriefingState.load(vault).claimed("morning") is None
+    f.build_hook = None
+    clock.now = at(6, 56)
+    await svc.tick()
+    assert len(f.announces) == 1 and at(7, 0) <= f.announces[0][0] < at(7, 1)
+    assert BriefingState.load(vault).last_run("morning")["outcome"] == "played"
+
+
+async def test_switched_off_and_on_during_the_build_can_still_play_that_day(vault):
+    clock = Clock(at(6, 40))
+    f = Fakes(vault, clock)
+    svc = make(vault, clock, f)
+    yesterday = at(6, 45, day=23).isoformat()
+    _marks(vault, claimed=yesterday)
+    svc.state = BriefingState.load(vault)
+
+    async def off():
+        save(vault, enabled=False)
+        svc.settings_saved("morning")
+
+    f.build_hook = off
+    await svc.tick()
+    assert f.announces == [] and BriefingState.load(vault).claimed("morning") == yesterday
+    f.build_hook = None
+    clock.now = at(6, 42)
+    save(vault, enabled=True)
+    svc.settings_saved("morning")
+    await svc.tick()
+    assert len(f.announces) == 1 and at(6, 45) <= f.announces[0][0] < at(6, 46)
+
+
+async def test_a_run_that_reached_the_speakers_keeps_its_claim(vault):
+    clock = Clock(at(6, 40))
+    f = Fakes(vault, clock)
+    f.announce_error = ValueError(NO_SPEAKER)
+    svc = make(vault, clock, f)
+    await svc.tick()
+    assert BriefingState.load(vault).claimed("morning") == at(6, 45).isoformat()
+    f.announce_error = None
+    clock.now = at(6, 50)
+    await svc.tick()
+    assert len(f.announces) == 1  # one try a day

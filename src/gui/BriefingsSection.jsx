@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Badge, Button, Switch } from '@fluentui/react-components';
 import { Add24Regular, Play24Regular, WeatherSunny24Regular } from '@fluentui/react-icons';
 import BriefingDialog from './BriefingDialog.jsx';
-import { POLL_MS, SECTION_LINE, canPlay, keeperOf, lastRunLine, readinessFix, readinessLine, scheduleLabel, skippedLate, wakeWarning } from './briefings.js';
+import { POLL_MS, SECTION_LINE, canPlay, keeperOf, lastRunLine, readinessFix, readinessLine, scheduleLabel, skippedLate, toggleBody, wakeWarning } from './briefings.js';
 import { formatWhen } from './routine-schedule.js';
 
 // The Briefings section at the top of the Routines page: ZenBot speaking on the Sonos speakers. The status is read
@@ -57,7 +57,7 @@ export default function BriefingsSection({ api, online, notify, openSettings }) 
     if (login !== null && keeper?.setLogin) { try { await keeper.setLogin(login); } catch { /* the briefing is saved */ } }
     setDialog(null); notify('Morning briefing saved'); await refresh(); await syncKeeper();
   }
-  const toggle = (b, enabled) => guarded(() => api.briefings.save('morning', { enabled, slots: b.slots, speakers: b.speakers, volume: b.volume }));
+  const toggle = (b, enabled) => guarded(() => api.briefings.save('morning', toggleBody(b, enabled, status?.ceiling)));
   const remove = () => { if (window.confirm('Delete the morning briefing?')) guarded(async () => { await api.briefings.remove('morning'); notify('Morning briefing deleted'); }); };
   const play = () => guarded(async () => { await api.briefings.play('morning'); notify('Playing the morning briefing'); });
 

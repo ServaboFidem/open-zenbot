@@ -3,8 +3,9 @@ Sonos speakers play them, and records what happened.
 
 A slot is claimed (saved to `briefing_state.json`) before anything is built or played, so it never plays twice, across
 a restart too. Building starts `PREP_LEAD` before the slot and the clip plays at the slot; a briefing that cannot start
-within `LATE_LIMIT` of its slot is skipped. Ledger entries hold counts, outcomes and reason codes only: never the text,
-the joke, a speaker's name or a title. Log lines carry class names only."""
+within `LATE_LIMIT` of its slot is skipped. A run dropped before it played (switched off, removed, or its slot moved
+while it was made) gives the claim back, so a later slot that day can still play. Ledger entries hold counts, outcomes
+and reason codes only: never the text, the joke, a speaker's name or a title. Log lines carry class names only."""
 
 from __future__ import annotations
 
@@ -124,11 +125,18 @@ class BriefingService:
             return None
         try:
             return datetime.fromisoformat(raw).astimezone()
-        except ValueError:
+        except (ValueError, OverflowError, OSError):  # a far-off year raises these on Windows, not ValueError
             return None
 
-    def _claimed(self, kind: str) -> datetime | None:
-        return self._when(self.state.claimed(kind))
+    def _mark(self, raw: str | None, now: datetime) -> datetime | None:
+        """A saved time mark, or None when it cannot be read or lies later than `now + PREP_LEAD`: a claim is never
+        further ahead than that, so a later one was written while the clock read wrong and would silence briefings
+        until real time caught up with it."""
+        when = self._when(raw)
+        return when if when is not None and when <= now + PREP_LEAD else None
+
+    def _claimed(self, kind: str, now: datetime) -> datetime | None:
+        return self._mark(self.state.claimed(kind), now)
 
     def _plan(self, kind: str, b: Briefing, now: datetime) -> tuple[datetime | None, datetime]:
         """`(missed, slot)`: the latest slot already more than `LATE_LIMIT` old that the loop has yet to record
@@ -136,9 +144,10 @@ class BriefingService:
 
         Slots count from the later of the claimed slot and the last settings save (`since`); with neither, from
         `now - LATE_LIMIT`. Only a save moves `since`, so a gap while the harness was off is still a late skip, but
-        an edit, a switch-on or a switch-off is not. One briefing a day: never a slot on the claimed slot's date."""
-        claimed = self._claimed(kind)
-        marks = [m for m in (claimed, self._when(self.state.since(kind))) if m is not None]
+        an edit, a switch-on or a switch-off is not. One briefing a day: never a slot on the claimed slot's date. A
+        mark that cannot be read, or lies later than `now + PREP_LEAD`, counts as none (`_mark`)."""
+        claimed = self._claimed(kind, now)
+        marks = [m for m in (claimed, self._mark(self.state.since(kind), now)) if m is not None]
         slot = next_slot(b, max(marks) if marks else now - LATE_LIMIT)
         if claimed is not None:
             while slot.date() == claimed.date():
@@ -150,10 +159,11 @@ class BriefingService:
 
     def settings_saved(self, kind: str) -> None:
         """Called after every save of a briefing's settings (an edit, switching it on or off): no slot before now
-        is due any more. Records no run or skip."""
+        is due any more, nor the slot claimed for a run under way. Records no run or skip. An older `since` is not
+        kept: it is never later than this one unless the clock read wrong, and then it must be repaired."""
         now = self._clock()
-        marks = [m for m in (self._claimed(kind), self._when(self.state.since(kind))) if m is not None]
-        self.state.set_since(kind, max([now, *marks]).isoformat())
+        claimed = self._claimed(kind, now)
+        self.state.set_since(kind, max([now, *([claimed] if claimed is not None else [])]).isoformat())
         try:
             self.state.save(self.vault)
         except Exception as e:  # noqa: BLE001
@@ -213,9 +223,10 @@ class BriefingService:
             if self._claim(kind, slot):
                 self._skip(kind, slot, "skipped", reason)
             return
+        previous = self.state.claimed(kind)
         if not self._claim(kind, slot):
             return
-        await self._run(kind, b, slot)
+        await self._run(kind, b, slot, previous=previous)
 
     def _claim(self, kind: str, slot: datetime) -> bool:
         """Saved before anything is built: a claim that cannot be saved plays nothing (it stays claimed in memory)."""
@@ -226,6 +237,15 @@ class BriefingService:
         except Exception as e:  # noqa: BLE001
             log.error("briefing claim not saved: %s", type(e).__name__)
             return False
+
+    def _release(self, kind: str, previous: str | None) -> None:
+        """Nothing played (the briefing was switched off, removed or its slot moved while it was made): the claim goes
+        back to what it was, so a later slot that day can still play."""
+        self.state.restore_claim(kind, previous)
+        try:
+            self.state.save(self.vault)
+        except Exception as e:  # noqa: BLE001
+            log.error("briefing claim not released: %s", type(e).__name__)
 
     # -- Play now ----------------------------------------------------------------------------------------------
 
@@ -275,17 +295,18 @@ class BriefingService:
             self._running, self._phase, self._token = None, "idle", None
 
     async def _run(self, kind: str, b: Briefing, slot: datetime | None,
-                   token: object | None = None) -> dict[str, Any] | None:
+                   token: object | None = None, previous: str | None = None) -> dict[str, Any] | None:
         token = token or self._begin(kind)
         try:
-            return await self._attempt(kind, b, slot)
+            return await self._attempt(kind, b, slot, previous)
         except Exception as e:  # noqa: BLE001 - whatever failed, the run is recorded
             log.warning("briefing run failed: %s", type(e).__name__)
             return self._fail(kind, slot, "run", type(e).__name__, PLAY_FAILED)
         finally:
             self._end(token)
 
-    async def _attempt(self, kind: str, b: Briefing, slot: datetime | None) -> dict[str, Any] | None:
+    async def _attempt(self, kind: str, b: Briefing, slot: datetime | None,
+                       previous: str | None = None) -> dict[str, Any] | None:
         when = slot or self._clock()
         jokes = ToldJokes.load(self.vault)
         try:
@@ -306,6 +327,7 @@ class BriefingService:
         if slot is not None:
             fresh = await self._wait_for(kind, slot)
             if fresh is None:  # switched off, removed or its slot changed while it was made: nothing plays
+                self._release(kind, previous)
                 return None
             b = fresh
             if self._clock() > slot + LATE_LIMIT:

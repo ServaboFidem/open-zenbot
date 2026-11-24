@@ -25,6 +25,8 @@ MAX_SLOTS = 7
 MAX_SPEAKERS = 32
 JOKES_CAP = 500
 JOKE_MAX = 500
+VOLUME_MAX = 100
+CEILING_ZERO = "Your Sonos volume limit is 0."  # also the routes' NOT_READY["ceiling_zero"]
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
@@ -67,8 +69,13 @@ def check(b: Briefing, ceiling: int) -> None:
         if seen & set(s.days) or len(set(s.days)) != len(s.days):
             raise ValueError("Each day can have only one time.")
         seen |= set(s.days)
-    if isinstance(b.volume, bool) or not isinstance(b.volume, int) or not 1 <= b.volume <= ceiling:
-        raise ValueError(f"Pick a volume from 1 to {ceiling}.")
+    # an enabled briefing is held to the Sonos limit; a switched-off one only to 1..100, so it can always be switched
+    # off (and kept) after the limit was lowered below its volume. It plays at min(volume, the limit) when on.
+    if b.enabled is True and ceiling < 1:
+        raise ValueError(CEILING_ZERO)
+    top = min(ceiling, VOLUME_MAX) if b.enabled is True else VOLUME_MAX
+    if isinstance(b.volume, bool) or not isinstance(b.volume, int) or not 1 <= b.volume <= top:
+        raise ValueError(f"Pick a volume from 1 to {top}.")
     if b.speakers is not None:
         sp = b.speakers
         if (not isinstance(sp, list) or not 1 <= len(sp) <= MAX_SPEAKERS
@@ -110,7 +117,7 @@ def _briefing(d: Any) -> Briefing:
         raise ValueError("id")
     b = Briefing(kind=d.get("kind"), enabled=d.get("enabled"), slots=slots,
                  speakers=d.get("speakers"), volume=d.get("volume"), id=ident)
-    check(b, 100)
+    check(b, VOLUME_MAX)
     return b
 
 
@@ -217,6 +224,13 @@ class BriefingState:
 
     def claim(self, kind: str, slot_iso: str) -> None:
         self._d.setdefault(kind, {})["claimed"] = slot_iso
+
+    def restore_claim(self, kind: str, previous: str | None) -> None:
+        """Put the claim back as it was before a run that played nothing (None: there was none)."""
+        if previous is None:
+            self._d.get(kind, {}).pop("claimed", None)
+        else:
+            self.claim(kind, previous)
 
     def last_run(self, kind: str) -> dict[str, Any] | None:
         v = self._d.get(kind, {}).get("last_run")

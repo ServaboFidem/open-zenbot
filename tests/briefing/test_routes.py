@@ -69,6 +69,22 @@ async def test_volume_above_ceiling_422(client):
     assert r.status_code == 422 and "1 to 60" in r.json()["detail"]
 
 
+async def test_switching_off_works_when_the_ceiling_fell_below_the_volume(client, parts):
+    svc, f, _ = parts
+    assert (await client.put("/briefings/morning", json={**BODY, "volume": 50})).status_code == 200
+    f.sonos.settings.max_volume = 30
+    r = await client.put("/briefings/morning", json={**BODY, "enabled": False, "volume": 50})
+    assert r.status_code == 200 and r.json()["briefings"][0]["enabled"] is False
+    f.sonos.settings.max_volume = 0
+    r = await client.put("/briefings/morning", json={**BODY, "enabled": False, "volume": 50})
+    assert r.status_code == 200
+    r = await client.put("/briefings/morning", json={**BODY, "enabled": True, "volume": 0})
+    assert r.status_code == 422 and r.json()["detail"] == NOT_READY["ceiling_zero"]
+    f.sonos.settings.max_volume = 30
+    r = await client.put("/briefings/morning", json={**BODY, "enabled": True, "volume": 50})
+    assert r.status_code == 422 and r.json()["detail"] == "Pick a volume from 1 to 30."
+
+
 async def test_malformed_body_422_without_echo(client):
     r = await client.put("/briefings/morning", json={"slots": "SECRET-ECHO"})
     assert r.status_code == 422 and "SECRET-ECHO" not in r.text
