@@ -16,8 +16,9 @@ import logging
 import re
 import secrets
 import shutil
+import threading
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -235,7 +236,10 @@ class Harness:
     _dream_gen: tuple[tuple, Generator] | None = field(default=None, init=False, repr=False)  # (the dream choice's settings, its generator)
     media: MediaProxy | None = None  # remote images, video and PDFs for the chat; trusted hosts at once, others on a click
     task_attachments: dict[str, list[Attachment]] = field(default_factory=dict)  # session id -> files attached in a one-to-one task
-    sending_uploads: set[str] = field(default_factory=set)  # chat upload ids a task route is sending: not deletable
+    # chat upload id -> how many task routes are sending it right now: not deletable or sweepable while above 0
+    sending_uploads: Counter[str] = field(default_factory=Counter)
+    # held for each check-and-act on uploads: a send's claim, DELETE's check and removal, the sweep's per folder
+    uploads_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     part_turns: dict[str, PartTurn] = field(default_factory=dict)  # session id -> a helper's turn on a design: its worksheet and changes
     _warm_tasks: set = field(default_factory=set, init=False, repr=False)
     _last_routed_at: datetime | None = field(default=None, init=False)  # last /orchestrate that put a message in a room
@@ -591,6 +595,22 @@ class Harness:
         if self.conversations is None:
             return set()
         return {f.get("id", "") for c in self.conversations.all() for ex in c.exchanges for f in ex.files}
+
+    def upload_in_use(self, upload_id: str) -> bool:
+        """A send holds the upload, or some conversation names it. Read with `uploads_lock` held."""
+        return self.sending_uploads.get(upload_id, 0) > 0 or upload_id in self.sent_uploads()
+
+    def claim_uploads(self, ids: list[str]) -> None:
+        """A send carries these (each once): DELETE and the sweep leave them until `release_uploads`."""
+        with self.uploads_lock:
+            self.sending_uploads.update(ids)
+
+    def release_uploads(self, ids: list[str]) -> None:
+        with self.uploads_lock:
+            for i in ids:
+                self.sending_uploads[i] -= 1
+                if self.sending_uploads[i] <= 0:
+                    del self.sending_uploads[i]
 
     def busy(self) -> bool:
         """Something is under way that dreaming waits for: a task, room turn or routine run (each has a session),
@@ -1702,7 +1722,9 @@ def create_app(h: Harness) -> FastAPI:
         async def sweep_uploads() -> None:
             while True:  # unsent chat uploads older than a day; one named by any conversation is never swept
                 try:
-                    n = await asyncio.to_thread(chat_files.sweep, vault, h.sent_uploads(), time.time())
+                    # each old folder is checked against the live claims and conversations, under the lock
+                    n = await asyncio.to_thread(chat_files.sweep, vault, h.upload_in_use, time.time(),
+                                                lock=h.uploads_lock)
                     if n:
                         h.ledger.append(Kind.upload, "", "", event="swept", count=n)
                 except asyncio.CancelledError:
@@ -3162,14 +3184,15 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(422, "task is empty")
         if not h.bound:
             raise HTTPException(503, UnboundProvider.MESSAGE)
-        # marked as being sent before the first await, so DELETE /uploads/{id} refuses them until the exchange
-        # names them (or the send fails)
-        sending = [i for i in dict.fromkeys(body.uploads) if i not in h.sending_uploads]
-        h.sending_uploads.update(sending)
+        # claimed before the first await, so DELETE /uploads/{id} and the sweep leave them; the exchange names
+        # them before this returns, and the claim is released only then (or when the send fails). A count: two
+        # sends of one id each hold it
+        sending = list(dict.fromkeys(body.uploads))
+        h.claim_uploads(sending)
         try:
             return await _start_task(bot, body)
         finally:
-            h.sending_uploads.difference_update(sending)
+            h.release_uploads(sending)
 
     async def _start_task(bot: Bot, body: TaskIn) -> dict[str, Any]:
         # every file is read once, here, before the last check: no await lies between that check and the task

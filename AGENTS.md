@@ -1531,7 +1531,8 @@ was done on).
   `DOCUMENT_SUFFIXES`, so what is left is `.csv .docx .epub .json .markdown .md .pdf .pptx .text .txt .xlsx` (the
   ingestor's plain and MarkItDown suffixes less the pages; `tests/test_chat_files.py` pins the list). At upload a
   file is a picture by its first bytes whatever its name (picture bytes under a document's name become a picture);
-  else a document by its suffix. At send a stored document whose first bytes are a picture's is refused. Anything else is refused with "ZenBot can't work with this kind of file yet." (`REFUSED`).
+  else a document by its suffix, unless its first bytes are a picture's or GIF89a (`_looks_like_picture`), which is
+  refused. At send a stored document whose first bytes are a picture's or GIF89a is refused. Anything else is refused with "ZenBot can't work with this kind of file yet." (`REFUSED`).
   `chat-files.js` `DOCUMENT_SUFFIXES` equals the harness's list: keep them equal.
 - **Limits.** A picture upload is at most 50,000,000 bytes (`MAX_PICTURE_UPLOAD`), a document 20,000,000
   (`MAX_DOCUMENT`), both checked from the base64 length before decoding, so the limit is chosen by the name's suffix
@@ -1553,10 +1554,16 @@ was done on).
   `application/octet-stream` with `Content-Disposition: attachment`), `nosniff` and `no-store`, 404 "No such file."
   for an id that is malformed or not what was saved. `DELETE /uploads/{id}` answers 204; 409 "That file was already
   sent." for an id any exchange names (`Harness.sent_uploads`) and for one a send is reading right now
-  (`Harness.sending_uploads`: the task route adds the ids before its first await and removes them in a `finally` once
-  `start_task` has returned, when the exchange names them, or the send has failed). A sweep in the `lifespan` runs hourly and deletes
-  upload folders older than a day that no conversation names (`chat_files.sweep`); an unsent file the user left is
-  gone after a day.
+  (`Harness.sending_uploads`, a `Counter`: the task route claims each id it carries once, before its first await
+  (`claim_uploads`), and releases it in a `finally` (`release_uploads`) once `start_task` has returned, when the
+  exchange names them, or the send has failed; an id leaves the count at 0, so two sends of one file each hold it).
+  One `threading.Lock`, `Harness.uploads_lock`, is held for each check-and-act: a send's claim; DELETE's check
+  (`Harness.upload_in_use`: a claim above 0, or named by a conversation) and removal, together in one worker thread;
+  and the sweep's check and removal of each folder. So no upload a send holds, or a conversation names at that moment,
+  is removed. A sweep in the `lifespan` runs hourly and deletes upload folders older than a day that its `keep`
+  callable (`upload_in_use`, asked live for each old folder under the lock) does not keep (`chat_files.sweep`); an
+  unsent file the user left is gone after a day. A task sent with `conversation: false` makes no exchange, so its
+  files are deletable once the send returns.
 - **Reading is link-safe on POSIX.** Where the platform has `dir_fd` (`_DIR_FD`), `read`, `save`, `remove` and `sweep`
   open `uploads` and `chat` without following a link (`O_DIRECTORY | O_NOFOLLOW`, each step checked a real folder), work
   relative to that directory descriptor, `stat` the file before opening it (a FIFO would block the open: only a
@@ -1602,7 +1609,10 @@ was done on).
 - **The GUI** (`src/gui/chat-files.js`, wired in `app.jsx`; the composer of a one-to-one chat, off in the onboarding
   interview and while the harness is offline). A paperclip button, a drop onto the composer and a paste of files add
   chips (name, size, a spinner while uploading, the refusal's sentence, a remove button). `precheck` refuses by
-  type, suffix and size before any upload, the harness has the last word. Send waits while a file uploads ("Wait for
+  type, suffix and size before any upload, the harness has the last word; a file with no type is a picture when its
+  name ends `.png`, `.jpg`, `.jpeg`, `.webp` or `.gif`. A file removed while the scope check is out does not go:
+  after that await, and in the scope prompt's answer, the send keeps only the ids it captured that are still on a
+  ready chip (`stillSendable`), never one added meanwhile. Send waits while a file uploads ("Wait for
   the files to finish uploading.") and past 4 pictures. After the harness takes the message the chips that went with
   it are gone (`afterSend`); removing a ready chip calls `DELETE /uploads/{id}`. A note under the composer says "<bot>'s
   model can't see pictures. It can still work with the file." when a picture is ready and the bot's `sees_images` is not

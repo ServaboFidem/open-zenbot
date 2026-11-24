@@ -183,7 +183,7 @@ def test_sweep_spares_kept_and_young_uploads(vault):
     now = time.time()
     for u in (old, kept):
         os.utime(u.path.parent, (now - 90_000, now - 90_000))
-    assert chat_files.sweep(vault, {kept.id}, now) == 1
+    assert chat_files.sweep(vault, {kept.id}.__contains__, now) == 1
     assert not old.path.parent.exists() and kept.path.parent.exists() and young.path.parent.exists()
 
 
@@ -229,7 +229,7 @@ def test_a_linked_uploads_folder_is_refused_and_never_swept_through(vault, tmp_p
     with pytest.raises(FileRefused):
         asyncio.run(chat_files.save(vault, "a.txt", b"x"))
     os.utime(victim, (0, 0))
-    assert chat_files.sweep(vault, set(), time.time()) == 0
+    assert chat_files.sweep(vault, lambda name: False, time.time()) == 0
     assert chat_files.remove(vault, "3" * 32) is False
     assert victim.exists()
     with pytest.raises(FileRefused):
@@ -286,3 +286,44 @@ def test_document_suffixes_are_pinned():
     assert sorted(chat_files.DOCUMENT_SUFFIXES) == [
         ".csv", ".docx", ".epub", ".json", ".markdown", ".md", ".pdf", ".pptx", ".text", ".txt", ".xlsx",
     ]
+
+
+# --- CodeRabbit review on PR 36 ----------------------------------------------------------------------------------
+
+def test_gif89a_under_a_document_name_is_refused_at_save_and_at_send(vault):
+    with pytest.raises(FileRefused) as e:
+        asyncio.run(chat_files.save(vault, "x.txt", b"GIF89a" + b"\0" * 20))
+    assert str(e.value) == chat_files.REFUSED
+    folder = vault / "uploads" / "chat" / ("4" * 32)
+    folder.mkdir(parents=True)
+    (folder / "x.txt").write_bytes(b"GIF89a" + b"\0" * 20)
+    with pytest.raises(FileRefused) as e:
+        chat_files.read(vault, "4" * 32)
+    assert str(e.value) == chat_files.REFUSED
+    up = asyncio.run(chat_files.save(vault, "notes.txt", b"GIF is a picture format."))  # plain text still goes
+    assert chat_files.read(vault, up.id)[1] == b"GIF is a picture format."
+
+
+def test_sweep_reads_keep_under_the_lock_for_each_candidate(vault):
+    """A claim made after the folder was listed, before its check, keeps it: keep is asked live, under the lock."""
+    ups = [asyncio.run(chat_files.save(vault, "a.txt", b"x")) for _ in range(3)]
+    old = time.time() - 90_000
+    for u in ups:
+        os.utime(u.path.parent, (old, old))
+    target = ups[1].id
+    claimed: set[str] = set()
+    held = []
+
+    class Lock:
+        def __enter__(self):
+            held.append(True)
+            claimed.add(target)  # a send admitted while the sweep walked the folder
+        def __exit__(self, *exc):
+            held.pop()
+
+    def keep(name: str) -> bool:
+        assert held, "keep is read under the lock"
+        return name in claimed
+
+    assert chat_files.sweep(vault, keep, time.time(), lock=Lock()) == 2
+    assert [u.path.parent.exists() for u in ups] == [False, True, False]

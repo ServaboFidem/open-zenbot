@@ -9,7 +9,8 @@ import re
 import secrets
 import shutil
 import stat
-from contextlib import contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -47,6 +48,11 @@ def picture_kind(head: bytes) -> str | None:
     if head.startswith(b"GIF87a"):
         return "gif87a"
     return None
+
+
+def _looks_like_picture(head: bytes) -> bool:
+    """Picture bytes of any kind this module knows, GIF89a included: never taken as a document."""
+    return picture_kind(head) is not None or head.startswith(b"GIF89a")
 
 
 def _save(im: Image.Image, **options) -> bytes:
@@ -180,7 +186,7 @@ async def save(vault_root: Path, name: str, raw: bytes) -> Upload:
     if picture_kind(raw[:16]) is not None:
         data = await asyncio.to_thread(to_webp, raw)
         kind, stored = "image", _image_name(name)
-    elif _suffix(name) in DOCUMENT_SUFFIXES:
+    elif _suffix(name) in DOCUMENT_SUFFIXES and not _looks_like_picture(raw[:16]):
         if len(raw) > MAX_DOCUMENT:
             raise FileRefused("This file is too large.")
         data, kind, stored = raw, "document", name
@@ -273,7 +279,7 @@ def read(vault_root: Path, upload_id: str) -> tuple[Upload, bytes]:
         except (UnidentifiedImageError, OSError, ValueError):
             raise FileRefused(REFUSED) from None
         kind = "image"
-    elif _suffix(name) in DOCUMENT_SUFFIXES and picture_kind(head) is None:
+    elif _suffix(name) in DOCUMENT_SUFFIXES and not _looks_like_picture(head):
         kind = "document"
     else:
         raise FileRefused(REFUSED)
@@ -300,21 +306,28 @@ def remove(vault_root: Path, upload_id: str) -> bool:
         return False
 
 
-def sweep(vault_root: Path, keep: set[str], now: float, max_age_s: float = 86_400) -> int:
-    """Delete upload folders older than `max_age_s` that no conversation names; returns how many."""
+def sweep(vault_root: Path, keep: Callable[[str], bool], now: float, max_age_s: float = 86_400,
+          lock: AbstractContextManager | None = None) -> int:
+    """Delete upload folders older than `max_age_s` that `keep` does not keep (one a send holds or a conversation
+    names); returns how many. `keep` is asked for each old folder while `lock` is held, and the folder is removed
+    under that same hold, so a send admitted under the lock meanwhile is seen."""
+    lock = lock if lock is not None else nullcontext()
     root = uploads_dir(vault_root)
     count = 0
     try:
         with _chat(vault_root) as fd:
             for name in os.listdir(fd if fd is not None else root):
-                if not ID.fullmatch(name) or name in keep or not _real_dir(root / name):
+                if not ID.fullmatch(name) or not _real_dir(root / name):
                     continue
                 try:
                     if now - (root / name).lstat().st_mtime < max_age_s:
                         continue
                 except OSError:
                     continue
-                _rm(name, fd, root)
+                with lock:
+                    if keep(name):
+                        continue
+                    _rm(name, fd, root)
                 count += 1
     except (FileRefused, OSError):
         return count

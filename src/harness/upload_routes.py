@@ -74,9 +74,17 @@ def upload_router(h) -> APIRouter:
 
     @r.delete("/{upload_id}", status_code=204)
     async def delete_upload(upload_id: str) -> Response:
-        if upload_id in h.sending_uploads or upload_id in h.sent_uploads():
+        def drop() -> str:
+            # the check and the removal under one hold of the lock: no send is admitted between them
+            with h.uploads_lock:
+                if h.upload_in_use(upload_id):
+                    return "sent"
+                return "removed" if chat_files.remove(h.config.vault_root, upload_id) else "missing"
+
+        outcome = await asyncio.to_thread(drop)
+        if outcome == "sent":
             raise HTTPException(409, SENT)
-        if not await asyncio.to_thread(chat_files.remove, h.config.vault_root, upload_id):
+        if outcome == "missing":
             raise HTTPException(404, NO_FILE)
         log("removed")
         return Response(status_code=204)

@@ -223,7 +223,7 @@ async def test_sent_upload_survives_the_sweep(client, harness: Harness, vault: P
     unsent = await _upload(client, "b.txt", b"two")
     await _send(client, harness, "read", [sent["id"]])
     assert sent["id"] in harness.sent_uploads()
-    n = chat_files.sweep(vault, harness.sent_uploads(), time.time() + 2 * 86_400)
+    n = chat_files.sweep(vault, harness.sent_uploads().__contains__, time.time() + 2 * 86_400)
     assert n == 1
     assert (chat_files.uploads_dir(vault) / sent["id"]).is_dir()
     assert not (chat_files.uploads_dir(vault) / unsent["id"]).exists()
@@ -258,14 +258,14 @@ async def test_an_upload_being_sent_cannot_be_deleted(client, harness: Harness, 
     assert (r.status_code, r.json()["detail"]) == (409, "That file was already sent.")
     release.set()
     assert (await send).status_code == 202
-    assert harness.sending_uploads == set()
+    assert not harness.sending_uploads
 
 
 async def test_a_refused_send_lets_its_uploads_be_deleted(client, harness: Harness):
     ids = [(await _upload(client, f"p{i}.png", _png(c)))["id"]
            for i, c in enumerate(["red", "green", "blue", "white", "black"])]
     r = await _send(client, harness, "look", ids)
-    assert r.status_code == 422 and harness.sending_uploads == set()
+    assert r.status_code == 422 and not harness.sending_uploads
     assert (await client.delete(f"/uploads/{ids[0]}")).status_code == 204
 
 
@@ -276,3 +276,38 @@ async def test_the_start_entry_counts_files_and_says_whether_pictures_went(clien
     r = await _send(client, harness, "look", [pic["id"], doc["id"]])
     start = harness.ledger.tail(kind="session", session_id=r.json()["session_id"])[0]
     assert start.data["files"] == 2 and start.data["images_sent"] is False and start.data["images"] == 0
+
+
+async def test_overlapping_sends_of_one_upload_each_hold_it(client, harness: Harness, monkeypatch):
+    """Two sends carry one file; the first ends (refused here, so no exchange names it) while the second is
+    still reading: the file stays undeletable until the second ends too."""
+    import asyncio
+    import threading
+
+    doc = await _upload(client, "notes.txt", b"hello")
+    gates = [(threading.Event(), threading.Event()) for _ in range(2)]
+    calls = iter(gates)
+    real = chat_files.read
+
+    def slow_read(root, upload_id):
+        if upload_id == doc["id"]:
+            reading, release = next(calls)
+            reading.set()
+            release.wait(5)
+        return real(root, upload_id)
+
+    monkeypatch.setattr(chat_files, "read", slow_read)
+    gone = ["f" * 32, "e" * 32]  # no such uploads: each send is refused after reading the shared one
+    first = asyncio.create_task(_send(client, harness, "read", [doc["id"], gone[0]]))
+    await asyncio.to_thread(gates[0][0].wait, 5)
+    second = asyncio.create_task(_send(client, harness, "read", [doc["id"], gone[1]]))
+    await asyncio.to_thread(gates[1][0].wait, 5)
+    assert harness.sending_uploads[doc["id"]] == 2
+    gates[0][1].set()
+    assert (await first).status_code == 422
+    r = await client.delete(f"/uploads/{doc['id']}")
+    assert (r.status_code, r.json()["detail"]) == (409, "That file was already sent.")
+    gates[1][1].set()
+    assert (await second).status_code == 422
+    assert not harness.sending_uploads
+    assert (await client.delete(f"/uploads/{doc['id']}")).status_code == 204

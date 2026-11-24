@@ -139,7 +139,7 @@ async def test_files_round_trip_through_the_conversation_store_and_survive_a_res
         e.pop("files")
     assert Conversation.from_record(legacy).exchanges[-1].files == []
     os.utime(up.path.parent, (0, 0))
-    assert chat_files.sweep(harness.config.vault_root, harness.sent_uploads(), time.time()) == 0
+    assert chat_files.sweep(harness.config.vault_root, harness.sent_uploads().__contains__, time.time()) == 0
 
 
 @pytest.mark.skipif(not hasattr(__import__("os"), "mkfifo"), reason="needs POSIX fifos")
@@ -149,3 +149,22 @@ async def test_get_of_a_fifo_is_404(client, harness):
     folder.mkdir(parents=True)
     os.mkfifo(folder / "a.txt")
     assert (await client.get("/uploads/" + "7" * 32)).status_code == 404
+
+
+async def test_delete_checks_again_under_the_lock(client, harness):
+    """A send admitted after DELETE arrived, before it took the lock, still makes it 409 and nothing is removed."""
+    j = (await client.post("/uploads", json={"name": "a.txt", "data": _b64(b"hi")})).json()
+    real = harness.uploads_lock
+
+    class Lock:
+        def __enter__(self):
+            harness.sending_uploads[j["id"]] += 1  # the send's admission, just before the route's check
+            return real.__enter__()
+        def __exit__(self, *exc):
+            return real.__exit__(*exc)
+
+    harness.uploads_lock = Lock()
+    r = await client.delete(f"/uploads/{j['id']}")
+    assert (r.status_code, r.json()["detail"]) == (409, upload_routes.SENT)
+    harness.uploads_lock = real
+    assert (await client.get(f"/uploads/{j['id']}")).status_code == 200
