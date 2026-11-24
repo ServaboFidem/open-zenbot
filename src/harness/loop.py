@@ -157,13 +157,14 @@ class TaskLoop:
         protected: dict[str, Any] | None = None,
         turn_extra: str = "",
         images: list[str] | None = None,
+        files: int = 0,
     ) -> Session:
         session = session or Session(bot_id=bot.id, task=task)
         # one Langfuse trace per run, grouped by conversation (or room) so the session view replays it
         with tracing.attributes(session_id=session.conversation_id or session.room_id or session.id, tags=[bot.id],
                                 trace_name="run-task", metadata={"harness_session": session.id, "room": session.room_id}):
             with tracing.observe("run-task", as_type="agent", input=task, metadata={"bot": bot.id}) as run_obs:
-                await self._run(bot, task, session, history, protected, turn_extra, images)
+                await self._run(bot, task, session, history, protected, turn_extra, images, files)
                 run_obs.update(output=session.result or session.error or str(session.state),
                                level="ERROR" if session.state == SessionState.failed else None,
                                status_message=session.error or None,
@@ -172,7 +173,8 @@ class TaskLoop:
         return session
 
     async def _run(self, bot: Bot, task: str, session: Session, history: list[Message] | None,
-                   protected: dict[str, Any] | None, turn_extra: str = "", images: list[str] | None = None) -> None:
+                   protected: dict[str, Any] | None, turn_extra: str = "", images: list[str] | None = None,
+                   files: int = 0) -> None:
         if session.pinned_skills:
             by_slug = {s.slug: s for s in bot.skills}
             missing = next((slug for slug in session.pinned_skills if slug not in by_slug), None)
@@ -222,7 +224,7 @@ class TaskLoop:
             Kind.session, bot.id, session.id, event="start", task=task,
             injected=session.injected, selector=getattr(self.selector, "kind", "?"), recall=getattr(self.recall, "kind", "?"),
             route_outcome=selection.detail.get("outcome"), route_cached=selection.detail.get("cached"), route_fallback=selection.detail.get("fallback"),
-            images=len(images or []),
+            images=len(images or []), files=files, images_sent=bool(images),
         )
         try:
             await self._drive(bot, session, skills)

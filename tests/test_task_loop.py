@@ -506,17 +506,22 @@ class _Spy:
 
 
 async def test_turn_extra_and_images_reach_the_last_message_but_not_routing(ledger: Ledger, tmp_path: Path):
-    provider = ScriptedProvider([completion("done")])
+    provider = ScriptedProvider([completion("done"), completion("done")])
     spy = _Spy()
     loop = make_loop(provider, ledger, tmp_path)
     loop.selector = spy
     loop.recall = spy
-    s = await loop.run(Bot(name="B", role="r"), "read it", turn_extra="FILE TEXT", images=["data:image/webp;base64,AA"])
+    s = await loop.run(Bot(name="B", role="r"), "read it", turn_extra="FILE TEXT", images=["data:image/webp;base64,AA"],
+                       files=2)
     last = provider.calls[0][-1]
     assert last.content == "read it\n\nFILE TEXT" and last.images == ["data:image/webp;base64,AA"]
     assert spy.tasks == ["read it", "read it"]
     start = ledger.tail(kind="session", session_id=s.id)[0]
     assert start.data["task"] == "read it" and start.data["images"] == 1
+    assert start.data["files"] == 2 and start.data["images_sent"] is True
+    s = await loop.run(Bot(name="B", role="r"), "plain")
+    start = ledger.tail(kind="session", session_id=s.id)[0]
+    assert start.data["files"] == 0 and start.data["images_sent"] is False
 
 
 async def test_images_dropped_clears_images_for_later_steps(ledger: Ledger, tmp_path: Path):

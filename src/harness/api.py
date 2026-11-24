@@ -235,6 +235,7 @@ class Harness:
     _dream_gen: tuple[tuple, Generator] | None = field(default=None, init=False, repr=False)  # (the dream choice's settings, its generator)
     media: MediaProxy | None = None  # remote images, video and PDFs for the chat; trusted hosts at once, others on a click
     task_attachments: dict[str, list[Attachment]] = field(default_factory=dict)  # session id -> files attached in a one-to-one task
+    sending_uploads: set[str] = field(default_factory=set)  # chat upload ids a task route is sending: not deletable
     part_turns: dict[str, PartTurn] = field(default_factory=dict)  # session id -> a helper's turn on a design: its worksheet and changes
     _warm_tasks: set = field(default_factory=set, init=False, repr=False)
     _last_routed_at: datetime | None = field(default=None, init=False)  # last /orchestrate that put a message in a room
@@ -1114,15 +1115,19 @@ class Harness:
                         base = pinned or {"task": task, "constraints": []}
                         pinned = {**base, "constraints": [*base.get("constraints", []),
                                                           *(ln for ln in brief.splitlines() if ln.strip())]}
-                    if file_lines:  # the files' paths outlive a mid-task compaction, like the comment lines
-                        base = pinned or {"task": task, "constraints": []}
-                        have = list(base.get("constraints", []))
-                        pinned = {**base, "constraints": [*have, *(ln for ln in file_lines if ln not in have)]}
+                    # the files' paths outlive a mid-task compaction: the pinned task carries them, else (a carried
+                    # block of its own) they are pinned as constraints, like the comment lines
+                    if file_lines and pinned is not None:
+                        have = list(pinned.get("constraints", []))
+                        in_task = set(str(pinned.get("task", "")).splitlines())
+                        pinned = {**pinned, "constraints": [*have, *(ln for ln in file_lines
+                                                                       if ln not in have and ln not in in_task)]}
                     told = "\n\n".join(p for p in (addendum, brief) if p)
                     turn = (await chat_turn.build(vault, files, sees=sees, convert=self.ingestor.converter.convert)
                             if files else chat_turn.Turn())
                     await self.loop.run(bot, f"{task}\n\n{told}" if told else task, session, history=history,
-                                        protected=pinned, turn_extra=turn.told, images=turn.images)
+                                        protected=pinned, turn_extra=turn.told, images=turn.images,
+                                        files=len(files))
                 except asyncio.CancelledError:
                     if session.state not in _ENDED:  # cancelled before the loop could mark it
                         session.state = SessionState.stopped
@@ -3157,6 +3162,16 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(422, "task is empty")
         if not h.bound:
             raise HTTPException(503, UnboundProvider.MESSAGE)
+        # marked as being sent before the first await, so DELETE /uploads/{id} refuses them until the exchange
+        # names them (or the send fails)
+        sending = [i for i in dict.fromkeys(body.uploads) if i not in h.sending_uploads]
+        h.sending_uploads.update(sending)
+        try:
+            return await _start_task(bot, body)
+        finally:
+            h.sending_uploads.difference_update(sending)
+
+    async def _start_task(bot: Bot, body: TaskIn) -> dict[str, Any]:
         # every file is read once, here, before the last check: no await lies between that check and the task
         files: list[tuple[chat_files.Upload, bytes]] = []
         for upload_id in dict.fromkeys(body.uploads):

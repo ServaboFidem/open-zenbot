@@ -84,7 +84,17 @@ async def test_a_picture_reaches_a_seeing_model_as_an_image(client, harness: Har
     assert f"Attached: pic.webp (uploads/chat/{pic['id']}/pic.webp)" in msg.content
     assert CANT_SEE_LINE not in msg.content
     s = harness.sessions[r.json()["session_id"]]
-    assert f"Attached: pic.webp (uploads/chat/{pic['id']}/pic.webp)" in s.protected["constraints"]
+    line = f"Attached: pic.webp (uploads/chat/{pic['id']}/pic.webp)"
+    assert line in s.protected["task"]  # pinned with the task, so a mid-task compaction keeps it
+    assert line not in s.protected["constraints"]  # and not again as a constraint
+
+
+async def test_a_pinned_block_without_the_files_gets_them_as_constraints(client, harness: Harness):
+    doc = await _upload(client, "notes.txt", b"hello")
+    r = await _send(client, harness, "read", [doc["id"]], protected={"task": "read", "constraints": ["be brief"]})
+    assert r.status_code == 202, r.text
+    s = harness.sessions[r.json()["session_id"]]
+    assert s.protected["constraints"] == ["be brief", f"Attached: notes.txt (uploads/chat/{doc['id']}/notes.txt)"]
 
 
 async def test_a_blind_model_gets_the_line_and_no_image(client, harness: Harness):
@@ -218,3 +228,51 @@ async def test_sent_upload_survives_the_sweep(client, harness: Harness, vault: P
     assert (chat_files.uploads_dir(vault) / sent["id"]).is_dir()
     assert not (chat_files.uploads_dir(vault) / unsent["id"]).exists()
     assert (await client.delete(f"/uploads/{sent['id']}")).status_code == 409
+
+
+async def test_a_vanished_upload_says_so_and_starts_nothing(client, harness: Harness, vault: Path):
+    doc = await _upload(client, "notes.txt", b"hello")
+    chat_files.remove(vault, doc["id"])  # as the sweep would
+    r = await _send(client, harness, "read", [doc["id"]])
+    assert (r.status_code, r.json()["detail"]) == (422, "That file is no longer there. Attach it again.")
+    assert harness.sessions == {}
+
+
+async def test_an_upload_being_sent_cannot_be_deleted(client, harness: Harness, monkeypatch):
+    import asyncio
+    import threading
+
+    doc = await _upload(client, "notes.txt", b"hello")
+    reading, release = threading.Event(), threading.Event()
+    real = chat_files.read
+
+    def slow_read(root, upload_id):
+        reading.set()
+        release.wait(5)
+        return real(root, upload_id)
+
+    monkeypatch.setattr(chat_files, "read", slow_read)
+    send = asyncio.create_task(_send(client, harness, "read", [doc["id"]]))
+    await asyncio.to_thread(reading.wait, 5)
+    r = await client.delete(f"/uploads/{doc['id']}")
+    assert (r.status_code, r.json()["detail"]) == (409, "That file was already sent.")
+    release.set()
+    assert (await send).status_code == 202
+    assert harness.sending_uploads == set()
+
+
+async def test_a_refused_send_lets_its_uploads_be_deleted(client, harness: Harness):
+    ids = [(await _upload(client, f"p{i}.png", _png(c)))["id"]
+           for i, c in enumerate(["red", "green", "blue", "white", "black"])]
+    r = await _send(client, harness, "look", ids)
+    assert r.status_code == 422 and harness.sending_uploads == set()
+    assert (await client.delete(f"/uploads/{ids[0]}")).status_code == 204
+
+
+async def test_the_start_entry_counts_files_and_says_whether_pictures_went(client, harness: Harness):
+    _sees(harness, ["text"])
+    pic = await _upload(client, "pic.png", _png())
+    doc = await _upload(client, "notes.txt", b"hello")
+    r = await _send(client, harness, "look", [pic["id"], doc["id"]])
+    start = harness.ledger.tail(kind="session", session_id=r.json()["session_id"])[0]
+    assert start.data["files"] == 2 and start.data["images_sent"] is False and start.data["images"] == 0
