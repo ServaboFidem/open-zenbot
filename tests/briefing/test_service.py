@@ -334,3 +334,121 @@ async def test_loop_survives_an_exception(vault, monkeypatch):
     with pytest.raises(Stop):
         await svc.run()
     assert len(calls) == 3 and sleeps == [service_mod.INTERVAL_S] * 3
+
+
+async def test_an_edit_after_a_play_is_no_late_skip(vault):
+    clock = Clock(at(6, 40))
+    f = Fakes(vault, clock)
+    svc = make(vault, clock, f)
+    await svc.tick()
+    assert len(f.announces) == 1
+    clock.now = at(9, 0)
+    save(vault, time="07:30")
+    svc.settings_saved("morning")
+    await svc.tick()
+    st = BriefingState.load(vault)
+    assert st.last_run("morning")["outcome"] == "played" and st.last_skip("morning") is None
+    assert datetime.fromisoformat(svc.status()["briefings"][0]["next_run"]) == at(7, 30, day=25)
+    clock.now = at(7, 25, day=25)
+    await svc.tick()
+    assert len(f.announces) == 2  # tomorrow's 07:30 plays
+
+
+async def test_one_briefing_a_day_after_moving_it_later(vault):
+    clock = Clock(at(6, 40))
+    f = Fakes(vault, clock)
+    svc = make(vault, clock, f)
+    await svc.tick()
+    clock.now = at(9, 1)
+    save(vault, time="09:05")
+    svc.settings_saved("morning")
+    assert datetime.fromisoformat(svc.status()["briefings"][0]["next_run"]) == at(9, 5, day=25)
+    for t in (at(9, 2), at(9, 5), at(9, 10)):
+        clock.now = t
+        await svc.tick()
+    assert len(f.announces) == 1 and len(f.builds) == 1
+    assert BriefingState.load(vault).last_skip("morning") is None
+
+
+async def test_re_enabled_after_days_off_is_no_late_skip(vault):
+    clock = Clock(at(6, 40, day=20))
+    f = Fakes(vault, clock)
+    svc = make(vault, clock, f)
+    await svc.tick()  # played on the 20th
+    save(vault, enabled=False)
+    svc.settings_saved("morning")
+    clock.now = at(9, 0, day=24)
+    save(vault, enabled=True)
+    svc.settings_saved("morning")
+    await svc.tick()
+    st = BriefingState.load(vault)
+    assert st.last_skip("morning") is None and st.last_run("morning")["outcome"] == "played"
+    assert datetime.fromisoformat(svc.status()["briefings"][0]["next_run"]) == at(6, 45, day=25)
+
+
+async def test_a_gap_while_the_harness_was_off_is_still_a_late_skip(vault):
+    clock = Clock(at(6, 40, day=20))
+    f = Fakes(vault, clock)
+    await make(vault, clock, f).tick()
+    clock.now = at(9, 0, day=24)  # no save in between: the harness was off
+    svc = make(vault, clock, f)
+    assert datetime.fromisoformat(svc.status()["briefings"][0]["next_run"]) == at(6, 45, day=25)
+    await svc.tick()
+    assert BriefingState.load(vault).last_skip("morning")["outcome"] == "skipped_late"
+
+
+async def test_ten_minutes_late_still_plays(vault):
+    st = BriefingState.load(vault)
+    st.claim("morning", at(6, 45, day=23).isoformat())
+    st.save(vault)
+    clock = Clock(at(6, 55))
+    f = Fakes(vault, clock)
+    await make(vault, clock, f).tick()
+    assert len(f.announces) == 1
+    assert BriefingState.load(vault).last_run("morning")["outcome"] == "played"
+
+
+async def test_a_cancel_during_announce_records_nothing_and_frees_the_service(vault):
+    clock = Clock(at(6, 40))
+    f = Fakes(vault, clock)
+    f.announce_gate = asyncio.Event()
+    svc = make(vault, clock, f)
+    task = asyncio.create_task(svc.tick())
+    while not f.announces:
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert svc._running is None
+    assert BriefingState.load(vault).last_run("morning") is None
+    f.announce_gate = None
+    out = await svc.play_now("morning")
+    assert out["outcome"] == "played"
+
+
+async def test_start_play_now_refuses_at_once_and_runs_in_the_background(vault):
+    clock = Clock(at(10, 0))
+    f = Fakes(vault, clock)
+    f.announce_gate = asyncio.Event()
+    svc = make(vault, clock, f)
+    task = svc.start_play_now("morning")
+    assert svc.status()["briefings"][0]["state"] == "building"  # set before the task first runs
+    with pytest.raises(Busy):
+        svc.start_play_now("morning")
+    f.sonos.settings.enabled = False
+    with pytest.raises(Busy):  # busy is checked first
+        svc.start_play_now("morning")
+    f.sonos.settings.enabled = True
+    f.announce_gate.set()
+    assert (await task)["outcome"] == "played"
+    assert svc._running is None
+    # a task cancelled before it ever ran still frees the service
+    t2 = svc.start_play_now("morning")
+    t2.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t2
+    await asyncio.sleep(0)
+    assert svc._running is None
+    f.sonos.rooms = []
+    with pytest.raises(NotReady):
+        svc.start_play_now("morning")

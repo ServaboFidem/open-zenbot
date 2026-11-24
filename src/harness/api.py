@@ -1642,6 +1642,7 @@ def create_app(h: Harness) -> FastAPI:
             texting.cancel()
             briefing.cancel()
             await asyncio.gather(morning_mail, texting, briefing, return_exceptions=True)
+            await h.briefing.close()  # a Play now under way is cancelled; announce puts the speakers back
             warming.cancel()
             refreshing.cancel()
             await h.delegator.stop_all()  # every hand-off in flight ends, its tree killed and its end logged

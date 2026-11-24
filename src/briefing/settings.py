@@ -232,6 +232,14 @@ class BriefingState:
     def record_skip(self, kind: str, skip: dict[str, Any]) -> None:
         self._d.setdefault(kind, {})["last_skip"] = skip
 
+    def since(self, kind: str) -> str | None:
+        """When the briefing's settings were last saved (local ISO): no slot before it is due."""
+        v = self._d.get(kind, {}).get("since")
+        return v if isinstance(v, str) else None
+
+    def set_since(self, kind: str, iso: str) -> None:
+        self._d.setdefault(kind, {})["since"] = iso
+
 
 def normalise(joke: str) -> str:
     return "".join(c for c in joke.casefold() if c.isalnum())

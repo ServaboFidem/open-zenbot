@@ -86,6 +86,8 @@ class BriefingService:
         self.state = BriefingState.load(self.vault)
         self._running: str | None = None  # the kind building or playing; one briefing at a time
         self._phase = "idle"  # building | playing while one runs
+        self._token: object | None = None  # the run that holds the busy flag; only it may clear it
+        self._tasks: set[asyncio.Task] = set()  # Play now runs started in the background
 
     # -- readiness and status ----------------------------------------------------------------------------------
 
@@ -116,8 +118,8 @@ class BriefingService:
             return "ceiling_zero"
         return None
 
-    def _claimed(self, kind: str) -> datetime | None:
-        raw = self.state.claimed(kind)
+    @staticmethod
+    def _when(raw: str | None) -> datetime | None:
         if raw is None:
             return None
         try:
@@ -125,13 +127,37 @@ class BriefingService:
         except ValueError:
             return None
 
-    def _next_run(self, kind: str, b: Briefing, now: datetime) -> datetime:
-        """The slot the loop will take next: after the claimed one, and never one already past the late limit."""
+    def _claimed(self, kind: str) -> datetime | None:
+        return self._when(self.state.claimed(kind))
+
+    def _plan(self, kind: str, b: Briefing, now: datetime) -> tuple[datetime | None, datetime]:
+        """`(missed, slot)`: the latest slot already more than `LATE_LIMIT` old that the loop has yet to record
+        (None when there is none), and the slot it takes next. The one rule for the loop and for the status.
+
+        Slots count from the later of the claimed slot and the last settings save (`since`); with neither, from
+        `now - LATE_LIMIT`. Only a save moves `since`, so a gap while the harness was off is still a late skip, but
+        an edit, a switch-on or a switch-off is not. One briefing a day: never a slot on the claimed slot's date."""
         claimed = self._claimed(kind)
-        base = now - LATE_LIMIT
-        if claimed is not None and claimed > base:
-            base = claimed
-        return next_slot(b, base)
+        marks = [m for m in (claimed, self._when(self.state.since(kind))) if m is not None]
+        slot = next_slot(b, max(marks) if marks else now - LATE_LIMIT)
+        if claimed is not None:
+            while slot.date() == claimed.date():
+                slot = next_slot(b, slot)
+        missed = None
+        while now > slot + LATE_LIMIT:
+            missed, slot = slot, next_slot(b, slot)
+        return missed, slot
+
+    def settings_saved(self, kind: str) -> None:
+        """Called after every save of a briefing's settings (an edit, switching it on or off): no slot before now
+        is due any more. Records no run or skip."""
+        now = self._clock()
+        marks = [m for m in (self._claimed(kind), self._when(self.state.since(kind))) if m is not None]
+        self.state.set_since(kind, max([now, *marks]).isoformat())
+        try:
+            self.state.save(self.vault)
+        except Exception as e:  # noqa: BLE001
+            log.error("briefing state not saved: %s", type(e).__name__)
 
     def status(self) -> dict[str, Any]:
         store = BriefingStore.load(self.vault)
@@ -140,7 +166,7 @@ class BriefingService:
         items = []
         for kind, b in store.items.items():
             d = asdict(b)
-            d.update(next_run=self._next_run(kind, b, now).isoformat() if b.enabled else None,
+            d.update(next_run=self._plan(kind, b, now)[1].isoformat() if b.enabled else None,
                      last_run=self.state.last_run(kind), last_skip=self.state.last_skip(kind),
                      state=self._phase if self._running == kind else "idle",
                      ready=reason is None, reason=reason)
@@ -173,13 +199,10 @@ class BriefingService:
 
     async def _tick_one(self, kind: str, b: Briefing) -> None:
         now = self._clock()
-        claimed = self._claimed(kind)
-        slot = next_slot(b, claimed if claimed is not None else now - LATE_LIMIT)
-        if now > slot + LATE_LIMIT:  # first seen too late (the harness was off, the machine asleep): only the latest
-            while now > (later := next_slot(b, slot)) + LATE_LIMIT:
-                slot = later
-            if self._claim(kind, slot):
-                self._skip(kind, slot, "skipped_late", "late")
+        missed, slot = self._plan(kind, b, now)
+        if missed is not None:  # first seen too late (the harness was off, the machine asleep): only the latest
+            if self._claim(kind, missed):
+                self._skip(kind, missed, "skipped_late", "late")
             return
         if now < slot - PREP_LEAD:
             return
@@ -206,8 +229,9 @@ class BriefingService:
 
     # -- Play now ----------------------------------------------------------------------------------------------
 
-    async def play_now(self, kind: str) -> dict[str, Any]:
-        """Build and play at once. Claims no slot. Raises Busy while one builds or plays, NotReady(reason) else."""
+    def start_play_now(self, kind: str) -> asyncio.Task:
+        """Build and play at once, in the background. Claims no slot. Raises Busy while one builds or plays, else
+        NotReady(reason), before anything starts; the service is busy from the moment this returns."""
         if self._running:
             raise Busy()
         b = BriefingStore.load(self.vault).items.get(kind) if kind in KINDS else None
@@ -216,21 +240,50 @@ class BriefingService:
         reason = self.readiness()
         if reason is not None:
             raise NotReady(reason)
-        if self._running:  # nothing above awaits, but keep the check next to the set
-            raise Busy()
-        return await self._run(kind, b, None)
+        token = self._begin(kind)
+        task = asyncio.get_running_loop().create_task(self._run(kind, b, None, token))
+        self._tasks.add(task)
+
+        def done(t: asyncio.Task) -> None:
+            self._tasks.discard(t)
+            self._end(token)  # a task cancelled before it ever ran never reached _run's finally
+            if not t.cancelled() and t.exception() is not None:
+                log.warning("briefing play now failed: %s", type(t.exception()).__name__)
+
+        task.add_done_callback(done)
+        return task
+
+    async def play_now(self, kind: str) -> dict[str, Any]:
+        """`start_play_now`, awaited."""
+        return await self.start_play_now(kind)
+
+    async def close(self) -> None:
+        """Harness shutdown: a Play now under way is cancelled (announce puts the speakers back)."""
+        for t in list(self._tasks):
+            t.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
 
     # -- one run -----------------------------------------------------------------------------------------------
 
-    async def _run(self, kind: str, b: Briefing, slot: datetime | None) -> dict[str, Any] | None:
-        self._running, self._phase = kind, "building"
+    def _begin(self, kind: str) -> object:
+        token = object()
+        self._running, self._phase, self._token = kind, "building", token
+        return token
+
+    def _end(self, token: object) -> None:
+        if self._token is token:
+            self._running, self._phase, self._token = None, "idle", None
+
+    async def _run(self, kind: str, b: Briefing, slot: datetime | None,
+                   token: object | None = None) -> dict[str, Any] | None:
+        token = token or self._begin(kind)
         try:
             return await self._attempt(kind, b, slot)
         except Exception as e:  # noqa: BLE001 - whatever failed, the run is recorded
             log.warning("briefing run failed: %s", type(e).__name__)
             return self._fail(kind, slot, "run", type(e).__name__, PLAY_FAILED)
         finally:
-            self._running, self._phase = None, "idle"
+            self._end(token)
 
     async def _attempt(self, kind: str, b: Briefing, slot: datetime | None) -> dict[str, Any] | None:
         when = slot or self._clock()
