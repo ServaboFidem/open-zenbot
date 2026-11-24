@@ -255,3 +255,34 @@ def test_a_fifo_as_the_entry_is_refused_without_blocking(vault):
     os.mkfifo(folder / "a.txt")
     with pytest.raises(FileRefused):
         chat_files.read(vault, "6" * 32)
+
+
+def test_a_vanished_upload_has_its_own_sentence(vault):
+    with pytest.raises(FileRefused) as e:  # no uploads folder at all yet
+        chat_files.read(vault, "5" * 32)
+    assert str(e.value) == chat_files.MISSING == "That file is no longer there. Attach it again."
+    up = asyncio.run(chat_files.save(vault, "a.txt", b"hello"))
+    with pytest.raises(FileRefused) as e:  # the folder is there, the id's is not (swept)
+        chat_files.read(vault, "6" * 32)
+    assert str(e.value) == chat_files.MISSING
+    up.path.unlink()
+    with pytest.raises(FileRefused) as e:  # the id's folder is there, its file is gone
+        chat_files.read(vault, up.id)
+    assert str(e.value) == chat_files.MISSING
+    with pytest.raises(FileRefused) as e:  # a malformed id is still refused as before
+        chat_files.read(vault, "../x")
+    assert str(e.value) == REFUSED
+
+
+def test_a_16_bit_greyscale_png_keeps_its_greys():
+    im = Image.new("I;16", (4, 4))
+    im.putdata([30000] * 16)
+    out = _open(to_webp(_save(im, "PNG")))
+    r, g, b = out.convert("RGB").getpixel((0, 0))
+    assert abs(r - 117) <= 2 and r == g == b
+
+
+def test_document_suffixes_are_pinned():
+    assert sorted(chat_files.DOCUMENT_SUFFIXES) == [
+        ".csv", ".docx", ".epub", ".json", ".markdown", ".md", ".pdf", ".pptx", ".text", ".txt", ".xlsx",
+    ]

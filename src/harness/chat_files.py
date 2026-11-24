@@ -20,6 +20,7 @@ from src.memory.ingest import MARKITDOWN_SUFFIXES, PLAIN_SUFFIXES
 
 REFUSED = "ZenBot can't work with this kind of file yet."
 TOO_LARGE = "This picture is too large."
+MISSING = "That file is no longer there. Attach it again."
 
 MAX_SIDE = 2048
 MAX_PICTURE = 5_000_000
@@ -68,6 +69,10 @@ def to_webp(raw: bytes) -> bytes:
             im.load()
             im = ImageOps.exif_transpose(im)
             im.thumbnail((MAX_SIDE, MAX_SIDE))
+            if im.mode == "I" or im.mode.startswith("I;16"):
+                # 16-bit greys (a PNG's open as I;16, or I): scale to 8 bits first, else converting clips every
+                # value above 255 to white
+                im = im.convert("I").point(lambda v: v / 256).convert("L")
             has_alpha = im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info
             im = im.convert("RGBA" if has_alpha else "RGB")
             out = _save(im, lossless=True)
@@ -140,6 +145,8 @@ def _chat(vault_root: Path, create: bool = False):
             for d in (up, chat):
                 if not os.path.lexists(d):
                     d.mkdir(exist_ok=True)
+        if not create and not (os.path.lexists(up) and os.path.lexists(chat)):
+            raise FileRefused(MISSING)
         if not (_real_dir(up) and _real_dir(chat)):
             raise FileRefused(REFUSED)
         if not _DIR_FD:
@@ -213,9 +220,14 @@ def read(vault_root: Path, upload_id: str) -> tuple[Upload, bytes]:
     try:
         with _chat(vault_root) as fd:
             if fd is not None:
-                dfd = os.open(upload_id, os.O_RDONLY | os.O_DIRECTORY | _NOFOLLOW, dir_fd=fd)
+                try:
+                    dfd = os.open(upload_id, os.O_RDONLY | os.O_DIRECTORY | _NOFOLLOW, dir_fd=fd)
+                except FileNotFoundError:
+                    raise FileRefused(MISSING) from None
                 try:
                     names = os.listdir(dfd)
+                    if not names:
+                        raise FileRefused(MISSING)
                     if len(names) != 1:
                         raise FileRefused(REFUSED)
                     if not stat.S_ISREG(os.stat(names[0], dir_fd=dfd, follow_symlinks=False).st_mode):
@@ -224,9 +236,13 @@ def read(vault_root: Path, upload_id: str) -> tuple[Upload, bytes]:
                 finally:
                     os.close(dfd)
             else:
+                if not os.path.lexists(root / upload_id):
+                    raise FileRefused(MISSING)
                 if not _real_dir(root / upload_id):
                     raise FileRefused(REFUSED)
                 names = os.listdir(root / upload_id)
+                if not names:
+                    raise FileRefused(MISSING)
                 if len(names) != 1:
                     raise FileRefused(REFUSED)
                 if not stat.S_ISREG((root / upload_id / names[0]).lstat().st_mode):
