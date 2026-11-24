@@ -101,6 +101,8 @@ from src.telnyx.service import TelnyxService
 from src.sonos.routes import sonos_router
 from src.sonos.service import SonosService
 from src.sonos.tools import SonosTools
+from src.briefing import content as briefing_content
+from src.briefing.service import BriefingService
 from src.speakers.routes import speakers_router
 from src.speakers.service import SpeakerService
 from src.music.routes import music_router
@@ -216,6 +218,7 @@ class Harness:
     telnyx: TelnyxService | None = None  # Telnyx: calendar reminders by text to the owner's phone, the /telnyx routes (no bot tool)
     sonos: SonosService | None = None  # Sonos: the speakers found on the home network, the sonos tools, the /sonos routes
     speakers: SpeakerService | None = None  # Wi-Fi speakers: AirPlay, Chromecast and DLNA found, the default speaker, /speakers
+    briefing: BriefingService | None = None  # the spoken morning briefing on the Sonos speakers (no bot tool)
     dreamer: Dreamer | None = None  # dreaming: learns facts from the user's own messages while idle; built once, a rebind keeps it
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
     provider_store: ProviderStore | None = None  # vault-settings/providers.json: providers, their keys, their enabled models
@@ -383,6 +386,14 @@ class Harness:
         self.sonos_tools = SonosTools(self.sonos, in_room=lambda sid: bool((s := self.sessions.get(sid)) and s.room_id))
         self.sonos.on_change = lambda _found: self.sonos_tools.register(self.tools, self.catalog)
         self.sonos_tools.register(self.tools, self.catalog)
+        if self.briefing is None:  # each dependency read at call time: a rebind replaces the sonos tools
+            self.briefing = BriefingService(
+                c.vault_root, self.ledger,
+                build=lambda now, jokes: briefing_content.build(self, now, jokes),
+                say=lambda text: self.speech.say(text),
+                announce=lambda names, wav, volume: self.sonos_tools.announce(names, wav, volume),
+                sonos=self.sonos, speech_ready=lambda: self.speech.can_say() is None,
+                hosted=lambda: self.speech.hosted())
         if self.speakers is None:  # nothing listens until a speaker type is switched on
             self.speakers = SpeakerService(c.vault_root, self.ledger, sonos_addresses=self._sonos_addresses)
         if self.discover is None:
@@ -1623,12 +1634,14 @@ def create_app(h: Harness) -> FastAPI:
         dreaming = asyncio.create_task(h.dreamer.run(stop))  # a pass when the machine is idle and nothing is under way
         morning_mail = asyncio.create_task(morning.delivery.run())
         texting = asyncio.create_task(h.telnyx.run())  # reminders and the evening rundown, once a minute
+        briefing = asyncio.create_task(h.briefing.run())  # the spoken briefing's slots, every 30 s
         try:
             yield
         finally:
             morning_mail.cancel()
             texting.cancel()
-            await asyncio.gather(morning_mail, texting, return_exceptions=True)
+            briefing.cancel()
+            await asyncio.gather(morning_mail, texting, briefing, return_exceptions=True)
             warming.cancel()
             refreshing.cancel()
             await h.delegator.stop_all()  # every hand-off in flight ends, its tree killed and its end logged

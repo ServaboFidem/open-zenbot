@@ -68,6 +68,7 @@ class Kind(StrEnum):
     sonos = "sonos"
     speech = "speech"
     speakers = "speakers"
+    briefing = "briefing"
     telnyx = "telnyx"
 
 
