@@ -71,8 +71,8 @@ def speakers(fake_speakers):
                            room("Office", OFFICE), room("Patio", PATIO)]
     fake_speakers.volumes = {DEN: 30, GARAGE: 56, KITCHEN: 12, OFFICE: 40, PATIO: 20}
     fake_speakers.favs = [Favorite("Morning Jazz", "favorite")]
-    # the clip plays and ends at once
-    fake_speakers.after_play = lambda ip: fake_speakers.transport_states.__setitem__(ip, "STOPPED")
+    # the clip plays: the lead reads PLAYING, then STOPPED once it ends
+    fake_speakers.after_play = lambda ip: fake_speakers.state_script.__setitem__(ip, ["PLAYING", "STOPPED"])
     return fake_speakers
 
 
@@ -297,3 +297,79 @@ async def test_ledger_holds_counts_only(sonos, vault):
     text = repr(entry)
     for secret in ALL + NAMES + [URL, "10.0.0.9"]:
         assert secret not in text
+
+
+async def test_an_early_stopped_reading_does_not_end_the_wait(sonos, speakers):
+    # SoCo sets the address (STOPPED) before Play, and the lead was paused in step 3: neither is the clip ending
+    speakers.after_play = lambda ip: speakers.state_script.__setitem__(
+        ip, ["STOPPED", "PAUSED_PLAYBACK", "PLAYING", "STOPPED"])
+    result = await sonos.announce(None, WAV, 25)
+    assert speakers.state_script[OFFICE] == []  # every reading was taken: the wait went on past the early ones
+    assert ("transport", OFFICE, "stop") not in speakers.calls
+    assert result.played == NAMES
+
+
+async def test_playing_never_seen_is_cut_off_as_a_failure(sonos, speakers, monkeypatch):
+    monkeypatch.setattr(tools_mod, "CLIP_WAIT_SLACK_S", 0.05)
+    speakers.after_play = lambda ip: speakers.state_script.__setitem__(ip, ["STOPPED"])
+    with pytest.raises(ValueError, match="did not finish"):
+        await asyncio.wait_for(sonos.announce(None, WAV, 25), 5)
+    assert ("transport", OFFICE, "stop") in speakers.calls
+    assert {c[1] for c in speakers.calls if c[0] == "restore"} == set(ALL)
+
+
+def failing(speakers, method, bad_ip):
+    real = getattr(speakers, method)
+
+    def call(ip, *args):
+        if ip == bad_ip:
+            raise SpeakerError("network", "ConnectionError")
+        return real(ip, *args)
+    setattr(speakers, method, call)
+
+
+async def test_a_member_that_will_not_leave_is_turned_down_before_the_clip(sonos, speakers):
+    failing(speakers, "unjoin", DEN)  # Den was not named, but cannot leave Office's group
+    speakers.volumes[DEN] = 90
+    before = topology(speakers)
+    result = await sonos.announce(["Office"], WAV, 25)
+    calls = speakers.calls
+    play = calls.index(("play_uri", OFFICE, URL, TITLE))
+    assert ("set_volume", DEN, 25) in calls[:play]
+    assert result.played == ["Office"]
+    assert ("restore", DEN) in calls  # its own volume comes back
+    assert topology(speakers) == before
+
+
+async def test_a_member_that_cannot_be_quieted_stops_the_briefing(sonos, speakers):
+    failing(speakers, "unjoin", DEN)
+    failing(speakers, "set_volume", DEN)
+    with pytest.raises(ValueError, match="did not play"):
+        await sonos.announce(["Office"], WAV, 25)
+    assert not [c for c in speakers.calls if c[0] == "play_uri"]
+    assert {c[1] for c in speakers.calls if c[0] == "restore"} == {OFFICE, DEN}
+
+
+async def test_a_target_whose_volume_and_leaving_fail_stops_the_briefing(sonos, speakers):
+    failing(speakers, "set_volume", PATIO)
+    failing(speakers, "unjoin", PATIO)
+    with pytest.raises(ValueError, match="did not play"):
+        await sonos.announce(None, WAV, 25)
+    assert not [c for c in speakers.calls if c[0] == "play_uri"]
+    assert {c[1] for c in speakers.calls if c[0] == "restore"} == set(ALL)
+
+
+async def test_a_group_with_a_snapshot_failure_is_left_alone(sonos, speakers):
+    failing(speakers, "snapshot", DEN)
+    before = topology(speakers)
+    result = await sonos.announce(None, WAV, 25)
+    assert result.failed == {"Den": "did not answer", "Office": "did not answer"}
+    assert result.played == ["Garage", "Kitchen", "Patio"]
+    assert [c for c in speakers.calls if c[1] in (DEN, OFFICE) and c[0] != "snapshot"] == []
+    assert topology(speakers) == before
+
+
+async def test_unjoining_a_coordinator_hands_its_group_on(speakers):
+    speakers.unjoin(OFFICE)
+    assert topology(speakers)[DEN] == f"RINCON_{DEN}"  # Den, Office's only member, leads what is left
+    assert topology(speakers)[OFFICE] == f"RINCON_{OFFICE}"

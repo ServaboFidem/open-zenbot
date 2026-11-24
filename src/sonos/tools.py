@@ -46,6 +46,7 @@ NOT_WAV = "The briefing is not a WAV clip."
 CUT_OFF = "The briefing did not finish playing in time, so it was stopped."
 NOT_FETCHED = "The speakers did not fetch the briefing."
 NOT_SERVED = "The briefing could not be served to the speakers."
+UNCONTROLLED = "A speaker in the group could not be checked or turned down, so the briefing did not play."
 DID_NOT_ANSWER = "did not answer"
 COULD_NOT_JOIN = "could not join"
 _ENDED = ("STOPPED", "PAUSED_PLAYBACK")
@@ -510,7 +511,9 @@ class SonosTools:
             return [lead_of[r.uid], *self._members(lead_of[r.uid], rooms)]
 
         # 2. snapshot every target and every speaker of each group a target is in: those groups are taken apart. A
-        # lead's snapshot keeps what it plays; a member's only its volume (SoCo's Snapshot)
+        # lead's snapshot keeps what it plays; a member's only its volume (SoCo's Snapshot). A group with a speaker
+        # whose snapshot fails is left whole and untouched: it could not be put back (and a lead taken out from
+        # under a member hands its group on), so its targets did not answer
         wanted = {g.uid for t in targets for g in group(t)}
         snaps: dict[str, Snap] = {}
         for r in rooms:
@@ -519,13 +522,14 @@ class SonosTools:
                     snaps[r.uid] = await self._ask(r, speakers.snapshot)
                 except _Failed:
                     pass
+        broken = {lead_of[r.uid].uid for r in rooms if r.uid in wanted and r.uid not in snaps}
         for t in targets:
-            if t.uid not in snaps:
+            if lead_of[t.uid].uid in broken:
                 failed[t.name] = DID_NOT_ANSWER
 
         def on_tv(r: Room) -> bool:
             return any(s is not None and s.source == "tv" for s in (snaps.get(r.uid), snaps.get(lead_of[r.uid].uid)))
-        targets = [t for t in targets if t.uid in snaps and not on_tv(t)]
+        targets = [t for t in targets if lead_of[t.uid].uid not in broken and not on_tv(t)]
         if not targets:
             self._note_announce(targets=0, played=0, failed=len(failed), phone_paused=0, seconds=0.0,
                                 put_back_failed=0, error="none")
@@ -599,6 +603,13 @@ class SonosTools:
                     except _Failed:
                         pass
 
+            # every speaker that will sound must be one set above, or be taken out or turned down now: the lead's
+            # group is read again just before playing
+            level = max(0, min(volume, self.service.settings.max_volume))
+            if not await self._quiet_strays(lead, {t.uid for t in played}, {r.uid for r in touched}, level):
+                error = "uncontrolled"
+                raise ValueError(UNCONTROLLED)
+
             # 6. serve the clip to the lead alone, play it, and wait for it to end (cut off at its length + slack)
             with contextlib.ExitStack() as stack:
                 try:
@@ -635,17 +646,48 @@ class SonosTools:
         return Announcement(played=sorted((t.name for t in played), key=_key), failed=failed, seconds=seconds,
                             phone_paused=phone_paused)
 
+    async def _quiet_strays(self, lead: Room, set_uids: set[str], touched_uids: set[str], level: int) -> bool:
+        """Read the lead's group again and deal with every member whose volume the briefing did not set: take it
+        out of the group, else turn it down to `level` (its snapshot puts its own volume back). False when the group
+        cannot be read, or a member cannot be taken out or turned down, or is one the briefing never snapshotted
+        (it could not be put back): then nothing plays."""
+        try:
+            now = await self._ask(lead, self.service.speakers.rooms)
+        except _Failed:
+            return False
+        for m in now:
+            if m.coordinator_uid != lead.uid or m.uid == lead.uid or m.uid in set_uids:
+                continue
+            if m.uid not in touched_uids:
+                return False
+            try:
+                await self._ask(m, self.service.speakers.unjoin)
+                continue
+            except _Failed:
+                pass
+            try:
+                await self._ask(m, self.service.speakers.set_volume,
+                                max(0, min(level, self.service.settings.max_volume)))
+            except _Failed:
+                return False
+        return True
+
     async def _clip_ended(self, lead: Room, limit: float) -> bool:
-        """Whether the lead's transport ended (STOPPED or PAUSED) within `limit` seconds of the clip starting. A
-        reading that fails is tried again on the next poll."""
+        """Whether the clip played and ended within `limit` seconds: an ended reading (STOPPED or PAUSED) counts only
+        after PLAYING (or TRANSITIONING) was seen, since the lead reads paused from step 3 and SoCo sets the address
+        (STOPPED) before it plays. A reading that fails is tried again on the next poll; never seeing the clip play
+        runs to the cut-off."""
         deadline = time.monotonic() + limit
+        seen = False
         while True:
             await asyncio.sleep(CLIP_POLL_S)
             try:
                 state = await self._ask(lead, self.service.speakers.transport_state)
             except _Failed:
                 state = ""
-            if state in _ENDED:
+            if state in _PLAYING:
+                seen = True
+            elif seen and state in _ENDED:
                 return True
             if time.monotonic() >= deadline:
                 return False

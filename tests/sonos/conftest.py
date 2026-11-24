@@ -31,6 +31,7 @@ class FakeSpeakers:
         self.sources: dict[str, str] = {}  # ip -> queue | stream | phone | tv | none (default queue)
         self.transport_states: dict[str, str] = {}  # ip -> SoCo's transport state
         self.after_play: Callable[[str], None] | None = None  # called with the ip after play_uri; a test sets STOPPED
+        self.state_script: dict[str, list[str]] = {}  # ip -> transport states read one by one before transport_states
 
     def _check(self, ip: str) -> None:
         if ip in self.down:
@@ -81,9 +82,21 @@ class FakeSpeakers:
         self.found = [replace(r, coordinator_uid=f"RINCON_{coordinator_ip}") if r.ip == ip else r for r in self.found]
 
     def unjoin(self, ip: str) -> None:
+        """As Sonos does: a coordinator with members that leaves hands its group to its first member."""
         self._check(ip)
         self.calls.append(("unjoin", ip))
-        self.found = [replace(r, coordinator_uid=r.uid) if r.ip == ip else r for r in self.found]
+        me = next((r for r in self.found if r.ip == ip), None)
+        heir = None
+        if me is not None and me.coordinator_uid == me.uid:
+            heir = next((r for r in self.found if r.coordinator_uid == me.uid and r.uid != me.uid), None)
+        moved = []
+        for r in self.found:
+            if r.ip == ip:
+                r = replace(r, coordinator_uid=r.uid)
+            elif heir is not None and r.coordinator_uid == me.uid:
+                r = replace(r, coordinator_uid=heir.uid)
+            moved.append(r)
+        self.found = moved
 
     def snapshot(self, ip: str) -> Snap:
         self._check(ip)
@@ -105,6 +118,9 @@ class FakeSpeakers:
 
     def transport_state(self, ip: str) -> str:
         self._check(ip)
+        script = self.state_script.get(ip)
+        if script:
+            self.transport_states[ip] = script.pop(0)  # the state stays as last read
         return self.transport_states.get(ip, "STOPPED")
 
     def clear_clip(self, ip: str) -> None:
