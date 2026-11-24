@@ -8,6 +8,7 @@ const { createArrival } = require('./arrival.cjs');
 const { createIdleReport } = require('./idle-report.cjs');
 const { applySavedDsn, settingsDir } = require('./tracing-settings.cjs');
 const { registerMorningEmail } = require('./morning-email.cjs');
+const { registerTelnyxTexts } = require('./telnyx-texts.cjs');
 const { allowFrameNavigation } = require('./frame-nav.cjs');
 const { createUpdateChecker } = require('./update-check.cjs');
 const { runtimePaths } = require('./runtime-paths.cjs');
@@ -278,6 +279,7 @@ app.whenReady().then(() => {
     });
   });
   registerMorningEmail(ipcMain, appWindows, settingsDir(process.env, vaultBase));
+  registerTelnyxTexts(ipcMain, appWindows, settingsDir(process.env, vaultBase));
   handleUpdates();
   if (managed) {
     require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling });
