@@ -22,7 +22,9 @@ function entry(execPath) {
 
 // fs: { mkdir(dir), write(file, text), rename(from, to), remove(file), exists(file) }, all synchronous
 function createAutostart({ fs, env = {}, home, execPath, join = (...p) => p.join('/') }) {
-  const base = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.trim() ? env.XDG_CONFIG_HOME : join(home, '.config');
+  // the XDG spec: a relative or empty value is ignored
+  const xdg = typeof env.XDG_CONFIG_HOME === 'string' ? env.XDG_CONFIG_HOME.trim() : '';
+  const base = xdg.startsWith('/') ? xdg : join(home, '.config');
   const dir = join(base, 'autostart');
   const file = join(dir, NAME);
   return {
@@ -31,8 +33,13 @@ function createAutostart({ fs, env = {}, home, execPath, join = (...p) => p.join
     enable() {
       fs.mkdir(dir);
       const tmp = `${file}.tmp`;
-      fs.write(tmp, entry(execPath));
-      fs.rename(tmp, file);
+      try {
+        fs.write(tmp, entry(execPath));
+        fs.rename(tmp, file);
+      } catch (e) {
+        try { fs.remove(tmp); } catch { /* nothing left to remove */ }
+        throw e;
+      }
     },
     disable() { fs.remove(file); },
   };

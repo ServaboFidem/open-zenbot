@@ -46,3 +46,33 @@ test('a path with a space is quoted', () => {
   assert.equal(execLine('/x/"y"'), '"/x/\\\\"y\\\\"" --hidden');
   assert.equal(execLine("/x/$y"), String.raw`"/x/\\$y" --hidden`);
 });
+
+test('a backslash is written as four, a percent doubled, a backtick escaped', () => {
+  const BS = String.fromCharCode(92);
+  assert.equal(execLine(`/x/a${BS}b`), `"/x/a${BS.repeat(4)}b" --hidden`);
+  assert.equal(execLine('/x/100%'), '"/x/100%%" --hidden');
+  assert.equal(execLine('/x/a`b'), `"/x/a${BS.repeat(2)}\`b" --hidden`);
+});
+
+test('a relative or blank XDG_CONFIG_HOME is ignored', () => {
+  for (const bad of ['relative/dir', '   ', '']) {
+    const { a } = rig({ env: { XDG_CONFIG_HOME: bad } });
+    assert.equal(a.file, '/home/zen/.config/autostart/openzenbot.desktop');
+  }
+});
+
+test('a failed write or rename leaves no .tmp file', () => {
+  for (const failAt of ['write', 'rename']) {
+    const files = new Map();
+    const fs = {
+      mkdir() {},
+      write: (f, t) => { files.set(f, t); if (failAt === 'write') throw new Error('disk'); },
+      rename: () => { throw new Error('busy'); },
+      remove: f => files.delete(f),
+      exists: f => files.has(f),
+    };
+    const a = createAutostart({ fs, env: {}, home: '/home/zen', execPath: '/x/z' });
+    assert.throws(() => a.enable());
+    assert.equal(files.size, 0);
+  }
+});

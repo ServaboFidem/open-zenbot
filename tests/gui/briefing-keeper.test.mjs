@@ -134,15 +134,24 @@ test('the blocker is released after the deadline even when the status read fails
   const slot = Date.parse(at);
   r.box.now = slot - 5 * MIN; await r.keeper.tick();
   assert.equal(r.blocker.started, 1);
-  r.box.st = null;
-  const down = new Error('down');
-  const keeper = r.keeper;
   r.box.fail = true;
-  r.box.now = slot + 5 * MIN; await keeper.tick();
+  r.box.now = slot + 5 * MIN; await r.keeper.tick();
   assert.deepEqual(r.blocker.stopped, [], 'held until the deadline');
-  r.box.now = slot + LATE_LIMIT_MS + MIN; await keeper.tick();
+  r.box.now = slot + LATE_LIMIT_MS + MIN; await r.keeper.tick();
   assert.deepEqual(r.blocker.stopped, [1]);
-  assert.ok(down);
+});
+
+test('a busy status whose next_run is tomorrow releases about 15 minutes after the last good read', async () => {
+  const tomorrow = '2026-11-25T06:45:00Z';
+  const r = rig({ st: status([{ days: [1], time: '06:45' }], { next_run: tomorrow, state: 'playing' }) });
+  const read = Date.parse('2026-11-24T06:46:00Z');
+  r.box.now = read; await r.keeper.tick();
+  assert.equal(r.blocker.started, 1);
+  r.box.fail = true;
+  r.box.now = read + 10 * MIN; await r.keeper.tick();
+  assert.deepEqual(r.blocker.stopped, [], 'still inside the limit');
+  r.box.now = read + LATE_LIMIT_MS + MIN; await r.keeper.tick();
+  assert.deepEqual(r.blocker.stopped, [1], 'released long before tomorrow');
 });
 
 test('a status that is null or not an object does not throw', async () => {
@@ -156,20 +165,24 @@ test('a status that is null or not an object does not throw', async () => {
 });
 
 test('the timer callback never leaves an unhandled rejection', async () => {
-  let cb = null;
+  let cb = null, fail = false, t = 0;
   const rejections = [];
   const onRej = e => rejections.push(e);
   process.on('unhandledRejection', onRej);
+  let stopCalls = 0;
   const k = createBriefingKeeper({
     platform: 'win32', managed: true,
-    fetchStatus: async () => { throw new Error('down'); },
+    fetchStatus: async () => { if (fail) throw new Error('down'); return status([{ days: [1], time: '06:45' }], { next_run: new Date(5 * MIN).toISOString() }); },
     runSchtasks: async () => {}, writeTaskXml: async () => ({ path: 'x', remove() {} }),
-    powerSaveBlocker: { start: () => 1, stop: () => { throw new Error('stop failed'); } },
-    setLoginItem() {}, getLoginItem: () => false, now: () => 0, setTimer: f => { cb = f; return 1; }, clearTimer() {},
+    powerSaveBlocker: { start: () => 1, stop: () => { stopCalls += 1; throw new Error('stop failed'); } },
+    setLoginItem() {}, getLoginItem: () => false, now: () => t, setTimer: f => { cb = f; return 1; }, clearTimer() {},
   });
-  k.start();
-  cb(); cb();
+  k.start();  // a good read inside the window: the hold is taken
+  await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
+  fail = true; t = 5 * MIN + LATE_LIMIT_MS + MIN;
+  cb();  // the read fails past the deadline: the release throws inside tick
   await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
   process.off('unhandledRejection', onRej);
+  assert.ok(stopCalls >= 1, 'the release was attempted');
   assert.deepEqual(rejections, []);
 });

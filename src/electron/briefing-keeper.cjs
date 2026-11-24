@@ -88,7 +88,7 @@ function lines(status) {
 function createBriefingKeeper({ platform, fetchStatus, runSchtasks, writeTaskXml, powerSaveBlocker, setLoginItem, getLoginItem,
   managed, now = Date.now, setTimer = setInterval, clearTimer = clearInterval }) {
   let blockerId = null, wakeError = null, synced = null, timer = null, chain = Promise.resolve();
-  let deadline = null, ticking = false;  // deadline: the last good status's latest next_run + LATE_LIMIT
+  let deadline = null, ticking = false;  // deadline: from the last good status, what justified the hold + LATE_LIMIT
 
   async function applyTasks(wanted) {
     let failed = false;
@@ -148,8 +148,12 @@ function createBriefingKeeper({ platform, fetchStatus, runSchtasks, writeTaskXml
       const next = Date.parse(b.next_run || '');
       return Number.isFinite(next) && next - t <= WAKE_LEAD_MS && t <= next + LATE_LIMIT_MS;
     });
-    const nexts = on.map(b => Date.parse(b.next_run || '')).filter(Number.isFinite);
-    deadline = nexts.length || busy ? Math.max(busy ? t : 0, ...nexts) + LATE_LIMIT_MS : null;
+    // the deadline comes only from what justifies the hold: a slot inside its window, or a briefing under way (whose
+    // next_run has already moved on to a later slot)
+    const reasons = on.map(b => Date.parse(b.next_run || '')).filter(n => Number.isFinite(n) && n - t <= WAKE_LEAD_MS && t <= n + LATE_LIMIT_MS)
+      .map(n => n + LATE_LIMIT_MS);
+    if (busy) reasons.push(t + LATE_LIMIT_MS);
+    deadline = reasons.length ? Math.min(Math.max(...reasons), t + WAKE_LEAD_MS + LATE_LIMIT_MS) : null;
     hold(busy || near);
     if (JSON.stringify(lines(status)) !== synced) await sync();
   }
