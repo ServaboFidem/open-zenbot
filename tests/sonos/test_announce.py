@@ -163,6 +163,40 @@ async def test_volume_is_capped_by_the_ceiling_read_at_play_time(sonos, svc, spe
     assert sets and all(level <= 10 for _, _, level in sets)
 
 
+async def test_a_ceiling_lowered_after_a_speaker_was_set_turns_it_down_before_the_play(sonos, svc, speakers):
+    real = speakers.set_volume
+
+    def set_volume(ip, level):
+        real(ip, level)
+        svc.settings.max_volume = 10  # the owner lowers the ceiling once the first speaker is set
+    speakers.set_volume = set_volume
+    await sonos.announce(None, WAV, 25)
+    play = next(i for i, c in enumerate(speakers.calls) if c[0] == "play_uri")
+    level_at_play: dict[str, int] = {}
+    for c in speakers.calls[:play]:
+        if c[0] == "set_volume":
+            level_at_play[c[1]] = c[2]
+    assert any(c == ("set_volume", c[1], 25) for c in speakers.calls[:play])  # one was set before the change
+    assert level_at_play and all(level <= 10 for level in level_at_play.values())
+
+
+async def test_a_speaker_that_cannot_be_turned_down_under_a_lowered_ceiling_plays_nothing(sonos, svc, speakers):
+    real = speakers.set_volume
+    first: list[str] = []
+
+    def set_volume(ip, level):
+        if first and ip == first[0] and level == 10:
+            raise SpeakerError("network", "ConnectionError")
+        real(ip, level)
+        if not first:
+            first.append(ip)
+            svc.settings.max_volume = 10
+    speakers.set_volume = set_volume
+    with pytest.raises(ValueError):
+        await sonos.announce(None, WAV, 25)
+    assert not any(c[0] == "play_uri" for c in speakers.calls)
+
+
 async def test_named_speakers_only(sonos, speakers):
     result = await sonos.announce(["office", "Attic"], WAV, 25)
     assert result.played == ["Office"]

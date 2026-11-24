@@ -523,6 +523,25 @@ async def test_a_slot_moved_during_the_build_releases_the_claim_and_plays_at_the
     assert BriefingState.load(vault).last_run("morning")["outcome"] == "played"
 
 
+async def test_a_slot_moved_earlier_during_the_build_still_plays_at_the_new_time(vault):
+    clock = Clock(at(6, 40))
+    f = Fakes(vault, clock)
+    svc = make(vault, clock, f)
+
+    async def moved():
+        save(vault, time="06:43")
+        svc.settings_saved("morning")
+
+    f.build_hook = moved
+    await svc.tick()
+    assert f.announces == []
+    f.build_hook = None
+    clock.now = at(6, 41)
+    await svc.tick()
+    assert len(f.announces) == 1 and at(6, 43) <= f.announces[0][0] < at(6, 44)
+    assert BriefingState.load(vault).last_run("morning")["outcome"] == "played"
+
+
 async def test_switched_off_and_on_during_the_build_can_still_play_that_day(vault):
     clock = Clock(at(6, 40))
     f = Fakes(vault, clock)

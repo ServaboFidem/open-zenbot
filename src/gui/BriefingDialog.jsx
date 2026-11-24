@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field } from '@fluentui/react-components';
 import { DAY_NAMES, LOGIN_LABEL, MAX_SLOTS, SAYS_LINE, WEATHER_SET, WEATHER_UNSET,
-  defaultForm, hostedNote, keeperSentence, offersSignIn, readinessFix, saveBlocked, signInStart, validate, formBlocker } from './briefings.js';
+  defaultForm, hostedNote, keeperSentence, offersSignIn, readinessFix, saveBlocked, ceilingLow, speakerChoices, signInStart, validate, formBlocker } from './briefings.js';
 import { toggleDay } from './routine-schedule.js';
 
 // Create or edit the morning briefing. `briefing` is the one to edit or null; `status` is GET /briefings (ceiling,
@@ -24,7 +24,8 @@ export default function BriefingDialog({ briefing, status, ready, reason, weathe
   const setSlot = (i, patch) => set({ slots: form.slots.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
   const hosted = hostedNote(status?.hosted);
   const blocker = formBlocker(status);
-  const noVolume = saveBlocked(status);
+  const noVolume = ceilingLow(status);  // no volume picker; Save is still on for a switched-off briefing
+  const blocked = saveBlocked(status, form);
   const fix = readinessFix(reason || (noVolume ? 'ceiling_zero' : null));
   const signIn = offersSignIn(keeper);
   const sentence = keeperSentence(keeper);
@@ -56,8 +57,8 @@ export default function BriefingDialog({ briefing, status, ready, reason, weathe
           <label className="od-row"><input type="radio" name="briefing-speakers" checked={form.speakers === null} onChange={() => set({ speakers: null })}/> Every speaker</label>
           <label className="od-row"><input type="radio" name="briefing-speakers" checked={form.speakers !== null} onChange={() => set({ speakers: form.speakers || [] })}/> Choose:</label>
           {form.speakers !== null && <div className="od-row briefing-rooms">{rooms.length === 0 && <span>No Sonos speakers answer right now.</span>}
-            {rooms.map(name => <label key={name} className="od-row"><input type="checkbox" checked={form.speakers.includes(name)}
-              onChange={() => set({ speakers: form.speakers.includes(name) ? form.speakers.filter(x => x !== name) : [...form.speakers, name] })}/> {name}</label>)}</div>}
+            {speakerChoices(rooms, form.speakers).map(({ name, missing }) => <label key={name} className="od-row"><input type="checkbox" checked={form.speakers.includes(name)}
+              onChange={() => set({ speakers: form.speakers.includes(name) ? form.speakers.filter(x => x !== name) : [...form.speakers, name] })}/> {name}{missing && ' (not answering)'}</label>)}</div>}
         </div>
       </Field>
       {!noVolume && <Field label="Volume" hint={`Never above your Sonos limit of ${ceiling}.`}>
@@ -70,6 +71,6 @@ export default function BriefingDialog({ briefing, status, ready, reason, weathe
       {signIn && <label className="od-row"><input type="checkbox" checked={login} onChange={e => setLogin(e.target.checked)}/> {LOGIN_LABEL}</label>}
       {sentence && <p className="field-hint">{sentence}</p>}
     </form></DialogContent>
-    <DialogActions><Button appearance="secondary" onClick={onClose}>Cancel</Button><Button appearance="primary" type="submit" form="briefing-form" disabled={busy || noVolume}>Save</Button></DialogActions>
+    <DialogActions><Button appearance="secondary" onClick={onClose}>Cancel</Button><Button appearance="primary" type="submit" form="briefing-form" disabled={busy || blocked}>Save</Button></DialogActions>
   </DialogBody></DialogSurface></Dialog>;
 }

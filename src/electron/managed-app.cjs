@@ -120,13 +120,16 @@ function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, 
     return shell.openPath(paths.logs);
   });
 
-  app.on('second-instance', () => {
+  const bringBack = () => {
     const w = winOf();
-    if (!w) return;
+    if (!w) return false;
     if (w.isMinimized()) w.restore();
     w.show(); w.focus();
-  });
-  app.on('activate', () => { if (!winOf()) win = createWindow(workspace ? 'index.html' : 'setup.html'); });  // macOS
+    return true;
+  };
+  app.on('second-instance', bringBack);
+  // macOS Dock: a window hidden to the tray is shown; with none, one is made
+  app.on('activate', () => { if (!bringBack()) win = createWindow(workspace ? 'index.html' : 'setup.html'); });
 
   // quit: cancel setup (not waited for: a Node download ends on its own), stop the harness once, then quit
   let quitReady = false;

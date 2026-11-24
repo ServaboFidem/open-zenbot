@@ -241,3 +241,11 @@ test('main runs schtasks by its full path and guards the tray', () => {
   assert.match(src, /app\.on\('window-all-closed', \(\) => allClosed\(\{ hasTray, quit: \(\) => app\.quit\(\) \}\)\);/);
   assert.match(src, /closeToTray\(win, \{ isQuitting: \(\) => quitting, hasTray,/);
 });
+
+test('a Dock click on macOS shows a window hidden to the tray, in both modes', () => {
+  const main = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8');
+  assert.match(main, /app\.on\('activate', showWindow\)/);  // showWindow shows a hidden one, makes one when none
+  const managed = readFileSync(new URL('../../src/electron/managed-app.cjs', import.meta.url), 'utf8');
+  assert.match(managed, /app\.on\('activate', \(\) => \{ if \(!bringBack\(\)\) win = createWindow\(/);
+  assert.match(managed, /const bringBack = \(\) => \{[^}]*w\.show\(\)/s);
+});

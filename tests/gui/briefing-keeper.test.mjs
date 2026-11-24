@@ -16,7 +16,7 @@ function rig({ platform = 'win32', st = status([{ days: [0, 2], time: '06:45' }]
     fetchStatus: async () => { if (box.fail) throw new Error('down'); return box.st; },
     runSchtasks: async args => {
       calls.push(args);
-      if (failCreate && args[0] === '/Create') throw new Error('denied');
+      if ((box.failCreate ?? failCreate) && args[0] === '/Create') throw new Error('denied');
     },
     writeTaskXml: async xml => { xmls.push(xml); return { path: `C:\temp\t${xmls.length}.xml`, remove: async () => removed.push(xmls.length) }; },
     powerSaveBlocker: { start: kind => { assert.equal(kind, 'prevent-app-suspension'); blocker.started += 1; return ++blocker.id; }, stop: id => blocker.stopped.push(id) },
@@ -87,6 +87,29 @@ test('a failed task sets wake_error', async () => {
   const ok = rig();
   await ok.keeper.sync();
   assert.equal(ok.keeper.loginState().wake_error, null);
+});
+
+test('a failed task is made again on the next tick, with nothing changed', async () => {
+  const r = rig({ failCreate: true });
+  await r.keeper.tick();
+  assert.equal(r.calls.filter(a => a[0] === '/Create').length, 1);
+  assert.ok(r.keeper.loginState().wake_error);
+  r.box.failCreate = false;
+  await r.keeper.tick();
+  assert.equal(r.calls.filter(a => a[0] === '/Create').length, 2);
+  assert.equal(r.keeper.loginState().wake_error, null);
+  await r.keeper.tick();
+  assert.equal(r.calls.filter(a => a[0] === '/Create').length, 2, 'synced once made');
+});
+
+test('Play now of a switched-off briefing holds the computer awake', async () => {
+  const r = rig({ st: status([{ days: [1], time: '06:45' }], { enabled: false, state: 'playing' }) });
+  await r.keeper.tick();
+  assert.equal(r.blocker.started, 1);
+  assert.equal(r.calls.filter(a => a[0] === '/Create').length, 0, 'still no wake task for it');
+  r.box.st = status([{ days: [1], time: '06:45' }], { enabled: false, state: 'idle' });
+  await r.keeper.tick();
+  assert.deepEqual(r.blocker.stopped, [1]);
 });
 
 test('the blocker is held only inside the window', async () => {

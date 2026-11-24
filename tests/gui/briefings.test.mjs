@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  scheduleLabel, overlap, validate, lastRunLine, readinessLine, hostedNote, defaultForm, canPlay, skippedLate, formBlocker, saveBlocked, KEEPER_LINUX, KEEPER_WAKE, keeperOf, offersSignIn, signInStart, keeperSentence, wakeWarning, toggleBody,
+  scheduleLabel, overlap, validate, lastRunLine, readinessLine, hostedNote, defaultForm, canPlay, skippedLate, formBlocker, saveBlocked, ceilingLow, speakerChoices, loginTook, LOGIN_FAILED, KEEPER_LINUX, KEEPER_WAKE, keeperOf, offersSignIn, signInStart, keeperSentence, wakeWarning, toggleBody,
 } from '../../src/gui/briefings.js';
 
 const wk = { days: [0, 1, 2, 3, 4], time: '06:45' };
@@ -104,11 +104,24 @@ test('formBlocker: the top-level reason, and a ceiling below 1 is a blocker of i
   assert.equal(formBlocker(null), null);
 });
 
-test('saveBlocked only for a ceiling below 1', () => {
-  assert.equal(saveBlocked({ ready: false, reason: 'no_voice', ceiling: 60 }), false);
-  assert.equal(saveBlocked({ ready: false, reason: 'ceiling_zero', ceiling: 0 }), true);
-  assert.equal(saveBlocked({ ready: true, reason: null, ceiling: 0 }), true);
-  assert.equal(saveBlocked(null), false);
+test('saveBlocked only for a ceiling below 1, and never for a switched-off briefing', () => {
+  const on = { enabled: true }, off = { enabled: false };
+  assert.equal(saveBlocked({ ready: false, reason: 'no_voice', ceiling: 60 }, on), false);
+  assert.equal(saveBlocked({ ready: false, reason: 'ceiling_zero', ceiling: 0 }, on), true);
+  assert.equal(saveBlocked({ ready: true, reason: null, ceiling: 0 }, on), true);
+  assert.equal(saveBlocked(null, on), false);
+  assert.equal(saveBlocked({ ready: false, reason: 'ceiling_zero', ceiling: 0 }, off), false);
+  assert.equal(validate({ ...off, slots: [{ days: [0], time: '06:45' }], speakers: null, volume: 50 }, 0), null);
+  assert.equal(ceilingLow({ ready: true, reason: null, ceiling: 0 }), true);
+  assert.equal(ceilingLow({ ready: true, reason: null, ceiling: 5 }), false);
+});
+
+test('speakerChoices keeps a saved speaker that no longer answers, so it can be unticked', () => {
+  assert.deepEqual(speakerChoices(['Den', 'Kitchen'], ['Garage', 'Den']), [
+    { name: 'Den', missing: false }, { name: 'Kitchen', missing: false }, { name: 'Garage', missing: true }]);
+  assert.deepEqual(speakerChoices([], ['Garage', 'Garage']), [{ name: 'Garage', missing: true }]);
+  assert.deepEqual(speakerChoices(['Den'], null), [{ name: 'Den', missing: false }]);
+  assert.deepEqual(speakerChoices(undefined, [7, 'Den']), [{ name: 'Den', missing: true }]);
 });
 
 test('the keeper is the preload API or null', () => {
@@ -160,4 +173,12 @@ test('toggleBody sends the saved volume to switch off and min(volume, limit) to 
   assert.equal(toggleBody(b, false, 0).volume, 50);
   // switched on under a zero limit the harness answers 'Your Sonos volume limit is 0.'
   assert.equal(validate(toggleBody({ ...b, enabled: false }, true, 0), 0), 'Your Sonos volume limit is 0.');
+});
+
+test('loginTook: the keeper must answer the state asked for', () => {
+  assert.equal(loginTook(true, { managed: true, login: true }), true);
+  assert.equal(loginTook(true, { managed: true, login: false }), false);
+  assert.equal(loginTook(false, { managed: true, login: false }), true);
+  assert.equal(loginTook(true, undefined), true);  // an older desktop app answered nothing
+  assert.match(LOGIN_FAILED, /^The briefing is saved, but /);
 });

@@ -17,6 +17,11 @@ export const WEATHER_UNSET = 'Set a weather city in Settings > Calendar > Mornin
 export const KEEPER_LINUX = 'Keep this computer from sleeping overnight, or the briefing will be skipped.';
 export const KEEPER_WAKE = 'Windows wakes the computer for a briefing only when "Allow wake timers" is on in the power plan. Some laptops ignore wake timers.';
 export const LOGIN_LABEL = 'Start ZenBot when I sign in to this computer';
+export const LOGIN_FAILED = 'The briefing is saved, but starting ZenBot when you sign in could not be changed. Try again.';
+
+/** Whether a sign-in change took: the keeper's answer says the login state, which must be the one asked for. An
+ * answer without one (an older desktop app) is taken as done. */
+export const loginTook = (asked, state) => !state || typeof state !== 'object' || typeof state.login !== 'boolean' || state.login === asked;
 
 const READINESS = {
   sonos_off: 'Sonos is off. Switch it on in Settings > Connected apps.',
@@ -178,5 +183,19 @@ export function formBlocker(status) {
   return reason ? readinessLine(reason) : null;
 }
 
-/** Save is off when no volume can be picked: the Sonos limit is below 1. */
-export const saveBlocked = status => !!status && (status.reason === 'ceiling_zero' || status.ceiling < 1);
+/** No volume can be picked: the Sonos limit is below 1. */
+export const ceilingLow = status => !!status && (status.reason === 'ceiling_zero' || status.ceiling < 1);
+
+/** Save is off when the form would play and no volume can be picked. A switched-off briefing keeps its saved volume
+ * (held to 1..100 only, as `validate` and the harness's `check` do), so its days, times and speakers can still be
+ * changed under a limit of 0. */
+export const saveBlocked = (status, form) => ceilingLow(status) && form?.enabled !== false;
+
+/** The speakers the form offers: the ones that answer now, then any saved one that does not (marked missing), so a
+ * saved choice can always be seen and unticked. */
+export function speakerChoices(rooms, chosen) {
+  const found = Array.isArray(rooms) ? rooms.filter(n => typeof n === 'string') : [];
+  const seen = new Set(found);
+  const missing = (Array.isArray(chosen) ? chosen : []).filter(n => typeof n === 'string' && !seen.has(n) && seen.add(n));
+  return [...found.map(name => ({ name, missing: false })), ...missing.map(name => ({ name, missing: true }))];
+}

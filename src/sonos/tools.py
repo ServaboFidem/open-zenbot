@@ -589,11 +589,13 @@ class SonosTools:
 
             # 5. the volume: the briefing's own, never above the ceiling, read again just before each speaker is set.
             # A speaker whose volume cannot be set might be loud, so it leaves the group
+            levels: dict[str, tuple[Room, int]] = {}  # uid -> (speaker, the level the briefing set it to)
             for t in joined:
                 level = max(0, min(volume, self.service.settings.max_volume))
                 try:
                     await self._ask(t, speakers.set_volume, level)
                     played.append(t)
+                    levels[t.uid] = (t, level)
                 except _Failed:
                     if t.uid == lead.uid:
                         raise
@@ -606,9 +608,21 @@ class SonosTools:
             # every speaker that will sound must be one set above, or be taken out or turned down now: the lead's
             # group is read again just before playing
             level = max(0, min(volume, self.service.settings.max_volume))
-            if not await self._quiet_strays(lead, {t.uid for t in played}, {r.uid for r in touched}, level):
+            if not await self._quiet_strays(lead, {t.uid for t in played}, {r.uid for r in touched}, level, levels):
                 error = "uncontrolled"
                 raise ValueError(UNCONTROLLED)
+            # the ceiling may have been lowered while the speakers were set: every speaker set above the ceiling as it
+            # is now is turned down again, until a reading finds none, so no await lies between that reading and the
+            # play. One that cannot be turned down plays nothing
+            while over := [r for r, lv in levels.values() if lv > self.service.settings.max_volume]:
+                ceiling = max(0, self.service.settings.max_volume)
+                for r in over:
+                    try:
+                        await self._ask(r, speakers.set_volume, ceiling)
+                    except _Failed:
+                        error = "uncontrolled"
+                        raise ValueError(UNCONTROLLED) from None
+                    levels[r.uid] = (r, ceiling)
 
             # 6. serve the clip to the lead alone, play it, and wait for it to end (cut off at its length + slack)
             with contextlib.ExitStack() as stack:
@@ -646,7 +660,8 @@ class SonosTools:
         return Announcement(played=sorted((t.name for t in played), key=_key), failed=failed, seconds=seconds,
                             phone_paused=phone_paused)
 
-    async def _quiet_strays(self, lead: Room, set_uids: set[str], touched_uids: set[str], level: int) -> bool:
+    async def _quiet_strays(self, lead: Room, set_uids: set[str], touched_uids: set[str], level: int,
+                            levels: dict[str, tuple[Room, int]] | None = None) -> bool:
         """Read the lead's group again and deal with every member whose volume the briefing did not set: take it
         out of the group, else turn it down to `level` (its snapshot puts its own volume back). False when the group
         cannot be read, or a member cannot be taken out or turned down, or is one the briefing never snapshotted
@@ -665,11 +680,13 @@ class SonosTools:
                 continue
             except _Failed:
                 pass
+            turned = max(0, min(level, self.service.settings.max_volume))
             try:
-                await self._ask(m, self.service.speakers.set_volume,
-                                max(0, min(level, self.service.settings.max_volume)))
+                await self._ask(m, self.service.speakers.set_volume, turned)
             except _Failed:
                 return False
+            if levels is not None:
+                levels[m.uid] = (m, turned)
         return True
 
     async def _clip_ended(self, lead: Room, limit: float) -> bool:

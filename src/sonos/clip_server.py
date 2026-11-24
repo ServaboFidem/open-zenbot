@@ -27,13 +27,51 @@ def local_ip_toward(ip: str) -> str:
         s.close()
 
 
+REQUEST_TIMEOUT_S = 10  # a connection that sends nothing (or stops reading) for this long is closed
+MAX_CONNECTIONS = 8  # at once; a speaker opens one or two
+
+
 class _QuietServer(ThreadingHTTPServer):
-    """Never prints: the default handle_error writes the client's address."""
+    """Never prints: the default handle_error writes the client's address. Only the allowed address gets a handler
+    thread: anything else is closed in the accept loop (`verify_request`), before a byte of it is read, and at most
+    `MAX_CONNECTIONS` are open at once."""
 
     errors = 0
+    allowed = ""
+
+    def __init__(self, *args, **kwargs):
+        self._active = 0
+        self._active_lock = threading.Lock()
+        super().__init__(*args, **kwargs)
 
     def handle_error(self, request, client_address):
         self.errors += 1
+
+    def verify_request(self, request, client_address):
+        if client_address[0] != self.allowed:
+            return False
+        with self._active_lock:
+            if self._active >= MAX_CONNECTIONS:
+                return False
+            self._active += 1
+            return True
+
+    def _done(self) -> None:
+        with self._active_lock:
+            self._active -= 1
+
+    def process_request(self, request, client_address):
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._done()  # no thread started to release it
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._done()
 
 
 class ClipServer:
@@ -66,6 +104,7 @@ class ClipServer:
 
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.0"
+            timeout = REQUEST_TIMEOUT_S  # set on the socket: a stalled request line or a stalled reader ends
 
             def log_message(self, *args):  # silenced
                 pass
@@ -88,7 +127,6 @@ class ClipServer:
                     if a <= b:
                         status, data = 206, wav[a : b + 1]
                         extra["Content-Range"] = f"bytes {a}-{b}/{total}"
-                outer._count()
                 self.send_response(status)
                 self.send_header("Content-Type", "audio/wav")
                 self.send_header("Content-Length", str(len(data)))
@@ -98,6 +136,7 @@ class ClipServer:
                 self.end_headers()
                 if body:
                     self.wfile.write(data)
+                    outer._count()  # only audio actually sent counts as a fetch, never a HEAD
 
             def do_GET(self):
                 self._serve(True)
@@ -109,6 +148,7 @@ class ClipServer:
 
     def __enter__(self) -> "ClipServer":
         self._httpd = _QuietServer((self._bind, 0), self._handler())
+        self._httpd.allowed = self._allowed
         self._httpd.daemon_threads = True
         self._port = self._httpd.server_address[1]
         threading.Thread(target=self._httpd.serve_forever, daemon=True).start()

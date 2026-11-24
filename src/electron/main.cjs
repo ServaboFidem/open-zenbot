@@ -384,7 +384,7 @@ app.whenReady().then(() => {
   createWindow();
   startArrivalPolling();
   app.on('second-instance', showWindow);
-  app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
+  app.on('activate', showWindow);  // macOS Dock: a window hidden to the tray is shown, none is made again
 });
 app.on('before-quit', () => { if (idleReport) idleReport.stop(); if (keeper) keeper.stop(); });
 // closing the last window leaves ZenBot in the tray; the tray's Quit (or the OS) ends it. With no tray it quits.

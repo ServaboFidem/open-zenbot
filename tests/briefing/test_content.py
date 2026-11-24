@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -204,11 +204,20 @@ def test_spoken_time():
 
 def test_weather_line():
     assert weather_line(READY) == ("In Columbus today, partly cloudy, with a high of 54 and a low of 38, "
-                                   "and a 20 percent chance of rain.")
+                                   "and a 20 percent chance of precipitation.")
     assert weather_line({**READY, "precipitation": 0, "low": -3}) == (
         "In Columbus today, partly cloudy, with a high of 54 and a low of minus 3.")
     assert weather_line({"status": "unavailable"}) is None
     assert weather_line({"status": "ready", "location": "X"}) is None
+
+
+def test_build_hands_agenda_the_naive_wall_clock(monkeypatch):
+    seen = []
+    monkeypatch.setattr(content, "agenda", lambda h, now: seen.append(now) or h.agenda)
+    h = make_h(FakeProvider(GOOD))
+    aware = NOW.replace(tzinfo=timezone(timedelta(hours=-5)))
+    asyncio.run(build(h, aware, ToldJokes(), weather=FakeWeather(READY)))
+    assert seen == [NOW] and seen[0].tzinfo is None
 
 
 def test_birthday_line():

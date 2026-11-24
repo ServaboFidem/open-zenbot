@@ -1,8 +1,10 @@
+import socket
 import time
 
 import httpx
 import pytest
 
+from src.sonos import clip_server
 from src.sonos.clip_server import ClipServer, local_ip_toward
 
 WAV = bytes(range(256)) * 4
@@ -25,12 +27,41 @@ def test_head_has_no_body():
         assert r.status_code == 200
         assert r.headers["content-length"] == str(len(WAV))
         assert r.content == b""
+        assert s.hits == 0  # a HEAD is not a fetch of the audio
 
 
-def test_refuses_other_addresses():
+def test_refuses_other_addresses_before_reading_them():
+    # closed in the accept loop, so no handler thread waits on a request line that never comes
     with ClipServer(WAV, allowed="127.0.0.2", bind="127.0.0.1", life_s=30) as s:
-        assert httpx.get(s.url).status_code == 403
+        with pytest.raises(httpx.TransportError):
+            httpx.get(s.url)
         assert s.hits == 0
+
+
+def test_a_stalled_connection_is_closed_after_the_timeout(monkeypatch):
+    monkeypatch.setattr(clip_server, "REQUEST_TIMEOUT_S", 0.3)
+    with ClipServer(WAV, allowed="127.0.0.1", bind="127.0.0.1", life_s=30) as s:
+        host, port = s.url.split("/")[2].split(":")
+        with socket.create_connection((host, int(port)), timeout=5) as c:
+            c.sendall(b"GET /")  # never finishes the request line
+            assert c.recv(1024) == b""  # the server gave up and closed it
+        assert httpx.get(s.url).status_code == 200
+
+
+def test_connections_at_once_are_bounded(monkeypatch):
+    monkeypatch.setattr(clip_server, "MAX_CONNECTIONS", 2)
+    with ClipServer(WAV, allowed="127.0.0.1", bind="127.0.0.1", life_s=30) as s:
+        host, port = s.url.split("/")[2].split(":")
+        held = [socket.create_connection((host, int(port)), timeout=5) for _ in range(2)]
+        try:
+            time.sleep(0.2)
+            with pytest.raises(httpx.TransportError):
+                httpx.get(s.url)
+        finally:
+            for c in held:
+                c.close()
+        time.sleep(0.2)
+        assert httpx.get(s.url).status_code == 200
 
 
 def test_unknown_path_is_404():

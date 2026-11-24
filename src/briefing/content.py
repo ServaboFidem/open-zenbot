@@ -94,7 +94,7 @@ def weather_line(f: dict) -> str | None:
     if not place or not condition:
         return None
     line = f"In {place} today, {condition}, with a high of {high} and a low of {low}"
-    return line + (f", and a {chance} percent chance of rain." if chance > 0 else ".")
+    return line + (f", and a {chance} percent chance of precipitation." if chance > 0 else ".")
 
 
 def birthday_line(names: list[str]) -> str | None:
@@ -201,7 +201,9 @@ async def _greeting_and_joke(h, now: datetime, name: str, jokes: ToldJokes) -> t
 async def build(h, now: datetime, jokes: ToldJokes, weather: MorningWeather | None = None) -> Built:
     """The briefing's words. Sections, in order: greeting, joke, weather, birthdays, calendar, signoff."""
     await synced_calendar(h.calendar)  # a stale or failed sync only logs; the briefing goes on
-    today = agenda(h, now)
+    # agenda's day bounds need the naive wall clock: an aware `now` carries one fixed offset, wrong for one end of a
+    # day the clocks change (the email digest does the same)
+    today = agenda(h, now.replace(tzinfo=None))
     name = _first_name(h)
     greeting, joke = await _greeting_and_joke(h, now, name, jokes)
     parts: list[tuple[str, str]] = [("greeting", greeting)]

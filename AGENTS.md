@@ -1066,9 +1066,11 @@ Settings > Connected apps has a Sonos section (`SonosSettings.jsx`). Design:
   small `ThreadingHTTPServer` made for one announcement and closed after it (`with`), or after the clip's length plus
   `CLIP_LIFE_SLACK_S` (60 s). It binds one address, the computer's own interface that reaches the lead
   (`local_ip_toward`: a UDP connect to the lead's port 1400, nothing sent), on a port the system picks, never
-  `0.0.0.0`. It answers only the lead speaker's address (403 to any other) at `/<token>.wav`, an unguessable token
-  (404 to any other path), `GET` and `HEAD`, with single-range 206 answers and `no-store`, and counts requests
-  (`hits`, so a clip nobody fetched is known). It never logs: no address, URL or token reaches a log line, and the
+  `0.0.0.0`. It answers only the lead speaker's address at `/<token>.wav`, an unguessable token (404 to any other
+  path), `GET` and `HEAD`, with single-range 206 answers and `no-store`, and counts GETs whose audio was written
+  (`hits`, so a clip nobody fetched is known; a HEAD never counts). Any other address is closed in the accept loop
+  (`verify_request`), before a byte is read or a thread started; at most `MAX_CONNECTIONS` (8) are open at once, and a
+  connection idle for `REQUEST_TIMEOUT_S` (10 s) is closed, so a stalled client cannot hold a thread past it. It never logs: no address, URL or token reaches a log line, and the
   server's own error hook is silenced. Windows may ask about the firewall the first time (unchecked in the installed
   app: see Unverified under `### Spoken briefings`).
 - **The volume ceiling** (`max_volume`). Before `sonos_play`, `sonos_control` `resume` and `sonos_group`, every
@@ -1542,8 +1544,10 @@ on; the plan is beside it in `docs/superpowers/plans/`).
   `briefing_state.json`) before anything is built, so it never plays twice, across a restart too; a claim that cannot
   be saved plays nothing. A slot more than `LATE_LIMIT` (15 minutes) old when first seen is skipped (`skipped_late`,
   only the latest of several). Slots count from the later of the claimed slot and the last settings save (`since`):
-  every save of a briefing (an edit, switching it on or off) calls `settings_saved`, which sets `since` to the later of
-  now and the claimed slot, so an edit never yields a false late skip and never a second play that day; only a gap
+  every save of a briefing (an edit, switching it on or off) calls `settings_saved`, which sets `since` to now (never to
+  the claimed slot: the claim itself holds one briefing a day, and a slot moved earlier but still ahead while the old
+  one was being made, 06:45 to 06:43, must still play), so an edit never yields a false late skip and never a second
+  play that day; only a gap
   with the harness off or the computer asleep is a late skip. A time mark (the claim or `since`) that cannot be read
   (a far-off year raises `OverflowError` or `OSError` on Windows, caught with `ValueError`) or lies more than
   `MARK_AHEAD` (24 hours) after now counts as none (`_mark`): such a mark was written while the clock read far ahead,
@@ -1554,7 +1558,9 @@ on; the plan is beside it in `docs/superpowers/plans/`).
   07:00 during the build plays at 07:00, and one switched off and on again before 06:45 plays at 06:45. Every other
   run keeps its claim: one that played, was skipped, or failed to be built, spoken or played. Not ready at the slot (Sonos off, no speaker found, no usable voice, a volume
   ceiling of 0; `readiness`) is waited out until the slot, then recorded as `skipped` with that reason. It plays at
-  `min(volume, the ceiling as it is when it plays)`. Play now (`POST /briefings/{kind}/play`) builds and plays at once,
+  `min(volume, the ceiling as it is when it plays)`: just before the clip plays, `announce` reads the ceiling again and
+  turns down every speaker it set above it (a ceiling lowered while the speakers were being set), until a reading finds
+  none; a speaker that cannot be turned down plays nothing (`UNCONTROLLED`). Play now (`POST /briefings/{kind}/play`) builds and plays at once,
   in a task of its own (a client that goes away does not stop it), claims no slot and is refused with 409 while one
   runs or when not ready; one briefing runs at a time (`Busy`).
 - **The words** (`content.py`, `build`). Sections in order: greeting, joke, weather, birthdays, calendar, sign-off
@@ -1595,7 +1601,10 @@ on; the plan is beside it in `docs/superpowers/plans/`).
 - **The Routines page** (`BriefingsSection.jsx`, `BriefingDialog.jsx`, decisions in `briefings.js`, through
   `briefings-api.js`; no entry in `settings-index.js`, which indexes Settings panels, and Routines is a page). It reads
   the status every `POLL_MS` (15 s) while open. The form names what is missing (`readinessLine`) and blocks on a volume
-  ceiling of 0; its sentences equal the harness's (`check`, `NOT_READY`): keep them equal. The row's switch saves
+  ceiling of 0 (`saveBlocked`; a switched-off briefing can still be saved, its volume held to 1..100 only); its
+  sentences equal the harness's (`check`, `NOT_READY`): keep them equal. A saved speaker that no longer answers is still
+  listed, marked "(not answering)", so it can be unticked (`speakerChoices`). A start-at-sign-in change that fails or
+  does not take after a save says so on its own (`LOGIN_FAILED`, `loginTook`); the briefing stays saved. The row's switch saves
   `toggleBody`: the saved volume to switch off, `min(volume, ceiling)` to switch on. Speaker names are plain text.
 - **Keeping ZenBot ready** (`src/electron/briefing-keeper.cjs`, `autostart.cjs`, `tray.cjs`; the desktop app only,
   through the preload's `briefingKeeper` `get`, `setLogin` and `refresh`, channels `briefing-keeper:*`). The harness
@@ -1606,22 +1615,28 @@ on; the plan is beside it in `docs/superpowers/plans/`).
     `WakeToRun`, least privilege, an interactive token, and an action that does nothing (`cmd.exe /c exit 0`). Made with
     `schtasks /Create /XML`, run by its full path (`%SystemRoot%\System32\schtasks.exe`, as the uninstaller does) from
     an argument array (no shell) and a temporary XML file; matched to the harness's lines at
-    start, when they change and every minute. A failed `schtasks` shows as a warning on the briefing row (`wake_error`).
+    start, when they change and every minute. A failed `schtasks` shows as a warning on the briefing row (`wake_error`),
+    and the lines are made again on the next tick (they count as matched only once every task was made).
     The uninstaller deletes the seven (`build/installer.nsh`, `schtasks /Delete`, errors ignored, no network).
   - *Stay awake*: the keeper holds Electron's `prevent-app-suspension` blocker from the wake time to the slot plus
-    `LATE_LIMIT`, and while a briefing is building or playing. The hold's deadline comes only from what justified it (a
+    `LATE_LIMIT`, and while a briefing is building or playing (a switched-off one's Play now included). The hold's deadline comes only from what justified it (a
     slot inside its window, or a run under way) and is capped at the wake lead plus the late limit, so a harness that
     stops answering, or a stale status, cannot keep the computer awake: when a read fails the hold lasts only until that
     deadline.
-  - *Start at sign-in* (the installed app only; a checkbox in the briefing form): Windows and macOS use Electron's login
-    item with `--hidden`; Linux uses an XDG autostart entry (`autostart.cjs`, `~/.config/autostart/openzenbot.desktop`,
+  - *Start at sign-in* (the installed app only; a checkbox in the briefing form): Windows uses Electron's login item with
+    `--hidden` (on macOS the login item takes no arguments, so a sign-in start there would show the window; macOS is
+    not packaged, and `wasOpenedAtLogin` is not read); Linux uses an XDG autostart entry (`autostart.cjs`, `~/.config/autostart/openzenbot.desktop`,
     or under `$XDG_CONFIG_HOME` when that is an absolute path), because the login item does nothing there. A start with
     `--hidden` shows no window, only the tray (`tray.cjs` `startsHidden`); with no tray it shows the window. In managed mode a hidden start treats the update
     notice as "later" and goes on; any other wait for the user (setup, a failure) shows the window (`managed.cjs`
     `hidden`, `reveal`), since the briefing must run unattended.
   - *The tray* keeps ZenBot running when the window is closed (the GUI row of the table above), which the briefing needs.
     A tray that cannot be made (`new Tray` throws, as on a Linux desktop without one) never fails the start: the app
-    runs without it, and closing the window then quits ZenBot, so no briefing plays until it is started again.
+    runs without it, and closing the window then quits ZenBot, so no briefing plays until it is started again. A tray
+    made on a Linux desktop with no tray host (GNOME without an AppIndicator extension) does not throw, so the app
+    counts it as there: the window then hides on close with no icon to bring it back, and only starting ZenBot again
+    shows it (the second launch hands over to the first). Not detected (known limit). On macOS a Dock click shows a
+    window hidden to the tray.
 - **Ledger.** Kind `briefing`, events `played`, `failed` and `skipped` (the briefing kind, `trigger` `slot` or `now`; for
   a run the counts played and failed, `phone_paused`, `seconds`, the section names and the text's length; for a failure
   the `stage` (`build`, `speak`, `play`, `run`) and an error code; for a skip the outcome `skipped` or `skipped_late`

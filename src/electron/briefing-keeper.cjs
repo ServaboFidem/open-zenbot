@@ -69,11 +69,14 @@ function taskXml({ hh, mm, days }) {
 `;
 }
 
-// The enabled briefings of a status; a status that is not an object, or entries that are not, count as none
-function enabledOf(status) {
+// The briefings of a status, switched on or off; a status that is not an object, or entries that are not, count as none
+function briefingsOf(status) {
   const list = status && typeof status === 'object' && Array.isArray(status.briefings) ? status.briefings : [];
-  return list.filter(b => b && typeof b === 'object' && b.enabled === true);
+  return list.filter(b => b && typeof b === 'object');
 }
+
+// The enabled briefings of a status
+const enabledOf = status => briefingsOf(status).filter(b => b.enabled === true);
 
 // The enabled slot lines of every briefing, in order
 function lines(status) {
@@ -107,6 +110,7 @@ function createBriefingKeeper({ platform, fetchStatus, runSchtasks, writeTaskXml
       try { await runSchtasks(['/Delete', '/TN', taskName(n), '/F']); } catch { /* it was not there */ }
     }
     wakeError = failed ? WAKE_ERROR : null;
+    return !failed;
   }
 
   function sync() {
@@ -116,9 +120,9 @@ function createBriefingKeeper({ platform, fetchStatus, runSchtasks, writeTaskXml
       try { status = await fetchStatus(); } catch { return; }  // the harness may not be up yet
       if (!status || typeof status !== 'object') return;
       const wanted = lines(status);
-      synced = JSON.stringify(wanted);
-      await applyTasks(wanted);
-    }).catch(() => { wakeError = WAKE_ERROR; });
+      // only lines that were all made count as synced: a failed /Create is tried again on the next tick
+      synced = (await applyTasks(wanted)) ? JSON.stringify(wanted) : null;
+    }).catch(() => { synced = null; wakeError = WAKE_ERROR; });
     return chain;
   }
 
@@ -142,7 +146,8 @@ function createBriefingKeeper({ platform, fetchStatus, runSchtasks, writeTaskXml
       return;
     }
     const on = enabledOf(status);
-    const busy = on.some(b => b.state === 'building' || b.state === 'playing');
+    // Play now runs a switched-off briefing too: any briefing under way holds the computer awake
+    const busy = briefingsOf(status).some(b => b.state === 'building' || b.state === 'playing');
     const t = now();
     const near = on.some(b => {
       const next = Date.parse(b.next_run || '');

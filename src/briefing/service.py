@@ -161,11 +161,12 @@ class BriefingService:
 
     def settings_saved(self, kind: str) -> None:
         """Called after every save of a briefing's settings (an edit, switching it on or off): no slot before now
-        is due any more, nor the slot claimed for a run under way. Records no run or skip. An older `since` is not
-        kept: it is never later than this one unless the clock read wrong, and then it must be repaired."""
+        is due any more. Records no run or skip. An older `since` is not kept: it is never later than this one unless
+        the clock read wrong, and then it must be repaired. `since` is never pushed to a claimed slot: a run that
+        plays keeps its claim, which `_plan` already holds to one briefing that day, and a run the save drops
+        releases it, so a slot moved earlier but still ahead (06:45 to 06:43 while 06:45 was being made) still plays."""
         now = self._clock()
-        claimed = self._claimed(kind, now)
-        self.state.set_since(kind, max([now, *([claimed] if claimed is not None else [])]).isoformat())
+        self.state.set_since(kind, now.isoformat())
         try:
             self.state.save(self.vault)
         except Exception as e:  # noqa: BLE001

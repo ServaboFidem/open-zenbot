@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Badge, Button, Switch } from '@fluentui/react-components';
 import { Add24Regular, Play24Regular, WeatherSunny24Regular } from '@fluentui/react-icons';
 import BriefingDialog from './BriefingDialog.jsx';
-import { POLL_MS, SECTION_LINE, canPlay, keeperOf, lastRunLine, readinessFix, readinessLine, scheduleLabel, skippedLate, toggleBody, wakeWarning } from './briefings.js';
+import { LOGIN_FAILED, POLL_MS, SECTION_LINE, loginTook, canPlay, keeperOf, lastRunLine, readinessFix, readinessLine, scheduleLabel, skippedLate, toggleBody, wakeWarning } from './briefings.js';
 import { formatWhen } from './routine-schedule.js';
 
 // The Briefings section at the top of the Routines page: ZenBot speaking on the Sonos speakers. The status is read
@@ -54,8 +54,9 @@ export default function BriefingsSection({ api, online, notify, openSettings }) 
   }
   async function save(body, login) {
     await api.briefings.save('morning', body);
-    if (login !== null && keeper?.setLogin) { try { await keeper.setLogin(login); } catch { /* the briefing is saved */ } }
-    setDialog(null); notify('Morning briefing saved'); await refresh(); await syncKeeper();
+    let loginOk = true;  // the briefing is saved either way; a sign-in change that did not take is said on its own
+    if (login !== null && keeper?.setLogin) { try { loginOk = loginTook(login, await keeper.setLogin(login)); } catch { loginOk = false; } }
+    setDialog(null); notify('Morning briefing saved'); setError(loginOk ? '' : LOGIN_FAILED); await refresh(); await syncKeeper();
   }
   const toggle = (b, enabled) => guarded(() => api.briefings.save('morning', toggleBody(b, enabled, status?.ceiling)));
   const remove = () => { if (window.confirm('Delete the morning briefing?')) guarded(async () => { await api.briefings.remove('morning'); notify('Morning briefing deleted'); }); };
