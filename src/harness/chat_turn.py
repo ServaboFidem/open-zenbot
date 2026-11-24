@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import shutil
 import tempfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -33,7 +35,7 @@ def _cut(text: str, room: int) -> str:
 
 
 def _name(name: str) -> str:
-    return name.replace('"', "'").replace("\n", " ").replace("\r", " ")
+    return _defang(name).replace('"', "'").replace("\n", " ").replace("\r", " ")
 
 
 async def _text(upload: Upload, raw: bytes, convert: Callable[[Path], Awaitable[str]]) -> str:
@@ -41,10 +43,18 @@ async def _text(upload: Upload, raw: bytes, convert: Callable[[Path], Awaitable[
     if suffix in PLAIN_SUFFIXES:
         return raw.decode("utf-8", errors="replace")
     # a private copy outside the vault: a bot could swap the vault file after it was checked
-    with tempfile.TemporaryDirectory() as tmp:
+    tmp = await asyncio.to_thread(tempfile.mkdtemp)
+    try:
         copy = Path(tmp) / f"file{suffix}"
-        copy.write_bytes(raw)
+        await asyncio.to_thread(copy.write_bytes, raw)
         return await convert(copy)
+    finally:
+        await asyncio.to_thread(shutil.rmtree, tmp, True)
+
+
+def _defang(text: str) -> str:
+    """No fence marker can be written inside a fence: a document's '<<<' becomes '‹‹‹'."""
+    return text.replace("<<<", "\u2039\u2039\u2039")
 
 
 async def build(vault_root: Path, files: list[tuple[Upload, bytes]], *, sees: bool | None,
@@ -64,7 +74,7 @@ async def build(vault_root: Path, files: list[tuple[Upload, bytes]], *, sees: bo
         turn.lines.append(line)
         name = _name(upload.name)
         try:
-            text = exclusion.redact(await _text(upload, raw, convert))[0]
+            text = _defang(exclusion.redact(await _text(upload, raw, convert))[0])
         except Exception as e:  # noqa: BLE001  class name only: the message may hold a path or content
             blocks.append(f"({name} could not be read as text: {type(e).__name__}.)")
             continue

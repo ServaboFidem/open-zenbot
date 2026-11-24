@@ -10,7 +10,7 @@ and approval event goes to the ledger.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -264,10 +264,9 @@ class TaskLoop:
                     return
                 continue  # retry the same step
             if completion.images_dropped:  # refused with pictures: later steps must not send them again
-                for m in session.messages:
-                    if m.images:
-                        m.images = []
-                        m.content = f"{m.content}\n\n{CANT_SEE}" if m.content else CANT_SEE
+                session.messages = [
+                    replace(m, images=[], content=f"{m.content}\n\n{CANT_SEE}" if m.content else CANT_SEE)
+                    if m.images else m for m in session.messages]
                 self.ledger.append(Kind.upload, bot.id, session.id, event="images_refused")
             session.steps += 1
             msg = completion.message

@@ -526,6 +526,7 @@ async def test_images_dropped_clears_images_for_later_steps(ledger: Ledger, tmp_
     s = await make_loop(provider, ledger, tmp_path).run(Bot(name="B", role="r"), "look", images=["data:image/webp;base64,AA"])
     second = provider.calls[1]
     assert all(m.images == [] for m in second)
+    assert provider.calls[0][-1].images == ["data:image/webp;base64,AA"]  # the first call's messages are untouched
     user = [m for m in second if m.role == "user"][-1]
     assert user.content.endswith("(The picture could not be shown to this model; use your tools on the file.)")
     ev = ledger.tail(kind="upload", session_id=s.id)
