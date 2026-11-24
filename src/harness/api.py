@@ -81,7 +81,7 @@ from .config import HarnessConfig
 from .conversations import Conversation, ConversationStore, Conversations
 from .dream_routes import dream_router
 from .upload_routes import upload_router
-from . import chat_files
+from . import chat_files, chat_turn
 from .speech_routes import speech_providers, speech_router
 from .loop import Session, SessionState, TaskLoop
 from .scheduler import Routine, RoutineError, RoutineStore, Schedule, Scheduler, next_run, parse_schedule
@@ -565,6 +565,26 @@ class Harness:
         """The one-to-one conversations dreaming may read."""
         return [c for c in self.conversations.all() if c.kind == "bot"] if self.conversations is not None else []
 
+    def sees_images(self, bot: Bot) -> bool | None:
+        """Whether the model a task of `bot` runs on takes pictures: its own model when `_model_for` would use it,
+        else the chat model. None when the provider does not say (or the model is not known). Logs nothing."""
+        store = self.provider_store
+        if store is None:
+            return None
+        choice = self.bot_models.get(bot.id) if self.bot_models else None
+        if choice is not None:
+            try:
+                e = check_choice(store, choice, "text", f"{bot.name}'s model")
+            except ProviderStoreError:
+                pass  # the task runs on the chat model
+            else:
+                m = e.model(choice.model)
+                return m.image_input if m is not None else None
+        chat = self.model_roles().chat
+        e = store.entries.get(chat.provider) if chat is not None else None
+        m = e.model(chat.model) if e is not None else None
+        return m.image_input if m is not None else None
+
     def sent_uploads(self) -> set[str]:
         """The id of every chat upload some conversation's exchange names; these are never swept or deleted."""
         if self.conversations is None:
@@ -1012,7 +1032,7 @@ class Harness:
         protected: dict[str, Any] | None = None, pinned_skills: list[str] | None = None,
         comments: list[dict[str, str]] | None = None, addendum: str = "",
         owner: Bot | None = None, part: PartTurn | None = None, brief: str = "", recall_query: str = "",
-        answers_to: str = "",
+        answers_to: str = "", files: list[tuple[chat_files.Upload, bytes]] | None = None,
     ) -> Session:
         """Run a task for a bot. `owner` is the conversation's owner when it is another bot: `bot` then acts
         in that conversation as a helper (no design folder or design system block, no turn note). It joins the bot's current conversation (or
@@ -1022,14 +1042,27 @@ class Harness:
         not this bot's. `part` makes the task a helper's turn on the conversation's design (`start_helper`).
         `brief` is read after the addendum and pinned with it, but not kept with the exchange (a helper's
         worksheet and rules: a later turn must not replay them). `recall_query`, when given, is what memory recall
-        searches instead of the task (the events routine's is the user's interests text)."""
+        searches instead of the task (the events routine's is the user's interests text). `files` are the uploads
+        the user sent, read once by the route: `task` is the typed text, which the exchange keeps; the session's
+        task adds one `Attached:` line per file, pinned as constraints, and the turn carries their text and
+        pictures (never kept)."""
+        files = list(files or [])
+        user_text = task
+        vault = self.config.vault_root
+        sees = self.sees_images(bot) if files else None
+        file_lines = [chat_turn.attached_line(vault, up, sees) for up, _ in files]
+        if file_lines:
+            joined = "\n".join(file_lines)
+            task = f"{task}\n\n{joined}" if task else joined
         session = Session(bot_id=bot.id, task=task, pinned_skills=list(pinned_skills or []))
         conv = None
         helper = owner is not None and owner.id != bot.id
         if in_conversation:
-            conv, _ = self.conversations.begin((owner or bot).id, task, session_id=session.id, conv_id=conversation_id,
+            sent = [{"id": up.id, "name": up.name, "kind": up.kind, "path": chat_turn.relative(vault, up)}
+                    for up, _ in files]
+            conv, _ = self.conversations.begin((owner or bot).id, user_text, session_id=session.id, conv_id=conversation_id,
                                                comments=comments, addendum=addendum, bot=bot.id if helper else "",
-                                               answers_to=answers_to)
+                                               answers_to=answers_to, files=sent)
             session.conversation_id = conv.id
             session.conversation_owner = conv.owner
             if not helper and self.turn_notes is not None and self.turn_notes.config.enabled:
@@ -1081,9 +1114,15 @@ class Harness:
                         base = pinned or {"task": task, "constraints": []}
                         pinned = {**base, "constraints": [*base.get("constraints", []),
                                                           *(ln for ln in brief.splitlines() if ln.strip())]}
+                    if file_lines:  # the files' paths outlive a mid-task compaction, like the comment lines
+                        base = pinned or {"task": task, "constraints": []}
+                        have = list(base.get("constraints", []))
+                        pinned = {**base, "constraints": [*have, *(ln for ln in file_lines if ln not in have)]}
                     told = "\n\n".join(p for p in (addendum, brief) if p)
+                    turn = (await chat_turn.build(vault, files, sees=sees, convert=self.ingestor.converter.convert)
+                            if files else chat_turn.Turn())
                     await self.loop.run(bot, f"{task}\n\n{told}" if told else task, session, history=history,
-                                        protected=pinned)
+                                        protected=pinned, turn_extra=turn.told, images=turn.images)
                 except asyncio.CancelledError:
                     if session.state not in _ENDED:  # cancelled before the loop could mark it
                         session.state = SessionState.stopped
@@ -1175,6 +1214,8 @@ class OpenRouterKeyIn(BaseModel):
 
 
 NARRATOR_NO_TASK = "The Narrator reads replies aloud; it does not take tasks."
+MAX_PICTURES = 4
+TOO_MANY_PICTURES = "At most 4 pictures a message."
 
 
 class ImageToolIn(BaseModel):
@@ -1334,6 +1375,7 @@ class TaskIn(BaseModel):
     route: Literal["auto", "owner"] = "auto"  # "owner": the Designer takes a revision, whatever the decider would say
     answers_to: str | None = None  # the session id of the reply whose question form this answers
     redo_of: str | None = None  # the session id of a helper's reply the user sends back (Task 10)
+    uploads: list[str] = Field(default_factory=list, max_length=10)  # ids of files sent with the message (POST /uploads)
 
 
 class ScheduleIn(BaseModel):
@@ -1479,6 +1521,8 @@ def create_app(h: Harness) -> FastAPI:
         for ex in record["exchanges"]:
             ex["attachments"] = [_attachment_view(a) for a in ex.get("attachments", [])]
             ex.pop("addendum", None)
+            ex["files"] = [{"id": f.get("id", ""), "name": f.get("name", ""), "kind": f.get("kind", "")}
+                           for f in ex.get("files", [])]  # never the path
             ex["bot_name"] = h.bots[ex["bot"]].name if ex.get("bot") in h.bots else ex.get("bot", "")
         d, _ = exclusion.redact_obj(record)
         return d
@@ -2730,7 +2774,7 @@ def create_app(h: Harness) -> FastAPI:
 
     @app.get("/bots")
     async def list_bots() -> list[dict[str, Any]]:
-        return [b.to_dict() for b in h.bots.values()]
+        return [{**b.to_dict(), "sees_images": h.sees_images(b)} for b in h.bots.values()]
 
     @app.get("/bots/{bot_id}/conversations")
     async def list_conversations(bot_id: str) -> dict[str, Any]:
@@ -3109,10 +3153,19 @@ def create_app(h: Harness) -> FastAPI:
         bot = _bot(h, bot_id)
         if bot.narrates:
             raise HTTPException(409, NARRATOR_NO_TASK)
-        if not body.task.strip():
+        if not body.task.strip() and not body.uploads:
             raise HTTPException(422, "task is empty")
         if not h.bound:
             raise HTTPException(503, UnboundProvider.MESSAGE)
+        # every file is read once, here, before the last check: no await lies between that check and the task
+        files: list[tuple[chat_files.Upload, bytes]] = []
+        for upload_id in dict.fromkeys(body.uploads):
+            try:
+                files.append(await asyncio.to_thread(chat_files.read, h.config.vault_root, upload_id))
+            except chat_files.FileRefused as e:
+                raise HTTPException(422, str(e)) from None
+        if sum(up.kind == "image" for up, _ in files) > MAX_PICTURES:
+            raise HTTPException(422, TOO_MANY_PICTURES)
         _require_idle(bot, body)
         comments = [c.model_dump() for c in body.design_comments]
         redo = _redo_target(bot, body) if body.redo_of else None
@@ -3123,7 +3176,8 @@ def create_app(h: Harness) -> FastAPI:
             conv = _task_conv(bot, body) if bot.studio and body.conversation else None
             if conv is not None and conv.owner == bot.id:
                 conversation_id = conv.id
-            helped = await _helper_turn(bot, body, conv, comments, addendum)
+            # a message with files always goes to the owner, as route "owner": the helpers' worksheets never see them
+            helped = None if files else await _helper_turn(bot, body, conv, comments, addendum)
             if helped is not None:
                 return {"session_id": helped.id, "state": str(helped.state)}
             _require_idle(bot, body, conv)  # the routing await may have let another task start
@@ -3140,7 +3194,7 @@ def create_app(h: Harness) -> FastAPI:
                                    in_conversation=body.conversation,
                                    protected=body.protected.model_dump() if body.protected else None,
                                    comments=comments,
-                                   addendum=addendum, answers_to=body.answers_to or "")
+                                   addendum=addendum, answers_to=body.answers_to or "", files=files)
         except KeyError:
             raise HTTPException(404, "no such conversation") from None
         return {"session_id": session.id, "state": str(session.state)}

@@ -28,6 +28,21 @@ class Turn:
     sent_images: bool = False
 
 
+def attached(name: str, rel: str) -> str:
+    """The one line that names a sent file to the model: here, in the pinned block and in later turns' history."""
+    return f"Attached: {name} ({rel})"
+
+
+def relative(vault_root: Path, upload: Upload) -> str:
+    return upload.path.relative_to(vault_root).as_posix()
+
+
+def attached_line(vault_root: Path, upload: Upload, sees: bool | None) -> str:
+    """The turn's line for one file; a picture the model cannot see says so."""
+    line = attached(upload.name, relative(vault_root, upload))
+    return line + CANT_SEE_LINE if upload.kind == "image" and sees is not True else line
+
+
 def _cut(text: str, room: int) -> str:
     if len(text) <= room:
         return text
@@ -63,15 +78,11 @@ async def build(vault_root: Path, files: list[tuple[Upload, bytes]], *, sees: bo
     blocks: list[str] = []
     left = MESSAGE_CAP
     for upload, raw in files:
-        line = f"Attached: {upload.name} ({upload.path.relative_to(vault_root).as_posix()})"
+        turn.lines.append(attached_line(vault_root, upload, sees))
         if upload.kind == "image":
             if sees is True:
                 turn.images.append("data:image/webp;base64," + base64.b64encode(raw).decode("ascii"))
-            else:
-                line += CANT_SEE_LINE
-            turn.lines.append(line)
             continue
-        turn.lines.append(line)
         name = _name(upload.name)
         try:
             text = _defang(exclusion.redact(await _text(upload, raw, convert))[0])
