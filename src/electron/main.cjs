@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification, powerMonitor, session } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification, powerMonitor, session, Tray, Menu, nativeImage } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { saveMedia } = require('./save-media.cjs');
@@ -12,13 +12,19 @@ const { registerTelnyxTexts } = require('./telnyx-texts.cjs');
 const { allowFrameNavigation } = require('./frame-nav.cjs');
 const { createUpdateChecker } = require('./update-check.cjs');
 const { runtimePaths } = require('./runtime-paths.cjs');
+const { createTray, closeToTray } = require('./tray.cjs');
 
 // The installed app (or ZEN_MANAGED=1 from the repo) sets itself up, runs its own harness and checks for updates
 // (managed-app.cjs); a developer run does none of that. Its bundled uv and harness are in <resources>: from the repo
 // only ZEN_RESOURCES points at them, else a folder that does not exist, so setup fails at its first uv step.
 const managed = app.isPackaged || process.env.ZEN_MANAGED === '1';
-// one window: a second launch hands over to the first ('second-instance' below) and quits
-if (managed && !app.requestSingleInstanceLock()) { app.quit(); return; }
+// one app, in a tray: a second launch hands over to the first ('second-instance') and quits
+if (!app.requestSingleInstanceLock()) { app.quit(); return; }
+// Closing the window hides it (tray.cjs); only a real quit closes it. Registered before the managed handler, which
+// calls app.quit() again after stopping the harness, so that second quit still sees this flag.
+let quitting = false;
+app.on('before-quit', () => { quitting = true; });
+let trayParts = null;
 const resources = app.isPackaged ? process.resourcesPath : (process.env.ZEN_RESOURCES || path.join(__dirname, 'no-bundled-resources'));
 const paths = managed ? runtimePaths({ userData: app.getPath('userData'), resources, platform: process.platform }) : null;
 
@@ -90,6 +96,7 @@ function createWindow(page = 'index.html') {
   win.webContents.on('will-frame-navigate', (event) => {
     if (!event.isMainFrame && !allowFrameNavigation(event.url, harnessBase())) event.preventDefault();
   });
+  closeToTray(win, { isQuitting: () => quitting, onHidden: () => trayParts && trayParts.onHidden() });
   win.loadURL(`app://openzenbot/${page}`);
   return win;
 }
@@ -238,6 +245,27 @@ function startIdleReport() {
   });
   idleReport.start();
 }
+// the window the tray brings back: a hidden one is shown, a destroyed one made again
+function showWindow() {
+  const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && appWindows.has(w.webContents));
+  if (!win) { createWindow(managed ? 'index.html' : undefined); return; }
+  if (win.isMinimized()) win.restore();
+  win.show(); win.focus();
+}
+function startTray() {
+  const fs = require('node:fs');
+  const store = path.join(app.getPath('userData'), 'tray.json');
+  trayParts = createTray({
+    Tray, Menu,
+    icon: nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'zenbot-enso-icon.png')),
+    showWindow, quit: () => app.quit(),
+    notify: body => { if (Notification.isSupported()) new Notification({ title: 'ZenBot', body }).show(); },
+    seenStore: {
+      read: () => { try { return JSON.parse(fs.readFileSync(store, 'utf8')).seen === true; } catch { return false; } },
+      write: () => fs.writeFileSync(store, JSON.stringify({ seen: true })),
+    },
+  });
+}
 app.whenReady().then(() => {
   protocol.handle('app', serveApp);
   // The app's IPC channels (Sentry adds its own when the DSN is set): the renderer asks for a directory or a file, the user
@@ -281,13 +309,16 @@ app.whenReady().then(() => {
   registerMorningEmail(ipcMain, appWindows, settingsDir(process.env, vaultBase));
   registerTelnyxTexts(ipcMain, appWindows, settingsDir(process.env, vaultBase));
   handleUpdates();
+  startTray();
   if (managed) {
     require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling });
     return;
   }
   createWindow();
   startArrivalPolling();
+  app.on('second-instance', showWindow);
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
 });
 app.on('before-quit', () => { if (idleReport) idleReport.stop(); });
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+// closing the last window leaves ZenBot in the tray; the tray's Quit (or the OS) ends it
+app.on('window-all-closed', () => {});
