@@ -52,6 +52,20 @@ def email_text(today: dict, forecast: dict, recommendations: list[dict]) -> tupl
     return f"ZenBot morning digest · {heading}", "\n".join(lines).rstrip()
 
 
+async def synced_calendar(calendar) -> str | None:
+    """With Google connected, run a sync (or join the one in flight, such as the first after start) so what is read
+    holds appointments made elsewhere. Answers a warning when it failed or took too long."""
+    if calendar.conn.state() != "connected":
+        return None
+    try:
+        status = await asyncio.wait_for(calendar.sync(), SYNC_WAIT_S)
+    except Exception as exc:
+        # Class name only: a traceback through the Google client holds its secret and tokens.
+        log.warning("Morning calendar sync unavailable (%s)", type(exc).__name__)
+        return SYNC_STALE
+    return SYNC_STALE if (status or {}).get("sync", {}).get("error") else None
+
+
 class MorningDigest:
     def __init__(self, harness):
         self.h = harness
@@ -70,18 +84,7 @@ class MorningDigest:
         return email_text(today, forecast, recommendations)
 
     async def _synced(self) -> str | None:
-        """With Google connected, run a sync (or join the one in flight, such as the first after start) so the
-        email holds appointments made elsewhere. Answers a warning when it failed or took too long."""
-        calendar = self.h.calendar
-        if calendar.conn.state() != "connected":
-            return None
-        try:
-            status = await asyncio.wait_for(calendar.sync(), SYNC_WAIT_S)
-        except Exception as exc:
-            # Class name only: a traceback through the Google client holds its secret and tokens.
-            log.warning("Morning calendar sync unavailable (%s)", type(exc).__name__)
-            return SYNC_STALE
-        return SYNC_STALE if (status or {}).get("sync", {}).get("error") else None
+        return await synced_calendar(self.h.calendar)
 
     async def _recommendations(self, local: datetime, today: dict) -> list[dict]:
         try:
