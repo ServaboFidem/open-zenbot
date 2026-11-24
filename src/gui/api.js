@@ -5,6 +5,7 @@ import { createMusicApi } from './music-api.js';
 import { createCalendarApi } from './calendar-api.js';
 import { createDiscoverApi } from './discover-api.js';
 import { createMailApi } from './mail-api.js';
+import { createTelnyxApi } from './telnyx-api.js';
 import { createSonosApi } from './sonos-api.js';
 import { createSpeakersApi } from './speakers-api.js';
 import { createFrameParser, END_MISSING } from './speech.js';
@@ -78,6 +79,7 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     calendar: createCalendarApi(call),
     discover: createDiscoverApi(call),
     mail: createMailApi(call),
+    telnyx: createTelnyxApi(call),
     sonos: createSonosApi(call),
     speakers: createSpeakersApi(call),
     dream: dreamApi(call),

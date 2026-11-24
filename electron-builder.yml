@@ -82,6 +82,9 @@ extraResources:
   - from: src/speakers
     to: harness/src/speakers
     filter: *python
+  - from: src/telnyx
+    to: harness/src/telnyx
+    filter: *python
   - from: src/kokoro
     to: harness/src/kokoro
     filter: *python

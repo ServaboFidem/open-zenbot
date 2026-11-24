@@ -96,6 +96,8 @@ from src.events.service import CalendarService
 from src.events.discovery import MANAGED_BY as EVENTS_MANAGED_BY, Discovery
 from src.mail.routes import mail_router
 from src.mail.service import MailService
+from src.telnyx.routes import telnyx_router
+from src.telnyx.service import TelnyxService
 from src.sonos.routes import sonos_router
 from src.sonos.service import SonosService
 from src.sonos.tools import SonosTools
@@ -211,6 +213,7 @@ class Harness:
     calendar: CalendarService | None = None  # the built-in calendar: its store, Google sync, the /calendar routes
     discover: Discovery | None = None  # event discovery: the Eventbrite pool, the scout's tools and routine, the digests
     mail: MailService | None = None  # AgentMail: ZenBot's own inbox, read-only, the /agentmail routes (no bot tool)
+    telnyx: TelnyxService | None = None  # Telnyx: calendar reminders by text to the owner's phone, the /telnyx routes (no bot tool)
     sonos: SonosService | None = None  # Sonos: the speakers found on the home network, the sonos tools, the /sonos routes
     speakers: SpeakerService | None = None  # Wi-Fi speakers: AirPlay, Chromecast and DLNA found, the default speaker, /speakers
     dreamer: Dreamer | None = None  # dreaming: learns facts from the user's own messages while idle; built once, a rebind keeps it
@@ -372,6 +375,8 @@ class Harness:
             self.calendar = CalendarService(c, self.ledger)  # no network until Google is connected
         if self.mail is None:
             self.mail = MailService(c.vault_root, self.ledger)  # no network until a key is saved
+        if self.telnyx is None:  # no network until a key is saved; reads the calendar each pass
+            self.telnyx = TelnyxService(c.vault_root, self.ledger, lambda: self.calendar.store)
         if self.sonos is None:
             self.sonos = SonosService(c.vault_root, self.ledger)  # no network until start() in the lifespan
         # the sonos tools exist only while a speaker answers, and never in a bot room's turn
@@ -1572,7 +1577,7 @@ def create_app(h: Harness) -> FastAPI:
     h.discover.routines, h.discover.scheduler = routines, scheduler
     morning = MorningDigest(h)
     app_routers = [morning_router(morning), music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h),
-                   facebook_router(h.discover, h), dream_router(h), speech_router(h), mail_router(h.mail),
+                   facebook_router(h.discover, h), dream_router(h), speech_router(h), mail_router(h.mail), telnyx_router(h.telnyx),
                    sonos_router(h.sonos, h.sonos_tools), speakers_router(h.speakers)]
 
     @asynccontextmanager
@@ -1617,11 +1622,13 @@ def create_app(h: Harness) -> FastAPI:
         extracting = asyncio.create_task(h.extract_queue.run(stop)) if h.extract_queue else None
         dreaming = asyncio.create_task(h.dreamer.run(stop))  # a pass when the machine is idle and nothing is under way
         morning_mail = asyncio.create_task(morning.delivery.run())
+        texting = asyncio.create_task(h.telnyx.run())  # reminders and the evening rundown, once a minute
         try:
             yield
         finally:
             morning_mail.cancel()
-            await asyncio.gather(morning_mail, return_exceptions=True)
+            texting.cancel()
+            await asyncio.gather(morning_mail, texting, return_exceptions=True)
             warming.cancel()
             refreshing.cancel()
             await h.delegator.stop_all()  # every hand-off in flight ends, its tree killed and its end logged
@@ -1638,6 +1645,7 @@ def create_app(h: Harness) -> FastAPI:
             await h.discover.close()  # first: its background refresh reads through the calendar's HTTP client
             await h.calendar.close()
             await h.mail.close()
+            await h.telnyx.close()
             await h.sonos.close()
             await h.speakers.close()
             if h.speech is not None:

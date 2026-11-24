@@ -68,6 +68,7 @@ class Kind(StrEnum):
     sonos = "sonos"
     speech = "speech"
     speakers = "speakers"
+    telnyx = "telnyx"
 
 
 def _on_loop(loop: asyncio.AbstractEventLoop) -> bool:

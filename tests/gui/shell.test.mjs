@@ -34,7 +34,7 @@ function loadPreload(env, argv = []) {
   return { exposed, invoked, listeners };
 }
 
-const KEYS = ['exportDesign', 'harnessUrl', 'managed', 'morningEmail', 'onOpenMusic', 'openVault', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'updates', 'version'];
+const KEYS = ['exportDesign', 'harnessUrl', 'managed', 'morningEmail', 'onOpenMusic', 'openVault', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'telnyxTexts', 'updates', 'version'];
 
 test('preload exposes only the workspace controls and named settings groups', async () => {
   const { exposed, invoked } = loadPreload({ ZEN_HARNESS_URL: '' });
@@ -58,6 +58,16 @@ test('morning email bridge passes just the recipient and time', async () => {
   await bridge.get();
   await bridge.save({ recipient: 'owner@example.com', time: '07:00', path: 'other', send: true });
   assert.deepEqual(invoked, [['morning-email:get'], ['morning-email:save', { recipient: 'owner@example.com', time: '07:00' }]]);
+});
+
+test('telnyx texts bridge passes just the five settings', async () => {
+  const { exposed, invoked } = loadPreload({});
+  const bridge = exposed.openzenbot.telnyxTexts;
+  assert.deepEqual(Object.keys(bridge).sort(), ['get', 'save']);
+  await bridge.get();
+  await bridge.save({ phone: '+15551234567', lead_minutes: 30, evening: '20:00', before: true, rundown: false, to: 'other' });
+  assert.deepEqual(invoked, [['telnyx-texts:get'],
+    ['telnyx-texts:save', { phone: '+15551234567', lead_minutes: 30, evening: '20:00', before: true, rundown: false }]]);
 });
 
 test('preload reads the version and the managed switch from the main process\'s --zen-* arguments', () => {
