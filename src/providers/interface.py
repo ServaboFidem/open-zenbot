@@ -31,6 +31,10 @@ class ToolCall:
     arguments: dict[str, Any]
 
 
+CANT_SEE = "(The picture could not be shown to this model; use your tools on the file.)"
+IMAGES_REFUSED = {400, 413, 422}
+
+
 @dataclass
 class Message:
     role: str  # system | user | assistant | tool
@@ -38,6 +42,7 @@ class Message:
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None
     name: str | None = None
+    images: list[str] = field(default_factory=list)  # data URIs; sent as image parts by the adapter only
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"role": self.role, "content": self.content}
@@ -49,6 +54,8 @@ class Message:
             d["tool_call_id"] = self.tool_call_id
         if self.name:
             d["name"] = self.name
+        if self.images:
+            d["images"] = len(self.images)
         return d
 
 
@@ -68,6 +75,7 @@ class Completion:
     usage: Usage = field(default_factory=Usage)
     kind: str = ""  # provider kind that produced this; flows into the ledger
     reasoning: str = ""  # the model's thinking before it answered, when the provider returns it (traced, not replayed)
+    images_dropped: bool = False  # the pictures were refused and the call was made again without them
 
 
 class ProviderError(Exception):
