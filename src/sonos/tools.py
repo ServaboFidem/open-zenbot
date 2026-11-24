@@ -9,13 +9,19 @@ never instructions, and never written to the ledger (only the tool, the room and
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import difflib
+import io
+import time
+import wave
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from src.harness.tools import current_call
 from src.memory.ledger import Kind
 from src.skills.catalog import CatalogEntry
-from src.sonos.devices import ACTIONS, Favorite, NowPlaying, Room, SpeakerError
+from src.sonos.clip_server import ClipServer, local_ip_toward
+from src.sonos.devices import ACTIONS, Favorite, NowPlaying, Room, Snap, SpeakerError
 from src.sonos.service import CALL_TIMEOUT_S
 
 GROUP = "sonos"
@@ -28,6 +34,39 @@ CLOSEST_CAP = 10
 IN_ROOM = "Sonos tools are not used in a bot room."
 OFF = "Sonos is off. Switch it on in Settings > Connected apps."
 PLAY_TIMEOUT_S = 45  # clearing the queue, adding a long playlist (30 s at most) and starting it
+
+# Announcements (the spoken briefing): the clip's listener lives for its length plus CLIP_LIFE_SLACK_S, and the wait
+# for it to finish playing is cut off at its length plus CLIP_WAIT_SLACK_S
+ANNOUNCE_TITLE = "ZenBot morning briefing"
+CLIP_LIFE_SLACK_S = 60.0
+CLIP_WAIT_SLACK_S = 30.0
+CLIP_POLL_S = 0.25  # how often the lead's transport is read while the clip plays
+NO_SPEAKER = "No Sonos speaker answered."
+NOT_WAV = "The briefing is not a WAV clip."
+CUT_OFF = "The briefing did not finish playing in time, so it was stopped."
+NOT_FETCHED = "The speakers did not fetch the briefing."
+NOT_SERVED = "The briefing could not be served to the speakers."
+DID_NOT_ANSWER = "did not answer"
+COULD_NOT_JOIN = "could not join"
+_ENDED = ("STOPPED", "PAUSED_PLAYBACK")
+_PLAYING = ("PLAYING", "TRANSITIONING")
+
+
+@dataclass
+class Announcement:
+    played: list[str]  # the speakers the clip played on
+    failed: dict[str, str]  # a speaker's name -> "did not answer" | "could not join"
+    seconds: float  # from the lead starting the clip to its transport ending
+    phone_paused: list[str] = field(default_factory=list)  # leads playing from a phone that did not resume
+
+
+def _clip_seconds(wav: bytes) -> float:
+    try:
+        with wave.open(io.BytesIO(wav)) as w:
+            rate = w.getframerate()
+            return w.getnframes() / rate if rate > 0 else 0.0
+    except (wave.Error, EOFError, ValueError):
+        raise ValueError(NOT_WAV) from None
 
 _ROOM = {"type": "string", "description": "a Sonos room's name, as sonos_rooms lists it"}
 SPECS: dict[str, tuple[str, dict[str, Any]]] = {
@@ -88,12 +127,21 @@ class _Failed(Exception):
 
 
 class SonosTools:
+    # swapped in tests: the clip's listener and this computer's address toward a speaker (read off the class, so a
+    # plain function set here is never bound as a method)
+    server_factory: Callable[..., Any] = ClipServer
+    local_ip: Callable[[str], str] = staticmethod(local_ip_toward)
+
     def __init__(self, service: Any, in_room: Callable[[str], bool]) -> None:
         self.service = service
         self.in_room = in_room
         # one speaker command at a time, so a volume read, its check against the ceiling and its write are never
         # split by another command (a routine and a chat can both be playing with the same speakers)
         self._lock = asyncio.Lock()
+        # clear while an announcement has the speakers regrouped: a command reads the topology only once it is
+        # put back, so it never acts on the briefing's temporary group
+        self._settled = asyncio.Event()
+        self._settled.set()
 
     # registration -------------------------------------------------------------
 
@@ -127,7 +175,12 @@ class SonosTools:
 
     async def _rooms(self) -> tuple[list[Room], list[Room]]:
         """The rooms now, and the ones known before (so a room that vanished reads as not answering). Both are this
-        call's own: two calls at once must not see each other's lists."""
+        call's own: two calls at once must not see each other's lists. While an announcement runs this waits for it
+        to put the speakers back first."""
+        await self._settled.wait()
+        return await self._read_rooms()
+
+    async def _read_rooms(self) -> tuple[list[Room], list[Room]]:
         before = list(self.service.rooms)
         return await self.service.refresh(), before
 
@@ -407,6 +460,244 @@ class SonosTools:
     async def panel_volume(self, room: str, level: int) -> str:
         self._on()
         return await self._volume(room, level, None, "panel_volume")
+
+    # announcements --------------------------------------------------------------------
+    # The spoken briefing: the chosen speakers play one clip together, then every speaker touched is put back as it
+    # was. The run holds the lock throughout, so the tools and the Sonos page wait for it and then run. A speaker
+    # playing the TV or a line-in is left out and not interrupted (the builder's call): neither targeted, paused nor
+    # named in the answer. Only counts reach the ledger: never a name, title or address.
+
+    async def announce(self, names: list[str] | None, wav: bytes, volume: int,
+                       title: str = ANNOUNCE_TITLE) -> Announcement:
+        self._on()
+        if not _is_int(volume):
+            raise ValueError("The volume is a whole number.")
+        clip_s = _clip_seconds(wav)
+        async with self._lock:
+            self._settled.clear()
+            try:
+                return await self._announce(names, wav, volume, title, clip_s)
+            finally:
+                self._settled.set()
+
+    def _note_announce(self, **counts: Any) -> None:
+        self.service.ledger.append(Kind.sonos, "", "", event="announce", **counts)
+
+    async def _announce(self, names: list[str] | None, wav: bytes, volume: int, title: str,
+                        clip_s: float) -> Announcement:
+        speakers = self.service.speakers
+        # 1. the topology, read fresh; the targets are every speaker or the named ones
+        rooms, before = await self._read_rooms()
+        failed: dict[str, str] = {}
+        if names is None:
+            targets = list(rooms)
+        else:
+            targets = []
+            for name in names:
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                key = _key(name)
+                found = next((r for r in rooms if _key(r.name) == key), None)
+                if found is None:
+                    failed[next((r.name for r in before if _key(r.name) == key), name.strip())] = DID_NOT_ANSWER
+                elif all(t.uid != found.uid for t in targets):
+                    targets.append(found)
+        targets.sort(key=lambda r: _key(r.name))
+        lead_of = {r.uid: self._lead(r, rooms) for r in rooms}
+
+        def group(r: Room) -> list[Room]:
+            """The speaker's group as it is now: its lead and every member."""
+            return [lead_of[r.uid], *self._members(lead_of[r.uid], rooms)]
+
+        # 2. snapshot every target and every speaker of each group a target is in: those groups are taken apart. A
+        # lead's snapshot keeps what it plays; a member's only its volume (SoCo's Snapshot)
+        wanted = {g.uid for t in targets for g in group(t)}
+        snaps: dict[str, Snap] = {}
+        for r in rooms:
+            if r.uid in wanted:
+                try:
+                    snaps[r.uid] = await self._ask(r, speakers.snapshot)
+                except _Failed:
+                    pass
+        for t in targets:
+            if t.uid not in snaps:
+                failed[t.name] = DID_NOT_ANSWER
+
+        def on_tv(r: Room) -> bool:
+            return any(s is not None and s.source == "tv" for s in (snaps.get(r.uid), snaps.get(lead_of[r.uid].uid)))
+        targets = [t for t in targets if t.uid in snaps and not on_tv(t)]
+        if not targets:
+            self._note_announce(targets=0, played=0, failed=len(failed), phone_paused=0, seconds=0.0,
+                                put_back_failed=0, error="none")
+            raise ValueError(NO_SPEAKER)
+        touched_uids = {g.uid for t in targets for g in group(t)}
+        touched = [r for r in rooms if r.uid in touched_uids and r.uid in snaps]
+        target_uids = {t.uid for t in targets}
+        asked = len(targets)
+
+        lead: Room | None = None
+        played: list[Room] = []
+        started = finished = False
+        seconds = 0.0
+        error = "interrupted"
+        phone_paused: list[str] = []
+        try:
+            # 3. pause each lead that is playing
+            silent: set[str] = set()
+            for r in touched:
+                if r.coordinator_uid != r.uid or snaps[r.uid].state != "PLAYING":
+                    continue
+                try:
+                    await self._ask(r, speakers.transport, "pause")
+                except _Failed:
+                    if r.uid in target_uids:
+                        failed[r.name] = DID_NOT_ANSWER
+                        silent.add(r.uid)
+            targets = [t for t in targets if t.uid not in silent]
+            if not targets:
+                raise ValueError(NO_SPEAKER)
+
+            # 4. one lead: a target that already leads a group of several, else the first target by name; every
+            # other target joins it, and a speaker that fails to join is left out
+            lead = next((t for t in targets if t.coordinator_uid == t.uid and len(self._members(t, rooms)) > 1),
+                        targets[0])
+            if lead.coordinator_uid != lead.uid:
+                await self._ask(lead, speakers.unjoin)  # out of someone else's group first
+            else:
+                for r in touched:  # members of its group that were not chosen must not hear the clip
+                    if r.coordinator_uid == lead.uid and r.uid != lead.uid and r.uid not in target_uids:
+                        try:
+                            await self._ask(r, speakers.unjoin)
+                        except _Failed:
+                            pass
+            joined = [lead]
+            for t in targets:
+                if t.uid == lead.uid:
+                    continue
+                if t.coordinator_uid == lead.uid:  # already in the lead's group
+                    joined.append(t)
+                    continue
+                try:
+                    await self._ask(t, speakers.join, lead.ip)
+                    joined.append(t)
+                except _Failed:
+                    failed[t.name] = COULD_NOT_JOIN
+
+            # 5. the volume: the briefing's own, never above the ceiling, read again just before each speaker is set.
+            # A speaker whose volume cannot be set might be loud, so it leaves the group
+            for t in joined:
+                level = max(0, min(volume, self.service.settings.max_volume))
+                try:
+                    await self._ask(t, speakers.set_volume, level)
+                    played.append(t)
+                except _Failed:
+                    if t.uid == lead.uid:
+                        raise
+                    failed[t.name] = DID_NOT_ANSWER
+                    try:
+                        await self._ask(t, speakers.unjoin)
+                    except _Failed:
+                        pass
+
+            # 6. serve the clip to the lead alone, play it, and wait for it to end (cut off at its length + slack)
+            with contextlib.ExitStack() as stack:
+                try:
+                    server = stack.enter_context(type(self).server_factory(
+                        wav, allowed=lead.ip, bind=type(self).local_ip(lead.ip), life_s=clip_s + CLIP_LIFE_SLACK_S))
+                except OSError:
+                    error = "serve"
+                    raise ValueError(NOT_SERVED) from None
+                started = True  # from here a failure stops the lead, in case it did start
+                await self._ask(lead, speakers.play_uri, server.url, title, timeout=PLAY_TIMEOUT_S)
+                begun = time.monotonic()
+                finished = await self._clip_ended(lead, clip_s + CLIP_WAIT_SLACK_S)
+                seconds = round(time.monotonic() - begun, 1)
+                fetched = getattr(server, "hits", None) != 0
+            if not finished:
+                error = "cut_off"
+                raise ValueError(CUT_OFF)
+            if not fetched:
+                error = "not_fetched"
+                raise ValueError(NOT_FETCHED)
+            error = ""
+        except _Failed as e:  # only the lead's own failures get here
+            error = "lead"
+            raise ValueError(f"{e.room.name} did not answer.") from None
+        except ValueError as e:
+            if error == "interrupted":
+                error = {OFF: "off", NO_SPEAKER: "none"}.get(str(e), "other")
+            raise
+        finally:
+            # 7. put back, always
+            phone_paused, undone = await self._put_back(lead, started and not finished, touched, lead_of, snaps)
+            self._note_announce(targets=asked, played=len(played), failed=len(failed),
+                                phone_paused=len(phone_paused), seconds=seconds, put_back_failed=undone, error=error)
+        return Announcement(played=sorted((t.name for t in played), key=_key), failed=failed, seconds=seconds,
+                            phone_paused=phone_paused)
+
+    async def _clip_ended(self, lead: Room, limit: float) -> bool:
+        """Whether the lead's transport ended (STOPPED or PAUSED) within `limit` seconds of the clip starting. A
+        reading that fails is tried again on the next poll."""
+        deadline = time.monotonic() + limit
+        while True:
+            await asyncio.sleep(CLIP_POLL_S)
+            try:
+                state = await self._ask(lead, self.service.speakers.transport_state)
+            except _Failed:
+                state = ""
+            if state in _ENDED:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+
+    async def _put_back(self, lead: Room | None, stop: bool, touched: list[Room], lead_of: dict[str, Room],
+                        snaps: dict[str, Snap]) -> tuple[list[str], int]:
+        """Put every touched speaker back as it was: stop the clip if it may still play, unjoin every speaker, rejoin
+        each to its old lead, restore the snapshots (leads first, so playback comes back once the groups are whole),
+        and clear the dead clip from a lead that had no track. Each call goes straight to the service, past the
+        switch check: switched off or not, the house is put back. One speaker's failure is counted and the rest go
+        on. Returns the phone-played leads that did not resume, and the count of calls that failed."""
+        speakers = self.service.speakers
+        failures = 0
+
+        async def quietly(fn: Callable[..., Any], *args: Any, timeout: float = CALL_TIMEOUT_S) -> Any:
+            nonlocal failures
+            try:
+                return await self.service.call(fn, *args, timeout=timeout)
+            except Exception:  # noqa: BLE001 - one speaker's failure must not stop the others being put back
+                failures += 1
+                return None
+
+        if stop and lead is not None:
+            await quietly(speakers.transport, lead.ip, "stop")
+        leads = [r for r in touched if r.coordinator_uid == r.uid]
+        members = [r for r in touched if r.coordinator_uid != r.uid]
+        # members first, then the old leads, and the briefing's lead last: by then it is alone, so no group is ever
+        # handed on to another speaker as its lead leaves
+        last = [lead] if lead is not None and any(r.uid == lead.uid for r in touched) else []
+        for r in [*members, *leads]:
+            if lead is None or r.uid != lead.uid:
+                await quietly(speakers.unjoin, r.ip)
+        for r in last:
+            await quietly(speakers.unjoin, r.ip)
+        for r in touched:
+            old = lead_of[r.uid]
+            if old.uid != r.uid:
+                await quietly(speakers.join, r.ip, old.ip)
+        for r in [*leads, *members]:
+            await quietly(speakers.restore, snaps[r.uid], timeout=PLAY_TIMEOUT_S)
+        # a member rejoined its lead and holds no track of its own; a lead that had none would keep the clip
+        for r in leads:
+            if not snaps[r.uid].had_track:
+                await quietly(speakers.clear_clip, r.ip)
+        phone_paused = []
+        for r in leads:
+            snap = snaps[r.uid]
+            if snap.source == "phone" and snap.state == "PLAYING":
+                state = await quietly(speakers.transport_state, r.ip)
+                if state not in _PLAYING:
+                    phone_paused.append(r.name)
+        return phone_paused, failures
 
 
 def _and(names: list[str]) -> str:
