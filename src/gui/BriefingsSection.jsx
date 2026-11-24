@@ -33,8 +33,7 @@ export default function BriefingsSection({ api, online, notify, openSettings }) 
   useEffect(() => { if (online) readWeather(); }, [online]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const morning = status?.briefings?.find(b => b.kind === 'morning') || null;
-  // with nothing saved yet the form says what is missing: the same codes the harness answers a Play now with
-  const reason = morning ? morning.reason : (status?.rooms?.length === 0 ? 'no_speakers' : null);
+  const reason = status?.reason || null;  // the top level holds even before a briefing exists
 
   async function guarded(fn) {
     setBusy(true); setError('');

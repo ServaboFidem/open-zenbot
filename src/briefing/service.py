@@ -176,7 +176,7 @@ class BriefingService:
         except Exception as e:  # noqa: BLE001
             log.warning("briefing hosted check failed: %s", type(e).__name__)
             hosted = None
-        return {"briefings": items, "ceiling": self.sonos.settings.max_volume,
+        return {"briefings": items, "ready": reason is None, "reason": reason, "ceiling": self.sonos.settings.max_volume,
                 "rooms": [r.name for r in self.sonos.rooms], "hosted": hosted, "error": store.error}
 
     # -- the loop ----------------------------------------------------------------------------------------------

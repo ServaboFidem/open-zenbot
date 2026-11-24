@@ -1,7 +1,8 @@
 // The Briefings section's decisions (BriefingsSection.jsx, BriefingDialog.jsx). Pure, so they test without a DOM
 // (tests/gui/briefings.test.mjs). Speaker names come from Sonos: shown as plain text, never as markup.
 // The sentences in `validate` and `READINESS` are the harness's own (src/briefing/settings.py `check`,
-// src/briefing/routes.py `NOT_READY`): keep them equal.
+// src/briefing/routes.py `NOT_READY`): keep them equal. `validate` mirrors only the sentences this form can trigger
+// (not "Only the morning briefing exists." or "Enabled must be on or off.").
 
 export const POLL_MS = 15000;  // the status is read again this often while the Routines page is open
 export const MAX_SLOTS = 7;
@@ -145,3 +146,13 @@ export const canPlay = b => b?.state === 'idle' && b?.ready === true;
 
 /** The desktop app's keeper (Task 12), or null in a plain browser. */
 export const keeperOf = win => win?.openzenbot?.briefingKeeper || null;
+
+/** What is missing, from the top-level status (it holds even before a briefing exists); a ceiling below 1 counts. */
+export function formBlocker(status) {
+  if (!status) return null;
+  const reason = status.reason || (status.ceiling < 1 ? 'ceiling_zero' : null);
+  return reason ? readinessLine(reason) : null;
+}
+
+/** Save is off when no volume can be picked: the Sonos limit is below 1. */
+export const saveBlocked = status => !!status && (status.reason === 'ceiling_zero' || status.ceiling < 1);

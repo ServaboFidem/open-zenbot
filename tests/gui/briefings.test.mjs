@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  scheduleLabel, overlap, validate, lastRunLine, readinessLine, hostedNote, defaultForm, canPlay, skippedLate, KEEPER_LINUX,
+  scheduleLabel, overlap, validate, lastRunLine, readinessLine, hostedNote, defaultForm, canPlay, skippedLate, formBlocker, saveBlocked, KEEPER_LINUX,
 } from '../../src/gui/briefings.js';
 
 const wk = { days: [0, 1, 2, 3, 4], time: '06:45' };
@@ -94,4 +94,19 @@ test('canPlay needs idle and ready', () => {
 
 test('the Linux sentence is verbatim', () => {
   assert.equal(KEEPER_LINUX, 'Keep this computer from sleeping overnight, or the briefing will be skipped.');
+});
+
+test('formBlocker: the top-level reason, and a ceiling below 1 is a blocker of its own', () => {
+  assert.equal(formBlocker({ ready: true, reason: null, ceiling: 60 }), null);
+  assert.equal(formBlocker({ ready: false, reason: 'no_voice', ceiling: 60 }), 'Set up a voice in Settings > Harness Tools > Read aloud first.');
+  assert.equal(formBlocker({ ready: false, reason: 'ceiling_zero', ceiling: 0 }), 'Your Sonos volume limit is 0.');
+  assert.equal(formBlocker({ ready: true, reason: null, ceiling: 0 }), 'Your Sonos volume limit is 0.');
+  assert.equal(formBlocker(null), null);
+});
+
+test('saveBlocked only for a ceiling below 1', () => {
+  assert.equal(saveBlocked({ ready: false, reason: 'no_voice', ceiling: 60 }), false);
+  assert.equal(saveBlocked({ ready: false, reason: 'ceiling_zero', ceiling: 0 }), true);
+  assert.equal(saveBlocked({ ready: true, reason: null, ceiling: 0 }), true);
+  assert.equal(saveBlocked(null), false);
 });

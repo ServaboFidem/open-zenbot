@@ -308,6 +308,20 @@ async def test_status_lists_next_run_and_readiness(vault):
     assert s["ceiling"] == 60 and s["rooms"] == ["Kitchen", "Office"] and s["hosted"] is None
 
 
+async def test_status_carries_a_top_level_readiness_with_no_briefing(vault):
+    clock = Clock(at(6, 0))
+    f = Fakes(vault, clock)
+    svc = make(vault, clock, f)
+    assert svc.status()["ready"] is True and svc.status()["reason"] is None
+    f.voice_ok = False
+    st = svc.status()
+    assert st["ready"] is False and st["reason"] == "no_voice"
+    assert st["briefings"][0]["reason"] == "no_voice"
+    f.voice_ok = True
+    f.sonos.settings.max_volume = 0
+    assert svc.status()["reason"] == "ceiling_zero"
+
+
 async def test_loop_survives_an_exception(vault, monkeypatch):
     class Stop(BaseException):
         pass
