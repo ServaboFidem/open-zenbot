@@ -160,8 +160,13 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     patchBot: (id, body) => call('PATCH', `/bots/${enc(id)}`, body),
     // A task joins the bot's current conversation (or the one named); a routine passes conversation: false.
     // designComments: notes on elements of the newest design revision, sent only when there are some.
-    startTask: (botId, task, { conversationId, conversation = true, protected: block, designComments, route, answersTo, redoOf } = {}) =>
-      post(`/bots/${enc(botId)}/tasks`, { task, ...(conversationId ? { conversation_id: conversationId } : {}), conversation, ...(block ? { protected: block } : {}), ...(designComments?.length ? { design_comments: designComments } : {}), ...(route ? { route } : {}), ...(answersTo ? { answers_to: answersTo } : {}), ...(redoOf ? { redo_of: redoOf } : {}) }),
+    // uploads: ids of files sent with the message (POST /uploads), sent only when there are some.
+    startTask: (botId, task, { conversationId, conversation = true, protected: block, designComments, route, answersTo, redoOf, uploads } = {}) =>
+      post(`/bots/${enc(botId)}/tasks`, { task, ...(conversationId ? { conversation_id: conversationId } : {}), conversation, ...(block ? { protected: block } : {}), ...(designComments?.length ? { design_comments: designComments } : {}), ...(route ? { route } : {}), ...(answersTo ? { answers_to: answersTo } : {}), ...(redoOf ? { redo_of: redoOf } : {}), ...(uploads?.length ? { uploads } : {}) }),
+    // files added to a chat message before it is sent: one request per file, the bytes as base64
+    upload: (name, data) => post('/uploads', { name, data }),
+    removeUpload: id => del(`/uploads/${enc(id)}`),
+    uploadUrl: id => `${base}/uploads/${enc(id)}`,
     // conversations
     conversations: botId => get(`/bots/${enc(botId)}/conversations`),
     designs: () => get('/designs'),  // every design made in a studio bot's conversation, newest first
@@ -248,7 +253,7 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     cacheFacts: sessionId => get('/memory/cache', { session_id: sessionId }),
     addCacheFact: (sessionId, text, entities = []) => post('/memory/cache', { text, entities }, { session_id: sessionId }),
     // vault
-    upload: (name, text) => post('/vault/upload', { name, text }),
+    vaultUpload: (name, text) => post('/vault/upload', { name, text }),
     ingest: path => post('/vault/ingest', { path }),
     vaultSync: () => get('/vault/sync'),
     rescan: () => post('/vault/rescan'),

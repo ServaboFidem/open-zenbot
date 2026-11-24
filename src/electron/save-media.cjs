@@ -8,7 +8,7 @@ const { pipeline } = require('node:stream/promises');
 const MAX_NAME = 120;
 const PICTURES = /\.(jpe?g|png|gif|webp|avif|svg|mp4|webm|mov)$/i;
 const ROUTES = [/^\/media$/, /^\/rooms\/[^/]+\/attachments\/[^/]+$/, /^\/conversations\/[^/]+\/attachments\/[^/]+$/,
-  /^\/conversations\/[^/]+\/design\/export\.zip$/];
+  /^\/conversations\/[^/]+\/design\/export\.zip$/, /^\/uploads\/[^/]+$/];
 
 /** The name's last segment, without characters Windows refuses, trimmed, at most 120 characters with its extension kept. */
 function safeName(name) {
@@ -20,7 +20,7 @@ function safeName(name) {
   return base.slice(0, MAX_NAME - ext.length) + ext;
 }
 
-/** Only the harness's media route, attachment routes and a design's zip, on the harness's own origin. */
+/** Only the harness's media route, attachment routes, a design's zip and a chat message's files, on the harness's own origin. */
 function allowedUrl(url, harnessBase) {
   let u, base;
   try { u = new URL(url); base = new URL(harnessBase); } catch { return false; }
