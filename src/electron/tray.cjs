@@ -23,14 +23,33 @@ function createTray({ Tray, Menu, icon, showWindow, quit, notify, seenStore }) {
   return { tray, onHidden };
 }
 
-// A closed window is hidden, not destroyed, unless the app is quitting.
-function closeToTray(win, { isQuitting, onHidden }) {
+// createTray, or null when no tray can be made (a Linux desktop without one): the app goes on without it, and only
+// the error's message is logged.
+function openTray(options, { log = console.error } = {}) {
+  try {
+    return createTray(options);
+  } catch (e) {
+    log(`tray could not be made: ${e && e.message ? e.message : 'unknown error'}`);
+    return null;
+  }
+}
+
+// A closed window is hidden, not destroyed, unless the app is quitting or there is no tray to bring it back from.
+function closeToTray(win, { isQuitting, onHidden, hasTray = () => true }) {
   win.on('close', event => {
-    if (isQuitting()) return;
+    if (isQuitting() || !hasTray()) return;
     event.preventDefault();
     win.hide();
     if (onHidden) onHidden();
   });
 }
 
-module.exports = { createTray, closeToTray, NOTE };
+// The last window closed: with a tray ZenBot keeps running there; without one it would run invisibly, so it quits.
+function allClosed({ hasTray, quit }) {
+  if (!hasTray()) quit();
+}
+
+// A --hidden start (at sign-in) stays out of sight only when there is a tray to open the window from.
+const startsHidden = (argv, hasTray) => (argv || []).includes('--hidden') && !!hasTray;
+
+module.exports = { createTray, openTray, closeToTray, allClosed, startsHidden, NOTE };

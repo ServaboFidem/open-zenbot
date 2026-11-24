@@ -12,8 +12,8 @@ const { registerTelnyxTexts } = require('./telnyx-texts.cjs');
 const { allowFrameNavigation } = require('./frame-nav.cjs');
 const { createUpdateChecker } = require('./update-check.cjs');
 const { runtimePaths } = require('./runtime-paths.cjs');
-const { createTray, closeToTray } = require('./tray.cjs');
-const { createBriefingKeeper, shouldShowWindow } = require('./briefing-keeper.cjs');
+const { openTray, closeToTray, allClosed, startsHidden } = require('./tray.cjs');
+const { createBriefingKeeper } = require('./briefing-keeper.cjs');
 
 // The installed app (or ZEN_MANAGED=1 from the repo) sets itself up, runs its own harness and checks for updates
 // (managed-app.cjs); a developer run does none of that. Its bundled uv and harness are in <resources>: from the repo
@@ -73,10 +73,12 @@ function serveApp(request) {
 
 const appWindows = new WeakSet();
 // page: index.html (the workspace) or setup.html (the installed app's setup and start screen)
-// started hidden (--hidden, at sign-in): the first window stays out of sight and the tray is all there is
+// started hidden (--hidden, at sign-in): the first window stays out of sight and the tray is all there is; with no
+// tray it shows, or nothing could open it
 let firstWindow = true;
+const hasTray = () => trayParts !== null;
 function createWindow(page = 'index.html') {
-  const show = !firstWindow || shouldShowWindow(process.argv);
+  const show = !firstWindow || !startsHidden(process.argv, hasTray());
   firstWindow = false;
   const win = new BrowserWindow({
     show,
@@ -102,7 +104,7 @@ function createWindow(page = 'index.html') {
   win.webContents.on('will-frame-navigate', (event) => {
     if (!event.isMainFrame && !allowFrameNavigation(event.url, harnessBase())) event.preventDefault();
   });
-  closeToTray(win, { isQuitting: () => quitting, onHidden: () => trayParts && trayParts.onHidden() });
+  closeToTray(win, { isQuitting: () => quitting, hasTray, onHidden: () => trayParts && trayParts.onHidden() });
   win.loadURL(`app://openzenbot/${page}`);
   return win;
 }
@@ -261,7 +263,7 @@ function showWindow() {
 function startTray() {
   const fs = require('node:fs');
   const store = path.join(app.getPath('userData'), 'tray.json');
-  trayParts = createTray({
+  trayParts = openTray({
     Tray, Menu,
     icon: nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'zenbot-enso-icon.png')),
     showWindow, quit: () => app.quit(),
@@ -306,7 +308,9 @@ function startKeeper() {
     },
     // schtasks.exe from an argument array, never a shell
     runSchtasks: args => new Promise((resolve, reject) => {
-      execFile('schtasks.exe', args, { windowsHide: true, timeout: 20_000 }, err => (err ? reject(err) : resolve()));
+      // by full path, as build/installer.nsh does, so no schtasks.exe found elsewhere on PATH is run
+      const exe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'schtasks.exe');
+      execFile(exe, args, { windowsHide: true, timeout: 20_000 }, err => (err ? reject(err) : resolve()));
     }),
     writeTaskXml: async xml => {
       const file = path.join(app.getPath('temp'), `openzenbot-wake-${process.pid}-${Date.now()}.xml`);
@@ -374,7 +378,7 @@ app.whenReady().then(() => {
   startTray();
   startKeeper();
   if (managed) {
-    require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling, hidden: !shouldShowWindow(process.argv) });
+    require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling, hidden: startsHidden(process.argv, hasTray()) });
     return;
   }
   createWindow();
@@ -383,5 +387,5 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
 });
 app.on('before-quit', () => { if (idleReport) idleReport.stop(); if (keeper) keeper.stop(); });
-// closing the last window leaves ZenBot in the tray; the tray's Quit (or the OS) ends it
-app.on('window-all-closed', () => {});
+// closing the last window leaves ZenBot in the tray; the tray's Quit (or the OS) ends it. With no tray it quits.
+app.on('window-all-closed', () => allClosed({ hasTray, quit: () => app.quit() }));

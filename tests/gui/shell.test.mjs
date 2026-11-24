@@ -231,3 +231,13 @@ test('the setup page has its own closed CSP and sets text, never markup', () => 
   assert.match(build, /entryPoints: \['src\/gui\/setup\.js'\]/);
   assert.match(build, /copyFileSync\('src\/gui\/setup\.html', 'dist\/setup\.html'\)/);
 });
+
+test('main runs schtasks by its full path and guards the tray', () => {
+  const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');  // checked out with CRLF on Windows
+  assert.match(src, /path\.join\(process\.env\.SystemRoot \|\| 'C:\\\\Windows', 'System32', 'schtasks\.exe'\)/);
+  assert.doesNotMatch(src, /execFile\('schtasks\.exe'/);
+  assert.match(src, /trayParts = openTray\(/);  // a tray that cannot be made never fails the start
+  assert.doesNotMatch(src, /createTray\(/);
+  assert.match(src, /app\.on\('window-all-closed', \(\) => allClosed\(\{ hasTray, quit: \(\) => app\.quit\(\) \}\)\);/);
+  assert.match(src, /closeToTray\(win, \{ isQuitting: \(\) => quitting, hasTray,/);
+});

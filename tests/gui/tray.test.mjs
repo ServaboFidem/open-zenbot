@@ -73,3 +73,34 @@ test('the tray note is shown once ever', () => {
   again.onHidden();
   assert.deepEqual(again.calls.notify, []);
 });
+
+test('a tray that cannot be made is logged by its message and the app goes on without one', () => {
+  const { openTray } = createRequire(import.meta.url)('../../src/electron/tray.cjs');
+  const logged = [];
+  class Broken { constructor() { const e = new Error('no tray here'); e.stack = 'SECRET-STACK'; throw e; } }
+  const parts = openTray({ Tray: Broken, Menu: FakeMenu, icon: 'i', showWindow() {}, quit() {}, notify() {}, seenStore: { read: () => false, write() {} } },
+    { log: (...a) => logged.push(a.join(' ')) });
+  assert.equal(parts, null);
+  assert.deepEqual(logged, ['tray could not be made: no tray here']);
+  const ok = openTray({ Tray: FakeTray, Menu: FakeMenu, icon: 'i', showWindow() {}, quit() {}, notify() {}, seenStore: { read: () => false, write() {} } }, { log() {} });
+  assert.ok(ok && ok.tray instanceof FakeTray);
+});
+
+test('without a tray, closing the window closes it and the app quits', () => {
+  const { allClosed, startsHidden } = createRequire(import.meta.url)('../../src/electron/tray.cjs');
+  const win = fakeWin(); let prevented = 0, hid = 0;
+  closeToTray(win, { isQuitting: () => false, hasTray: () => false, onHidden: () => { hid++; } });
+  win.handlers.close({ preventDefault: () => { prevented++; } });
+  assert.equal(prevented, 0);
+  assert.equal(win.hidden, 0);
+  assert.equal(hid, 0);
+  let quits = 0;
+  allClosed({ hasTray: () => false, quit: () => { quits++; } });
+  assert.equal(quits, 1);
+  allClosed({ hasTray: () => true, quit: () => { quits++; } });
+  assert.equal(quits, 1);  // with a tray, ZenBot stays running
+  // a --hidden start with no tray would leave nothing to open: the window shows
+  assert.equal(startsHidden(['x', '--hidden'], true), true);
+  assert.equal(startsHidden(['x', '--hidden'], false), false);
+  assert.equal(startsHidden(['x'], true), false);
+});
