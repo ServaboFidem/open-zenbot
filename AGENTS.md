@@ -1529,14 +1529,18 @@ was done on).
   call, a security matter. Page types are never documents: `CLOSED_SUFFIXES` (`.html`, `.htm`, `.xhtml`, `.xht`,
   `.shtml`, `.xml`, `.svg`, `.svgz`, `.mht`, `.mhtml`, the same list as `api.CLOSED_SUFFIXES`) are taken out of
   `DOCUMENT_SUFFIXES`, so what is left is `.csv .docx .epub .json .markdown .md .pdf .pptx .text .txt .xlsx` (the
-  ingestor's plain and MarkItDown suffixes less the pages). A document is matched by suffix and refused when its first
-  bytes are a picture's. Anything else is refused with "ZenBot can't work with this kind of file yet." (`REFUSED`).
+  ingestor's plain and MarkItDown suffixes less the pages; `tests/test_chat_files.py` pins the list). At upload a
+  file is a picture by its first bytes whatever its name (picture bytes under a document's name become a picture);
+  else a document by its suffix. At send a stored document whose first bytes are a picture's is refused. Anything else is refused with "ZenBot can't work with this kind of file yet." (`REFUSED`).
   `chat-files.js` `DOCUMENT_SUFFIXES` equals the harness's list: keep them equal.
 - **Limits.** A picture upload is at most 50,000,000 bytes (`MAX_PICTURE_UPLOAD`), a document 20,000,000
-  (`MAX_DOCUMENT`), both checked from the base64 length before decoding; over is 413 "This file is too large.". A
+  (`MAX_DOCUMENT`), both checked from the base64 length before decoding, so the limit is chosen by the name's suffix
+  (`.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`: the picture limit, `upload_routes.PICTURE_SUFFIXES`; any other: the
+  document limit); over is 413 "This file is too large.". A
   message carries at most 10 files in the page (`MAX_FILES`; the harness takes at most 10 ids a task, `TaskIn.uploads`)
   and at most 4 pictures (`MAX_PICTURES`, both sides, 422 "At most 4 pictures a message.").
-- **Pictures are converted, never kept as sent.** `to_webp` makes a still WebP: upright by its EXIF turn, scaled down
+- **Pictures are converted, never kept as sent.** `to_webp` makes a still WebP: upright by its EXIF turn, a 16-bit
+  grey scaled to 8 bits (not clipped to white), scaled down
   to fit 2,048 px a side (`MAX_SIDE`; never up), lossless, and when that passes 5,000,000 bytes (`MAX_PICTURE`) lossy
   at quality 90 (`LOSSY_QUALITY`); still over is "This picture is too large.". No metadata is written (`exif=b""`),
   and the original bytes are never written to disk. A picture over `Image.MAX_IMAGE_PIXELS` is refused. The stored file is
@@ -1548,7 +1552,9 @@ was done on).
   /uploads/{id}` answers the stored bytes read once through `chat_files.read` (a picture as `image/webp`, a document as
   `application/octet-stream` with `Content-Disposition: attachment`), `nosniff` and `no-store`, 404 "No such file."
   for an id that is malformed or not what was saved. `DELETE /uploads/{id}` answers 204; 409 "That file was already
-  sent." for an id any exchange names (`Harness.sent_uploads`). A sweep in the `lifespan` runs hourly and deletes
+  sent." for an id any exchange names (`Harness.sent_uploads`) and for one a send is reading right now
+  (`Harness.sending_uploads`: the task route adds the ids before its first await and removes them in a `finally` once
+  `start_task` has returned, when the exchange names them, or the send has failed). A sweep in the `lifespan` runs hourly and deletes
   upload folders older than a day that no conversation names (`chat_files.sweep`); an unsent file the user left is
   gone after a day.
 - **Reading is link-safe on POSIX.** Where the platform has `dir_fd` (`_DIR_FD`), `read`, `save`, `remove` and `sweep`
@@ -1558,17 +1564,20 @@ was done on).
   and read once, at most the limit plus one byte, and **the bytes checked are the bytes returned**: a caller never
   opens the path again. At send the stored file must still be what was saved: a WebP named `.webp` whose first bytes
   are WebP and has one frame, or a document suffix that is not a picture. Anything else is refused (422 with
-  `REFUSED`). **Known limit, Windows:** there is no `dir_fd` there, so the fallback checks the folders and the file
+  `REFUSED`); an id whose folder or file is gone (swept, or deleted) is 422 "That file is no longer there. Attach it
+  again." (`MISSING`), as is any id when `uploads/chat` does not exist yet. **Known limit, Windows:** there is no `dir_fd` there, so the fallback checks the folders and the file
   with `lstat` and opens by path, and a link or reparse point swapped in between the check and the open can be
   followed. It has not been tried on Windows.
 - **Sending** (`POST /bots/{id}/tasks`, `TaskIn.uploads`). A message may be only files (an empty `task` is 422 only
   with no uploads). The route reads every upload once, in `asyncio.to_thread`, before its last idle check, so no
   `await` lies between that check and the task, and the exchange keeps the typed text and `files`; the conversation's
   title is the first file's name when the message has no text. The session's task is the typed text plus one
-  `Attached: <name> (<vault path>)` line per file (`chat_turn.attached`), pinned as constraints so a mid-task
-  compaction cannot fold the paths away; a picture's line ends " (this model can't see pictures; use your tools on the
+  `Attached: <name> (<vault path>)` line per file (`chat_turn.attached`), pinned with the task so a mid-task
+  compaction cannot fold the paths away (as constraints when the task carries a pinned block of its own without them,
+  never twice); a picture's line ends " (this model can't see pictures; use your tools on the
   file)" unless the model is known to take pictures (`CANT_SEE_LINE`). Later turns read the same line from the
-  exchange (`conversations.user_text`), never the content. A message with files to ZenBot is ZenBot's own task: the page
+  exchange (`conversations.user_text`), never the content; a conversation fold summarises those lines like any other
+  text. A message with files to ZenBot is ZenBot's own task: the page
   does not call `/orchestrate`, so no room takes it. A studio message with files goes to the Designer and never to a
   helper (`_helper_turn` is skipped). Files go only with a normal composer send, never with a Redo or a design change.
   Every upload is read again at send, so a file swapped in the vault after the upload (a bot can write there) is
@@ -1602,8 +1611,10 @@ was done on).
   (`save-media.cjs` `ROUTES` has `/^\/uploads\/[^/]+$/`).
 - **Ledger.** Kind `upload`, events `saved` (`id`, `file_kind`, `size`, `suffix`), `refused` (`reason` `size`, `read` or
   `type`), `removed`, `swept` (`count`) and `images_refused` (a model refused the pictures). Never a file name, a path, a
-  byte or text. The loop's `tool_call` and `turn` entries are as for any task: a bot's own read of the file with its
-  tools is in them.
+  byte or text. The session's `start` entry carries `files` (a count), `images` (the pictures sent as image parts)
+  and `images_sent`, and its `task` holds the `Attached:` lines (names and vault-relative paths), as it holds any task
+  text; the upload code's own entries never carry a name, a path or bytes. The loop's `tool_call` and `turn` entries
+  are as for any task: a bot's own read of the file with its tools is in them.
 - **Bots and uploads (a known residual risk).** The harness API has no authentication, and the vault is writable by
   bots. So a bot with `shell` (curl) or the `browser` server can upload files, read any unsent upload (`GET /uploads/{id}`
   once it knows an id, which is 128 random bits, or by listing `<vault>/uploads/chat/`) and delete one not yet sent.
@@ -1620,7 +1631,8 @@ was done on).
 Rules for contributors: never serve, send or convert an upload through its path: use `chat_files.read` and the bytes
 it returns. Never write a picture's original bytes or its metadata; keep GIF89a and multi-frame pictures refused. Never
 accept a page type as a document. Convert a document only from a private copy of the checked bytes, and keep the
-`<<<` to `‹‹‹` rule for text and names. Keep a file's content, name and path out of the ledger and logs, and its
+`<<<` to `‹‹‹` rule for text and names. Keep a file's content, name and path out of the `upload` entries and logs
+  (the session `start` entry's task holds the `Attached:` lines like any task text), and its
 bytes out of traces. Keep `uploads/chat/` in the vault (bots must be able to read what the user sent) and never put
 a secret there. Every `/uploads` POST takes a required JSON body. Keep the GUI's suffixes and limits equal to the
 harness's. Tests never touch the network or a real model: a fake provider and `httpx.MockTransport`. Tests:
