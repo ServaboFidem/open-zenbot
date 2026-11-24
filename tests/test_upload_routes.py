@@ -134,11 +134,18 @@ async def test_files_round_trip_through_the_conversation_store_and_survive_a_res
     harness.conversations.get(conv.id).exchanges[-1].files = files
     rec = harness.conversations.get(conv.id).to_record()
     assert Conversation.from_record(json.loads(json.dumps(rec))).exchanges[-1].files == files
-    old = Conversation.from_record({k: v for k, v in rec.items() if k != "x"})
-    assert old.exchanges[-1].files == files
     legacy = json.loads(json.dumps(rec))
     for e in legacy["exchanges"]:
         e.pop("files")
     assert Conversation.from_record(legacy).exchanges[-1].files == []
     os.utime(up.path.parent, (0, 0))
     assert chat_files.sweep(harness.config.vault_root, harness.sent_uploads(), time.time()) == 0
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "mkfifo"), reason="needs POSIX fifos")
+async def test_get_of_a_fifo_is_404(client, harness):
+    import os
+    folder = harness.config.vault_root / "uploads" / "chat" / ("7" * 32)
+    folder.mkdir(parents=True)
+    os.mkfifo(folder / "a.txt")
+    assert (await client.get("/uploads/" + "7" * 32)).status_code == 404

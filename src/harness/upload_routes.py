@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 from pathlib import Path
@@ -62,7 +63,7 @@ def upload_router(h) -> APIRouter:
     @r.get("/{upload_id}")
     async def get_upload(upload_id: str) -> Response:
         try:
-            up, data = chat_files.read(h.config.vault_root, upload_id)
+            up, data = await asyncio.to_thread(chat_files.read, h.config.vault_root, upload_id)
         except chat_files.FileRefused:
             raise HTTPException(404, NO_FILE) from None
         headers = {"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"}
@@ -75,7 +76,7 @@ def upload_router(h) -> APIRouter:
     async def delete_upload(upload_id: str) -> Response:
         if upload_id in h.sent_uploads():
             raise HTTPException(409, SENT)
-        if not chat_files.remove(h.config.vault_root, upload_id):
+        if not await asyncio.to_thread(chat_files.remove, h.config.vault_root, upload_id):
             raise HTTPException(404, NO_FILE)
         log("removed")
         return Response(status_code=204)

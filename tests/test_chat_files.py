@@ -246,3 +246,12 @@ def test_a_linked_chat_folder_is_refused(vault, tmp_path):
 def test_remove_is_false_for_unknown_and_malformed_ids(vault):
     assert chat_files.remove(vault, "../x") is False
     assert chat_files.remove(vault, "4" * 32) is False
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs POSIX fifos")
+def test_a_fifo_as_the_entry_is_refused_without_blocking(vault):
+    folder = vault / "uploads" / "chat" / ("6" * 32)
+    folder.mkdir(parents=True)
+    os.mkfifo(folder / "a.txt")
+    with pytest.raises(FileRefused):
+        chat_files.read(vault, "6" * 32)

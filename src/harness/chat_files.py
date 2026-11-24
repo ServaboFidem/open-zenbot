@@ -86,6 +86,7 @@ ID = re.compile(r"[0-9a-f]{32}")
 _BAD = re.compile(r"[^A-Za-z0-9._ -]")
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _BIN = getattr(os, "O_BINARY", 0)
+_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
 _DIR_FD = os.open in os.supports_dir_fd and os.mkdir in os.supports_dir_fd and hasattr(os, "O_DIRECTORY")
 
 
@@ -217,7 +218,9 @@ def read(vault_root: Path, upload_id: str) -> tuple[Upload, bytes]:
                     names = os.listdir(dfd)
                     if len(names) != 1:
                         raise FileRefused(REFUSED)
-                    ffd = os.open(names[0], os.O_RDONLY | _NOFOLLOW | _BIN, dir_fd=dfd)
+                    if not stat.S_ISREG(os.stat(names[0], dir_fd=dfd, follow_symlinks=False).st_mode):
+                        raise FileRefused(REFUSED)  # a FIFO would block the open
+                    ffd = os.open(names[0], os.O_RDONLY | _NOFOLLOW | _BIN | _NONBLOCK, dir_fd=dfd)
                 finally:
                     os.close(dfd)
             else:
@@ -226,7 +229,9 @@ def read(vault_root: Path, upload_id: str) -> tuple[Upload, bytes]:
                 names = os.listdir(root / upload_id)
                 if len(names) != 1:
                     raise FileRefused(REFUSED)
-                ffd = os.open(root / upload_id / names[0], os.O_RDONLY | _NOFOLLOW | _BIN)
+                if not stat.S_ISREG((root / upload_id / names[0]).lstat().st_mode):
+                    raise FileRefused(REFUSED)
+                ffd = os.open(root / upload_id / names[0], os.O_RDONLY | _NOFOLLOW | _BIN | _NONBLOCK)
     except OSError:
         raise FileRefused(REFUSED) from None
     name = names[0]
