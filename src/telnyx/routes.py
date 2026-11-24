@@ -9,8 +9,9 @@ class name is logged."""
 from __future__ import annotations
 
 import logging
+from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 
 from src.events.routes import NothingIn
@@ -32,10 +33,6 @@ GENERAL = {
 UNREADABLE = (502, "Telnyx answered in a way ZenBot could not read.")
 
 
-class KeyIn(BaseModel):
-    key: str
-
-
 class NumberIn(BaseModel):
     id: str
 
@@ -53,9 +50,9 @@ def telnyx_router(service: TelnyxService) -> APIRouter:
         return service.status()
 
     @r.put("/key")
-    async def save_key(body: KeyIn):
+    async def save_key(body: Any = Body(None)):  # checked here: a validation error would echo the key back
         try:
-            return await service.set_key(body.key)
+            return await service.set_key(body.get("key") if isinstance(body, dict) else None)
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
         except TelnyxError as err:

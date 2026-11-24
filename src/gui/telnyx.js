@@ -51,3 +51,11 @@ export function errorLine(err) {
   const text = typeof err?.message === 'string' ? err.message.trim() : '';
   return !text || /^[[{]/.test(text) ? FALLBACK : text;
 }
+
+// Reads of the status or the numbers that started before a key or number change must not land after it: a slow
+// read from when the section opened would otherwise put back "no key" over a key just saved. Each read takes a
+// token; a change takes a new one, and a read whose token is no longer current is dropped.
+export function createReads() {
+  let generation = 0;
+  return { start: () => generation, change: () => ++generation, current: token => token === generation };
+}

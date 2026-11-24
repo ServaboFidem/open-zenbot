@@ -54,7 +54,8 @@ class SendRecord:
         with self._db() as db:
             return db.execute("""
                 INSERT INTO texts (key, kind, day, state, attempts, at) VALUES (?, ?, ?, 'sending', 1, ?)
-                ON CONFLICT(key) DO UPDATE SET state='sending', attempts=texts.attempts + 1, at=excluded.at
+                ON CONFLICT(key) DO UPDATE SET state='sending', attempts=texts.attempts + 1, day=excluded.day,
+                    at=excluded.at
                 WHERE texts.state='retry' AND texts.attempts < ?
             """, (key, kind, day, at, MAX_ATTEMPTS)).rowcount == 1
 
@@ -65,7 +66,8 @@ class SendRecord:
             db.execute("""
                 INSERT INTO texts (key, kind, day, state, message_id, error, at) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(key) DO UPDATE SET state=excluded.state, message_id=excluded.message_id,
-                    error=excluded.error, at=excluded.at
+                    error=excluded.error, at=excluded.at,
+                    day=CASE WHEN excluded.day != '' THEN excluded.day ELSE texts.day END
             """, (key, kind, day, state, message_id, error, at))
 
     def last_sent_at(self) -> float | None:
@@ -75,6 +77,12 @@ class SendRecord:
     def last_test_at(self) -> float | None:
         with self._db() as db:
             return db.execute(f"SELECT MAX(at) FROM texts WHERE kind='test' AND state IN {_COUNTED}").fetchone()[0]
+
+    def day(self, key: str) -> str:
+        """The local day a key's text is counted on ("" when unknown). A retry claimed again moves to that day."""
+        with self._db() as db:
+            row = db.execute("SELECT day FROM texts WHERE key=?", (key,)).fetchone()
+        return row[0] if row else ""
 
     def attempts(self, key: str) -> int:
         with self._db() as db:

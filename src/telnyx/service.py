@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
 
@@ -48,6 +48,11 @@ def _local(now: datetime | float | None) -> datetime:
     return datetime.fromtimestamp(now) if now is not None else datetime.now()
 
 
+def _still_on(start, now, kind: str) -> bool:
+    """The texts settings still allow this kind of text, to the phone the pass started with."""
+    return bool(now and now.on and now.phone == start.phone and (now.before if kind == "before" else now.rundown))
+
+
 class TelnyxService:
     def __init__(self, vault_root: Path, ledger, calendar_store: Callable[[], object],
                  http: httpx.AsyncClient | None = None):
@@ -61,12 +66,16 @@ class TelnyxService:
         self.http = http if http is not None else httpx.AsyncClient(timeout=TIMEOUT_S, follow_redirects=False)
         self._lock = asyncio.Lock()
         self._capped_day = ""
+        self.clock: Callable[[], datetime] = datetime.now  # read before every send, not only at a pass's start
 
     def __repr__(self) -> str:  # never the key
         return "TelnyxService()"
 
     def _client(self, key: str | None = None) -> Telnyx:
         return Telnyx(self.http, key if key is not None else self.keys.api_key)
+
+    def _now(self, now: datetime | float | None) -> datetime:
+        return _local(now if now is not None else self.clock())
 
     def _log(self, event: str, **data) -> None:
         self.ledger.append(Kind.telnyx, "", "", event=event, **data)
@@ -91,20 +100,19 @@ class TelnyxService:
         keys = TelnyxKeys(api_key=key)
         keys.save(self.vault_root)  # written before it is used, so a failed write leaves the old key in use
         self.keys = keys
-        if cleared:
-            empty = TelnyxNumber()
-            empty.save(self.vault_root)
-            self.number = empty
         self._log("key_saved", number_cleared=cleared)
+        if cleared:
+            self.number = TelnyxNumber()  # never sent from with the new key, even if clearing its file fails below
+            self.number.save(self.vault_root)
         return self.status()
 
     def forget_key(self) -> dict:
         """Forget the key and the sending number. Nothing changes at Telnyx."""
-        keys, number = TelnyxKeys(), TelnyxNumber()
-        keys.save(self.vault_root)
-        number.save(self.vault_root)
-        self.keys, self.number = keys, number
+        keys = TelnyxKeys()
+        keys.save(self.vault_root)  # a failed write leaves the old key saved and in use
+        self.keys, self.number = keys, TelnyxNumber()  # out of use once the key file is cleared
         self._log("key_forgotten")
+        self.number.save(self.vault_root)
         return self.status()
 
     async def numbers(self) -> list[dict]:
@@ -113,8 +121,10 @@ class TelnyxService:
         return await self._client().numbers()
 
     async def choose_number(self, number_id: str) -> dict:
+        """KeyError for a number the key cannot see, or one checked with a key replaced while the list was read."""
+        key = self.keys.api_key
         found = next((n for n in await self.numbers() if n["id"] == number_id), None)
-        if found is None:
+        if found is None or self.keys.api_key != key:
             raise KeyError(number_id)
         number = TelnyxNumber(id=found["id"], phone=found["phone"], profile_id=found["profile_id"])
         number.save(self.vault_root)
@@ -153,14 +163,14 @@ class TelnyxService:
         self._log("sent", type=kind, message_id=message_id)
         return None
 
-    async def test(self, now: float | None = None) -> dict:
+    async def test(self, now: datetime | float | None = None) -> dict:
         """Send the fixed test sentence to the owner's saved phone. LookupError when not set up, PermissionError
         within a minute of the last test or once the day's cap is reached; a failed send raises its TelnyxError."""
         async with self._lock:
             config = read_texts(self.vault_root)
             if not (self.keys.api_key and self.number.phone and config and config.phone):
                 raise LookupError("not set up")
-            current = _local(now)
+            current = self._now(now)
             at, day = current.timestamp(), current.date().isoformat()
             last = self.record.last_test_at()
             if (last is not None and at - last < TEST_GAP_S) or self.record.count(day) >= DAILY_CAP:
@@ -171,9 +181,11 @@ class TelnyxService:
             return self.status(current)
 
     async def tick(self, now: datetime | None = None) -> None:
-        """One pass: send what is due, at most PER_PASS, within the day's cap."""
+        """One pass: send what is due, at most PER_PASS, within the day's cap. A send can take up to the client's
+        timeout, so the clock and the texts settings are read again before each text: a reminder whose event has
+        started is not sent, and a new day or changed settings end the pass (the next one builds its list afresh)."""
         async with self._lock:
-            current = _local(now)
+            current = self._now(now)
             config = read_texts(self.vault_root)
             if not (self.keys.api_key and self.number.phone and config and config.on):
                 return
@@ -187,10 +199,18 @@ class TelnyxService:
                 state = self.record.known(item.key)
                 if state not in (None, "retry"):
                     continue
+                moment = self._now(now)
+                if moment.date().isoformat() != day or not _still_on(config, read_texts(self.vault_root), item.kind):
+                    break
+                if item.start is not None and moment.astimezone(UTC) >= item.start:
+                    continue  # started while an earlier text was sending; nothing is recorded
+                at = moment.timestamp()
                 if not item.text:
                     self.record.mark(item.key, "empty", at, kind=item.kind, day=day)
                     continue
-                if state is None and self.record.count(day) >= DAILY_CAP:
+                # a retry was counted on its first day; carried past midnight it counts toward the new one
+                counted_today = state == "retry" and self.record.day(item.key) == day
+                if not counted_today and self.record.count(day) >= DAILY_CAP:
                     self.record.mark(item.key, "capped", at, kind=item.kind, day=day)
                     continue
                 if sent >= PER_PASS:
@@ -211,9 +231,12 @@ class TelnyxService:
         return count
 
     async def run(self) -> None:
-        self.settle()
+        settled = False
         while True:
             try:
+                if not settled:  # tried again each pass until it works; no text goes before it has
+                    self.settle()
+                    settled = True
                 await self.tick()
             except Exception as e:  # noqa: BLE001 - the loop outlives any failure; texts may be in the frames
                 log.warning("telnyx pass failed: %s", type(e).__name__)

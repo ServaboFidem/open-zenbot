@@ -83,4 +83,12 @@ def test_typographic_punctuation_is_made_plain():
 def test_bare_domains_and_glued_links_become_link():
     assert clean("see evil.com/login or bit.ly/x or Xhttps://a.b") == "see [link] or [link] or X[link]"
     assert clean("Go to Example.ORG now") == "Go to [link] now"
-    assert clean("Dr.Smith at St.Louis, 9.30 a.m. e.g. here") == "Dr.Smith at St.Louis, 9.30 a.m. e.g. here"
+    assert clean("Visit attacker.tech/login or attacker.tech today") == "Visit [link] or [link] today"
+    assert clean("Open slides.zip and notes.md") == "Open [link] and [link]"  # both are top-level domains
+    assert clean("Read agenda.pdf and notes.docx at 9.30 a.m. e.g. v1.5, U.S. A.B. Co.") == \
+        "Read agenda.pdf and notes.docx at 9.30 a.m. e.g. v1.5, U.S. A.B. Co."
+
+
+def test_a_short_location_is_kept_when_it_fits():
+    assert reminder("Dentist", "3:00 PM", "HQ") == "Reminder: Dentist at 3:00 PM - HQ"
+    assert reminder("Dentist", "3:00 PM", "A") == "Reminder: Dentist at 3:00 PM - A"

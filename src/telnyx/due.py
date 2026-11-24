@@ -6,7 +6,7 @@ once in the rundown. An event made here is known by its own id. Hidden calendars
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, time, timedelta
 
 from src.events.morning_agenda import _clock
@@ -21,6 +21,7 @@ class Due:
     key: str
     kind: str  # "before" or "rundown"
     text: str  # "" for a rundown with nothing tomorrow
+    start: datetime | None = field(default=None, compare=False)  # a reminder's event start (UTC), checked again at send
 
 
 def event_id(row: dict) -> str:
@@ -54,7 +55,7 @@ def reminders(store, now: datetime, lead_minutes: int) -> list[Due]:
         start = datetime.fromisoformat(row["start"])
         if start - lead <= instant < start:
             due.append((start, Due(f"before:{event_id(row)}:{row['start']}", "before",
-                                   reminder(row["title"], _clock(start, now), row["location"]))))
+                                   reminder(row["title"], _clock(start, now), row["location"]), start)))
     due.sort(key=lambda pair: pair[0])
     return [d for _, d in due]
 

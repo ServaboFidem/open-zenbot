@@ -918,13 +918,15 @@ Calls and webhooks (replies, delivery reports) are not built.
 - **The text** (`texts.py`). Calendar text can be written by anyone who invites the owner, so it is flattened to one
   line (control and format characters, U+2028 and U+2029 become spaces), typographic quotes, dashes and the ellipsis
   become plain ones (one curly apostrophe would make the whole text UCS-2), and web addresses become `[link]`
-  (`LINK`): anything from `http://`, `https://` or `www.` on, glued to a word or not, and a bare domain under a common
-  top-level domain with what follows it (`evil.com/login`, `bit.ly/x`; the list is `_TLDS`, so "Dr.Smith" and
-  "St.Louis" stay, and a domain under a rarer top-level domain still passes).
+  (`LINK`): anything from `http://`, `https://` or `www.` on, glued to a word or not, and anything shaped like a bare
+  domain (a name, a dot and 2 to 24 letters) with what follows it (`evil.com/login`, `attacker.tech`). No list of
+  top-level domains is complete, so "Dr.Smith" and "St.Louis" become `[link]` too. A dot before digits or one letter
+  ("9.30", "a.m.", "U.S.") stays, and so does a file name whose extension is no top-level domain (`_FILES`:
+  "agenda.pdf"); ".zip", ".mov" and ".md" are top-level domains, so those are links.
   Length is counted in SMS segments as carriers bill it (GSM-7: 160, or 153 a segment when split, an extension
   character counting two; anything else UCS-2: 70, or 67, counted in UTF-16 units). A reminder ("Reminder: <title>
-  at <time> - <location>") is cut to one segment without ever cutting its time: a long location is cut first, or
-  dropped when less than a character of it would fit, then the title. A rundown ("Tomorrow: <item>; <item>"; "...and N more" when cut) to
+  at <time> - <location>") is cut to one segment without ever cutting its time: a location is kept whole when it fits
+  (however short), a long one is cut first, or dropped when less than a character of it would fit, then the title. A rundown ("Tomorrow: <item>; <item>"; "...and N more" when cut) to
   two, with "..." where text was cut. Every fixed part is GSM-7.
 - **Never twice** (`record.py`, `service.py`). Each text's key is claimed in the send record, and the claim committed,
   before it is sent. A claim still `sending` at start (a crash or a kill mid-send) becomes `uncertain` (`settle`) and
@@ -934,11 +936,15 @@ Calls and webhooks (replies, delivery reports) are not built.
   a refused key or text (`key`, `invalid`) is `failed`. `settle` records its rows with the error `interrupted`. Rows older than 30 days are pruned.
 - **The loop.** `TelnyxService.run` (started and cancelled in the `lifespan`, beside the morning mail) settles, then
   looks once a minute (`INTERVAL_S`) and sends only with a key, a number and `telnyx_texts.json` saying a phone and at
-  least one kind on. One lock holds every send, so texts go one at a time. The loop outlives any exception (logged by
-  class name).
+  least one kind on. A `settle` that fails is tried again on the next pass, and nothing is sent until it has worked.
+  One lock holds every send, so texts go one at a time. A send can take up to the client's 30 s, so before each text
+  the clock (`TelnyxService.clock`) and `telnyx_texts.json` are read again: a reminder whose event has started is not
+  sent (and not recorded), and a new local day, texts switched off for that kind, or a changed phone end the pass;
+  the next pass builds its list afresh. The loop outlives any exception (logged by class name).
 - **The cap.** At most 30 texts a local day (`DAILY_CAP`), of every kind, the test texts included, counting sends that
   failed or are uncertain; a due text past it is recorded `capped` and never sent, and the ledger gets one `capped`
-  entry a day. At most 10 a pass (`PER_PASS`). A test text needs a minute since the last one (`TEST_GAP_S`). The cap
+  entry a day. A text counts on the day it is claimed: a `retry` carried past midnight is claimed again on the new
+  day, counts toward it and is held to its cap. At most 10 a pass (`PER_PASS`). A test text needs a minute since the last one (`TEST_GAP_S`). The cap
   is there because anyone who invites the owner to events could otherwise run up their bill. Settings shows "30 texts
   were sent today; N more were skipped."
 - **Routes** (`routes.py`, under `/telnyx`; no answer carries the key or the owner's full phone, and no route takes a
@@ -947,9 +953,12 @@ Calls and webhooks (replies, delivery reports) are not built.
   when it was sent, its error kind when it failed or waits to be tried again, `uncertain` when it may have gone, or
   `interrupted` when the harness stopped mid-send); `PUT /key` (`{key}`; checked by listing the numbers before it is saved;
   422 "Telnyx did not accept this key.", 502 when unreachable, 500 "The key could not be saved." on any other
-  exception, class name logged; a chosen number the new key cannot see is cleared); `DELETE /key` (forgets the key
-  and the number; nothing changes at Telnyx); `GET /numbers` (409 "Save a Telnyx key first."); `PUT /number` (`{id}`;
-  404 "No such number for this key."); `POST /test` (`NothingIn`; sends "This is a test text from ZenBot." to the
+  exception, class name logged; the body is checked in the route, not by a model, so a malformed one is 422 without
+  echoing the key; a chosen number the new key cannot see is cleared, and is out of use at once even if clearing its
+  file fails); `DELETE /key` (forgets the key and the number; nothing changes at Telnyx; the key is out of use once its
+  file is cleared, even if clearing the number's file then fails with a 500); `GET /numbers` (409 "Save a Telnyx key
+  first."); `PUT /number` (`{id}`; 404 "No such number for this key.", also when the key was replaced while the list
+  was read); `POST /test` (`NothingIn`; sends "This is a test text from ZenBot." to the
   saved phone; 409 "Set up Telnyx and your phone number first.", 429 "Wait a minute between test texts, or until
   tomorrow after 30 texts in a day.", and the send's failure: 422 "Telnyx refused the text. Check the number's
   messaging setup and registration.", 401, 429, else 502 "The test text may not have been sent."). The only POST

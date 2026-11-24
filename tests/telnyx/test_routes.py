@@ -94,6 +94,13 @@ async def test_key_refusals(client, fake_telnyx):
     assert (await client.put("/telnyx/key", json={"key": KEY})).status_code == 502
 
 
+async def test_a_misshapen_key_body_never_echoes_the_key(client):
+    for body in ({"key": [KEY]}, {"key": {"k": KEY}}, [KEY], KEY):
+        got = await client.put("/telnyx/key", json=body)
+        assert got.status_code == 422 and KEY not in got.text
+    assert (await client.put("/telnyx/key", content=KEY, headers={"content-type": "text/plain"})).status_code == 422
+
+
 async def test_numbers_and_choice(client):
     assert (await client.get("/telnyx/numbers")).status_code == 409
     await client.put("/telnyx/key", json={"key": KEY})

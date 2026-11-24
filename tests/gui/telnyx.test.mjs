@@ -1,7 +1,7 @@
 // Telnyx's decisions for the settings section.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ERRORS, LEADS, REGISTER_URL, TELNYX_LINE, canTest, errorLine, leadLabel, statusLine } from '../../src/gui/telnyx.js';
+import { ERRORS, LEADS, REGISTER_URL, TELNYX_LINE, canTest, createReads, errorLine, leadLabel, statusLine } from '../../src/gui/telnyx.js';
 
 const ready = {
   key_set: true, key_hint: '6789', number: '+15550001111', last_sent_at: null, last_error: '', sent_today: 0,
@@ -44,4 +44,16 @@ test('the fixed copy, the leads and the guide address', () => {
   assert.match(REGISTER_URL, /^https:\/\/support\.telnyx\.com\//);
   assert.equal(errorLine({ message: 'Telnyx is busy. Try again in a moment.' }), 'Telnyx is busy. Try again in a moment.');
   assert.equal(errorLine({ message: '{"detail":1}' }), 'Something went wrong. Try again.');
+});
+
+test('a read that started before a key or number change is dropped', () => {
+  const reads = createReads();
+  const onMount = reads.start();
+  assert.equal(reads.current(onMount), true);
+  const save = reads.change();  // a key save starts while the first status read is still out
+  assert.equal(reads.current(onMount), false);
+  assert.equal(reads.current(save), true);
+  const test = reads.start();  // a test text changes neither, so it drops nothing
+  assert.equal(reads.current(save), true);
+  assert.equal(reads.current(test), true);
 });

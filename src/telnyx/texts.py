@@ -18,15 +18,15 @@ GSM = ("@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*
        "abcdefghijklmnopqrstuvwxyzäöñüà")
 GSM_EXT = "^{}\\[~]|€"
 _GSM, _EXT = frozenset(GSM), frozenset(GSM_EXT)
-# A web address phones would make tappable: a scheme or "www." anywhere (glued to a word too), or a bare domain with
-# a common top-level domain ("evil.com/login", "bit.ly/x"). The list keeps "Dr.Smith" and "St.Louis" as they are;
-# a domain under a rarer top-level domain still passes.
-_TLDS = ("com|net|org|edu|gov|mil|int|info|biz|io|co|ly|me|app|dev|ai|gg|to|tv|sh|so|li|cc|ws|fm|xyz|link|site|"
-         "online|shop|store|top|live|click|page|news|club|us|uk|ca|au|nz|ie|de|fr|es|it|nl|be|ch|se|no|dk|fi|pl|"
-         "cz|ru|ua|cn|jp|kr|in|br|mx|ar|eu|gl|is|tk|ml|ga|cf|gq")
+# A web address phones would make tappable: a scheme or "www." anywhere (glued to a word too), or anything shaped like
+# a bare domain, a name and a dot and two or more letters ("evil.com/login", "attacker.tech"). No list of top-level
+# domains is ever complete, so every such word is a link, "Dr.Smith" included. A dot before digits or a single letter
+# ("9.30", "a.m.", "U.S.") is not, and neither are file names whose extension is no top-level domain ("agenda.pdf");
+# ".zip" and ".mov" are top-level domains, so those are links.
+_FILES = "pdf|docx?|xlsx?|pptx?|txt|csv|rtf|odt|ods|odp|jpe?g|png|gif|heic|webp|svg|mp3|mp4|m4a|wav|ics"
 LINK = re.compile(r"(?i)(?:https?://|www\.)\S+"
-                  rf"|\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.(?:{_TLDS})"
-                  r"(?![\w-])(?:[/?#:]\S*)?")
+                  r"|\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*"
+                  rf"\.(?!(?:{_FILES})(?![\w-]))[a-z]{{2,24}}(?![\w-])(?:[/?#:]\S*)?")
 # Typographic punctuation phones and calendars put in by default; any one of them would make the whole text UCS-2.
 PLAIN = str.maketrans({"‘": "'", "’": "'", "‚": "'", "‛": "'", "“": '"', "”": '"',
                        "„": '"', "‟": '"', "–": "-", "—": "-", "‐": "-", "‑": "-",
@@ -79,8 +79,11 @@ def reminder(title: str, clock: str, location: str) -> str:
         return cut(f"Reminder: {clean(title)}", 1, tail=f" at {clock}")
     if not where:
         return base
-    full = cut(f"{base} - {where}", 1)
-    return full if len(full) >= len(base) + len(" - ") + 4 else base  # at least a character of it and "..."
+    whole = f"{base} - {where}"
+    full = cut(whole, 1)
+    if full == whole:
+        return whole
+    return full if len(full) >= len(base) + len(" - ") + 4 else base  # cut: at least a character of it and "..."
 
 
 def rundown(items: list[str]) -> str:

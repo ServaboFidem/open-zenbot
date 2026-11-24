@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Field, Input, Radio, RadioGroup, Spinner } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
-import { LEADS, REGISTER_LINE, REGISTER_URL, TELNYX_LINE, canTest, errorLine, leadLabel, statusLine } from './telnyx.js';
+import { LEADS, REGISTER_LINE, REGISTER_URL, TELNYX_LINE, canTest, createReads, errorLine, leadLabel, statusLine } from './telnyx.js';
 import './mail.css';
 
 // Settings > Connected apps > Telnyx: the API key (saved by the harness, never sent back; only its last four
@@ -67,30 +67,47 @@ export function TelnyxSettings({ api, online, notify }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState({ at: '', text: '' });
   const [picked, setPicked] = useState('');  // the radio marked, not yet used; '' follows the number in use
+  const reads = useRef(null);
+  reads.current ??= createReads();
   const current = numbers?.find(n => n.phone === status?.number)?.id || '';
   const shown = picked || current;
 
-  async function loadNumbers() {
-    try { setNumbers((await telnyx.numbers()).numbers); } catch (e) { setNumbers([]); setError({ at: 'number', text: errorLine(e) }); }
+  // every read keeps its answer only while no key or number change has started since (createReads)
+  async function loadNumbers(token = reads.current.start()) {
+    try {
+      const listed = (await telnyx.numbers()).numbers;
+      if (reads.current.current(token)) setNumbers(listed);
+    } catch (e) {
+      if (reads.current.current(token)) { setNumbers([]); setError({ at: 'number', text: errorLine(e) }); }
+    }
   }
   async function refresh() {
-    try { setStatus(await telnyx.status()); } catch (e) { setError({ at: 'load', text: errorLine(e) }); }
-  }
-  async function load() {
+    const token = reads.current.start();
     try {
       const st = await telnyx.status();
+      if (reads.current.current(token)) setStatus(st);
+    } catch (e) { if (reads.current.current(token)) setError({ at: 'load', text: errorLine(e) }); }
+  }
+  async function load() {
+    const token = reads.current.start();
+    try {
+      const st = await telnyx.status();
+      if (!reads.current.current(token)) return;
       setStatus(st);
-      if (st.key_set) await loadNumbers(); else setNumbers(null);
-    } catch (e) { setError({ at: 'load', text: errorLine(e) }); }
+      if (st.key_set) await loadNumbers(token); else setNumbers(null);
+    } catch (e) { if (reads.current.current(token)) setError({ at: 'load', text: errorLine(e) }); }
   }
   useEffect(() => { if (online) load(); }, [online]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function run(at, label, call, done, reloadNumbers = true) {
+  // changes: a key or number change, which drops every read started before it; a test text changes neither
+  async function run(at, label, call, done, changes = true) {
     setBusy(label); setError({ at: '', text: '' });
+    const token = changes ? reads.current.change() : reads.current.start();
     try {
       const st = await call();
+      if (!reads.current.current(token)) return true;
       setStatus(st);
-      if (reloadNumbers) { if (st.key_set) await loadNumbers(); else setNumbers(null); }
+      if (changes) { if (st.key_set) await loadNumbers(token); else setNumbers(null); }
       if (done) notify(done);
       return true;
     } catch (e) { setError({ at, text: errorLine(e) }); return false; }

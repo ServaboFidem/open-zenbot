@@ -1,5 +1,6 @@
 """The service: setup, the loop, never twice, the retry rules and the daily cap. Telnyx is the stand-in."""
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta, timezone
 
@@ -10,11 +11,11 @@ from src.events.store import CalendarStore
 from src.memory.ledger import Ledger
 from src.telnyx.client import TelnyxError
 from src.telnyx.service import DAILY_CAP, TEST_TEXT, TelnyxService
-from src.telnyx.settings import TEXTS_FILE
+from src.telnyx.settings import TEXTS_FILE, TelnyxKeys, TelnyxNumber
 from src.vault_settings import settings_dir
 from tests.telnyx.conftest import KEY
 
-ZONE = timezone(timedelta(hours=-5))
+ZONE = timezone(timedelta(hours=13))  # far from any test machine's zone: a day read from the host's clock shows
 NOW = datetime(2026, 11, 23, 14, 0, tzinfo=ZONE)
 OWNER = "+15551234567"
 
@@ -193,7 +194,7 @@ async def test_per_pass_and_daily_cap(vault, ledger, store, fake_telnyx):
     status = service.status(NOW)
     assert (status["sent_today"], status["skipped_today"]) == (30, 5)
     with pytest.raises(PermissionError):
-        await service.test(NOW.timestamp() + 3600)
+        await service.test(NOW + timedelta(hours=1))
     assert [e for e in entries(ledger) if e.get("event") == "capped"] == [{"event": "capped", "skipped": 5}]
 
 
@@ -219,11 +220,10 @@ async def test_empty_rundown_recorded_once(vault, ledger, store, fake_telnyx):
 
 async def test_test_text_gap(vault, ledger, store, fake_telnyx):
     service = await ready(vault, ledger, store, fake_telnyx)
-    at = NOW.timestamp()
-    await service.test(at)
+    await service.test(NOW)
     with pytest.raises(PermissionError):
-        await service.test(at + 30)
-    await service.test(at + 61)
+        await service.test(NOW + timedelta(seconds=30))
+    await service.test(NOW + timedelta(seconds=61))
     assert [s["text"] for s in fake_telnyx.sent] == [TEST_TEXT, TEST_TEXT]
     assert service.status(NOW)["sent_today"] == 2
 
@@ -232,7 +232,7 @@ async def test_a_failed_test_text_raises_its_error(vault, ledger, store, fake_te
     service = await ready(vault, ledger, store, fake_telnyx)
     fake_telnyx.fail["POST /messages"] = 422
     with pytest.raises(TelnyxError) as caught:
-        await service.test(NOW.timestamp())
+        await service.test(NOW)
     assert caught.value.kind == "invalid"
 
 
@@ -254,6 +254,144 @@ async def test_set_key_clears_unlisted_number(vault, ledger, store, fake_telnyx)
     assert status["number"] is None
     with pytest.raises(KeyError):
         await service.choose_number("n1")
+
+
+def broken_save(monkeypatch):
+    """Saving an empty sending number fails, as a full disk or a locked file would."""
+    real = TelnyxNumber.save
+
+    def save(self, vault_root):
+        if not self.id:
+            raise OSError("disk full")
+        return real(self, vault_root)
+    monkeypatch.setattr(TelnyxNumber, "save", save)
+
+
+async def test_forget_stops_using_the_key_even_if_clearing_the_number_fails(vault, ledger, store, fake_telnyx,
+                                                                           monkeypatch):
+    service = await ready(vault, ledger, store, fake_telnyx)
+    event(store, "Dentist", NOW + timedelta(minutes=20))
+    broken_save(monkeypatch)
+    with pytest.raises(OSError):
+        service.forget_key()
+    assert service.keys.api_key == ""
+    await service.tick(NOW)
+    assert fake_telnyx.requests[-1].url.path != "/v2/messages" and fake_telnyx.sent == []
+
+
+async def test_a_new_key_never_sends_from_a_number_it_cannot_see(vault, ledger, store, fake_telnyx, monkeypatch):
+    service = await ready(vault, ledger, store, fake_telnyx)
+    event(store, "Dentist", NOW + timedelta(minutes=20))
+    fake_telnyx.numbers = {"p1": []}
+    broken_save(monkeypatch)
+    with pytest.raises(OSError):
+        await service.set_key(KEY)
+    assert service.number.phone == ""
+    await service.tick(NOW)
+    assert fake_telnyx.sent == []
+
+
+async def test_a_number_checked_with_a_replaced_key_is_not_saved(vault, ledger, store, fake_telnyx):
+    service = make(vault, ledger, store, fake_telnyx)
+    await service.set_key(KEY)
+    real = service.numbers
+
+    async def racing():
+        listed = await real()
+        service.keys = TelnyxKeys(api_key="OTHERKEY0000")  # a new key saved while the list was being read
+        return listed
+    service.numbers = racing
+    with pytest.raises(KeyError):
+        await service.choose_number("n1")
+    assert service.number.phone == ""
+
+
+async def test_the_loop_survives_a_failed_settle(vault, ledger, store, fake_telnyx, monkeypatch):
+    import sqlite3
+
+    import src.telnyx.service as module
+    service = make(vault, ledger, store, fake_telnyx)
+    calls, fail = [], [True]
+
+    def settle():
+        if fail:
+            fail.pop()
+            raise sqlite3.OperationalError("database is locked")
+        calls.append("settle")
+        return 0
+
+    async def tick(now=None):
+        calls.append("tick")
+    service.settle, service.tick = settle, tick
+    monkeypatch.setattr(module, "INTERVAL_S", 0)
+    task = asyncio.create_task(service.run())
+    for _ in range(100):
+        await asyncio.sleep(0)
+        if "tick" in calls:
+            break
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert calls[:2] == ["settle", "tick"]
+
+
+async def test_a_reminder_whose_event_started_during_the_pass_is_not_sent(vault, ledger, store, fake_telnyx):
+    service = await ready(vault, ledger, store, fake_telnyx)
+    first = event(store, "Dentist", NOW + timedelta(minutes=20))
+    second = event(store, "Call", NOW + timedelta(minutes=21))
+    times = iter([NOW, NOW, NOW + timedelta(minutes=25)])  # the first send took the pass past the second's start
+    service.clock = lambda: next(times)
+    await service.tick()
+    assert [s["text"] for s in fake_telnyx.sent] == ["Reminder: Dentist at 2:20 PM"]
+    assert service.record.known(f"before:{second['id']}:{second['start']}") is None
+    assert service.record.known(f"before:{first['id']}:{first['start']}") == "sent"
+
+
+async def test_a_pass_that_crosses_midnight_stops(vault, ledger, store, fake_telnyx):
+    service = await ready(vault, ledger, store, fake_telnyx)
+    late = NOW.replace(hour=23, minute=50)
+    event(store, "Late", late + timedelta(minutes=5))
+    event(store, "Later", late + timedelta(minutes=15))
+    times = iter([late, late, late + timedelta(minutes=11)])
+    service.clock = lambda: next(times)
+    await service.tick()
+    assert len(fake_telnyx.sent) == 1  # the next pass rebuilds the list for the new day
+
+
+async def test_settings_changed_during_a_pass_end_it(vault, ledger, store, fake_telnyx, monkeypatch):
+    import src.telnyx.service as module
+    from src.telnyx.settings import TextsConfig
+    service = await ready(vault, ledger, store, fake_telnyx)
+    event(store, "Dentist", NOW + timedelta(minutes=20))
+    event(store, "Call", NOW + timedelta(minutes=21))
+    on = TextsConfig(phone=OWNER, lead_minutes=30, evening="20:00", before=True, rundown=False)
+    moved = TextsConfig(phone="+15559998888", lead_minutes=30, evening="20:00", before=True, rundown=False)
+    answers = iter([on, on, moved, moved])
+    monkeypatch.setattr(module, "read_texts", lambda vault_root: next(answers))
+    await service.tick(NOW)
+    assert [s["to"] for s in fake_telnyx.sent] == [OWNER]
+
+
+async def test_a_retry_carried_past_midnight_counts_toward_the_new_day(vault, ledger, store, fake_telnyx):
+    service = await ready(vault, ledger, store, fake_telnyx)
+    row = event(store, "Dentist", NOW + timedelta(minutes=20))
+    key = f"before:{row['id']}:{row['start']}"
+    service.record.claim(key, "before", "2026-11-22", NOW.timestamp() - 600)
+    service.record.mark(key, "retry", NOW.timestamp() - 600, error="network")
+    await service.tick(NOW)
+    assert len(fake_telnyx.sent) == 1
+    assert service.status(NOW)["sent_today"] == 1
+
+
+async def test_a_retry_carried_past_midnight_is_capped_on_a_full_day(vault, ledger, store, fake_telnyx):
+    service = await ready(vault, ledger, store, fake_telnyx)
+    row = event(store, "Dentist", NOW + timedelta(minutes=20))
+    key = f"before:{row['id']}:{row['start']}"
+    service.record.claim(key, "before", "2026-11-22", NOW.timestamp() - 600)
+    service.record.mark(key, "retry", NOW.timestamp() - 600, error="network")
+    for n in range(DAILY_CAP):
+        service.record.mark(f"other:{n}", "sent", NOW.timestamp() - 60, kind="before", day="2026-11-23")
+    await service.tick(NOW)
+    assert fake_telnyx.sent == [] and service.record.known(key) == "capped"
 
 
 async def test_status_never_has_key_or_full_phone(vault, ledger, store, fake_telnyx):
