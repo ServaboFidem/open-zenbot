@@ -28,6 +28,10 @@ JOKE_MAX = 500
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
+class StoreReadOnly(Exception):
+    """The briefings file could not be read, so nothing may be saved over it. The message is the sentence to show."""
+
+
 @dataclass
 class Slot:
     days: list[int]
@@ -133,12 +137,23 @@ class BriefingStore:
             return store
         except (OSError, ValueError) as e:
             store.read_only = True
-            backup = path.with_name(f"{cls.FILE}.bad-{datetime.now().strftime('%Y%m%dT%H%M%S')}")
+            kept = ""
             try:
-                shutil.copy2(path, backup)
-                kept = f"; a copy is at {backup.name}"
+                data = path.read_bytes()
+                same = [p for p in path.parent.glob(f"{cls.FILE}.bad-*") if p.read_bytes() == data]
+                if same:
+                    kept = f"; a copy is at {same[0].name}"
+                else:
+                    stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+                    backup = path.with_name(f"{cls.FILE}.bad-{stamp}")
+                    n = 1
+                    while backup.exists():
+                        n += 1
+                        backup = path.with_name(f"{cls.FILE}.bad-{stamp}-{n}")
+                    backup.write_bytes(data)
+                    kept = f"; a copy is at {backup.name}"
             except OSError:
-                kept = ""
+                pass
             store.error = (f"{cls.FILE} could not be read ({type(e).__name__}){kept}. "
                            "Briefings will not be saved until it is fixed or removed.")
             log.error("briefings: unreadable file: %s", type(e).__name__)
@@ -157,14 +172,21 @@ class BriefingStore:
 
     def save(self, vault: Path) -> None:
         if self.read_only:
-            return  # the unreadable file stays as it is
+            raise StoreReadOnly(self.error)  # the unreadable file stays as it is
         _write(settings_dir(vault) / self.FILE,
                {"briefings": [asdict(b) for b in self.items.values()] + self._bad})
 
+    def _drop_bad(self, kind: str) -> None:
+        self._bad = [x for x in self._bad if not (isinstance(x, dict) and x.get("kind") == kind)]
+        if not self._bad and not self.read_only:
+            self.error = ""
+
     def put(self, b: Briefing) -> None:
+        self._drop_bad(b.kind)
         self.items[b.kind] = b
 
     def delete(self, kind: str) -> bool:
+        self._drop_bad(kind)
         return self.items.pop(kind, None) is not None
 
 

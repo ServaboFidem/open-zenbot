@@ -114,7 +114,8 @@ def test_broken_file_survives_save(tmp_path):
     path = _write_file(vault, "{not json")
     s = BriefingStore.load(vault)
     s.put(make())
-    s.save(vault)
+    with pytest.raises(Exception):
+        s.save(vault)
     assert path.read_text(encoding="utf-8") == "{not json"
     backups = list(path.parent.glob("briefings.json.bad-*"))
     assert len(backups) == 1 and backups[0].read_text(encoding="utf-8") == "{not json"
@@ -182,3 +183,51 @@ def test_jokes_empty_normalised_and_long_text(tmp_path):
     j.add("x" * 900, "2026-11-01")
     assert len(j.recent(1)[0]) == 500
     assert j.seen("x" * 900)
+
+
+def test_save_on_read_only_store_raises(tmp_path):
+    from src.briefing.settings import StoreReadOnly
+    vault = tmp_path / "vault"
+    _write_file(vault, "{not json")
+    s = BriefingStore.load(vault)
+    s.put(make())
+    with pytest.raises(StoreReadOnly) as e:
+        s.save(vault)
+    assert str(e.value) == s.error and s.error
+
+
+def test_delete_does_not_resurrect_a_duplicate(tmp_path):
+    vault = tmp_path / "vault"
+    _write_file(vault, {"briefings": [_entry(id="a"), _entry(id="b")]})
+    s = BriefingStore.load(vault)
+    assert s.items["morning"].id == "a" and s.error
+    assert s.delete("morning")
+    s.save(vault)
+    again = BriefingStore.load(vault)
+    assert again.items == {} and not again.error
+
+
+def test_put_replaces_an_invalid_same_kind_entry(tmp_path):
+    import json
+    vault = tmp_path / "vault"
+    path = _write_file(vault, {"briefings": [_entry(volume=True)]})
+    s = BriefingStore.load(vault)
+    assert s.items == {} and s.error
+    s.put(make())
+    s.save(vault)
+    saved = json.loads(path.read_text(encoding="utf-8"))["briefings"]
+    assert [x["kind"] for x in saved] == ["morning"]
+    again = BriefingStore.load(vault)
+    assert "morning" in again.items and not again.error
+
+
+def test_bad_copy_not_repeated_and_never_overwritten(tmp_path):
+    vault = tmp_path / "vault"
+    path = _write_file(vault, "{not json")
+    BriefingStore.load(vault)
+    BriefingStore.load(vault)
+    assert len(list(path.parent.glob("briefings.json.bad-*"))) == 1
+    path.write_text("[also broken", encoding="utf-8")
+    BriefingStore.load(vault)
+    copies = list(path.parent.glob("briefings.json.bad-*"))
+    assert sorted(p.read_text(encoding="utf-8") for p in copies) == ["[also broken", "{not json"]
