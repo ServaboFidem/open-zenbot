@@ -61,6 +61,7 @@ class Exchange:
     bot: str = ""  # the bot that answered, when it is not the conversation's owner
     set_aside: bool = False  # a helper's change the user sent back to the owner
     answers_to: str = ""  # the session id of the reply whose question form this message answers
+    files: list[dict[str, str]] = field(default_factory=list)  # {id, name, kind}: files the user sent with the message (uploads/chat/<id>/)
 
 
 def reply_text(ex: Exchange) -> str:

@@ -12,6 +12,7 @@ import base64
 import binascii
 import hashlib
 import json
+import logging
 import re
 import secrets
 import shutil
@@ -79,6 +80,8 @@ from .onboarding import ASSISTANT_ID, NEW_TOPICS, TOPICS, Interviewer
 from .config import HarnessConfig
 from .conversations import Conversation, ConversationStore, Conversations
 from .dream_routes import dream_router
+from .upload_routes import upload_router
+from . import chat_files
 from .speech_routes import speech_providers, speech_router
 from .loop import Session, SessionState, TaskLoop
 from .scheduler import Routine, RoutineError, RoutineStore, Schedule, Scheduler, next_run, parse_schedule
@@ -561,6 +564,12 @@ class Harness:
     def _dream_conversations(self) -> list[Conversation]:
         """The one-to-one conversations dreaming may read."""
         return [c for c in self.conversations.all() if c.kind == "bot"] if self.conversations is not None else []
+
+    def sent_uploads(self) -> set[str]:
+        """The id of every chat upload some conversation's exchange names; these are never swept or deleted."""
+        if self.conversations is None:
+            return set()
+        return {f.get("id", "") for c in self.conversations.all() for ex in c.exchanges for f in ex.files}
 
     def busy(self) -> bool:
         """Something is under way that dreaming waits for: a task, room turn or routine run (each has a session),
@@ -1595,7 +1604,7 @@ def create_app(h: Harness) -> FastAPI:
     app_routers = [morning_router(morning), music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h),
                    facebook_router(h.discover, h), dream_router(h), speech_router(h), mail_router(h.mail), telnyx_router(h.telnyx),
                    sonos_router(h.sonos, h.sonos_tools), speakers_router(h.speakers),
-                   briefing_router(h.briefing)]
+                   briefing_router(h.briefing), upload_router(h)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -1641,9 +1650,24 @@ def create_app(h: Harness) -> FastAPI:
         morning_mail = asyncio.create_task(morning.delivery.run())
         texting = asyncio.create_task(h.telnyx.run())  # reminders and the evening rundown, once a minute
         briefing = asyncio.create_task(h.briefing.run())  # the spoken briefing's slots, every 30 s
+        async def sweep_uploads() -> None:
+            while True:  # unsent chat uploads older than a day; one named by any conversation is never swept
+                try:
+                    n = await asyncio.to_thread(chat_files.sweep, vault, h.sent_uploads(), time.time())
+                    if n:
+                        h.ledger.append(Kind.upload, "", "", event="swept", count=n)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logging.getLogger(__name__).warning("upload sweep failed: %s", type(e).__name__)
+                await asyncio.sleep(3600)
+
+        sweeping = asyncio.create_task(sweep_uploads())
         try:
             yield
         finally:
+            sweeping.cancel()
+            await asyncio.gather(sweeping, return_exceptions=True)
             morning_mail.cancel()
             texting.cancel()
             briefing.cancel()

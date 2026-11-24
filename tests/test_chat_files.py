@@ -100,3 +100,88 @@ def test_decompression_bomb_is_refused(monkeypatch):
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
     with pytest.raises(FileRefused):
         to_webp(raw)
+
+
+def test_too_large_after_lossy_is_refused(monkeypatch):
+    import random
+    rnd = random.Random(1)
+    im = Image.frombytes("RGB", (64, 64), bytes(rnd.randrange(256) for _ in range(64 * 64 * 3)))
+    monkeypatch.setattr(chat_files, "MAX_PICTURE", 100)
+    with pytest.raises(FileRefused) as e:
+        to_webp(_save(im, "PNG"))
+    assert str(e.value) == chat_files.TOO_LARGE
+
+
+# --- storage ---------------------------------------------------------------------------------------------------
+
+import asyncio
+import time
+
+
+def _png(size=(40, 30)):
+    return _save(Image.new("RGB", size, "blue"), "PNG")
+
+
+def test_save_converts_a_picture_to_webp_in_its_own_folder(vault):
+    up = asyncio.run(chat_files.save(vault, "photo.png", _png()))
+    assert up.kind == "image" and up.name == "photo.webp"
+    assert up.path == vault / "uploads" / "chat" / up.id / "photo.webp"
+    assert chat_files.ID.fullmatch(up.id) and up.path.read_bytes()[8:12] == b"WEBP"
+
+
+def test_save_keeps_a_pdf_as_is(vault):
+    up = asyncio.run(chat_files.save(vault, "a.pdf", b"%PDF-1.4 hi"))
+    assert (up.kind, up.name, up.path.read_bytes()) == ("document", "a.pdf", b"%PDF-1.4 hi")
+
+
+@pytest.mark.parametrize("name,raw", [("a.mp3", b"ID3\x03"), ("a.svg", b"<svg/>")])
+def test_save_refuses_an_mp3_and_an_svg(vault, name, raw):
+    with pytest.raises(FileRefused) as e:
+        asyncio.run(chat_files.save(vault, name, raw))
+    assert str(e.value) == REFUSED
+
+
+def test_safe_name_strips_paths_and_dots():
+    out = chat_files.safe_name("../a/.x.png")
+    assert out == "x.png" and "/" not in out and not out.startswith(".")
+    assert chat_files.safe_name("..\\..\\") == "file"
+    assert len(chat_files.safe_name("a" * 300 + ".txt")) <= 100
+
+
+def test_resolve_refuses_a_bad_id_a_link_and_a_second_file(vault):
+    up = asyncio.run(chat_files.save(vault, "a.txt", b"hello"))
+    assert chat_files.resolve(vault, up.id).kind == "document"
+    for bad in ("../x", "A" * 32, "nope"):
+        with pytest.raises(FileRefused):
+            chat_files.resolve(vault, bad)
+    (up.path.parent / "b.txt").write_bytes(b"x")
+    with pytest.raises(FileRefused):
+        chat_files.resolve(vault, up.id)
+    (up.path.parent / "b.txt").unlink()
+    link = vault / "uploads" / "chat" / ("1" * 32)
+    link.symlink_to(up.path.parent, target_is_directory=True)
+    with pytest.raises(FileRefused):
+        chat_files.resolve(vault, "1" * 32)
+    other = vault / "outside.txt"
+    other.write_text("x")
+    up.path.unlink()
+    up.path.symlink_to(other)
+    with pytest.raises(FileRefused):
+        chat_files.resolve(vault, up.id)
+
+
+def test_resolve_refuses_a_file_swapped_for_html(vault):
+    up = asyncio.run(chat_files.save(vault, "p.png", _png()))
+    up.path.write_bytes(b"<html><script>alert(1)</script>")
+    with pytest.raises(FileRefused):
+        chat_files.resolve(vault, up.id)
+
+
+def test_sweep_spares_kept_and_young_uploads(vault):
+    ups = [asyncio.run(chat_files.save(vault, "a.txt", b"x")) for _ in range(3)]
+    old, kept, young = ups
+    now = time.time()
+    for u in (old, kept):
+        os.utime(u.path.parent, (now - 90_000, now - 90_000))
+    assert chat_files.sweep(vault, {kept.id}, now) == 1
+    assert not old.path.parent.exists() and kept.path.parent.exists() and young.path.parent.exists()
