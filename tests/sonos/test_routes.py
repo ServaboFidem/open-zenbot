@@ -164,3 +164,27 @@ async def test_room_turns_are_not_offered_sonos(harness):
     harness.sessions["one-to-one"] = Session(id="one-to-one", bot_id="zenbot", task="x")
     assert "sonos_play" not in {s.name for s in harness.tools.specs(caller=("zenbot", "in-room"))}
     assert "sonos_play" in {s.name for s in harness.tools.specs(caller=("zenbot", "one-to-one"))}
+
+
+async def test_a_rebind_keeps_one_sonos_lock_for_the_page_and_the_briefing(client, harness):
+    """The Sonos page's router keeps the tools it was built with; a rebind (a provider or model save) must not give
+    the briefing's announce and the bot tools a second lock, or the page's commands stop waiting for a briefing."""
+    import asyncio
+
+    await harness.sonos.look()
+    before = harness.sonos_tools
+    harness.rebind(ScriptedProvider(), None)
+    assert "sonos_play" in harness.tools.names()  # the tools are registered again against the rebuilt services
+    tools = harness.sonos_tools
+    await tools._lock.acquire()  # as announce holds it for the whole briefing
+    tools._settled.clear()
+    try:
+        cmd = asyncio.create_task(client.post("/sonos/control", json={"room": "Kitchen", "action": "pause"}))
+        await asyncio.sleep(0.3)
+        assert not cmd.done()  # the page's command waits for the briefing
+    finally:
+        tools._settled.set()
+        tools._lock.release()
+    r = await asyncio.wait_for(cmd, 10)
+    assert r.status_code == 200
+    assert harness.sonos_tools is before

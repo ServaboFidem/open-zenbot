@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification, powerMonitor, session } = require('electron');
+const { app, BrowserWindow, protocol, net, ipcMain, dialog, shell, Notification, powerMonitor, session, Tray, Menu, nativeImage, powerSaveBlocker } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { saveMedia } = require('./save-media.cjs');
@@ -12,13 +12,20 @@ const { registerTelnyxTexts } = require('./telnyx-texts.cjs');
 const { allowFrameNavigation } = require('./frame-nav.cjs');
 const { createUpdateChecker } = require('./update-check.cjs');
 const { runtimePaths } = require('./runtime-paths.cjs');
+const { openTray, closeToTray, allClosed, startsHidden } = require('./tray.cjs');
+const { createBriefingKeeper } = require('./briefing-keeper.cjs');
 
 // The installed app (or ZEN_MANAGED=1 from the repo) sets itself up, runs its own harness and checks for updates
 // (managed-app.cjs); a developer run does none of that. Its bundled uv and harness are in <resources>: from the repo
 // only ZEN_RESOURCES points at them, else a folder that does not exist, so setup fails at its first uv step.
 const managed = app.isPackaged || process.env.ZEN_MANAGED === '1';
-// one window: a second launch hands over to the first ('second-instance' below) and quits
-if (managed && !app.requestSingleInstanceLock()) { app.quit(); return; }
+// one app, in a tray: a second launch hands over to the first ('second-instance') and quits
+if (!app.requestSingleInstanceLock()) { app.quit(); return; }
+// Closing the window hides it (tray.cjs); only a real quit closes it. Registered before the managed handler, which
+// calls app.quit() again after stopping the harness, so that second quit still sees this flag.
+let quitting = false;
+app.on('before-quit', () => { quitting = true; });
+let trayParts = null;
 const resources = app.isPackaged ? process.resourcesPath : (process.env.ZEN_RESOURCES || path.join(__dirname, 'no-bundled-resources'));
 const paths = managed ? runtimePaths({ userData: app.getPath('userData'), resources, platform: process.platform }) : null;
 
@@ -66,8 +73,15 @@ function serveApp(request) {
 
 const appWindows = new WeakSet();
 // page: index.html (the workspace) or setup.html (the installed app's setup and start screen)
+// started hidden (--hidden, at sign-in): the first window stays out of sight and the tray is all there is; with no
+// tray it shows, or nothing could open it
+let firstWindow = true;
+const hasTray = () => trayParts !== null;
 function createWindow(page = 'index.html') {
+  const show = !firstWindow || !startsHidden(process.argv, hasTray());
+  firstWindow = false;
   const win = new BrowserWindow({
+    show,
     width: 1440, height: 960, minWidth: 375, minHeight: 640,
     title: 'OpenZenBot', icon: path.join(__dirname, '..', 'assets', 'zenbot-enso-icon.png'), backgroundColor: '#f5f5f5', autoHideMenuBar: true,
     webPreferences: {
@@ -90,6 +104,7 @@ function createWindow(page = 'index.html') {
   win.webContents.on('will-frame-navigate', (event) => {
     if (!event.isMainFrame && !allowFrameNavigation(event.url, harnessBase())) event.preventDefault();
   });
+  closeToTray(win, { isQuitting: () => quitting, hasTray, onHidden: () => trayParts && trayParts.onHidden() });
   win.loadURL(`app://openzenbot/${page}`);
   return win;
 }
@@ -238,6 +253,85 @@ function startIdleReport() {
   });
   idleReport.start();
 }
+// the window the tray brings back: a hidden one is shown, a destroyed one made again
+function showWindow() {
+  const win = BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && appWindows.has(w.webContents));
+  if (!win) { createWindow(managed ? 'index.html' : undefined); return; }
+  if (win.isMinimized()) win.restore();
+  win.show(); win.focus();
+}
+function startTray() {
+  const fs = require('node:fs');
+  const store = path.join(app.getPath('userData'), 'tray.json');
+  trayParts = openTray({
+    Tray, Menu,
+    icon: nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'zenbot-enso-icon.png')),
+    showWindow, quit: () => app.quit(),
+    notify: body => { if (Notification.isSupported()) new Notification({ title: 'ZenBot', body }).show(); },
+    seenStore: {
+      read: () => { try { return JSON.parse(fs.readFileSync(store, 'utf8')).seen === true; } catch { return false; } },
+      write: () => fs.writeFileSync(store, JSON.stringify({ seen: true })),
+    },
+  });
+}
+// Wake tasks, the stay-awake hold and start at sign-in (briefing-keeper.cjs); the harness says when briefings are due
+// Start at sign-in: Electron's login item on Windows and macOS; on Linux an XDG autostart entry (autostart.cjs)
+function loginItem(fs) {
+  if (process.platform !== 'linux') {
+    return {
+      setLoginItem: o => app.setLoginItemSettings(o),
+      getLoginItem: () => app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin,
+    };
+  }
+  const a = require('./autostart.cjs').createAutostart({
+    env: process.env, home: app.getPath('home'), execPath: process.execPath, join: path.join,
+    fs: {
+      mkdir: d => fs.mkdirSync(d, { recursive: true }),
+      write: (f, t) => fs.writeFileSync(f, t, { mode: 0o644 }),
+      rename: (x, y) => fs.renameSync(x, y),
+      remove: f => fs.rmSync(f, { force: true }),
+      exists: f => fs.existsSync(f),
+    },
+  });
+  return { setLoginItem: o => (o.openAtLogin ? a.enable() : a.disable()), getLoginItem: () => a.enabled() };
+}
+let keeper = null;
+function startKeeper() {
+  const fs = require('node:fs');
+  const { execFile } = require('node:child_process');
+  keeper = createBriefingKeeper({
+    platform: process.platform, managed,
+    fetchStatus: async () => {
+      const r = await net.fetch(`${harnessBase()}/briefings`, { signal: AbortSignal.timeout(10_000) });
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    },
+    // schtasks.exe from an argument array, never a shell
+    runSchtasks: args => new Promise((resolve, reject) => {
+      // by full path, as build/installer.nsh does, so no schtasks.exe found elsewhere on PATH is run
+      const exe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'schtasks.exe');
+      execFile(exe, args, { windowsHide: true, timeout: 20_000 }, err => (err ? reject(err) : resolve()));
+    }),
+    writeTaskXml: async xml => {
+      const file = path.join(app.getPath('temp'), `openzenbot-wake-${process.pid}-${Date.now()}.xml`);
+      fs.writeFileSync(file, String.fromCharCode(0xfeff) + xml, { encoding: 'utf16le', mode: 0o600 });  // schtasks reads UTF-16
+      return { path: file, remove: () => { try { fs.unlinkSync(file); } catch { /* gone */ } } };
+    },
+    powerSaveBlocker,
+    ...loginItem(fs),
+  });
+  const handle = (channel, fn) => ipcMain.handle(channel, (event, arg) => {
+    if (!fromApp(event)) throw new Error('not allowed');
+    return fn(arg);
+  });
+  handle('briefing-keeper:get', () => keeper.loginState());
+  handle('briefing-keeper:set-login', on => {
+    if (typeof on !== 'boolean') throw new Error('on is true or false');
+    return keeper.setLogin(on);
+  });
+  handle('briefing-keeper:refresh', async () => { await keeper.sync(); return keeper.loginState(); });
+  keeper.start();
+}
 app.whenReady().then(() => {
   protocol.handle('app', serveApp);
   // The app's IPC channels (Sentry adds its own when the DSN is set): the renderer asks for a directory or a file, the user
@@ -281,13 +375,17 @@ app.whenReady().then(() => {
   registerMorningEmail(ipcMain, appWindows, settingsDir(process.env, vaultBase));
   registerTelnyxTexts(ipcMain, appWindows, settingsDir(process.env, vaultBase));
   handleUpdates();
+  startTray();
+  startKeeper();
   if (managed) {
-    require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling });
+    require('./managed-app.cjs').startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port: managedPort, fromApp, startArrivalPolling, hidden: startsHidden(process.argv, hasTray()) });
     return;
   }
   createWindow();
   startArrivalPolling();
-  app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
+  app.on('second-instance', showWindow);
+  app.on('activate', showWindow);  // macOS Dock: a window hidden to the tray is shown, none is made again
 });
-app.on('before-quit', () => { if (idleReport) idleReport.stop(); });
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('before-quit', () => { if (idleReport) idleReport.stop(); if (keeper) keeper.stop(); });
+// closing the last window leaves ZenBot in the tray; the tray's Quit (or the OS) ends it. With no tray it quits.
+app.on('window-all-closed', () => allClosed({ hasTray, quit: () => app.quit() }));

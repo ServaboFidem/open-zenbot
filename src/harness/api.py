@@ -101,6 +101,9 @@ from src.telnyx.service import TelnyxService
 from src.sonos.routes import sonos_router
 from src.sonos.service import SonosService
 from src.sonos.tools import SonosTools
+from src.briefing import content as briefing_content
+from src.briefing.routes import briefing_router
+from src.briefing.service import BriefingService
 from src.speakers.routes import speakers_router
 from src.speakers.service import SpeakerService
 from src.music.routes import music_router
@@ -216,6 +219,8 @@ class Harness:
     telnyx: TelnyxService | None = None  # Telnyx: calendar reminders by text to the owner's phone, the /telnyx routes (no bot tool)
     sonos: SonosService | None = None  # Sonos: the speakers found on the home network, the sonos tools, the /sonos routes
     speakers: SpeakerService | None = None  # Wi-Fi speakers: AirPlay, Chromecast and DLNA found, the default speaker, /speakers
+    sonos_tools: SonosTools | None = field(default=None, repr=False)  # built once; a rebind keeps it (one lock)
+    briefing: BriefingService | None = None  # the spoken morning briefing on the Sonos speakers (no bot tool)
     dreamer: Dreamer | None = None  # dreaming: learns facts from the user's own messages while idle; built once, a rebind keeps it
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
     provider_store: ProviderStore | None = None  # vault-settings/providers.json: providers, their keys, their enabled models
@@ -379,10 +384,21 @@ class Harness:
             self.telnyx = TelnyxService(c.vault_root, self.ledger, lambda: self.calendar.store)
         if self.sonos is None:
             self.sonos = SonosService(c.vault_root, self.ledger)  # no network until start() in the lifespan
-        # the sonos tools exist only while a speaker answers, and never in a bot room's turn
-        self.sonos_tools = SonosTools(self.sonos, in_room=lambda sid: bool((s := self.sessions.get(sid)) and s.room_id))
+        # the sonos tools exist only while a speaker answers, and never in a bot room's turn. Built once: the Sonos
+        # page's router, the bot tools and the briefing's announce share its one lock and settled event, so a rebind
+        # only registers them again
+        if self.sonos_tools is None:
+            self.sonos_tools = SonosTools(self.sonos, in_room=lambda sid: bool((s := self.sessions.get(sid)) and s.room_id))
         self.sonos.on_change = lambda _found: self.sonos_tools.register(self.tools, self.catalog)
         self.sonos_tools.register(self.tools, self.catalog)
+        if self.briefing is None:  # built once; each dependency is read at call time
+            self.briefing = BriefingService(
+                c.vault_root, self.ledger,
+                build=lambda now, jokes: briefing_content.build(self, now, jokes),
+                say=lambda text: self.speech.say(text),
+                announce=lambda names, wav, volume: self.sonos_tools.announce(names, wav, volume),
+                sonos=self.sonos, speech_ready=lambda: self.speech.can_say() is None,
+                hosted=lambda: self.speech.hosted())
         if self.speakers is None:  # nothing listens until a speaker type is switched on
             self.speakers = SpeakerService(c.vault_root, self.ledger, sonos_addresses=self._sonos_addresses)
         if self.discover is None:
@@ -1578,7 +1594,8 @@ def create_app(h: Harness) -> FastAPI:
     morning = MorningDigest(h)
     app_routers = [morning_router(morning), music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h),
                    facebook_router(h.discover, h), dream_router(h), speech_router(h), mail_router(h.mail), telnyx_router(h.telnyx),
-                   sonos_router(h.sonos, h.sonos_tools), speakers_router(h.speakers)]
+                   sonos_router(h.sonos, h.sonos_tools), speakers_router(h.speakers),
+                   briefing_router(h.briefing)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -1623,12 +1640,15 @@ def create_app(h: Harness) -> FastAPI:
         dreaming = asyncio.create_task(h.dreamer.run(stop))  # a pass when the machine is idle and nothing is under way
         morning_mail = asyncio.create_task(morning.delivery.run())
         texting = asyncio.create_task(h.telnyx.run())  # reminders and the evening rundown, once a minute
+        briefing = asyncio.create_task(h.briefing.run())  # the spoken briefing's slots, every 30 s
         try:
             yield
         finally:
             morning_mail.cancel()
             texting.cancel()
-            await asyncio.gather(morning_mail, texting, return_exceptions=True)
+            briefing.cancel()
+            await asyncio.gather(morning_mail, texting, briefing, return_exceptions=True)
+            await h.briefing.close()  # a Play now under way is cancelled; announce puts the speakers back
             warming.cancel()
             refreshing.cancel()
             await h.delegator.stop_all()  # every hand-off in flight ends, its tree killed and its end logged

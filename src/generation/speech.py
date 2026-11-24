@@ -265,15 +265,14 @@ class Speech:
                 "default_provider": DEFAULT_PROVIDER, "default_model": DEFAULT_MODEL, "default_voice": DEFAULT_VOICE,
                 "active": self.active, "local": local}
 
-    async def read(self, text: str, narrator: Any | None,
-                   model_for: Callable[[Any], tuple[Provider, str | None]]) -> Reading:
-        """The reply, rewritten by the Narrator, as a Reading of WAV pieces. Raises SpeechError."""
-        if not self.config.enabled:
-            raise SpeechError(409, OFF)
+    def _voice(self, *, narrator_missing: bool = False) -> tuple[bool, Secret | None, Any, Any, str, str]:
+        """The checks `read` and `say` share, in `read`'s order: a provider that speaks, (the Narrator), the model
+        downloaded or a key. Answers (local, key, speaker, engine, voice, model) as one snapshot, so a settings save
+        mid-call cannot mix them. Raises SpeechError."""
         local = self.config.provider == LOCAL
         if self.provider is None and not local:
             raise SpeechError(409, f"{self.config.provider!r} is not a provider that speaks. Pick a speech model in Settings.")
-        if narrator is None:
+        if narrator_missing:
             raise SpeechError(409, NO_NARRATOR)
         key: Secret | None = None
         if local:
@@ -287,9 +286,52 @@ class Speech:
                 key = self.resolve(ref)
             except (SecretNotFound, ValueError):
                 raise SpeechError(409, NO_KEY) from None
-        # a settings save mid-call cannot mix these
-        speaker, engine, voice = self.provider, self.local, self.config.voice
-        tts_model = KOKORO_MODEL if local else self.config.model
+        return local, key, self.provider, self.local, self.config.voice, KOKORO_MODEL if local else self.config.model
+
+    def can_say(self) -> str | None:
+        """Why `say` would refuse right now (its sentence), or None when it can speak."""
+        try:
+            self._voice()
+        except SpeechError as e:
+            return str(e)
+        return None
+
+    def hosted(self) -> str | None:
+        """The provider id when the voice is a hosted one (the text leaves this computer), None for Kokoro."""
+        return None if self.config.provider == LOCAL else self.config.provider
+
+    async def say(self, text: str) -> bytes:
+        """`text` as one WAV, exactly as given: no Narrator, and whether or not Read aloud is switched on. Raises
+        SpeechError. Writes one ledger entry (`briefing`), sizes only, never the text."""
+        local, key, speaker, engine, voice, tts_model = self._voice()
+        log: dict[str, Any] = {"chars_in": len(text), "model": tts_model, "voice": voice,
+                               "provider": self.config.provider, "briefing": True}
+        pieces = [p for p in split(text[:NARRATE_OUT_MAX]) if clean(p)] if local else [text.strip()]
+        if not pieces or not pieces[0]:
+            self._log("", **log, stage="speak", error="empty")
+            raise SpeechError(502, EMPTY)
+        try:
+            if local:
+                await engine.ensure()
+                reading = Reading(self._local_pieces(engine, pieces, voice), log)
+            else:
+                reading = Reading(_once(await speaker.speak(key, tts_model, voice, pieces[0])), log)
+            wav = await reading.wav()
+        except ProviderError as e:
+            self._log("", **log, stage="speak", error=failure_kind(e) or "other")
+            raise (SpeechError(*_local_refusal(e)) if local else SpeechError(502, SPEAK_FAILED)) from None
+        except Exception as e:
+            self._log("", **log, stage="speak", error=type(e).__name__)
+            raise
+        self.finish(reading)
+        return wav
+
+    async def read(self, text: str, narrator: Any | None,
+                   model_for: Callable[[Any], tuple[Provider, str | None]]) -> Reading:
+        """The reply, rewritten by the Narrator, as a Reading of WAV pieces. Raises SpeechError."""
+        if not self.config.enabled:
+            raise SpeechError(409, OFF)
+        local, key, speaker, engine, voice, tts_model = self._voice(narrator_missing=narrator is None)
         provider, model = model_for(narrator)
         bot_id = getattr(narrator, "id", "")
         log: dict[str, Any] = {"chars_in": len(text), "model": tts_model, "voice": voice,

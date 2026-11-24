@@ -1,0 +1,106 @@
+// The system tray: closing the window hides it while ZenBot keeps running; the tray's menu opens or quits.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+const { createTray, closeToTray } = createRequire(import.meta.url)('../../src/electron/tray.cjs');
+
+class FakeTray {
+  constructor(icon) { this.icon = icon; this.handlers = {}; this.menu = null; this.tip = null; }
+  setToolTip(t) { this.tip = t; }
+  setContextMenu(m) { this.menu = m; }
+  on(name, fn) { this.handlers[name] = fn; }
+}
+const FakeMenu = { buildFromTemplate: template => ({ template }) };
+function make(over = {}) {
+  const calls = { show: 0, quit: 0, notify: [], write: 0 };
+  const seen = { value: false };
+  const parts = createTray({
+    Tray: FakeTray, Menu: FakeMenu, icon: 'icon.png',
+    showWindow: () => { calls.show++; }, quit: () => { calls.quit++; },
+    notify: s => calls.notify.push(s),
+    seenStore: { read: () => seen.value, write: () => { calls.write++; seen.value = true; } },
+    ...over,
+  });
+  return { ...parts, calls };
+}
+
+test('the menu offers Open ZenBot and Quit ZenBot', () => {
+  const { tray, calls } = make();
+  const items = tray.menu.template;
+  assert.deepEqual(items.map(i => i.label), ['Open ZenBot', 'Quit ZenBot']);
+  items[0].click(); items[1].click();
+  assert.equal(calls.show, 1);
+  assert.equal(calls.quit, 1);
+});
+
+test('a left click opens the window', () => {
+  const { tray, calls } = make();
+  tray.handlers.click();
+  assert.equal(calls.show, 1);
+});
+
+function fakeWin() {
+  const w = { hidden: 0, handlers: {} };
+  w.on = (n, fn) => { w.handlers[n] = fn; };
+  w.hide = () => { w.hidden++; };
+  return w;
+}
+
+test('closing hides the window while not quitting', () => {
+  const win = fakeWin(); let hid = 0, prevented = 0;
+  closeToTray(win, { isQuitting: () => false, onHidden: () => { hid++; } });
+  win.handlers.close({ preventDefault: () => { prevented++; } });
+  assert.equal(prevented, 1);
+  assert.equal(win.hidden, 1);
+  assert.equal(hid, 1);
+});
+
+test('closing during quit closes for real', () => {
+  const win = fakeWin(); let prevented = 0, hid = 0;
+  closeToTray(win, { isQuitting: () => true, onHidden: () => { hid++; } });
+  win.handlers.close({ preventDefault: () => { prevented++; } });
+  assert.equal(prevented, 0);
+  assert.equal(win.hidden, 0);
+  assert.equal(hid, 0);
+});
+
+test('the tray note is shown once ever', () => {
+  const { onHidden, calls } = make();
+  onHidden(); onHidden();
+  assert.deepEqual(calls.notify, ['ZenBot is still running in the tray. Right-click its icon to open it or quit.']);
+  assert.equal(calls.write, 1);
+  const again = make({ seenStore: { read: () => true, write: () => {} } });
+  again.onHidden();
+  assert.deepEqual(again.calls.notify, []);
+});
+
+test('a tray that cannot be made is logged by its message and the app goes on without one', () => {
+  const { openTray } = createRequire(import.meta.url)('../../src/electron/tray.cjs');
+  const logged = [];
+  class Broken { constructor() { const e = new Error('no tray here'); e.stack = 'SECRET-STACK'; throw e; } }
+  const parts = openTray({ Tray: Broken, Menu: FakeMenu, icon: 'i', showWindow() {}, quit() {}, notify() {}, seenStore: { read: () => false, write() {} } },
+    { log: (...a) => logged.push(a.join(' ')) });
+  assert.equal(parts, null);
+  assert.deepEqual(logged, ['tray could not be made: no tray here']);
+  const ok = openTray({ Tray: FakeTray, Menu: FakeMenu, icon: 'i', showWindow() {}, quit() {}, notify() {}, seenStore: { read: () => false, write() {} } }, { log() {} });
+  assert.ok(ok && ok.tray instanceof FakeTray);
+});
+
+test('without a tray, closing the window closes it and the app quits', () => {
+  const { allClosed, startsHidden } = createRequire(import.meta.url)('../../src/electron/tray.cjs');
+  const win = fakeWin(); let prevented = 0, hid = 0;
+  closeToTray(win, { isQuitting: () => false, hasTray: () => false, onHidden: () => { hid++; } });
+  win.handlers.close({ preventDefault: () => { prevented++; } });
+  assert.equal(prevented, 0);
+  assert.equal(win.hidden, 0);
+  assert.equal(hid, 0);
+  let quits = 0;
+  allClosed({ hasTray: () => false, quit: () => { quits++; } });
+  assert.equal(quits, 1);
+  allClosed({ hasTray: () => true, quit: () => { quits++; } });
+  assert.equal(quits, 1);  // with a tray, ZenBot stays running
+  // a --hidden start with no tray would leave nothing to open: the window shows
+  assert.equal(startsHidden(['x', '--hidden'], true), true);
+  assert.equal(startsHidden(['x', '--hidden'], false), false);
+  assert.equal(startsHidden(['x'], true), false);
+});

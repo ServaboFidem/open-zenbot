@@ -1261,3 +1261,41 @@ async def test_an_unexpected_openrouter_failure_is_logged_by_class_and_passed_on
         await s.read("privateword", NARRATOR, _narrate("hi"))
     [entry] = [e for e in ledger.iter() if e.kind == "speech"]
     assert entry.data["stage"] == "speak" and entry.data["error"] == "TypeError"
+
+
+# --- say: given text, no Narrator, whatever the Read aloud switch says ---------------------------------------------
+
+async def test_say_speaks_without_the_narrator_when_read_aloud_is_off(tmp_path):
+    s, engine, _ = _local(tmp_path)
+    s.config.enabled = False
+    wav = await s.say("Good morning. It is sunny today.")
+    assert wav[:4] == b"RIFF" and wav_data(wav)
+    assert engine.calls
+    assert s.can_say() is None and s.hosted() is None
+
+
+async def test_say_refuses_when_kokoro_is_not_downloaded(tmp_path):
+    s, _, _ = _local(tmp_path, model=FakeModel(ready=False))
+    with pytest.raises(SpeechError) as e:
+        await s.say("Hello there.")
+    assert e.value.status == 409 and str(e.value) == NOT_DOWNLOADED
+    assert s.can_say() == NOT_DOWNLOADED
+
+
+async def test_say_ledger_entry_has_no_text(tmp_path):
+    s, _, ledger = _local(tmp_path)
+    wav = await s.say("Secret birthday for Alice. Second sentence here.")
+    [entry] = [e for e in ledger.iter() if e.kind == "speech"]
+    assert entry.data["briefing"] is True and entry.data["chars_in"] == len("Secret birthday for Alice. Second sentence here.")
+    assert entry.data["bytes"] >= len(wav) and entry.data["pieces"] == 2
+    assert "Alice" not in json.dumps(entry.data)
+
+
+async def test_say_with_a_provider_voice(tmp_path):
+    seen: list = []
+    s, ledger = _speech(tmp_path, _ok_tts(seen), config=SpeechConfig(enabled=False))
+    assert s.hosted() == "openrouter" and s.can_say() is None
+    assert await s.say("One. Two. Three.") == pcm_to_wav(PCM)
+    assert len(seen) == 1 and seen[0]["input"] == "One. Two. Three."
+    [entry] = [e for e in ledger.iter() if e.kind == "speech"]
+    assert entry.data["briefing"] is True and entry.data["pieces"] == 1

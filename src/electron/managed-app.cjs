@@ -42,7 +42,7 @@ function trace(paths, winOf) {
 }
 
 // port: the harness's port, the one in ZEN_HARNESS_URL (main.cjs), so the page and the harness it starts agree.
-function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port = 8765, fromApp, startArrivalPolling }) {
+function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, port = 8765, fromApp, startArrivalPolling, hidden = false }) {
   const platform = process.platform;
   const appVersion = app.getVersion();
   const lockHash = host.fileSha256(fs, path.join(paths.harness, 'uv.lock'));
@@ -88,7 +88,8 @@ function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, 
   }
 
   const ctl = createManaged({
-    checker, makeSetup, makeHarness, show,
+    checker, makeSetup, makeHarness, show, hidden,
+    reveal: () => { const w = winOf(); if (w) { if (w.isMinimized()) w.restore(); w.show(); } },
     needsSetup: async () => needsSetup({
       stamp: host.readStamp(fs, paths.stamp), appVersion, lockHash, pythonPresent: host.isFile(fs, paths.python),
     }),
@@ -119,13 +120,16 @@ function startManaged({ app, ipcMain, shell, net, createWindow, checker, paths, 
     return shell.openPath(paths.logs);
   });
 
-  app.on('second-instance', () => {
+  const bringBack = () => {
     const w = winOf();
-    if (!w) return;
+    if (!w) return false;
     if (w.isMinimized()) w.restore();
     w.show(); w.focus();
-  });
-  app.on('activate', () => { if (!winOf()) win = createWindow(workspace ? 'index.html' : 'setup.html'); });  // macOS
+    return true;
+  };
+  app.on('second-instance', bringBack);
+  // macOS Dock: a window hidden to the tray is shown; with none, one is made
+  app.on('activate', () => { if (!bringBack()) win = createWindow(workspace ? 'index.html' : 'setup.html'); });
 
   // quit: cancel setup (not waited for: a Node download ends on its own), stop the harness once, then quit
   let quitReady = false;

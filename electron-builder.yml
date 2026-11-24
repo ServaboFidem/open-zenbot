@@ -76,6 +76,9 @@ extraResources:
   - from: src/skills
     to: harness/src/skills
     filter: *python
+  - from: src/briefing
+    to: harness/src/briefing
+    filter: *python
   - from: src/sonos
     to: harness/src/sonos
     filter: *python

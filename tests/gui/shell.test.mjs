@@ -34,7 +34,7 @@ function loadPreload(env, argv = []) {
   return { exposed, invoked, listeners };
 }
 
-const KEYS = ['exportDesign', 'harnessUrl', 'managed', 'morningEmail', 'onOpenMusic', 'openVault', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'telnyxTexts', 'updates', 'version'];
+const KEYS = ['briefingKeeper', 'exportDesign', 'harnessUrl', 'managed', 'morningEmail', 'onOpenMusic', 'openVault', 'origin', 'pickDirectory', 'pickFile', 'saveMedia', 'setup', 'telnyxTexts', 'updates', 'version'];
 
 test('preload exposes only the workspace controls and named settings groups', async () => {
   const { exposed, invoked } = loadPreload({ ZEN_HARNESS_URL: '' });
@@ -115,7 +115,7 @@ test('main starts sentry only from ZEN_GLITCHTIP_DSN, over classic ipc', () => {
 
 test('main registers the directory and file pickers, save, export, and the update check\'s five channels, from the app\'s own pages', () => {
   const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');  // checked out with CRLF on Windows
-  assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 6);  // five, and the updates:* helper
+  assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 7);  // five, the updates:* helper and the keeper's
   assert.match(src, /ipcMain\.handle\('export-design', \(event, args\) => \{\n    if \(!fromApp\(event\)\) throw/);
   assert.match(src, /require\('\.\/export-design\.cjs'\)/);
   assert.match(src, /ipcMain\.handle\('open-vault', event => \{\n    if \(!fromApp\(event\)\) throw/);
@@ -230,4 +230,22 @@ test('the setup page has its own closed CSP and sets text, never markup', () => 
   const build = readFileSync(new URL('../../scripts/build-gui.mjs', import.meta.url), 'utf8');
   assert.match(build, /entryPoints: \['src\/gui\/setup\.js'\]/);
   assert.match(build, /copyFileSync\('src\/gui\/setup\.html', 'dist\/setup\.html'\)/);
+});
+
+test('main runs schtasks by its full path and guards the tray', () => {
+  const src = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');  // checked out with CRLF on Windows
+  assert.match(src, /path\.join\(process\.env\.SystemRoot \|\| 'C:\\\\Windows', 'System32', 'schtasks\.exe'\)/);
+  assert.doesNotMatch(src, /execFile\('schtasks\.exe'/);
+  assert.match(src, /trayParts = openTray\(/);  // a tray that cannot be made never fails the start
+  assert.doesNotMatch(src, /createTray\(/);
+  assert.match(src, /app\.on\('window-all-closed', \(\) => allClosed\(\{ hasTray, quit: \(\) => app\.quit\(\) \}\)\);/);
+  assert.match(src, /closeToTray\(win, \{ isQuitting: \(\) => quitting, hasTray,/);
+});
+
+test('a Dock click on macOS shows a window hidden to the tray, in both modes', () => {
+  const main = readFileSync(new URL('../../src/electron/main.cjs', import.meta.url), 'utf8');
+  assert.match(main, /app\.on\('activate', showWindow\)/);  // showWindow shows a hidden one, makes one when none
+  const managed = readFileSync(new URL('../../src/electron/managed-app.cjs', import.meta.url), 'utf8');
+  assert.match(managed, /app\.on\('activate', \(\) => \{ if \(!bringBack\(\)\) win = createWindow\(/);
+  assert.match(managed, /const bringBack = \(\) => \{[^}]*w\.show\(\)/s);
 });

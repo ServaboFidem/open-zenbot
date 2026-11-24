@@ -16,7 +16,9 @@
 //   show('setup' | 'workspace'); send(state) to the page; startChecker() -> stop (the periodic update check)
 //   logError(error) writes an unexpected error to the setup log
 
-function createManaged({ checker, needsSetup, makeSetup, makeHarness, show, send, startChecker, logError = () => {} }) {
+//   hidden: true on a start at sign-in (--hidden): no window is showing, so a newer release is treated as "later" and
+//   the launch goes on; reveal() shows the window whenever the launch has to wait for or tell the user something
+function createManaged({ checker, needsSetup, makeSetup, makeHarness, show, send, startChecker, logError = () => {}, hidden = false, reveal = () => {} }) {
   let state = { phase: 'update', update: null, setup: null, harness: null };
   let quitting = false;
   let shutdownPromise = null;
@@ -31,7 +33,8 @@ function createManaged({ checker, needsSetup, makeSetup, makeHarness, show, send
     state = { ...state, ...patch };
     send(snapshot());
   }
-  const waitFor = phase => new Promise(resolve => { waiting = { phase, resolve }; });
+  const needUser = () => { try { reveal(); } catch { /* the page still says it */ } };
+  const waitFor = phase => { needUser(); return new Promise(resolve => { waiting = { phase, resolve }; }); };
   function release(phase) {
     if (!waiting || waiting.phase !== phase || state.phase !== phase) return;
     const { resolve } = waiting;
@@ -47,6 +50,7 @@ function createManaged({ checker, needsSetup, makeSetup, makeHarness, show, send
       if (quitting || harness !== h) return;
       set({ phase: 'failed', harness: { reason: 'exited', detail: '' } });
       show('setup');
+      needUser();
     });
     set({ phase: 'starting', harness: { firstStart } });
     const r = await h.start();
@@ -57,6 +61,7 @@ function createManaged({ checker, needsSetup, makeSetup, makeHarness, show, send
       return;
     }
     set({ phase: 'failed', harness: { reason: (r && r.reason) || 'exited', detail: (r && r.detail) || '' } });
+    needUser();
   }
 
   // an unexpected error: log it, leave nothing running, and say so on the setup page
@@ -68,6 +73,7 @@ function createManaged({ checker, needsSetup, makeSetup, makeHarness, show, send
     harness = null;  // its late exit is not "the harness stopped"
     set({ phase: 'failed', harness: { reason: 'error', detail: String((error && error.message) || error) } });
     show('setup');
+    needUser();
     if (h) { try { await h.stop(); } catch { /* already gone */ } }
   }
 
@@ -85,7 +91,7 @@ function createManaged({ checker, needsSetup, makeSetup, makeHarness, show, send
       set({ phase: 'update', update: null });
       const update = await checker.check();
       if (quitting) return;
-      if (update && update.notify) {
+      if (update && update.notify && !hidden) {
         set({ update });
         await waitFor('update');
         if (quitting) return;

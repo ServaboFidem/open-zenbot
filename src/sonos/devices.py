@@ -5,12 +5,14 @@ a SpeakerError: kind `network` when the speaker could not be reached, `other` fo
 
 from __future__ import annotations
 
+import contextlib
 import functools
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Protocol, TypeVar
 
 import requests
 import soco
+from soco.snapshot import Snapshot
 
 T = TypeVar("T")
 
@@ -21,6 +23,10 @@ soco.config.REQUEST_TIMEOUT = REQUEST_TIMEOUT_S
 QUEUE_TIMEOUT_S = 30.0  # adding a playlist or album to the queue: the one request that may take the speaker long
 
 TRANSPORT_STATES = {"PLAYING": "playing", "PAUSED_PLAYBACK": "paused", "STOPPED": "stopped"}
+# What a speaker was playing, from its current URI, for putting it back after an announcement
+PHONE_SCHEMES = ("x-sonos-vli:", "x-sonos-spotify:", "x-sonosapi-rtrecent:")  # a phone or app cast to the speaker
+TV_SCHEMES = ("x-sonos-htastream:", "x-rincon-stream:")  # the TV or a line-in
+QUEUE_SCHEME = "x-rincon-queue:"
 ACTIONS = ("pause", "resume", "next", "previous", "stop")
 
 
@@ -51,6 +57,20 @@ class NowPlaying:
     artist: str
 
 
+@dataclass
+class Snap:
+    """What a speaker was doing before an announcement. `source` is queue | stream | phone | tv | none; `raw` is
+    SoCo's Snapshot (None in fakes), opaque outside this module."""
+
+    ip: str
+    coordinator_ip: str
+    volume: int
+    had_track: bool
+    source: str
+    state: str  # SoCo's current_transport_state: PLAYING, PAUSED_PLAYBACK, STOPPED, ...
+    raw: Any = field(default=None, repr=False, compare=False)
+
+
 class SpeakerError(Exception):
     def __init__(self, kind: str, message: str = "") -> None:
         super().__init__(message or kind)
@@ -68,6 +88,11 @@ class Speakers(Protocol):
     def set_volume(self, ip: str, level: int) -> None: ...
     def join(self, ip: str, coordinator_ip: str) -> None: ...
     def unjoin(self, ip: str) -> None: ...
+    def snapshot(self, ip: str) -> Snap: ...
+    def restore(self, snap: Snap) -> None: ...
+    def play_uri(self, coordinator_ip: str, url: str, title: str) -> None: ...
+    def transport_state(self, ip: str) -> str: ...
+    def clear_clip(self, ip: str) -> None: ...
 
 
 def _kind(exc: BaseException) -> str:
@@ -110,6 +135,22 @@ def _answering(zones: Any) -> list[Room]:
         except Exception:  # noqa: BLE001 - a speaker that cannot be read is one that is not there
             continue
     return sorted(rooms, key=lambda r: r.name.casefold())
+
+
+def _source(track_uri: str, media_uri: str) -> str:
+    """The kind of what plays: the media address says queue (the track address then names a queue item), the track
+    address says phone or tv, an address of either that is none of these is a stream, no address is none."""
+    track, media = track_uri.strip(), media_uri.strip()
+    if media.startswith(QUEUE_SCHEME) or track.startswith(QUEUE_SCHEME):
+        return "queue"
+    uri = track or media
+    if not uri:
+        return "none"
+    if uri.startswith(PHONE_SCHEMES) or media.startswith(PHONE_SCHEMES):
+        return "phone"
+    if uri.startswith(TV_SCHEMES) or media.startswith(TV_SCHEMES):
+        return "tv"
+    return "stream"
 
 
 def _is_container(obj: Any) -> bool:
@@ -196,3 +237,37 @@ class SocoSpeakers:
     @_guarded
     def unjoin(self, ip: str) -> None:
         self._zone(ip).unjoin()
+
+    @_guarded
+    def snapshot(self, ip: str) -> Snap:
+        zone = self._zone(ip)
+        group = zone.group
+        coordinator = group.coordinator if group is not None and group.coordinator is not None else zone
+        track = str(coordinator.get_current_track_info().get("uri") or "")
+        media = ""
+        with contextlib.suppress(Exception):  # the media address only refines the kind; the track address suffices
+            media = str(coordinator.avTransport.GetMediaInfo([("InstanceID", 0)]).get("CurrentURI") or "")
+        state = str(coordinator.get_current_transport_info().get("current_transport_state") or "")
+        raw = Snapshot(zone)
+        raw.snapshot()
+        return Snap(ip=str(zone.ip_address), coordinator_ip=str(coordinator.ip_address), volume=int(zone.volume),
+                    had_track=bool(track or media), source=_source(track, media), state=state, raw=raw)
+
+    @_guarded
+    def restore(self, snap: Snap) -> None:
+        snap.raw.restore(fade=False)
+
+    @_guarded
+    def play_uri(self, coordinator_ip: str, url: str, title: str) -> None:
+        self._zone(coordinator_ip).play_uri(url, title=title)
+
+    @_guarded
+    def transport_state(self, ip: str) -> str:
+        return str(self._zone(ip).get_current_transport_info().get("current_transport_state") or "")
+
+    @_guarded
+    def clear_clip(self, ip: str) -> None:
+        """Drop a finished clip as the current track by pointing the transport at nothing. A speaker that refuses
+        leaves it as it was: this is best effort and never raises."""
+        with contextlib.suppress(Exception):
+            self._zone(ip).avTransport.SetAVTransportURI([("InstanceID", 0), ("CurrentURI", ""), ("CurrentURIMetaData", "")])

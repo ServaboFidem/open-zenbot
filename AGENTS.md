@@ -19,15 +19,16 @@ name each top-level system and run the harness and the tests.
 | `src/telnyx/` | Telnyx text reminders: settings, the key and the sending number (`settings.py`), the client (`client.py`), the text and its length in SMS segments (`texts.py`), the send record (`record.py`), what is due from the calendar (`due.py`), the service and its loop (`service.py`) and the `/telnyx` routes (`routes.py`); see `### Telnyx text reminders` |
 | `src/sonos/` | Sonos control over SoCo: settings (`settings.py`), the device boundary (`devices.py`), the service that finds speakers (`service.py`), the `sonos_*` tools and the volume ceiling (`tools.py`) and the `/sonos` routes (`routes.py`); see `### Sonos` |
 | `src/speakers/` | Wi-Fi speakers (finding only, nothing played): settings and the speaker record (`settings.py`), the three finders behind one `Finder` protocol (`finders.py`, the only importer of pyatv, pychromecast, async_upnp_client and zeroconf), the service with a look per speaker type and the one default (`service.py`) and the `/speakers` routes (`routes.py`); see `### Wi-Fi speakers` |
+| `src/briefing/` | The spoken morning briefing on the Sonos speakers: the three files (`settings.py`: `Briefing`, `BriefingStore`, `BriefingState`, `ToldJokes`), the words (`content.py`), the runner (`service.py`: `BriefingService`) and the `/briefings` routes (`routes.py`); the clip listener is `src/sonos/clip_server.py` and the announcement `SonosTools.announce`; see `### Spoken briefings` |
 | `src/kokoro/` | Speech made on this computer by Kokoro on onnxruntime, for Read aloud: the pinned model files, their download and removal (`model.py`: `KokoroModel`), and the engine with the 28 English voices (`engine.py`: `KokoroEngine`, the only importer of `kokoro_onnx` and `onnxruntime`); see `### Reading replies aloud`. The splitting into pieces and the reading itself are in `src/generation/speech.py`, the routes in `src/harness/speech_routes.py` |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, with the editor `DesignEditor.jsx`, `TweaksPanel.jsx`, `DesignPendingBar.jsx`, `DesignCompare.jsx` and `ExportMenu.jsx`, and its unsaved changes decided in `design-edits.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, the approval dialog `ApprovalDialog.jsx` + `approval-dialog.js` (any pending approval opens it over whatever page is open, oldest first; `app.jsx` reads `GET /approvals` every 5 s while online and on a live `approval_request` event; closing it or Decide later decides nothing and puts that request off until a reload; it does not open on the Approvals page; never seen on screen with a real approval), program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; `export-design.cjs` renders a design as PDF or PNG in an offscreen window (`makeExportWindow` and `exportSession` in `main.cjs`); `open-vault.cjs` opens the vault's root in the OS file manager for the home page's Browse your vault button, shown in the desktop app only: the page sends no path, the folder is `ZEN_VAULT` as the main process reads it, checked by `tests/gui/open-vault.test.mjs`; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (AgentMail: the section at the top of Settings > Connected apps `MailSettings.jsx`, the AgentMail page `MailPage.jsx` (shown in the navigation below Conversations once a key is saved and an inbox chosen), their decisions in `mail.js` and styles in `mail.css`, through `mail-api.js`) (Telnyx: the section of Settings > Connected apps `TelnyxSettings.jsx`, its decisions in `telnyx.js`, through `telnyx-api.js`; the desktop app saves the owner's phone through `src/electron/telnyx-texts.cjs`) (Sonos: the section of Settings > Connected apps `SonosSettings.jsx`, its decisions in `sonos.js`, and the Music > Sonos page `SonosPage.jsx` with its decisions in `sonos-panel.js` and styles in `sonos.css`, both through `sonos-api.js`) (Wi-Fi speakers: the Settings > Wi-Fi speakers panel `WifiSpeakers.jsx`, its decisions in `wifi-speakers.js`, through `speakers-api.js`) (Read aloud: the card on Settings > Harness Tools, its voice on this computer in `ReadAloudLocal.jsx`, its decisions in `speech-settings.js`, and the player and reader in `speech.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, with the editor `DesignEditor.jsx`, `TweaksPanel.jsx`, `DesignPendingBar.jsx`, `DesignCompare.jsx` and `ExportMenu.jsx`, and its unsaved changes decided in `design-edits.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, the approval dialog `ApprovalDialog.jsx` + `approval-dialog.js` (any pending approval opens it over whatever page is open, oldest first; `app.jsx` reads `GET /approvals` every 5 s while online and on a live `approval_request` event; closing it or Decide later decides nothing and puts that request off until a reload; it does not open on the Approvals page; never seen on screen with a real approval), program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; `export-design.cjs` renders a design as PDF or PNG in an offscreen window (`makeExportWindow` and `exportSession` in `main.cjs`); `open-vault.cjs` opens the vault's root in the OS file manager for the home page's Browse your vault button, shown in the desktop app only: the page sends no path, the folder is `ZEN_VAULT` as the main process reads it, checked by `tests/gui/open-vault.test.mjs`; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (AgentMail: the section at the top of Settings > Connected apps `MailSettings.jsx`, the AgentMail page `MailPage.jsx` (shown in the navigation below Conversations once a key is saved and an inbox chosen), their decisions in `mail.js` and styles in `mail.css`, through `mail-api.js`) (Telnyx: the section of Settings > Connected apps `TelnyxSettings.jsx`, its decisions in `telnyx.js`, through `telnyx-api.js`; the desktop app saves the owner's phone through `src/electron/telnyx-texts.cjs`) (Sonos: the section of Settings > Connected apps `SonosSettings.jsx`, its decisions in `sonos.js`, and the Music > Sonos page `SonosPage.jsx` with its decisions in `sonos-panel.js` and styles in `sonos.css`, both through `sonos-api.js`) (Wi-Fi speakers: the Settings > Wi-Fi speakers panel `WifiSpeakers.jsx`, its decisions in `wifi-speakers.js`, through `speakers-api.js`) (Read aloud: the card on Settings > Harness Tools, its voice on this computer in `ReadAloudLocal.jsx`, its decisions in `speech-settings.js`, and the player and reader in `speech.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) (Spoken briefings: the Briefings section at the top of the Routines page `BriefingsSection.jsx` and its form `BriefingDialog.jsx`, their decisions in `briefings.js`, through `briefings-api.js`; the Electron side keeps ZenBot ready for a briefing in `briefing-keeper.cjs`, `autostart.cjs` and `tray.cjs`) (the tray: closing the window hides it to the system tray and ZenBot keeps running, since the harness, reminders and briefings need it up (`tray.cjs`: `openTray`, `createTray`, `closeToTray`, `allClosed`, `startsHidden`); the tray's right-click menu is Open ZenBot and Quit ZenBot, a click on the icon opens the window, and the first hide shows one notice, once ever, remembered in `<userData>/tray.json`; only Quit ZenBot, or the operating system ending the session, stops the app; when no tray can be made (`openTray` logs the error's message only), the app starts without one, closing the window quits it and a `--hidden` start shows the window, so it never runs invisibly; developer mode takes the single-instance lock too, so a second launch hands over to the first and quits; tested in `tests/gui/tray.test.mjs`) |
 | `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`); a prompt can also set `closed: true` (only the tool groups in its `mcps`, no built-in tool, never in a room: `event-scout.md`), or `narrates: true` (the Narrator, `narrator.md`: asked directly to rewrite replies for speech, never given a task) |
 | `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+), and `fetch-uv.mjs` (downloads the pinned uv into `build/bin/` for the installers). Packaging itself is `electron-builder.yml`, `build/` (icon, the .deb's AppArmor profile `apparmor-profile`, the NSIS include `installer.nsh`) and `packaging/harness/` (the CPU-only `pyproject.toml` and `uv.lock` the installed app uses) |
 | `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`); `skills/events-digest/` (the scout's weekly run); `skills/sonos-morning/` (ZenBot's morning music routine) |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
-| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`; direct changes in `tests/test_studio_edits.py`, `tests/test_studio_edit_routes.py` and `tests/test_design_tweaks.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `design-edits.test.mjs`, `design-bridge.test.mjs`, `export-design.test.mjs`, `save-media.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_findlocal.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` and the FindLocal stand-in `FakeFindLocal` are in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `all-events.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs`; dreaming in `tests/test_dream.py` and `tests/test_dream_routes.py`, GUI `tests/gui/dream.test.mjs` and `idle-report.test.mjs`; the approval dialog's rules in `tests/gui/approval-dialog.test.mjs`; AgentMail in `tests/mail/` (its stand-in `FakeAgentMail` is in `tests/mail/conftest.py`), GUI `tests/gui/mail.test.mjs` and `mail-api.test.mjs`; Telnyx in `tests/telnyx/` (its stand-in `FakeTelnyx` is in `tests/telnyx/conftest.py`), GUI `tests/gui/telnyx.test.mjs`, `telnyx-api.test.mjs` and `telnyx-texts.test.mjs`; Sonos in `tests/sonos/` (its stand-in `FakeSpeakers` is in `tests/sonos/conftest.py`), GUI `tests/gui/sonos.test.mjs`, `sonos-panel.test.mjs` and `sonos-api.test.mjs`; Wi-Fi speakers in `tests/speakers/` (finders get stand-ins and an `httpx.MockTransport`, the service a `FakeFinder`), GUI `tests/gui/wifi-speakers.test.mjs` and `speakers-api.test.mjs`; local speech in `tests/kokoro/` (`test_model.py`: the download through an `httpx.MockTransport`; `test_engine.py`: a fake library object, never `kokoro_onnx`) and `tests/test_speech.py`, GUI `tests/gui/speech.test.mjs` and `speech-settings.test.mjs` |
+| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`; direct changes in `tests/test_studio_edits.py`, `tests/test_studio_edit_routes.py` and `tests/test_design_tweaks.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `design-edits.test.mjs`, `design-bridge.test.mjs`, `export-design.test.mjs`, `save-media.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_findlocal.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` and the FindLocal stand-in `FakeFindLocal` are in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `all-events.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs`; dreaming in `tests/test_dream.py` and `tests/test_dream_routes.py`, GUI `tests/gui/dream.test.mjs` and `idle-report.test.mjs`; the approval dialog's rules in `tests/gui/approval-dialog.test.mjs`; AgentMail in `tests/mail/` (its stand-in `FakeAgentMail` is in `tests/mail/conftest.py`), GUI `tests/gui/mail.test.mjs` and `mail-api.test.mjs`; Telnyx in `tests/telnyx/` (its stand-in `FakeTelnyx` is in `tests/telnyx/conftest.py`), GUI `tests/gui/telnyx.test.mjs`, `telnyx-api.test.mjs` and `telnyx-texts.test.mjs`; Sonos in `tests/sonos/` (its stand-in `FakeSpeakers` is in `tests/sonos/conftest.py`), GUI `tests/gui/sonos.test.mjs`, `sonos-panel.test.mjs` and `sonos-api.test.mjs`; Wi-Fi speakers in `tests/speakers/` (finders get stand-ins and an `httpx.MockTransport`, the service a `FakeFinder`), GUI `tests/gui/wifi-speakers.test.mjs` and `speakers-api.test.mjs`; local speech in `tests/kokoro/` (`test_model.py`: the download through an `httpx.MockTransport`; `test_engine.py`: a fake library object, never `kokoro_onnx`) and `tests/test_speech.py`, GUI `tests/gui/speech.test.mjs` and `speech-settings.test.mjs`; spoken briefings in `tests/briefing/` (`test_settings.py`, `test_content.py`, `test_service.py`, `test_routes.py`), `tests/sonos/test_announce.py`, `test_clip_server.py` and the announcement cases in `test_devices.py` (the stand-in `FakeSpeakers` in `tests/sonos/conftest.py` gained snapshots and transport states), `say` in `tests/test_speech.py`, the forecast parts in `tests/events/test_morning_weather.py`, GUI `tests/gui/briefings.test.mjs`, `briefings-api.test.mjs`, `briefing-keeper.test.mjs`, `autostart.test.mjs`, `tray.test.mjs` and the hidden start in `managed.test.mjs` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
 | `.github/` | Workflows: `stale.yml`, and `release.yml` (a `v*` tag builds the .deb and the Windows installer and opens a draft release; a manual run only builds them; see `## Installed app`) |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
@@ -147,7 +148,7 @@ gives `notes-ledger/`, `notes-music/`, `notes-calendar/`, `notes-models/` and `n
 | `vault-models/` | `kokoro/`: the Kokoro model (`kokoro-v1.0.onnx`) and voices (`voices-v1.0.bin`), fetched by `POST /speech/local/download`; a `.part` file only while a download runs | `src/vault_settings.py` `models_dir`; a private folder (`allowed_folders.private_folders`), so no bot tool reaches it |
 | `vault-music/` | Music database (`music.db`), the Soundlore atlas, cover images | `src/music/settings.py` `music_dir`; bots never reach it (`allowed_folders.private_folders`) |
 | `vault-calendar/` | Calendar database (`calendar.db`: events, calendars, sync state) | `src/events/settings.py` `calendar_dir`; a private folder (`allowed_folders.private_folders`), so no bot tool reaches the file. The `/calendar` routes are another matter: see "Bots and the calendar" under `### The calendar and Google`; also holds `discover.db` (the discovered events, digests, cards and the events added from the pool) and `discover-images/` (card pictures, and pool pictures in `discover-images/pool/`), private like `calendar.db` |
-| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths, image generation and Read aloud), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `events.json` (event discovery: place, ticked categories, interests, on or off, the FindLocal city and its time zone), `events_keys.json` (the FindLocal key, owner-only), `agentmail.json` (ZenBot's chosen AgentMail inbox: its id and address; no secret), `agentmail_keys.json` (the AgentMail API key, owner-only), `telnyx.json` (the Telnyx sending number; no secret), `telnyx_keys.json` (the Telnyx API key, owner-only), `telnyx_texts.json` (the owner's phone and when to text, written only by the desktop app), `telnyx_texts.sqlite3` (what was texted), `sonos.json` (Sonos: on or off, the volume ceiling, the speaker addresses last found; no secret), `wifi_speakers.json` (Wi-Fi speakers: the three switches, the default speaker's key, the speakers each type last found with their addresses; no secret), `dream.json` (dreaming: on or off and the idle minutes), `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
+| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths, image generation and Read aloud), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `events.json` (event discovery: place, ticked categories, interests, on or off, the FindLocal city and its time zone), `events_keys.json` (the FindLocal key, owner-only), `agentmail.json` (ZenBot's chosen AgentMail inbox: its id and address; no secret), `agentmail_keys.json` (the AgentMail API key, owner-only), `telnyx.json` (the Telnyx sending number; no secret), `telnyx_keys.json` (the Telnyx API key, owner-only), `telnyx_texts.json` (the owner's phone and when to text, written only by the desktop app), `telnyx_texts.sqlite3` (what was texted), `sonos.json` (Sonos: on or off, the volume ceiling, the speaker addresses last found; no secret), `wifi_speakers.json` (Wi-Fi speakers: the three switches, the default speaker's key, the speakers each type last found with their addresses; no secret), `dream.json` (dreaming: on or off and the idle minutes), `briefings.json` (the spoken briefings: days, times, speakers, volume; no secret), `briefing_state.json` (the slot last claimed, the last run and skip, the last settings save), `briefing_jokes.json` (the jokes already told), `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
 
 A new setting goes in `settings_dir(vault_root) / "<name>.json"`, never under the vault. Secrets and
 `allowed_folders.json` (which decides what `files` may reach) must stay out of the vault: a bot that could
@@ -202,8 +203,10 @@ done on).
      60 s, and also reads it every 5 s and posts at once when it dropped below the previous reading (the user touched
      the computer, so a pass under way stops within seconds; `src/electron/idle-report.cjs`, `every` and `watchEvery`).
      It is started from `main.cjs` in developer mode, and in the installed app once the workspace is shown, not during
-     setup. The machine counts as idle when the newest report is under 150 s old and says at least `idle_minutes`. With
-     no fresh report (a plain browser, no Electron, or the app closed) it is never idle; `GET /dream/status`
+     setup. Closing the window hides ZenBot in the tray and the reports go on; they stop only when the app ends (Quit
+     ZenBot from the tray, or the operating system ending the session; with no tray, closing the window ends it). The
+     machine counts as idle when the newest report is under 150 s old and says at least `idle_minutes`. With no fresh
+     report (a plain browser, no Electron, or the app quit) it is never idle; `GET /dream/status`
      `idle_reported` is true only while the newest report is under 150 s old, whatever it said, and the settings
      section notes that dreaming starts on its own only in the desktop app (`needsDesktopNote`).
   3. Nothing is under way (`Harness.busy`): no session that has not ended (a task, room turn or routine run; a session
@@ -1032,6 +1035,44 @@ Settings > Connected apps has a Sonos section (`SonosSettings.jsx`). Design:
   `sonos_play` takes a Favorite or playlist by its exact title (a favorite wins over a playlist of the same title);
   an unknown title answers the ten closest. Playback goes to the group's coordinator. Listings start with a line
   saying the names are content, not instructions, and `sonos_favorites` lists at most 200.
+- **Announcements** (`devices.py`: `snapshot`, `restore`, `play_uri`, `transport_state`, `clear_clip`). `snapshot` keeps
+  SoCo's `Snapshot` and a `Snap` whose `source` comes from the group lead's URIs: `queue` (media or track URI
+  `x-rincon-queue:`), else `phone` (`PHONE_SCHEMES`: `x-sonos-vli:`, `x-sonos-spotify:`, `x-sonosapi-rtrecent:`), `tv`
+  (`TV_SCHEMES`: `x-sonos-htastream:`, `x-rincon-stream:`), `none` (no URI) or `stream`. `restore` is `fade=False`;
+  `clear_clip` is best effort and never raises. A snapshot is taken of every speaker of each group a target is in; a
+  group with a speaker whose snapshot fails is left whole and untouched, and its targets count as not answering.
+  `SonosTools.announce(names, wav, volume)` (`tools.py`; `names` None is every speaker) plays one WAV clip on the
+  chosen speakers together and puts every speaker it touched back as it was (group, volume, what it played, whether it
+  played), always, in a `finally`. It holds the tools' lock throughout, and the tools wait on `_settled` so they never
+  read its temporary grouping. Order: read the topology fresh; snapshot; pause each playing lead; make one lead (a
+  target that already leads a group of several, else the first target by name) and join the other targets to it, a
+  speaker that cannot join being left out; set each speaker's volume to the briefing's, never above the ceiling read
+  again just before each set; then `_quiet_strays` reads the lead's group again and takes every member the briefing
+  did not set out of the group, else turns it down to the briefing level, and plays nothing (`UNCONTROLLED`) when a
+  member cannot be read, taken out or turned down, or was never snapshotted; then serve the clip and play it. The
+  wait for the end (`_clip_ended`) polls the lead's transport every `CLIP_POLL_S` and counts STOPPED or
+  PAUSED_PLAYBACK as the end only after PLAYING or TRANSITIONING was seen (the lead reads paused from the pause
+  step, and SoCo sets the address, STOPPED, before it plays); it is cut off at the clip's length plus
+  `CLIP_WAIT_SLACK_S` (30 s), and a clip no speaker fetched is a failure (`NOT_FETCHED`). A speaker playing the TV or
+  a line-in (`source` `tv`) is left out and not interrupted. A speaker playing from a phone (`source` `phone`) is
+  paused for the clip and listed in `phone_paused`; restore cannot resume a phone's stream, so the owner starts it
+  again. Failures raise `ValueError` with a sentence (`NO_SPEAKER`, `CUT_OFF`, `NOT_FETCHED`, `NOT_SERVED`,
+  `UNCONTROLLED`, `NOT_WAV`) after the speakers are put back. `restore` puts a speaker back to its exact prior
+  volume even when that is above the ceiling: the ceiling binds what ZenBot raises a speaker to. `clear_clip` runs
+  only on an old lead that had no track (clearing a member's `x-rincon:` address would ungroup it). Ledger kind
+  `sonos`, event `announce`: counts only (`targets`, `played`, `failed`, `phone_paused`, `seconds`,
+  `put_back_failed`, `error`), never a name, title or address.
+- **The clip listener** (`src/sonos/clip_server.py`, `ClipServer`, used by `announce` through `server_factory`). A
+  small `ThreadingHTTPServer` made for one announcement and closed after it (`with`), or after the clip's length plus
+  `CLIP_LIFE_SLACK_S` (60 s). It binds one address, the computer's own interface that reaches the lead
+  (`local_ip_toward`: a UDP connect to the lead's port 1400, nothing sent), on a port the system picks, never
+  `0.0.0.0`. It answers only the lead speaker's address at `/<token>.wav`, an unguessable token (404 to any other
+  path), `GET` and `HEAD`, with single-range 206 answers and `no-store`, and counts GETs whose audio was written
+  (`hits`, so a clip nobody fetched is known; a HEAD never counts). Any other address is closed in the accept loop
+  (`verify_request`), before a byte is read or a thread started; at most `MAX_CONNECTIONS` (8) are open at once, and a
+  connection idle for `REQUEST_TIMEOUT_S` (10 s) is closed, so a stalled client cannot hold a thread past it. It never logs: no address, URL or token reaches a log line, and the
+  server's own error hook is silenced. Windows may ask about the firewall the first time (unchecked in the installed
+  app: see Unverified under `### Spoken briefings`).
 - **The volume ceiling** (`max_volume`). Before `sonos_play`, `sonos_control` `resume` and `sonos_group`, every
   speaker that will sound and is louder than the ceiling is turned down to it, and the answer says so ("Turned
   Living Room down to 60 first."). `sonos_volume` refuses to set a level above the ceiling that is louder than the
@@ -1039,7 +1080,9 @@ Settings > Connected apps has a Sonos section (`SonosSettings.jsx`). Design:
   speakers of the group being joined are lowered too, since they sound in the joining rooms. The ceiling is read
   after each volume read, so one the user lowers while a command runs is the one applied, and the tools run one
   speaker command at a time (`SonosTools._lock`), so a read, its check and its write are never split by another
-  command. Switching Sonos off stops a command under way before its next speaker call ("Sonos is off."), the tools
+  command. `Harness` builds `SonosTools` once (`Harness.sonos_tools`) and a rebind (a provider or model save) only
+  registers its tools again, so the Sonos page's router, the bot tools and the briefing's `announce` always share that
+  one lock and its `_settled` event. Switching Sonos off stops a command under way before its next speaker call ("Sonos is off."), the tools
   are registered only while Sonos is on, and a topology read that was out across the switch is thrown away
   (`refresh` checks the generation). A settings save that fails changes nothing, so the same request can be sent
   again. The ceiling binds ZenBot only: the Sonos app and anything else on the network can still go higher.
@@ -1312,6 +1355,14 @@ kokoro-onnx and phonemizer with their licences is planned and not built.
   per piece for both providers; a failure after the first piece ends it by raising. `Reading.wav()` awaits every piece
   and answers one WAV (the PCM under one header), which `Speech.speak` returns and the AirPlay design will hand to a
   speaker. `active` is `enabled`, a provider that can speak, and for `kokoro` the model ready.
+- **Saying text as it is** (`Speech.say`, `can_say`, `hosted`). The spoken briefing uses the voice without the
+  Narrator. `say(text)` makes one WAV of the text exactly as given, whether or not Read aloud is switched on, through
+  the same checks as `read` (`_voice`: a provider that speaks, the model downloaded or a key), and raises
+  `SpeechError`. Kokoro gets the text split into pieces as in a reading (cut at 4,000 characters); a hosted voice gets
+  it whole. `can_say()` answers the sentence `say` would refuse with, or None; `hosted()` answers the provider id
+  when the text leaves this computer, None for Kokoro. It writes one `speech` ledger entry with `briefing: true`:
+  sizes, voice, model and provider, never the text. With tracing on, the spoken text is in the trace as for any
+  other model call.
 - **Settings** in `vault-settings/tools.json` under `speech` (`SpeechConfig`: `provider` (default `openrouter`),
   `model` (`google/gemini-3.8-flash-lite-tts`, or `kokoro-v1.0` for `kokoro`), `voice` (default `Zephyr`; `VOICE_RE`;
   for `kokoro` it must be in the voice table), `enabled`), the Read aloud card on Settings > Harness Tools; the key is
@@ -1460,6 +1511,180 @@ speak nothing, and `tests/kokoro/` passes a fake library. A test of a stop cance
 `tests/kokoro/test_engine.py`, the `narrates` checks in `tests/test_bot_prompts.py`, `tests/test_rooms.py` and
 `tests/test_orchestrator.py`; GUI `tests/gui/speech.test.mjs`, `speech-settings.test.mjs`, `api.test.mjs` and the CSP
 check in `tests/gui/shell.test.mjs`.
+
+### Spoken briefings
+
+ZenBot can speak a morning briefing on the owner's Sonos speakers: at set days and times every chosen speaker stops what
+it is playing, a voice says good morning by name, tells a joke it has not told before, gives the weather, says whose
+birthday it is and what is on the calendar, and then each speaker is put back as it was. It is a built-in feature: the
+harness builds and plays the briefing itself, with no bot task, no tool for a bot and no catalog entry. Only the
+morning briefing exists (`KINDS`); the stored shape leaves room for an evening one. The Briefings section at the top of
+the Routines page (`BriefingsSection.jsx`) adds one with a button. Design:
+`docs/superpowers/specs/2026-11-24-spoken-morning-briefing-design.md` (git-ignored, on the computer the work was done
+on; the plan is beside it in `docs/superpowers/plans/`).
+
+- **Where things live.** Three files in `vault-settings/`, never the vault, each written tmp-then-replace
+  (`src/briefing/settings.py`): `briefings.json` (`BriefingStore`: per briefing `id`, `kind`, `enabled`, `slots` (up
+  to `MAX_SLOTS` 7 lines, each `days` 0 = Monday to 6 and a `time` `HH:MM`; a day belongs to one line only),
+  `speakers` (null for every speaker, else 1 to 32 Sonos room names) and `volume`, 1 up to the Sonos ceiling while
+  `enabled`, 1 to 100 while off, so a briefing can always be switched off after the ceiling was lowered below it);
+  `briefing_state.json` (`BriefingState`: per kind the slot last claimed, the last run, the last skip and `since`, the
+  time of the last settings save); and `briefing_jokes.json` (`ToldJokes`: the jokes told, newest first, at most
+  `JOKES_CAP` 500, each cut to `JOKE_MAX` 500 characters, compared case-folded and without punctuation). No secret in
+  any. A broken state or jokes file reads as empty. `briefings.json` is read entry by entry: an entry that cannot be
+  read is skipped and kept in the file, with a sentence in `error`; a file that cannot be read at all is copied to
+  `briefings.json.bad-<time>` and the store goes read-only (`StoreReadOnly`), so a save never wipes it (the routes
+  answer 409 with the sentence). `BriefingService` is built by `Harness` (`Harness.briefing`, its dependencies read at
+  call time so a rebind is picked up) and its loop runs in the `lifespan` beside the texts'; shutdown cancels a Play
+  now under way (`BriefingService.close`), and `announce` puts the speakers back.
+- **The schedule** (`BriefingService`). The loop looks every `INTERVAL_S` (30 s). A slot is the earliest next time over
+  the lines (`next_slot`, worked out as routines are, in the computer's local time). The words and the voice are made
+  from `PREP_LEAD` (5 minutes) before the slot, the settings are read again every 2 s while waiting, and the clip plays
+  at the slot. **One briefing a day**: never a second slot on the claimed slot's date. The slot is claimed (saved to
+  `briefing_state.json`) before anything is built, so it never plays twice, across a restart too; a claim that cannot
+  be saved plays nothing. A slot more than `LATE_LIMIT` (15 minutes) old when first seen is skipped (`skipped_late`,
+  only the latest of several). Slots count from the later of the claimed slot and the last settings save (`since`):
+  every save of a briefing (an edit, switching it on or off) calls `settings_saved`, which sets `since` to now (never to
+  the claimed slot: the claim itself holds one briefing a day, and a slot moved earlier but still ahead while the old
+  one was being made, 06:45 to 06:43, must still play), so an edit never yields a false late skip and never a second
+  play that day; only a gap
+  with the harness off or the computer asleep is a late skip. A time mark (the claim or `since`) that cannot be read
+  (a far-off year raises `OverflowError` or `OSError` on Windows, caught with `ValueError`) or lies more than
+  `MARK_AHEAD` (24 hours) after now counts as none (`_mark`): such a mark was written while the clock read far ahead,
+  and the next save writes `since` afresh. A mark only a little ahead is kept, so a clock set back a few minutes after
+  a play (Windows correcting a drifted clock after the wake) never releases today's claim or plays that slot again. A briefing switched off, removed or whose slot
+  changed while it was being made plays nothing, records nothing and gives its claim back (the previous claim is
+  saved again, `BriefingState.restore_claim`), so a later slot that day can still play: a slot moved from 06:45 to
+  07:00 during the build plays at 07:00, and one switched off and on again before 06:45 plays at 06:45. Every other
+  run keeps its claim: one that played, was skipped, or failed to be built, spoken or played. Not ready at the slot (Sonos off, no speaker found, no usable voice, a volume
+  ceiling of 0; `readiness`) is waited out until the slot, then recorded as `skipped` with that reason. It plays at
+  `min(volume, the ceiling as it is when it plays)`: just before the clip plays, `announce` reads the ceiling again and
+  turns down every speaker it set above it (a ceiling lowered while the speakers were being set), until a reading finds
+  none; a speaker that cannot be turned down plays nothing (`UNCONTROLLED`). Play now (`POST /briefings/{kind}/play`) builds and plays at once,
+  in a task of its own (a client that goes away does not stop it), claims no slot and is refused with 409 while one
+  runs or when not ready; one briefing runs at a time (`Busy`).
+- **The words** (`content.py`, `build`). Sections in order: greeting, joke, weather, birthdays, calendar, sign-off
+  (`SIGNOFF`, "Have a good day."). The harness writes everything from templates except the greeting and the joke: one
+  chat-model call (the `personal-assistant` bot's model, `MODEL_TIMEOUT_S` 20) writes only those two, as JSON, each at
+  most `PART_MAX` 400 characters. Without the bot, on any failure or an unusable answer the greeting falls back to a
+  fixed one with the owner's first name and the briefing goes on with no joke. A joke already told (`ToldJokes.seen`)
+  is left out, and a joke is added to the told list only when the briefing actually played. The weather is
+  `MorningWeather.forecast` (Open-Meteo; its answer gained `condition`, `high`, `low`, `precipitation` and `unit`
+  beside `summary`); birthdays and the day's events come from `morning_agenda.agenda` after `synced_calendar`. A
+  section whose source is unavailable is left out, not spoken as an error. At most `MAX_BIRTHDAYS` 5 names and
+  `MAX_EVENTS` 8 events; times are said as words; titles are flattened to one line with web addresses spoken as
+  "a link" and cut to `TITLE_MAX` 120 characters at a word (`_cap`; a location is not spoken). The calendar section is
+  built event by event (`calendar_line(events, room)`): an event that would take the text past `TEXT_MAX` 3,000
+  characters is not read, nor any after it, and "and N more" says how many were left out (with none read, the count
+  alone: "You have nine things today."). The sign-off is always kept; the parts before the calendar are still cut at a
+  word if they alone pass the cap.
+- **What is sent to which model.** The chat model gets only the owner's first name, the weekday and date, and the last
+  `TOLD_SENT` 100 jokes told, in a user message that says it is data, not instructions. **No calendar title, birthday
+  name or forecast is ever sent to it**: calendar text is written by anyone who invites the owner. The whole spoken text
+  goes to the voice: Kokoro on this computer, or the speech provider's model when a hosted voice is chosen
+  (`Speech.hosted()`; the status carries `hosted`, and the form says the text leaves this computer). The voice is the one
+  chosen on Settings > Harness Tools > Read aloud, used through `Speech.say` (see `### Reading replies aloud`), so it is
+  made even when Read aloud is switched off.
+- **Playing** is `SonosTools.announce` (see `### Sonos`: announcements and the clip listener): the clip goes to the lead
+  speaker alone over the local network, and the speakers are put back. A failure is a recorded run with a reason, never
+  an exception out of the loop. A phone's stream (`phone_paused`) is paused and not resumed.
+- **Routes** (`routes.py`, under `/briefings`; no answer carries a disk path or an address): `GET ""` (the status:
+  `briefings`, each with the saved fields plus `next_run`, `last_run`, `last_skip`, `state` `idle`, `building` or
+  `playing`, `ready` and `reason`; and `ready`, `reason`, `ceiling`, `rooms`, `hosted`, `error`); `PUT /{kind}` (the
+  whole briefing, checked by `check` against the current ceiling: 422 with the form's sentence, 409 when the store is
+  read-only, 500 "The briefing could not be saved." otherwise; then `settings_saved`; with `enabled: true` the volume
+  is held to 1 to the ceiling, and under a ceiling of 0 the answer is "Your Sonos volume limit is 0." (`CEILING_ZERO`),
+  never "from 1 to 0"; with `enabled: false` only to 1 to 100); `DELETE /{kind}`;
+  `POST /{kind}/play` (`NothingIn`; 404 "There is no such briefing." for an unknown kind or none saved, 409 with a
+  sentence for each reason it is not ready, or "A briefing is already playing."). The PUT and every POST take a
+  required JSON body, so a cross-site page cannot send one without a preflight.
+- **The Routines page** (`BriefingsSection.jsx`, `BriefingDialog.jsx`, decisions in `briefings.js`, through
+  `briefings-api.js`; no entry in `settings-index.js`, which indexes Settings panels, and Routines is a page). It reads
+  the status every `POLL_MS` (15 s) while open. The form names what is missing (`readinessLine`) and blocks on a volume
+  ceiling of 0 (`saveBlocked`; a switched-off briefing can still be saved, its volume held to 1..100 only); its
+  sentences equal the harness's (`check`, `NOT_READY`): keep them equal. A saved speaker that no longer answers is still
+  listed, marked "(not answering)", so it can be unticked (`speakerChoices`). A start-at-sign-in change that fails or
+  does not take after a save says so on its own (`LOGIN_FAILED`, `loginTook`); the briefing stays saved. The row's switch saves
+  `toggleBody`: the saved volume to switch off, `min(volume, ceiling)` to switch on. Speaker names are plain text.
+- **Keeping ZenBot ready** (`src/electron/briefing-keeper.cjs`, `autostart.cjs`, `tray.cjs`; the desktop app only,
+  through the preload's `briefingKeeper` `get`, `setLogin` and `refresh`, channels `briefing-keeper:*`). The harness
+  says when briefings are due (`GET /briefings`); the keeper holds no schedule of its own, and the harness never writes
+  a task or an autostart entry.
+  - *Wake the computer* (Windows): one Task Scheduler task per enabled slot line, up to 7 (`OpenZenBot briefing wake
+    <n>`), due 8 minutes before the slot (`WAKE_LEAD_MIN`; rolled back a day over midnight) on the line's days,
+    `WakeToRun`, least privilege, an interactive token, and an action that does nothing (`cmd.exe /c exit 0`). Made with
+    `schtasks /Create /XML`, run by its full path (`%SystemRoot%\System32\schtasks.exe`, as the uninstaller does) from
+    an argument array (no shell) and a temporary XML file; matched to the harness's lines at
+    start, when they change and every minute. A failed `schtasks` shows as a warning on the briefing row (`wake_error`),
+    and the lines are made again on the next tick (they count as matched only once every task was made).
+    The uninstaller deletes the seven (`build/installer.nsh`, `schtasks /Delete`, errors ignored, no network).
+  - *Stay awake*: the keeper holds Electron's `prevent-app-suspension` blocker from the wake time to the slot plus
+    `LATE_LIMIT`, and while a briefing is building or playing (a switched-off one's Play now included). The hold's deadline comes only from what justified it (a
+    slot inside its window, or a run under way) and is capped at the wake lead plus the late limit, so a harness that
+    stops answering, or a stale status, cannot keep the computer awake: when a read fails the hold lasts only until that
+    deadline.
+  - *Start at sign-in* (the installed app only; a checkbox in the briefing form): Windows uses Electron's login item with
+    `--hidden` (on macOS the login item takes no arguments, so a sign-in start there would show the window; macOS is
+    not packaged, and `wasOpenedAtLogin` is not read); Linux uses an XDG autostart entry (`autostart.cjs`, `~/.config/autostart/openzenbot.desktop`,
+    or under `$XDG_CONFIG_HOME` when that is an absolute path), because the login item does nothing there. A start with
+    `--hidden` shows no window, only the tray (`tray.cjs` `startsHidden`); with no tray it shows the window. In managed mode a hidden start treats the update
+    notice as "later" and goes on; any other wait for the user (setup, a failure) shows the window (`managed.cjs`
+    `hidden`, `reveal`), since the briefing must run unattended.
+  - *The tray* keeps ZenBot running when the window is closed (the GUI row of the table above), which the briefing needs.
+    A tray that cannot be made (`new Tray` throws, as on a Linux desktop without one) never fails the start: the app
+    runs without it, and closing the window then quits ZenBot, so no briefing plays until it is started again. A tray
+    made on a Linux desktop with no tray host (GNOME without an AppIndicator extension) does not throw, so the app
+    counts it as there: the window then hides on close with no icon to bring it back, and only starting ZenBot again
+    shows it (the second launch hands over to the first). Not detected (known limit). On macOS a Dock click shows a
+    window hidden to the tray.
+- **Ledger.** Kind `briefing`, events `played`, `failed` and `skipped` (the briefing kind, `trigger` `slot` or `now`; for
+  a run the counts played and failed, `phone_paused`, `seconds`, the section names and the text's length; for a failure
+  the `stage` (`build`, `speak`, `play`, `run`) and an error code; for a skip the outcome `skipped` or `skipped_late`
+  and a reason code) and `settings` (enabled, the number of lines). Never the text, a joke, a speaker's name, a title or
+  an address. A failed background pass logs the exception's class name only. The `speech` (`briefing: true`) and `sonos`
+  (`announce`) entries are written by their own code, also counts only.
+- **Bots and spoken briefings (a known residual risk).** There is no tool for it and no catalog entry. But the harness
+  API has no authentication, so a bot with `shell` (curl) or the `browser` server can call the `/briefings` routes:
+  read the schedule, change the days, times, speakers and volume (never above the Sonos ceiling), switch it on or off,
+  delete it, or press Play now, which speaks on the house speakers. It can also make the speakers read words it chose:
+  it can add an event to the calendar (`POST /calendar/events`, see the calendar's residual risk) and then press Play
+  now, and the briefing reads that event's title aloud (cut to 120 characters, web addresses spoken as "a link"). The
+  clip listener answers
+  only the lead speaker, at an unguessable address, for one announcement. Do not describe the briefing as out of bots'
+  reach.
+- **Unverified** (the spec's "To check by hand once built", plus what the build never ran for real). Nothing has played
+  on a real speaker: the tests use `FakeSpeakers` and a fake clip server, so no briefing has been heard, and nothing
+  here has been seen on screen (the Routines section, the form, the tray, the warnings). To check by hand: an album or
+  playlist resuming mid-song; a full 60 to 90 second briefing on all five speakers; a speaker playing from a phone
+  (Spotify Connect or AirPlay) and what the briefing leaves behind; the installed app's first briefing and the Windows
+  firewall prompt for the clip listener (it has never run in the installed app); a laptop-class CPU making the speech
+  within the five-minute lead; the PC asleep overnight, woken by the task, playing on time and then allowed to sleep
+  again; closing the window with ZenBot staying in the tray, the briefing playing and dreaming running while idle, then
+  Open ZenBot and Quit ZenBot from the menu; signing in after a restart starting ZenBot hidden. Never run: `schtasks`
+  itself (only a stand-in behind the keeper's arguments), so the task XML has never been accepted by Windows and the
+  wake has never woken a computer; a start where no tray can be made (only `tray.cjs`'s decisions and the wiring's
+  text in `main.cjs` are tested); the XDG autostart entry on a desktop; the macOS login item with `--hidden`; the
+  hidden-start update rule outside the tests. How real speakers take `Snapshot`, `restore` and `play_uri` for a stream,
+  a TV or a bonded set, and how a coordinator leaving a group hands it on, rest on the stand-in alone. The greeting and
+  joke prompt has never run with a real model (the fallback and the shape check are tested).
+
+Rules for contributors: no bot tool, catalog entry or task for the briefing, and no calendar text, birthday name or
+forecast in a model prompt: the chat model gets the first name, the date and the told jokes only. Claim a slot (and save
+the claim) before anything is built, give it back only when a run is dropped because its settings changed while it was
+made (switched off, removed, slot moved), play at most one briefing a day, never start one more than `LATE_LIMIT` after its
+slot, and call `settings_saved` after every save of a briefing. Play at `min(volume, the ceiling read just before)`:
+`announce` always puts the speakers back, in a `finally`, and plays nothing when a speaker that will sound could not be
+set or turned down (`UNCONTROLLED`). Serve the clip only to the lead's address, at a token path, on one local address,
+never `0.0.0.0`, and log none of it. No text, joke, speaker name, title or address in a ledger entry or a log line. Keep
+`briefings.json`, `briefing_state.json` and `briefing_jokes.json` in `vault-settings/`, and never save over a file that
+could not be read. Every `/briefings` POST and PUT takes a required JSON body. The harness never writes a Task Scheduler
+task or an autostart entry; the keeper does, from an argument array with no shell, and only for the lines the harness
+reports. Keep the GUI's sentences equal to `check` and `NOT_READY`. Tests never touch the network, a real speaker or
+`schtasks`: `tests/sonos/conftest.py` `FakeSpeakers` and the clip server stand-in, and the keeper's side effects as
+arguments. Tests: `tests/briefing/test_settings.py`, `test_content.py`, `test_service.py`, `test_routes.py`,
+`tests/sonos/test_announce.py`, `test_clip_server.py`, `test_devices.py`, `tests/test_speech.py`,
+`tests/events/test_morning_weather.py`; GUI `tests/gui/briefings.test.mjs`, `briefings-api.test.mjs`,
+`briefing-keeper.test.mjs`, `autostart.test.mjs`, `tray.test.mjs` and `managed.test.mjs`.
 
 ### Design studio
 
@@ -2138,6 +2363,12 @@ for v0.1.0, then installed and run by hand on Windows.
   the user's wins on the same id. Both are private folders (`allowed_folders.private_folders`): bots cannot reach them,
   with this switch on or off. The first start asks for an OpenRouter key (`POST /settings/openrouter-key`): the
   harness checks it, saves it in `providers.json` and registers it with the exclusion filter.
+- **The tray and a hidden start.** Closing the window hides it in the system tray and ZenBot keeps running (the
+  harness, reminders, briefings and dreaming's idle reports need it); only Quit ZenBot in the tray's menu, or the
+  operating system ending the session, ends it (`tray.cjs`; without a tray, closing the window quits). A start with
+  `--hidden` (start at sign-in, set from the briefing form) shows no window, only the tray; in managed mode it treats
+  the update notice as "later" and goes on, and any other wait for the user (setup, a failure) shows the window
+  (`managed.cjs` `hidden`, `reveal`). See `### Spoken briefings`, *Keeping ZenBot ready*.
 - **Updates** (`update-check.cjs`): reads GitHub's latest release of this repo about once a day (and when asked),
   sends only a User-Agent with the app version, and installs nothing. "Get the new version" opens only a link under
   this repo's release pages; the notes are shown as plain text, cut to 2,000 characters.
@@ -2162,7 +2393,8 @@ Rules for contributors:
 - Setup never runs a download whose SHA-256 was not checked against `pins.json`.
 - The update notice opens only this repo's release pages and shows notes as plain text.
 - Installer scripts (`build/installer.nsh`) make no network calls. The Windows uninstaller removes only
-  `%APPDATA%\OpenZenBot\runtime`, never the vault or settings, and keeps it on an update.
+  `%APPDATA%\OpenZenBot\runtime` (kept on an update) and the seven `OpenZenBot briefing wake <n>` Task Scheduler
+  tasks (deleted on an update too; the keeper makes them again at the next start), never the vault or settings.
 - A key never reaches a log, local storage or the Electron main process: the workspace's welcome screen
   (`src/gui/WelcomeKey.jsx`) sends it to the harness (`POST /settings/openrouter-key`) and nothing else.
 - Keep `vault-bots/` and `vault-skills/` out of anything a bot can read or write.

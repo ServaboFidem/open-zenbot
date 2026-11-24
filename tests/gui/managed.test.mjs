@@ -45,8 +45,8 @@ function fakeHarness(result) {
   return h;
 }
 
-function make({ checker = fakeChecker(), setupNeeded = false, setup = fakeSetup([{ ok: true }]), harnesses = [fakeHarness({ ok: true, adopted: false })], needsSetup } = {}) {
-  const calls = { shown: [], sent: [], checkerStarts: 0, checkerStops: 0, made: [], errors: [] };
+function make({ checker = fakeChecker(), setupNeeded = false, setup = fakeSetup([{ ok: true }]), harnesses = [fakeHarness({ ok: true, adopted: false })], needsSetup, hidden = false } = {}) {
+  const calls = { shown: [], sent: [], checkerStarts: 0, checkerStops: 0, made: [], errors: [], reveals: 0 };
   const m = createManaged({
     checker,
     needsSetup: needsSetup || (async () => setupNeeded),
@@ -54,6 +54,8 @@ function make({ checker = fakeChecker(), setupNeeded = false, setup = fakeSetup(
     makeHarness: async () => { const h = harnesses.shift(); if (h instanceof Error) throw h; calls.made.push(h); return h; },
     logError: e => calls.errors.push(e),
     show: page => calls.shown.push(page),
+    hidden,
+    reveal: () => { calls.reveals++; },
     send: s => calls.sent.push(s),
     startChecker: () => { calls.checkerStarts++; return () => { calls.checkerStops++; }; },
   });
@@ -269,4 +271,49 @@ test('a Restart whose new harness cannot be made lands on the same failed phase'
   first.exit();
   await t.m.restartHarness();
   assertCouldNotStart(t.m, t.calls, /no log folder/);
+});
+
+test('a hidden start treats a newer release as later: no wait, no window, the harness starts', async () => {
+  const { m, calls } = make({ checker: fakeChecker({ notify: true }), hidden: true });
+  await m.run();
+  assert.deepEqual(calls.shown, ['setup', 'workspace']);
+  assert.equal(calls.made.length, 1);
+  assert.equal(calls.reveals, 0);
+});
+
+test('a visible start still waits at a newer release', async () => {
+  const { m, calls } = make({ checker: fakeChecker({ notify: true }) });
+  const done = m.run();
+  await tick();
+  assert.equal(m.state().phase, 'update');
+  assert.equal(calls.made.length, 0);
+  m.proceed();
+  await done;
+});
+
+test('a hidden start shows the window when setup fails and waits for Retry', async () => {
+  const setup = fakeSetup([{ ok: false }, { ok: true }]);
+  const { m, calls } = make({ setupNeeded: true, setup, hidden: true });
+  const done = m.run();
+  await tick(); await tick();
+  assert.equal(m.state().phase, 'setup');
+  assert.equal(calls.reveals, 1);
+  m.retry();
+  await done;
+  assert.equal(calls.reveals, 1);
+});
+
+test('a hidden start shows the window when the harness cannot start, stops, or a step throws', async () => {
+  const bad = make({ harnesses: [fakeHarness({ ok: false, reason: 'port', detail: '' })], hidden: true });
+  await bad.m.run();
+  assert.equal(bad.calls.reveals, 1);
+  const h = fakeHarness({ ok: true, adopted: false });
+  const gone = make({ harnesses: [h], hidden: true });
+  await gone.m.run();
+  assert.equal(gone.calls.reveals, 0);
+  h.exit();
+  assert.equal(gone.calls.reveals, 1);
+  const boom = make({ needsSetup: async () => { throw new Error('x'); }, hidden: true });
+  await boom.m.run();
+  assert.equal(boom.calls.reveals, 1);
 });
