@@ -366,7 +366,7 @@ class Conversations:
         call per fold. The exchanges stay in the record for display; only
         the history drops them. On a generator error the history is kept
         as it was and the failure goes to the ledger."""
-        sizes = [len(edit_note(ex) if ex.outcome == "edit" else ex.user) + len(reply_text(ex)) for ex in conv.exchanges]
+        sizes = [len(edit_note(ex) if ex.outcome == "edit" else user_text(ex)) + len(reply_text(ex)) for ex in conv.exchanges]
         unfolded = sum(sizes[conv.folded :])
         if unfolded <= budget_chars:
             return False
@@ -385,7 +385,7 @@ class Conversations:
             return False
         before = history_chars(conv.history())
         old = conv.exchanges[conv.folded : end]
-        msgs = [m for ex in old for m in (Message("user", edit_note(ex) if ex.outcome == "edit" else ex.user), Message("assistant", reply_text(ex)))]
+        msgs = [m for ex in old for m in (Message("user", edit_note(ex) if ex.outcome == "edit" else user_text(ex)), Message("assistant", reply_text(ex)))]
         try:
             latest = await generator.compact(render_transcript(msgs), goal=conv.title or None)
             summary = await generator.fold(conv.summary, latest)

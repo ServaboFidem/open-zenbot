@@ -377,3 +377,15 @@ def test_history_names_files_by_line_and_never_their_content(tmp_path, ledger):
     assert user.content == (f"look\n\nAttached: a.webp (uploads/chat/{'a' * 32}/a.webp)\n"
                             f"Attached: n.txt (uploads/chat/{'b' * 32}/n.txt)")
     assert user.images == []
+
+
+async def test_a_fold_keeps_the_attached_lines_of_a_files_only_exchange(tmp_path, ledger):
+    convs = make(tmp_path, ledger)
+    files = [{"id": "b" * 32, "name": "report.pdf", "kind": "document", "path": f"uploads/chat/{'b' * 32}/report.pdf"}]
+    conv, _ = convs.begin("me", "", session_id="f1", files=files)
+    convs.finish(conv.id, "f1", "done", "read it " + "y" * 200)
+    _fill(convs, 6)
+    gen = FakeGenerator()
+    assert await convs.fold_if_needed(conv, gen, budget_chars=1000, keep=2) is True
+    rendered, _ = gen.compacted[0]
+    assert f"Attached: report.pdf (uploads/chat/{'b' * 32}/report.pdf)" in rendered
