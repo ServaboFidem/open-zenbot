@@ -20,7 +20,7 @@ from src.context.compaction import context_chars, is_summary
 from src.context.protected import ProtectedBlock
 from src.memory.ledger import Kind, Ledger
 from src.providers import tracing
-from src.providers.interface import Message, Provider, ProviderError
+from src.providers.interface import CANT_SEE, Message, Provider, ProviderError
 from src.skills.loader import Skill
 
 from .approvals import ApprovalState, ApprovalStore, needs_approval
@@ -155,13 +155,15 @@ class TaskLoop:
         *,
         history: list[Message] | None = None,
         protected: dict[str, Any] | None = None,
+        turn_extra: str = "",
+        images: list[str] | None = None,
     ) -> Session:
         session = session or Session(bot_id=bot.id, task=task)
         # one Langfuse trace per run, grouped by conversation (or room) so the session view replays it
         with tracing.attributes(session_id=session.conversation_id or session.room_id or session.id, tags=[bot.id],
                                 trace_name="run-task", metadata={"harness_session": session.id, "room": session.room_id}):
             with tracing.observe("run-task", as_type="agent", input=task, metadata={"bot": bot.id}) as run_obs:
-                await self._run(bot, task, session, history, protected)
+                await self._run(bot, task, session, history, protected, turn_extra, images)
                 run_obs.update(output=session.result or session.error or str(session.state),
                                level="ERROR" if session.state == SessionState.failed else None,
                                status_message=session.error or None,
@@ -170,7 +172,7 @@ class TaskLoop:
         return session
 
     async def _run(self, bot: Bot, task: str, session: Session, history: list[Message] | None,
-                   protected: dict[str, Any] | None) -> None:
+                   protected: dict[str, Any] | None, turn_extra: str = "", images: list[str] | None = None) -> None:
         if session.pinned_skills:
             by_slug = {s.slug: s for s in bot.skills}
             missing = next((slug for slug in session.pinned_skills if slug not in by_slug), None)
@@ -212,7 +214,7 @@ class TaskLoop:
             # the per-message context is its own user message: a mid-conversation system message could be
             # merged into the top-level system prompt (breaking the cached prefix) or rejected by a chat template
             *([Message("user", context)] if context else []),
-            Message("user", task),
+            Message("user", f"{task}\n\n{turn_extra}" if turn_extra else task, images=list(images or [])),
         ]
         # a scope check's "reject, just refine" carries the earlier block forward; otherwise the task is the block
         session.protected = ProtectedBlock(**protected).to_dict() if protected else ProtectedBlock(task=task).to_dict()
@@ -220,6 +222,7 @@ class TaskLoop:
             Kind.session, bot.id, session.id, event="start", task=task,
             injected=session.injected, selector=getattr(self.selector, "kind", "?"), recall=getattr(self.recall, "kind", "?"),
             route_outcome=selection.detail.get("outcome"), route_cached=selection.detail.get("cached"), route_fallback=selection.detail.get("fallback"),
+            images=len(images or []),
         )
         try:
             await self._drive(bot, session, skills)
@@ -260,6 +263,12 @@ class TaskLoop:
                     session.state = SessionState.stopped
                     return
                 continue  # retry the same step
+            if completion.images_dropped:  # refused with pictures: later steps must not send them again
+                for m in session.messages:
+                    if m.images:
+                        m.images = []
+                        m.content = f"{m.content}\n\n{CANT_SEE}" if m.content else CANT_SEE
+                self.ledger.append(Kind.upload, bot.id, session.id, event="images_refused")
             session.steps += 1
             msg = completion.message
             session.messages.append(msg)

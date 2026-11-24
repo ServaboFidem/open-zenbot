@@ -487,3 +487,46 @@ async def test_pinned_routine_gets_bot_mcps_sonos(bot: Bot, ledger: Ledger, tmp_
     s = await loop.run(bot, "morning music", Session(bot_id=bot.id, task="morning music", pinned_skills=["research-brief"]))
     assert s.route["mcps"] == ["sonos"]
     assert "sonos_rooms" in set(provider.tools[0])
+
+
+class _Spy:
+    kind = "spy"
+
+    def __init__(self):
+        self.tasks: list[str] = []
+
+    async def select(self, bot, task, session_id=""):
+        from src.harness.stubs import Selection
+        self.tasks.append(task)
+        return Selection([], {"skills": [], "outcome": "act", "scorer": None})
+
+    async def recall(self, bot, task, session_id=""):
+        self.tasks.append(task)
+        return []
+
+
+async def test_turn_extra_and_images_reach_the_last_message_but_not_routing(ledger: Ledger, tmp_path: Path):
+    provider = ScriptedProvider([completion("done")])
+    spy = _Spy()
+    loop = make_loop(provider, ledger, tmp_path)
+    loop.selector = spy
+    loop.recall = spy
+    s = await loop.run(Bot(name="B", role="r"), "read it", turn_extra="FILE TEXT", images=["data:image/webp;base64,AA"])
+    last = provider.calls[0][-1]
+    assert last.content == "read it\n\nFILE TEXT" and last.images == ["data:image/webp;base64,AA"]
+    assert spy.tasks == ["read it", "read it"]
+    start = ledger.tail(kind="session", session_id=s.id)[0]
+    assert start.data["task"] == "read it" and start.data["images"] == 1
+
+
+async def test_images_dropped_clears_images_for_later_steps(ledger: Ledger, tmp_path: Path):
+    first = completion(calls=[("c1", "shell", {"command": "echo hi"})])
+    first.images_dropped = True
+    provider = ScriptedProvider([first, completion("ok")])
+    s = await make_loop(provider, ledger, tmp_path).run(Bot(name="B", role="r"), "look", images=["data:image/webp;base64,AA"])
+    second = provider.calls[1]
+    assert all(m.images == [] for m in second)
+    user = [m for m in second if m.role == "user"][-1]
+    assert user.content.endswith("(The picture could not be shown to this model; use your tools on the file.)")
+    ev = ledger.tail(kind="upload", session_id=s.id)
+    assert ev and ev[0].data["event"] == "images_refused"
