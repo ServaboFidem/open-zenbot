@@ -102,6 +102,7 @@ from src.sonos.routes import sonos_router
 from src.sonos.service import SonosService
 from src.sonos.tools import SonosTools
 from src.briefing import content as briefing_content
+from src.briefing.routes import briefing_router
 from src.briefing.service import BriefingService
 from src.speakers.routes import speakers_router
 from src.speakers.service import SpeakerService
@@ -1589,7 +1590,8 @@ def create_app(h: Harness) -> FastAPI:
     morning = MorningDigest(h)
     app_routers = [morning_router(morning), music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h),
                    facebook_router(h.discover, h), dream_router(h), speech_router(h), mail_router(h.mail), telnyx_router(h.telnyx),
-                   sonos_router(h.sonos, h.sonos_tools), speakers_router(h.speakers)]
+                   sonos_router(h.sonos, h.sonos_tools), speakers_router(h.speakers),
+                   briefing_router(h.briefing)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
