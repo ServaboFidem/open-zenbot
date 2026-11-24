@@ -61,3 +61,22 @@ async def test_city_search_returns_unambiguous_coordinates_and_drops_invalid_res
         WeatherSettings(location={**CITY, "latitude": 90.1}, unit="F")
     with pytest.raises(ValidationError):
         WeatherSettings(location=CITY, unit="F", recipient="redirect@example.com")
+
+
+async def test_ready_forecast_has_spoken_parts(vault):
+    def provider(req):
+        stamp = req.url.params["start_date"]
+        return httpx.Response(200, json={"daily": {"time": [stamp], "weather_code": [2],
+            "temperature_2m_max": [47.8], "temperature_2m_min": [36.1], "precipitation_probability_max": [80]}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as client:
+        weather = MorningWeather(vault, lambda: client)
+        weather.save(WeatherSettings(location=CITY, unit="F"))
+        f = await weather.forecast(DAY)
+        assert f["summary"] == "Partly cloudy · High 48°F, low 36°F · 80% chance of precipitation"
+        assert f["condition"] == "partly cloudy"
+        assert (f["high"], f["low"], f["precipitation"], f["unit"]) == (48, 36, 80, "F")
+        assert type(f["high"]) is int and type(f["low"]) is int and type(f["precipitation"]) is int
+        weather.save(WeatherSettings(location=CITY, unit="C"))
+        c = await weather.forecast(DAY)
+        assert c["unit"] == "C" and c["summary"].endswith("°C, low 36°C · 80% chance of precipitation")

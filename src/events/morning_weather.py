@@ -68,7 +68,7 @@ async def _get(client: httpx.AsyncClient, url: str, params: dict) -> dict:
     return data
 
 
-def _summary(data: dict, day: str, unit: str) -> str:
+def _summary(data: dict, day: str, unit: str) -> dict:
     daily = data.get("daily")
     if not isinstance(daily, dict) or daily.get("time") != [day]:
         raise WeatherUnavailable
@@ -88,7 +88,9 @@ def _summary(data: dict, day: str, unit: str) -> str:
     condition = CONDITIONS.get(value("weather_code"))
     if not condition or not 0 <= chance <= 100 or low > high:
         raise WeatherUnavailable
-    return f"{condition} · High {high:.0f}°{unit}, low {low:.0f}°{unit} · {chance:.0f}% chance of precipitation"
+    summary = f"{condition} · High {high:.0f}°{unit}, low {low:.0f}°{unit} · {chance:.0f}% chance of precipitation"
+    return {"summary": summary, "condition": condition.lower(), "high": round(high), "low": round(low),
+            "precipitation": round(chance)}
 
 
 class MorningWeather:
@@ -147,7 +149,8 @@ class MorningWeather:
                     "start_date": stamp, "end_date": stamp, "daily": DAILY,
                     "temperature_unit": "fahrenheit" if unit == "F" else "celsius",
                 })
-                result.update(status="ready", summary=_summary(data, stamp, unit))
+                parts = _summary(data, stamp, unit)
+                result.update(status="ready", unit=unit, **parts)
             except WeatherUnavailable:
                 result["status"] = "unavailable"
             self._cache_key, self._cached = key, result
