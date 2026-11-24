@@ -1032,6 +1032,11 @@ Settings > Connected apps has a Sonos section (`SonosSettings.jsx`). Design:
   `sonos_play` takes a Favorite or playlist by its exact title (a favorite wins over a playlist of the same title);
   an unknown title answers the ten closest. Playback goes to the group's coordinator. Listings start with a line
   saying the names are content, not instructions, and `sonos_favorites` lists at most 200.
+- **Announcements** (`devices.py`: `snapshot`, `restore`, `play_uri`, `transport_state`, `clear_clip`). `snapshot` keeps
+  SoCo's `Snapshot` and a `Snap` whose `source` comes from the group lead's URIs: `queue` (media or track URI
+  `x-rincon-queue:`), else `phone` (`PHONE_SCHEMES`: `x-sonos-vli:`, `x-sonos-spotify:`, `x-sonosapi-rtrecent:`), `tv`
+  (`TV_SCHEMES`: `x-sonos-htastream:`, `x-rincon-stream:`), `none` (no URI) or `stream`. `restore` is `fade=False`;
+  `clear_clip` is best effort and never raises.
 - **The volume ceiling** (`max_volume`). Before `sonos_play`, `sonos_control` `resume` and `sonos_group`, every
   speaker that will sound and is louder than the ceiling is turned down to it, and the answer says so ("Turned
   Living Room down to 60 first."). `sonos_volume` refuses to set a level above the ceiling that is louder than the

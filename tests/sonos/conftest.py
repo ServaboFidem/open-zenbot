@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import threading
+from typing import Callable
 from dataclasses import replace
 
 import pytest
 
-from src.sonos.devices import Favorite, NowPlaying, Room, SpeakerError
+from src.sonos.devices import Favorite, NowPlaying, Room, Snap, SpeakerError
 
 
 def room(name: str, ip: str, coord: str | None = None) -> Room:
@@ -27,6 +28,9 @@ class FakeSpeakers:
         self.gate: threading.Event | None = None
         self.discover_error: SpeakerError | None = None
         self.rooms_gate: threading.Event | None = None  # blocks rooms() until set
+        self.sources: dict[str, str] = {}  # ip -> queue | stream | phone | tv | none (default queue)
+        self.transport_states: dict[str, str] = {}  # ip -> SoCo's transport state
+        self.after_play: Callable[[str], None] | None = None  # called with the ip after play_uri; a test sets STOPPED
 
     def _check(self, ip: str) -> None:
         if ip in self.down:
@@ -80,6 +84,32 @@ class FakeSpeakers:
         self._check(ip)
         self.calls.append(("unjoin", ip))
         self.found = [replace(r, coordinator_uid=r.uid) if r.ip == ip else r for r in self.found]
+
+    def snapshot(self, ip: str) -> Snap:
+        self._check(ip)
+        self.calls.append(("snapshot", ip))
+        source = self.sources.get(ip, "queue")
+        return Snap(ip=ip, coordinator_ip=ip, volume=self.volumes.get(ip, 20), had_track=source != "none",
+                    source=source, state=self.transport_states.get(ip, "PLAYING"), raw=None)
+
+    def restore(self, snap: Snap) -> None:
+        self._check(snap.ip)
+        self.calls.append(("restore", snap.ip))
+
+    def play_uri(self, coordinator_ip: str, url: str, title: str) -> None:
+        self._check(coordinator_ip)
+        self.calls.append(("play_uri", coordinator_ip, url, title))
+        self.transport_states[coordinator_ip] = "PLAYING"
+        if self.after_play is not None:
+            self.after_play(coordinator_ip)
+
+    def transport_state(self, ip: str) -> str:
+        self._check(ip)
+        return self.transport_states.get(ip, "STOPPED")
+
+    def clear_clip(self, ip: str) -> None:
+        self._check(ip)
+        self.calls.append(("clear_clip", ip))
 
 
 @pytest.fixture

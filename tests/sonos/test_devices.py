@@ -216,3 +216,93 @@ def test_a_failing_multicast_keeps_what_the_saved_address_found(monkeypatch):
     assert [r.name for r in SocoSpeakers().discover(["192.0.2.10"], False, 5)] == ["Kitchen"]
     with pytest.raises(SpeakerError):
         SocoSpeakers().discover([], False, 5)
+
+
+class SnapZone(StubZone):
+    def __init__(self, track_uri="", media_uri="", state="PLAYING", **kw):
+        super().__init__("RINCON_S", "Kitchen", "192.0.2.10", **kw)
+        self.track_uri, self.media_uri, self.state, self.volume = track_uri, media_uri, state, 17
+        self.avTransport = SimpleNamespace(
+            GetMediaInfo=lambda args: {"CurrentURI": self.media_uri},
+            SetAVTransportURI=lambda args: self.calls.append(("set_uri", tuple(args))))
+
+    def get_current_track_info(self):
+        return {"uri": self.track_uri}
+
+    def get_current_transport_info(self):
+        return {"current_transport_state": self.state}
+
+    def play_uri(self, uri="", meta="", title="", start=True, force_radio=False):
+        self.calls.append(("play_uri", uri, title))
+
+
+class StubSnapshot:
+    instances = []
+
+    def __init__(self, zone):
+        self.zone, self.restored = zone, None
+        StubSnapshot.instances.append(self)
+
+    def snapshot(self):
+        self.zone.calls.append(("snapshot",))
+
+    def restore(self, fade=False):
+        self.restored = fade
+
+
+@pytest.mark.parametrize("track,media,source,had", [
+    ("x-sonos-vli:RINCON_1:2,spotify:abc", "", "phone", True),
+    ("x-sonos-spotify:track", "", "phone", True),
+    ("hls-radio:xyz", "x-sonosapi-stream:s1", "stream", True),
+    ("x-sonos-htastream:RINCON_1:spdif", "", "tv", True),
+    ("x-rincon-queue:RINCON_1#0", "x-rincon-queue:RINCON_1#0", "queue", True),
+    ("", "x-rincon-queue:RINCON_1#0", "queue", True),
+    ("", "x-sonosapi-stream:s1", "stream", True),
+    ("", "", "none", False),
+])
+def test_snapshot_reads_source_kind(monkeypatch, track, media, source, had):
+    zone = SnapZone(track, media)
+    stub_soco(monkeypatch, [zone])
+    monkeypatch.setattr(devices, "Snapshot", StubSnapshot)
+    snap = SocoSpeakers().snapshot("192.0.2.10")
+    assert (snap.source, snap.had_track, snap.volume, snap.state) == (source, had, 17, "PLAYING")
+    assert snap.ip == snap.coordinator_ip == "192.0.2.10"
+    assert ("snapshot",) in zone.calls and snap.raw is StubSnapshot.instances[-1]
+
+
+def test_restore_calls_snapshot_restore_without_fade(monkeypatch):
+    zone = SnapZone("hls-radio:x")
+    stub_soco(monkeypatch, [zone])
+    monkeypatch.setattr(devices, "Snapshot", StubSnapshot)
+    sp = SocoSpeakers()
+    sp.restore(sp.snapshot("192.0.2.10"))
+    assert StubSnapshot.instances[-1].restored is False
+
+
+def test_play_uri_passes_title(monkeypatch):
+    zone = SnapZone()
+    stub_soco(monkeypatch, [zone])
+    SocoSpeakers().play_uri("192.0.2.10", "http://192.0.2.5/c.wav", "Morning")
+    assert zone.calls == [("play_uri", "http://192.0.2.5/c.wav", "Morning")]
+
+
+def test_transport_state_and_clear_clip(monkeypatch):
+    zone = SnapZone(state="STOPPED")
+    stub_soco(monkeypatch, [zone])
+    sp = SocoSpeakers()
+    assert sp.transport_state("192.0.2.10") == "STOPPED"
+    sp.clear_clip("192.0.2.10")
+    assert zone.calls[-1][0] == "set_uri"
+
+
+def test_clear_clip_refused_is_a_no_op(monkeypatch):
+    zone = SnapZone()
+    zone.avTransport.SetAVTransportURI = lambda args: (_ for _ in ()).throw(RuntimeError("refused"))
+    stub_soco(monkeypatch, [zone])
+    SocoSpeakers().clear_clip("192.0.2.10")
+
+
+def test_snapshot_failure_is_a_speaker_error(monkeypatch):
+    stub_soco(monkeypatch, [])
+    with pytest.raises(SpeakerError):
+        SocoSpeakers().snapshot("192.0.2.99")
