@@ -1798,9 +1798,13 @@ on; the plan is beside it in `docs/superpowers/plans/`).
   firewall prompt for the clip listener (it has never run in the installed app); a laptop-class CPU making the speech
   within the five-minute lead; the PC asleep overnight, woken by the task, playing on time and then allowed to sleep
   again; closing the window with ZenBot staying in the tray, the briefing playing and dreaming running while idle, then
-  Open ZenBot and Quit ZenBot from the menu; signing in after a restart starting ZenBot hidden. Never run: `schtasks`
-  itself (only a stand-in behind the keeper's arguments), so the task XML has never been accepted by Windows and the
-  wake has never woken a computer; a start where no tray can be made (only `tray.cjs`'s decisions and the wiring's
+  Open ZenBot and Quit ZenBot from the menu; signing in after a restart starting ZenBot hidden. Checked by hand once
+  (2026-11-24, Windows 11, a standard account, outside the app): the keeper's `taskXml`, written as the main process
+  writes it (UTF-16 with a BOM) and passed to `schtasks.exe /Create /XML` by its full path, was accepted with no admin
+  prompt, and Windows stored it as given (wake to run, interactive, least privilege, the signed-in user, a Monday to
+  Friday 00:05 line as Sunday to Thursday 23:57, run on battery, `cmd.exe /c exit 0`); the task was then deleted. The
+  keeper itself has never run `schtasks` (only a stand-in behind its arguments), and the wake has never woken a
+  computer. Never run: a start where no tray can be made (only `tray.cjs`'s decisions and the wiring's
   text in `main.cjs` are tested); the XDG autostart entry on a desktop; the macOS login item with `--hidden`; the
   hidden-start update rule outside the tests. How real speakers take `Snapshot`, `restore` and `play_uri` for a stream,
   a TV or a bonded set, and how a coordinator leaving a group hands it on, rest on the stand-in alone. The greeting and
