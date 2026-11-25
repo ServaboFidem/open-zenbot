@@ -125,6 +125,35 @@ test('startTask sends design comments only when there are some', async () => {
   assert.equal('design_comments' in calls[2].body, false);
 });
 
+test('startTask sends uploads only when there are some', async () => {
+  const { fetch, calls } = fakeFetch();
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  await api.startTask('b', '', { conversationId: 'c1', uploads: ['u1', 'u2'] });
+  await api.startTask('b', 'go on', { conversationId: 'c1', uploads: [] });
+  await api.startTask('b', 'go on', { conversationId: 'c1' });
+  assert.deepEqual(calls[0].body, { task: '', conversation_id: 'c1', conversation: true, uploads: ['u1', 'u2'] });
+  assert.equal('uploads' in calls[1].body, false);
+  assert.equal('uploads' in calls[2].body, false);
+});
+
+test('chat upload routes post {name, data}, delete by quoted id and give the file\'s URL', async () => {
+  const { fetch, calls } = fakeFetch({ 'POST /uploads': { status: 201, body: { id: 'u1', name: 'a.webp', kind: 'image', size: 3 } }, 'DELETE /uploads/u%2F1': { status: 204, body: null } });
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  assert.deepEqual(await api.upload('a.png', 'iVBORw=='), { id: 'u1', name: 'a.webp', kind: 'image', size: 3 });
+  assert.equal(await api.removeUpload('u/1'), null);
+  assert.deepEqual(calls.map(c => `${c.method} ${new URL(c.url).pathname}`), ['POST /uploads', 'DELETE /uploads/u%2F1']);
+  assert.deepEqual(calls[0].body, { name: 'a.png', data: 'iVBORw==' });
+  assert.equal(api.uploadUrl('u/1'), 'http://127.0.0.1:8765/uploads/u%2F1');
+});
+
+test('the vault upload keeps its own name and route', async () => {
+  const { fetch, calls } = fakeFetch();
+  const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });
+  await api.vaultUpload('n.md', 'text');
+  assert.equal(new URL(calls[0].url).pathname, '/vault/upload');
+  assert.deepEqual(calls[0].body, { name: 'n.md', text: 'text' });
+});
+
 test('design change routes quote the conversation id and send the exact bodies', async () => {
   const { fetch, calls } = fakeFetch();
   const api = createApi({ baseUrl: 'http://127.0.0.1:8765', fetch });

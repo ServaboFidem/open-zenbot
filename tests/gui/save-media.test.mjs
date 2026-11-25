@@ -40,6 +40,11 @@ test('only harness media and attachment urls are fetched', () => {
   assert.ok(!allowedUrl('not a url', BASE));
 });
 
+test('a file sent with a chat message is fetched by its id, and nothing under it', () => {
+  assert.ok(allowedUrl(BASE + '/uploads/0123abcd', BASE));
+  assert.ok(!allowedUrl(BASE + '/uploads', BASE)); assert.ok(!allowedUrl(BASE + '/uploads/a/b', BASE));
+});
+
 test('a design\'s zip is fetched, and nothing else under its design route', () => {
   assert.ok(allowedUrl(BASE + '/conversations/c1/design/export.zip', BASE));
   assert.ok(!allowedUrl(BASE + '/conversations/c1/design/slots', BASE));

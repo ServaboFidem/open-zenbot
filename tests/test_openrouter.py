@@ -204,3 +204,85 @@ async def test_cached_tokens_default_to_zero():
     _, p = _capture({"prompt_tokens": 5, "completion_tokens": 1})
     c = await p.complete([Message("user", "hi")])
     assert c.usage.cached_tokens == 0
+
+
+# -- pictures ---------------------------------------------------------------------------------------
+
+import base64 as _b64
+from contextlib import contextmanager as _cm
+from unittest.mock import patch as _patch
+
+from src.providers.interface import CANT_SEE
+
+_PIC = "data:image/webp;base64," + _b64.b64encode(b"x" * 30).decode()
+_OK = {"model": "test/model", "choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}]}
+
+
+async def test_message_with_images_is_sent_as_parts():
+    bodies = []
+
+    def handler(r):
+        bodies.append(json.loads(r.content))
+        return _ok(_OK)
+
+    await _provider(handler).complete([Message("user", "look", images=[_PIC])])
+    assert bodies[0]["messages"][0]["content"] == [
+        {"type": "text", "text": "look"},
+        {"type": "image_url", "image_url": {"url": _PIC}},
+    ]
+
+
+async def test_message_without_images_stays_a_string():
+    bodies = []
+
+    def handler(r):
+        bodies.append(json.loads(r.content))
+        return _ok(_OK)
+
+    await _provider(handler).complete([Message("user", "hi")])
+    assert bodies[0]["messages"][0]["content"] == "hi"
+
+
+async def test_refused_picture_is_sent_again_without_it():
+    bodies = []
+
+    def handler(r):
+        bodies.append(json.loads(r.content))
+        return httpx.Response(400, json={"error": {"message": "no"}}) if len(bodies) == 1 else _ok(_OK)
+
+    msgs = [Message("user", "look", images=[_PIC]), Message("user", "plain")]
+    c = await _provider(handler).complete(msgs)
+    assert c.images_dropped and c.message.content == "ok"
+    assert bodies[1]["messages"][0]["content"].endswith(CANT_SEE) and isinstance(bodies[1]["messages"][0]["content"], str)
+    assert bodies[1]["messages"][1]["content"] == "plain"
+    assert msgs[0].images == [_PIC] and msgs[0].content == "look"
+
+
+async def test_a_400_without_images_is_raised():
+    p = _provider(lambda r: httpx.Response(400, json={"error": {"message": "no"}}))
+    with pytest.raises(ProviderError):
+        await p.complete([Message("user", "hi")])
+
+
+async def test_trace_input_holds_no_image_bytes():
+    seen = {}
+
+    @_cm
+    def observe(name, **kw):
+        seen.update(kw)
+
+        class Gen:
+            def update(self, **u):
+                pass
+        yield Gen()
+
+    with _patch("src.providers.tracing.observe", observe):
+        await _provider(lambda r: _ok(_OK)).complete([Message("user", "look", images=[_PIC])])
+    dumped = json.dumps(seen["input"])
+    assert "base64," not in dumped
+    assert "[image: image/webp, 30 bytes]" in dumped
+
+
+def test_to_dict_counts_images():
+    assert Message("user", "x", images=[_PIC, _PIC]).to_dict()["images"] == 2
+    assert "images" not in Message("user", "x").to_dict()

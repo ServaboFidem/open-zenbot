@@ -12,11 +12,13 @@ import base64
 import binascii
 import hashlib
 import json
+import logging
 import re
 import secrets
 import shutil
+import threading
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -79,6 +81,8 @@ from .onboarding import ASSISTANT_ID, NEW_TOPICS, TOPICS, Interviewer
 from .config import HarnessConfig
 from .conversations import Conversation, ConversationStore, Conversations
 from .dream_routes import dream_router
+from .upload_routes import upload_router
+from . import chat_files, chat_turn
 from .speech_routes import speech_providers, speech_router
 from .loop import Session, SessionState, TaskLoop
 from .scheduler import Routine, RoutineError, RoutineStore, Schedule, Scheduler, next_run, parse_schedule
@@ -133,7 +137,7 @@ PREVIEW_CSP = ("sandbox allow-scripts; default-src 'none'; script-src 'unsafe-in
                "img-src data: blob:; font-src data:")
 OPEN_POLICY = "sandbox allow-scripts"  # an opened page: off this origin, but its scripts may reach the network
 # every type a browser will run as a page (script, or markup that can carry it): served under PREVIEW_CSP unless opened
-CLOSED_SUFFIXES = (".html", ".htm", ".xhtml", ".xht", ".shtml", ".xml", ".svg", ".svgz", ".mht", ".mhtml")
+CLOSED_SUFFIXES = chat_files.CLOSED_SUFFIXES
 
 
 class OpenTokens:
@@ -232,6 +236,10 @@ class Harness:
     _dream_gen: tuple[tuple, Generator] | None = field(default=None, init=False, repr=False)  # (the dream choice's settings, its generator)
     media: MediaProxy | None = None  # remote images, video and PDFs for the chat; trusted hosts at once, others on a click
     task_attachments: dict[str, list[Attachment]] = field(default_factory=dict)  # session id -> files attached in a one-to-one task
+    # chat upload id -> how many task routes are sending it right now: not deletable or sweepable while above 0
+    sending_uploads: Counter[str] = field(default_factory=Counter)
+    # held for each check-and-act on uploads: a send's claim, DELETE's check and removal, the sweep's per folder
+    uploads_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     part_turns: dict[str, PartTurn] = field(default_factory=dict)  # session id -> a helper's turn on a design: its worksheet and changes
     _warm_tasks: set = field(default_factory=set, init=False, repr=False)
     _last_routed_at: datetime | None = field(default=None, init=False)  # last /orchestrate that put a message in a room
@@ -561,6 +569,48 @@ class Harness:
     def _dream_conversations(self) -> list[Conversation]:
         """The one-to-one conversations dreaming may read."""
         return [c for c in self.conversations.all() if c.kind == "bot"] if self.conversations is not None else []
+
+    def sees_images(self, bot: Bot) -> bool | None:
+        """Whether the model a task of `bot` runs on takes pictures: its own model when `_model_for` would use it,
+        else the chat model. None when the provider does not say (or the model is not known). Logs nothing."""
+        store = self.provider_store
+        if store is None:
+            return None
+        choice = self.bot_models.get(bot.id) if self.bot_models else None
+        if choice is not None:
+            try:
+                e = check_choice(store, choice, "text", f"{bot.name}'s model")
+            except ProviderStoreError:
+                pass  # the task runs on the chat model
+            else:
+                m = e.model(choice.model)
+                return m.image_input if m is not None else None
+        chat = self.model_roles().chat
+        e = store.entries.get(chat.provider) if chat is not None else None
+        m = e.model(chat.model) if e is not None else None
+        return m.image_input if m is not None else None
+
+    def sent_uploads(self) -> set[str]:
+        """The id of every chat upload some conversation's exchange names; these are never swept or deleted."""
+        if self.conversations is None:
+            return set()
+        return {f.get("id", "") for c in self.conversations.all() for ex in c.exchanges for f in ex.files}
+
+    def upload_in_use(self, upload_id: str) -> bool:
+        """A send holds the upload, or some conversation names it. Read with `uploads_lock` held."""
+        return self.sending_uploads.get(upload_id, 0) > 0 or upload_id in self.sent_uploads()
+
+    def claim_uploads(self, ids: list[str]) -> None:
+        """A send carries these (each once): DELETE and the sweep leave them until `release_uploads`."""
+        with self.uploads_lock:
+            self.sending_uploads.update(ids)
+
+    def release_uploads(self, ids: list[str]) -> None:
+        with self.uploads_lock:
+            for i in ids:
+                self.sending_uploads[i] -= 1
+                if self.sending_uploads[i] <= 0:
+                    del self.sending_uploads[i]
 
     def busy(self) -> bool:
         """Something is under way that dreaming waits for: a task, room turn or routine run (each has a session),
@@ -1003,7 +1053,7 @@ class Harness:
         protected: dict[str, Any] | None = None, pinned_skills: list[str] | None = None,
         comments: list[dict[str, str]] | None = None, addendum: str = "",
         owner: Bot | None = None, part: PartTurn | None = None, brief: str = "", recall_query: str = "",
-        answers_to: str = "",
+        answers_to: str = "", files: list[tuple[chat_files.Upload, bytes]] | None = None,
     ) -> Session:
         """Run a task for a bot. `owner` is the conversation's owner when it is another bot: `bot` then acts
         in that conversation as a helper (no design folder or design system block, no turn note). It joins the bot's current conversation (or
@@ -1013,14 +1063,27 @@ class Harness:
         not this bot's. `part` makes the task a helper's turn on the conversation's design (`start_helper`).
         `brief` is read after the addendum and pinned with it, but not kept with the exchange (a helper's
         worksheet and rules: a later turn must not replay them). `recall_query`, when given, is what memory recall
-        searches instead of the task (the events routine's is the user's interests text)."""
+        searches instead of the task (the events routine's is the user's interests text). `files` are the uploads
+        the user sent, read once by the route: `task` is the typed text, which the exchange keeps; the session's
+        task adds one `Attached:` line per file, pinned as constraints, and the turn carries their text and
+        pictures (never kept)."""
+        files = list(files or [])
+        user_text = task
+        vault = self.config.vault_root
+        sees = self.sees_images(bot) if files else None
+        file_lines = [chat_turn.attached_line(vault, up, sees) for up, _ in files]
+        if file_lines:
+            joined = "\n".join(file_lines)
+            task = f"{task}\n\n{joined}" if task else joined
         session = Session(bot_id=bot.id, task=task, pinned_skills=list(pinned_skills or []))
         conv = None
         helper = owner is not None and owner.id != bot.id
         if in_conversation:
-            conv, _ = self.conversations.begin((owner or bot).id, task, session_id=session.id, conv_id=conversation_id,
+            sent = [{"id": up.id, "name": up.name, "kind": up.kind, "path": chat_turn.relative(vault, up)}
+                    for up, _ in files]
+            conv, _ = self.conversations.begin((owner or bot).id, user_text, session_id=session.id, conv_id=conversation_id,
                                                comments=comments, addendum=addendum, bot=bot.id if helper else "",
-                                               answers_to=answers_to)
+                                               answers_to=answers_to, files=sent)
             session.conversation_id = conv.id
             session.conversation_owner = conv.owner
             if not helper and self.turn_notes is not None and self.turn_notes.config.enabled:
@@ -1072,9 +1135,19 @@ class Harness:
                         base = pinned or {"task": task, "constraints": []}
                         pinned = {**base, "constraints": [*base.get("constraints", []),
                                                           *(ln for ln in brief.splitlines() if ln.strip())]}
+                    # the files' paths outlive a mid-task compaction: the pinned task carries them, else (a carried
+                    # block of its own) they are pinned as constraints, like the comment lines
+                    if file_lines and pinned is not None:
+                        have = list(pinned.get("constraints", []))
+                        in_task = set(str(pinned.get("task", "")).splitlines())
+                        pinned = {**pinned, "constraints": [*have, *(ln for ln in file_lines
+                                                                       if ln not in have and ln not in in_task)]}
                     told = "\n\n".join(p for p in (addendum, brief) if p)
+                    turn = (await chat_turn.build(vault, files, sees=sees, convert=self.ingestor.converter.convert)
+                            if files else chat_turn.Turn())
                     await self.loop.run(bot, f"{task}\n\n{told}" if told else task, session, history=history,
-                                        protected=pinned)
+                                        protected=pinned, turn_extra=turn.told, images=turn.images,
+                                        files=len(files))
                 except asyncio.CancelledError:
                     if session.state not in _ENDED:  # cancelled before the loop could mark it
                         session.state = SessionState.stopped
@@ -1166,6 +1239,8 @@ class OpenRouterKeyIn(BaseModel):
 
 
 NARRATOR_NO_TASK = "The Narrator reads replies aloud; it does not take tasks."
+MAX_PICTURES = 4
+TOO_MANY_PICTURES = "At most 4 pictures a message."
 
 
 class ImageToolIn(BaseModel):
@@ -1325,6 +1400,7 @@ class TaskIn(BaseModel):
     route: Literal["auto", "owner"] = "auto"  # "owner": the Designer takes a revision, whatever the decider would say
     answers_to: str | None = None  # the session id of the reply whose question form this answers
     redo_of: str | None = None  # the session id of a helper's reply the user sends back (Task 10)
+    uploads: list[str] = Field(default_factory=list, max_length=10)  # ids of files sent with the message (POST /uploads)
 
 
 class ScheduleIn(BaseModel):
@@ -1470,6 +1546,8 @@ def create_app(h: Harness) -> FastAPI:
         for ex in record["exchanges"]:
             ex["attachments"] = [_attachment_view(a) for a in ex.get("attachments", [])]
             ex.pop("addendum", None)
+            ex["files"] = [{"id": f.get("id", ""), "name": f.get("name", ""), "kind": f.get("kind", "")}
+                           for f in ex.get("files", [])]  # never the path
             ex["bot_name"] = h.bots[ex["bot"]].name if ex.get("bot") in h.bots else ex.get("bot", "")
         d, _ = exclusion.redact_obj(record)
         return d
@@ -1595,7 +1673,7 @@ def create_app(h: Harness) -> FastAPI:
     app_routers = [morning_router(morning), music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h),
                    facebook_router(h.discover, h), dream_router(h), speech_router(h), mail_router(h.mail), telnyx_router(h.telnyx),
                    sonos_router(h.sonos, h.sonos_tools), speakers_router(h.speakers),
-                   briefing_router(h.briefing)]
+                   briefing_router(h.briefing), upload_router(h)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -1641,9 +1719,26 @@ def create_app(h: Harness) -> FastAPI:
         morning_mail = asyncio.create_task(morning.delivery.run())
         texting = asyncio.create_task(h.telnyx.run())  # reminders and the evening rundown, once a minute
         briefing = asyncio.create_task(h.briefing.run())  # the spoken briefing's slots, every 30 s
+        async def sweep_uploads() -> None:
+            while True:  # unsent chat uploads older than a day; one named by any conversation is never swept
+                try:
+                    # each old folder is checked against the live claims and conversations, under the lock
+                    n = await asyncio.to_thread(chat_files.sweep, vault, h.upload_in_use, time.time(),
+                                                lock=h.uploads_lock)
+                    if n:
+                        h.ledger.append(Kind.upload, "", "", event="swept", count=n)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logging.getLogger(__name__).warning("upload sweep failed: %s", type(e).__name__)
+                await asyncio.sleep(3600)
+
+        sweeping = asyncio.create_task(sweep_uploads())
         try:
             yield
         finally:
+            sweeping.cancel()
+            await asyncio.gather(sweeping, return_exceptions=True)
             morning_mail.cancel()
             texting.cancel()
             briefing.cancel()
@@ -2706,7 +2801,7 @@ def create_app(h: Harness) -> FastAPI:
 
     @app.get("/bots")
     async def list_bots() -> list[dict[str, Any]]:
-        return [b.to_dict() for b in h.bots.values()]
+        return [{**b.to_dict(), "sees_images": h.sees_images(b)} for b in h.bots.values()]
 
     @app.get("/bots/{bot_id}/conversations")
     async def list_conversations(bot_id: str) -> dict[str, Any]:
@@ -3085,10 +3180,30 @@ def create_app(h: Harness) -> FastAPI:
         bot = _bot(h, bot_id)
         if bot.narrates:
             raise HTTPException(409, NARRATOR_NO_TASK)
-        if not body.task.strip():
+        if not body.task.strip() and not body.uploads:
             raise HTTPException(422, "task is empty")
         if not h.bound:
             raise HTTPException(503, UnboundProvider.MESSAGE)
+        # claimed before the first await, so DELETE /uploads/{id} and the sweep leave them; the exchange names
+        # them before this returns, and the claim is released only then (or when the send fails). A count: two
+        # sends of one id each hold it
+        sending = list(dict.fromkeys(body.uploads))
+        h.claim_uploads(sending)
+        try:
+            return await _start_task(bot, body)
+        finally:
+            h.release_uploads(sending)
+
+    async def _start_task(bot: Bot, body: TaskIn) -> dict[str, Any]:
+        # every file is read once, here, before the last check: no await lies between that check and the task
+        files: list[tuple[chat_files.Upload, bytes]] = []
+        for upload_id in dict.fromkeys(body.uploads):
+            try:
+                files.append(await asyncio.to_thread(chat_files.read, h.config.vault_root, upload_id))
+            except chat_files.FileRefused as e:
+                raise HTTPException(422, str(e)) from None
+        if sum(up.kind == "image" for up, _ in files) > MAX_PICTURES:
+            raise HTTPException(422, TOO_MANY_PICTURES)
         _require_idle(bot, body)
         comments = [c.model_dump() for c in body.design_comments]
         redo = _redo_target(bot, body) if body.redo_of else None
@@ -3099,7 +3214,8 @@ def create_app(h: Harness) -> FastAPI:
             conv = _task_conv(bot, body) if bot.studio and body.conversation else None
             if conv is not None and conv.owner == bot.id:
                 conversation_id = conv.id
-            helped = await _helper_turn(bot, body, conv, comments, addendum)
+            # a message with files always goes to the owner, as route "owner": the helpers' worksheets never see them
+            helped = None if files else await _helper_turn(bot, body, conv, comments, addendum)
             if helped is not None:
                 return {"session_id": helped.id, "state": str(helped.state)}
             _require_idle(bot, body, conv)  # the routing await may have let another task start
@@ -3116,7 +3232,7 @@ def create_app(h: Harness) -> FastAPI:
                                    in_conversation=body.conversation,
                                    protected=body.protected.model_dump() if body.protected else None,
                                    comments=comments,
-                                   addendum=addendum, answers_to=body.answers_to or "")
+                                   addendum=addendum, answers_to=body.answers_to or "", files=files)
         except KeyError:
             raise HTTPException(404, "no such conversation") from None
         return {"session_id": session.id, "state": str(session.state)}

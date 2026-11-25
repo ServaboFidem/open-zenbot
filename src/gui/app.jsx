@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FluentProvider, webLightTheme, Button, Input, Textarea, Field, Badge, Switch, Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions, Spinner, ProgressBar } from '@fluentui/react-components';
-import { Speaker224Regular, Code20Regular, Add24Regular, DesignIdeas24Regular, ArrowLeft24Regular, Apps24Regular, Chat24Regular, ArrowRight24Regular, ArrowUp24Regular, Checkmark24Regular, ChevronRight24Regular, Clock24Regular, Dismiss24Regular, Grid24Regular, People24Regular, Play24Regular, PlugConnected24Regular, Search24Regular, Settings24Regular, ShieldCheckmark24Regular, Sparkle24Regular, Stop24Regular, Document24Regular, Bot24Regular, Navigation24Regular, Record24Regular, CalendarLtr24Regular, Mail24Regular, Folder24Regular, Globe20Regular, Search20Regular, WindowConsole20Regular, BrainCircuit20Regular, Wrench20Regular, ChatSparkle20Regular, Play20Regular, CheckmarkCircle20Regular, ErrorCircle20Regular, Pause20Regular, ShieldCheckmark20Regular, ArrowMinimize20Regular, BookOpen20Regular, Database20Regular, Flag20Regular } from '@fluentui/react-icons';
+import { Speaker224Regular, Code20Regular, Add24Regular, DesignIdeas24Regular, ArrowLeft24Regular, Apps24Regular, Chat24Regular, ArrowRight24Regular, ArrowUp24Regular, Checkmark24Regular, ChevronRight24Regular, Clock24Regular, Dismiss24Regular, Grid24Regular, People24Regular, Play24Regular, PlugConnected24Regular, Search24Regular, Settings24Regular, ShieldCheckmark24Regular, Sparkle24Regular, Stop24Regular, Document24Regular, Bot24Regular, Navigation24Regular, Record24Regular, CalendarLtr24Regular, Mail24Regular, Folder24Regular, Globe20Regular, Search20Regular, WindowConsole20Regular, BrainCircuit20Regular, Wrench20Regular, ChatSparkle20Regular, Play20Regular, CheckmarkCircle20Regular, ErrorCircle20Regular, Pause20Regular, ShieldCheckmark20Regular, ArrowMinimize20Regular, BookOpen20Regular, Database20Regular, Flag20Regular, Attach24Regular, Dismiss16Regular } from '@fluentui/react-icons';
 import './styles.css';
 import KnowledgePanel from './KnowledgePanel';
 import Markdown from './Markdown';
-import { MediaProvider } from './MediaCards';
+import { MediaGrid, MediaProvider } from './MediaCards';
+import { addChips, afterSend, blindLine, chipRefused, chipUploaded, DOCUMENT_SUFFIXES, holdLine, PICTURE_TYPES, removeChip, sendable, sentFiles, stillSendable, sizeLabel, toBase64, uploadName } from './chat-files.js';
 import { attachmentItem, previewFrameUrl } from './media.js';
 import ConversationPicker from './ConversationPicker';
 import { TodayCard } from './TodayCard';
@@ -124,6 +125,12 @@ function App() {
   const [errors, setErrors] = useState({});
   const [query, setQuery] = useState('');
   const [composer, setComposer] = useState('');
+  // files added to the message (chat-files.js chips); every change goes through updateChips, so an upload that
+  // ends after another change still sees the chips as they now are
+  const [chips, setChips] = useState([]);
+  const chipsRef = useRef(chips);
+  const updateChips = fn => { chipsRef.current = fn(chipsRef.current); setChips(chipsRef.current); };
+  const fileInput = useRef(null);
   const [notice, setNotice] = useState('');
   const [designSystems, setDesignSystems] = useState([]);   // for a studio bot's picker
   const [warm, setWarm] = useState(null);  // GET /warmup; null until the first answer
@@ -260,6 +267,7 @@ function App() {
   const [revealDesign, setRevealDesign] = useState(0);  // bumped when a message is held, so a hidden pane shows its changes
   const holdForChanges = () => { setNotice(HOLD_FOR_CHANGES); setRevealDesign(k => k + 1); };
   const sendHeld = holdsSend(designChanges);
+  const fileHold = holdLine(chips);  // files still uploading, or more pictures than a message takes
   const sendHeldRef = useRef(sendHeld); sendHeldRef.current = sendHeld;  // as it is now, for a send that awaited
   const shownConvRef = useRef(''); shownConvRef.current = conv?.record?.id || '';
   // a save or restore answers the conversation as it now is: show it, so the pane moves to the new version. Taking
@@ -285,6 +293,7 @@ function App() {
   const newTopics = showNewTopicsOffer({ facts, dismissed: newTopicsDismissed }) && !!assistant && !interview;
   const progressNote = extractionNote(profile?.extraction);
   const interviewing = !!interview && bot?.id === ASSISTANT_ID;
+  const canAttach = online && !interviewing;  // files go with a task; the interview takes text only
   const canPick = typeof window !== 'undefined' && typeof window.openzenbot?.pickDirectory === 'function';
   const canBrowseVault = typeof window !== 'undefined' && typeof window.openzenbot?.openVault === 'function';  // the desktop app only
   async function browseVault() {
@@ -479,7 +488,41 @@ function App() {
   function navigate(next) { setPage(next); setQuery(''); setMobileNav(false); if (next === 'Settings') { openSettings(''); setSettingsQuery(''); } }
   // Settings > Calendar, from the Events page
   function openCalendarSettings() { navigate('Settings'); openSettings('calendar'); }
-  function openBot(id) { setSelected(id); setMode('bot'); setComposer(''); navigate('Conversation'); }
+  function openBot(id) { setSelected(id); setMode('bot'); setComposer(''); discardChips(); navigate('Conversation'); }
+  // -- files with a message: each is uploaded as soon as it is picked, dropped or pasted, one request per file
+  function addFiles(list) {
+    const files = Array.from(list || []);
+    if (!files.length) return;
+    const before = chipsRef.current.length;
+    updateChips(c => addChips(c, files));
+    chipsRef.current.slice(before).forEach((chip, i) => { if (chip.state === 'uploading') uploadChip(chip.key, files[i]); });
+  }
+  async function uploadChip(key, file) {
+    let r;
+    try {
+      r = await api.upload(uploadName(file), toBase64(await file.arrayBuffer()));
+    } catch (e) {
+      updateChips(c => chipRefused(c, key, e instanceof HarnessError ? e.message : 'That file could not be read.'));
+      return;
+    }
+    // removed while it was on its way: the harness has it, so take it back
+    if (!chipsRef.current.some(c => c.key === key)) { api.removeUpload(r.id).catch(() => {}); return; }
+    updateChips(c => chipUploaded(c, key, r));
+  }
+  function dropChip(chip) {
+    updateChips(c => removeChip(c, chip.key));
+    if (chip.state === 'ready') api.removeUpload(chip.id).catch(() => {});
+  }
+  function discardChips() {
+    chipsRef.current.filter(c => c.state === 'ready').forEach(c => api.removeUpload(c.id).catch(() => {}));
+    updateChips(() => []);
+  }
+  function pasteFiles(e) {
+    const files = Array.from(e.clipboardData?.files || []).filter(f => Object.hasOwn(PICTURE_TYPES, f.type));
+    if (!files.length) return;  // text pastes as text
+    e.preventDefault();
+    addFiles(files);
+  }
   // Conversations page: open that bot with that conversation made its current one
   async function openConversation(botId, id) {
     openBot(botId);
@@ -578,11 +621,16 @@ function App() {
     // a pick left without a note points at the message, when there is one; with no message it is left out
     const designComments = newestRev ? commentsFor(newestRev.attId, picksSent(picks, { answersTo }), typed ? { fallback: 'See my message.' } : {}) : [];
     const task = typed || (designComments.length ? 'See my comments on the design.' : '');
-    if (!bot || !task) return;
+    // files go only with a message from the composer, never with a form's answers
+    const files = answersTo || (interviewing && !interview.done) ? { held: false, ids: [] } : sendable(chipsRef.current);
+    let uploads = files.ids;
+    if (!bot || (!task && !uploads.length)) return;
     if (sendHeld) { holdForChanges(); return; }
+    if (!answersTo && holdLine(chipsRef.current)) { setNotice(holdLine(chipsRef.current)); return; }
     if (interviewing && !interview.done) return sendInterview(task);
     if (!bound) { setNotice('Bind a provider and key in Settings first.'); navigate('Settings'); openSettings('providers'); return; }
-    if (bot.id === ASSISTANT_ID) {
+    // a message with files to ZenBot is ZenBot's own task: rooms and other bots never get the files
+    if (bot.id === ASSISTANT_ID && !uploads.length) {
       setRouting(true);
       const routed = await guard(() => api.orchestrate(task, { newTopic })).finally(() => setRouting(false));
       setNewTopic(false);
@@ -603,16 +651,19 @@ function App() {
       }
     }
     // comments on a design are refinements, and form answers reply to the bot's own question: no scope check
-    if (designComments.length || skipScope) return start(bot.id, task, { designComments, answersTo });
-    // the scope check compares with the conversation's last task
+    if (designComments.length || skipScope) return start(bot.id, task, { designComments, answersTo, uploads });
+    // the scope check compares with the conversation's last task; files with no words are no new goal
     const lastTask = exchanges.findLast(x => x.session_id && x.outcome !== 'edit');  // a version the user saved is no task
-    if (lastTask && harness.settings?.scorer) {
+    if (lastTask && harness.settings?.scorer && task) {
       const change = await guard(() => api.scopeCheck(lastTask.session_id, task), { quiet: true });
-      if (change?.changed) { setScopePrompt({ sessionId: lastTask.session_id, change, text: task, botId: bot.id }); return; }
+      // a file removed while the scope check was out does not go (resolveScope does the same for the prompt)
+      uploads = stillSendable(uploads, chipsRef.current);
+      if (change?.changed) { setScopePrompt({ sessionId: lastTask.session_id, change, text: task, botId: bot.id, uploads }); return; }
       // design changes made while the scope check was out hold the message too
       if (sendHeldRef.current) { holdForChanges(); return; }
+      if (!task && !uploads.length) return;
     }
-    await start(bot.id, task);
+    await start(bot.id, task, { uploads });
   }
   // Send a helper's change back to the owner: the same message and comments, on the version the helper started from.
   function redoWithOwner(ex) {
@@ -622,17 +673,17 @@ function App() {
     return start(bot.id, ex.user, { designComments, redoOf: ex.session_id });
   }
   // A chat task joins the shown conversation; a routine passes { conversation: false } and joins none.
-  async function start(botId, task, { conversation = true, protected: block, designComments, conversationId: into, answersTo, redoOf } = {}) {
+  async function start(botId, task, { conversation = true, protected: block, designComments, conversationId: into, answersTo, redoOf, uploads = [] } = {}) {
     // while the picker's switch is out the harness may still hold the old conversation as current, and a chat task
     // sent with no id would land there: hold it (checked now, after any await in send); the composer keeps the text
     if (waitsForSwitch(switchingConversation.current, botId, { conversation, into })) { setNotice(WAIT_FOR_SWITCH); return; }
     const conversationId = into || (conversation && conv?.botId === botId ? conv.current || undefined : undefined);
     const listenEpoch = speakOnRef.current ? speakEpoch.current : -1;  // decided when sent: turning it on later never reads this one
-    const r = await guard(() => api.startTask(botId, task, { conversationId, conversation, protected: block, designComments, answersTo, redoOf }));
+    const r = await guard(() => api.startTask(botId, task, { conversationId, conversation, protected: block, designComments, answersTo, redoOf, uploads }));
     if (!r) return;
     // only once the harness took it: a refusal leaves the picks. Only the picks that were sent: the user
     // may have moved to another conversation and picked there while this was on its way
-    if (clearsComposer({ conversation, redoOf, answersTo })) { setComposer(''); const sent = picks; setPicks(now => now.filter(p => !sent.includes(p))); }
+    if (clearsComposer({ conversation, redoOf, answersTo })) { setComposer(''); const sent = picks; setPicks(now => now.filter(p => !sent.includes(p))); updateChips(c => afterSend(c, uploads)); }
     // a routine started while another task streams leaves that stream alone (the chat refetches when it ends);
     // the routine's activity still reaches the panel through the ledger trail
     if (!conversation && liveRef.current) { api.sessions().then(setSessions).catch(() => {}); log('Routine started', task); return; }
@@ -670,13 +721,15 @@ function App() {
     // confirm: the typed text is the new protected task. Reject: the earlier block carries on, refined by it.
     const prev = sessions.find(s => s.id === p.sessionId);
     const block = prev?.protected || (prev ? { task: prev.task, constraints: [] } : null);
-    await start(p.botId, p.text, accept || !block ? {} : { protected: { task: block.task, constraints: [...(block.constraints || []), `refine: ${p.text}`] } });
+    // the files the message carried, less any the user removed while the prompt was up
+    const uploads = stillSendable(p.uploads, chipsRef.current);
+    await start(p.botId, p.text, accept || !block ? { uploads } : { uploads, protected: { task: block.task, constraints: [...(block.constraints || []), `refine: ${p.text}`] } });
   }
   // -- onboarding and directory import ----------------------------------
   async function startOnboarding(topics) {
     if (!assistant) return;
     if (!bound) { setNotice('Bind a provider and key in Settings first, then come back to meet your assistant.'); navigate('Settings'); openSettings('providers'); return; }
-    setSelected(assistant.id); setMode('bot'); setComposer(''); navigate('Conversation');
+    setSelected(assistant.id); setMode('bot'); setComposer(''); discardChips(); navigate('Conversation');
     setBusy(true);
     const r = await guard(() => api.onboardingStart(topics));
     setBusy(false);
@@ -988,7 +1041,7 @@ function App() {
             {!interviewing && conv?.botId === bot.id && conv.today && <TodayCard key={conv.today} morning={api.morning} openSettings={() => {
               navigate('Settings'); openSettings('calendar', anchorId('calendar', 'Morning digest'));
             }}/>}
-            {interviewing && interview.messages.map((m, i) => <article className={`message ${m.author === 'user' ? 'user' : 'assistant'}`} key={i}><div className="message-byline">{m.author === 'user' ? 'You' : bot.name}</div>{m.author === 'user' ? <div className="message-content">{m.text}</div> : <Markdown text={m.text}/>}{m.facts?.length > 0 && <div className="fact-chips">{m.facts.map(f => <Badge key={f.id} appearance="tint" color="brand" size="medium" icon={<Sparkle24Regular/>}>Remembered: {short(f.text, 90)}</Badge>)}</div>}</article>)}{interviewing && interview.done && <div className="inline-note od-stack"><Checkmark24Regular/><span>That's the interview. Import a file or a folder to let your assistant learn from your files, or go back to tasks.</span><div className="od-row"><Button appearance="outline" onClick={() => setInterview(null)}>Done, back to tasks</Button></div></div>}{!interviewing && !exchanges.length && <div className="chat-welcome"><Avatar item={bot}/><h1>What shall we work on?</h1><p>{bot.role}</p><div className="suggestions">{suggestions.map(s => <Button key={s} appearance="outline" onClick={() => setComposer(s)}>{s}<ArrowRight24Regular/></Button>)}</div></div>}{!interviewing && exchanges.map((ex, i) => { const s = sessions.find(x => x.id === ex.session_id); const pendingNow = ex.outcome === 'pending'; const streaming = pendingNow && live?.sessionId === ex.session_id; const waiting = pendingNow && ['paused', 'waiting_approval'].includes(s?.state); if (ex.outcome === 'edit') return <p className="edit-line" key={`${i}-${ex.session_id || ''}`}>{ex.reply}</p>; return <React.Fragment key={`${i}-${ex.session_id || ''}`}><article className="message user"><div className="message-byline">You<span>{ex.at?.slice(11, 16)}</span></div><div className="message-content">{ex.user}</div>{ex.comments?.length > 0 && <SentComments comments={ex.comments}/>}</article>{!pendingNow && <article className="message assistant"><div className="message-byline">{ex.bot_name || bot.name}<span><Badge appearance="tint" color={outcomeColor(ex.outcome)} size="small">{ex.outcome}</Badge>{ex.set_aside && <Badge appearance="tint" color="informative" size="small">Set aside</Badge>}</span></div>{ex.reply || ex.attachments?.length ? <Markdown text={ex.reply} form={{ live: i === exchanges.length - 1 && !pendingNow && live?.botId !== bot.id && online, onAnswer: text => send(text, { skipScope: true, answersTo: ex.session_id }) }} attachments={(ex.attachments || []).map(att => attachmentItem(att, api.conversationAttachmentUrl(conv.record.id, att.id)))}/> : emptyReplyNote(ex) && <div className="message-content">{emptyReplyNote(ex)}</div>}{ex.outcome === 'done' && ex.reply && <Button appearance="subtle" icon={<Sparkle24Regular/>} onClick={() => rememberResult({ id: ex.session_id, result: ex.reply })}>Remember this</Button>}{speechFailed?.sessionId === ex.session_id && <p className="field-hint" role="status">{speechFailed.played ? 'The rest of this reply could not be read aloud.' : <>Could not read this reply aloud. {speechFailed.message}</>}</p>}{!live && online && redoTarget(exchanges) === ex && <Button appearance="subtle" disabledFocusable={sendHeld} title={sendHeld ? HOLD_FOR_CHANGES : undefined} onClick={() => redoWithOwner(ex)}>{`Redo with ${bot.name}`}</Button>}</article>}{waiting && <article className="message assistant"><div className="message-byline">{bot.name}<span><Badge appearance="tint" color={stateColor(s.state)} size="small">{s.state.replace('_', ' ')}</Badge></span></div><div className="message-content">{s.state === 'paused' ? s.pause_reason : 'Waiting for your approval.'}</div></article>}{(streaming || (pendingNow && s?.state === 'running')) && <div className="working-state od-row"><Spinner size="tiny"/><span>{!streaming ? 'Working' : live.events.at(-1)?.kind === 'tool_call' ? `Tool: ${live.events.at(-1).data?.tool || ''}` : live.events.at(-1)?.kind === 'turn' ? 'Thinking…' : live.events.at(-1)?.kind === 'pause' ? 'Paused' : 'Working'}…</span></div>}</React.Fragment>; })}{scopePrompt?.botId === bot.id && <div className="inline-note od-stack"><ShieldCheckmark24Regular/><span>This looks like a change of {scopePrompt.change.new_goal ? 'goal' : 'constraints'} (confidence {Number(scopePrompt.change.probability).toFixed(2)}). Confirm to make “{short(scopePrompt.text, 80)}” the protected task, or reject to treat it as a refinement.</span><div className="od-row"><Button appearance="primary" onClick={() => resolveScope(true)}>Confirm scope change</Button><Button appearance="outline" onClick={() => resolveScope(false)}>Reject, just refine</Button></div></div>}{importJob && bot.id === ASSISTANT_ID && <article className="message assistant"><div className="message-byline">{bot.name}<span><Badge appearance="tint" color={importJob.state === 'running' ? 'brand' : importJob.state === 'done' ? 'success' : 'warning'} size="small">{importJob.state === 'running' ? 'importing' : importJob.state === 'stopping' ? 'stopping…' : importJob.state}</Badge></span></div><div className="message-content">{importJob.state === 'running' ? `${importJob.done} / ${importJob.total} · ${importJob.current ? importJob.current.slice(importJob.dir.length + 1) : 'starting'}` : importJob.state === 'stopping' ? `Stopping… ${importJob.done} / ${importJob.total} done. A file already being saved finishes first.` : `${importJob.state === 'stopped' ? 'Stopped. ' : ''}Imported ${importJob.imported} ${importJob.imported === 1 ? 'file' : 'files'}, ${importJob.unchanged} unchanged, ${importJob.refused} refused.`}</div>{importJob.state === 'running' || importJob.state === 'stopping' ? <Button appearance="subtle" icon={<Stop24Regular/>} disabled={importJob.state === 'stopping'} onClick={stopImport}>{importJob.state === 'stopping' ? 'Stopping…' : 'Stop import'}</Button> : <Button appearance="subtle" icon={<People24Regular/>} onClick={() => navigate('Knowledge')}>Open Knowledge</Button>}</article>}{progressNote && bot.id === ASSISTANT_ID && <div className="inline-note" role="status">{progressNote}</div>}{busy && <div className="working-state od-row"><Spinner size="tiny"/><span>Thinking…</span></div>}{routing && <div className="working-state od-row" role="status"><Spinner size="tiny"/><span>Finding the right bot…</span></div>}<div ref={endRef}/></div>{bot.narrates ? <div className="inline-note" role="note">The Narrator reads other bots' replies aloud when the Read aloud button in their chat is on. It does not take tasks; change its prompt or model with Edit bot.</div> : <form className="composer" onSubmit={e => { e.preventDefault(); send(composer); }}><PickChips picks={picks} onPicks={setPicks}/><label htmlFor="task-input">Message {bot.name}</label><Textarea id="task-input" value={composer} onChange={(e, v) => setComposer(v.value)} onKeyDown={submitOnEnter} placeholder="Give your bot a clear task…" resize="vertical" rows={2}/><div className="composer-bottom od-row"><span role={sendHeld ? 'status' : undefined}>{sendHeld ? HOLD_FOR_CHANGES : bound ? 'Sends, publishes, and writes outside allowed folders wait for your approval' : 'Bind a provider in Settings to send'}</span><div className="od-fill"/>{bot.id === ASSISTANT_ID && !canPick && <Input className="dir-field" value={dirField} onChange={(e, v) => setDirField(v.value)} placeholder="Folder or file path to import" aria-label="Folder or file path to import"/>}{bot.id === ASSISTANT_ID && <Button appearance="outline" icon={<Document24Regular/>} disabled={!online || !bound || importJob?.state === 'running' || importJob?.state === 'stopping'} onClick={pickFile}>Import a file</Button>}{bot.id === ASSISTANT_ID && <Button appearance="outline" icon={<Folder24Regular/>} disabled={!online || !bound || importJob?.state === 'running' || importJob?.state === 'stopping'} onClick={pickFolder}>Import a folder</Button>}{bot.id === ASSISTANT_ID && !interviewing && <Button appearance={newTopic ? 'primary' : 'outline'} aria-pressed={newTopic} icon={<Add24Regular/>} title="The next message starts a new room instead of continuing a matching one" onClick={() => setNewTopic(v => !v)}>New topic</Button>}{live?.botId === bot.id ? <Button icon={<Stop24Regular/>} onClick={stopTask}>Stop task</Button> : <Button appearance="primary" type="submit" icon={<ArrowUp24Regular/>} disabled={!(composer.trim() || picks.some(p => p.note.trim())) || !online || routing || sendHeld || switchingBot === bot.id} title={sendHeld ? HOLD_FOR_CHANGES : switchingBot === bot.id ? WAIT_FOR_SWITCH : undefined}>Send</Button>}</div></form>}</section>{revisions.length > 0 && <DesignPane key={conv.record.id} api={api} convId={conv.record.id} revisions={revisions} urlFor={id => api.conversationAttachmentUrl(conv.record.id, id)} picks={picks} onPicks={setPicks} pending={designChanges} onPending={setDesignChanges} onSaved={showSavedConversation} onStale={() => loadConversation(bot.id)} disabled={live?.botId === bot.id} reveal={revealDesign}/>}<aside className="task-panel activity-side"><header className="feed-header od-row"><h3>Activity</h3>{live?.botId === bot.id ? <span className="live-pill" role="status"><span className="live-dot" aria-hidden="true"/>Live</span> : latest && <Badge appearance="tint" color={stateColor(latest.state)} size="small">{latest.state.replace('_', ' ')}</Badge>}<div className="od-fill"/>{latest && <span className="feed-steps">{latest.steps} {latest.steps === 1 ? 'step' : 'steps'}</span>}</header>{latest && <SessionStatus s={latest}/>}<ActivityFeed rows={activityFeed(live?.botId === bot.id ? live.events : trail.sessionId === latest?.id ? trail.events : [])} live={live?.botId === bot.id} task={latest?.task}/>{latest && <details className="feed-routing"><summary>Skills and protected task</summary><SessionPanel s={latest}/></details>}</aside></div>}
+            {interviewing && interview.messages.map((m, i) => <article className={`message ${m.author === 'user' ? 'user' : 'assistant'}`} key={i}><div className="message-byline">{m.author === 'user' ? 'You' : bot.name}</div>{m.author === 'user' ? <div className="message-content">{m.text}</div> : <Markdown text={m.text}/>}{m.facts?.length > 0 && <div className="fact-chips">{m.facts.map(f => <Badge key={f.id} appearance="tint" color="brand" size="medium" icon={<Sparkle24Regular/>}>Remembered: {short(f.text, 90)}</Badge>)}</div>}</article>)}{interviewing && interview.done && <div className="inline-note od-stack"><Checkmark24Regular/><span>That's the interview. Import a file or a folder to let your assistant learn from your files, or go back to tasks.</span><div className="od-row"><Button appearance="outline" onClick={() => setInterview(null)}>Done, back to tasks</Button></div></div>}{!interviewing && !exchanges.length && <div className="chat-welcome"><Avatar item={bot}/><h1>What shall we work on?</h1><p>{bot.role}</p><div className="suggestions">{suggestions.map(s => <Button key={s} appearance="outline" onClick={() => setComposer(s)}>{s}<ArrowRight24Regular/></Button>)}</div></div>}{!interviewing && exchanges.map((ex, i) => { const s = sessions.find(x => x.id === ex.session_id); const pendingNow = ex.outcome === 'pending'; const streaming = pendingNow && live?.sessionId === ex.session_id; const waiting = pendingNow && ['paused', 'waiting_approval'].includes(s?.state); if (ex.outcome === 'edit') return <p className="edit-line" key={`${i}-${ex.session_id || ''}`}>{ex.reply}</p>; return <React.Fragment key={`${i}-${ex.session_id || ''}`}><article className="message user"><div className="message-byline">You<span>{ex.at?.slice(11, 16)}</span></div>{(ex.user || !ex.files?.length) && <div className="message-content">{ex.user}</div>}{ex.files?.length > 0 && <div className="sent-files"><MediaGrid items={sentFiles(ex.files, api.uploadUrl)}/></div>}{ex.comments?.length > 0 && <SentComments comments={ex.comments}/>}</article>{!pendingNow && <article className="message assistant"><div className="message-byline">{ex.bot_name || bot.name}<span><Badge appearance="tint" color={outcomeColor(ex.outcome)} size="small">{ex.outcome}</Badge>{ex.set_aside && <Badge appearance="tint" color="informative" size="small">Set aside</Badge>}</span></div>{ex.reply || ex.attachments?.length ? <Markdown text={ex.reply} form={{ live: i === exchanges.length - 1 && !pendingNow && live?.botId !== bot.id && online, onAnswer: text => send(text, { skipScope: true, answersTo: ex.session_id }) }} attachments={(ex.attachments || []).map(att => attachmentItem(att, api.conversationAttachmentUrl(conv.record.id, att.id)))}/> : emptyReplyNote(ex) && <div className="message-content">{emptyReplyNote(ex)}</div>}{ex.outcome === 'done' && ex.reply && <Button appearance="subtle" icon={<Sparkle24Regular/>} onClick={() => rememberResult({ id: ex.session_id, result: ex.reply })}>Remember this</Button>}{speechFailed?.sessionId === ex.session_id && <p className="field-hint" role="status">{speechFailed.played ? 'The rest of this reply could not be read aloud.' : <>Could not read this reply aloud. {speechFailed.message}</>}</p>}{!live && online && redoTarget(exchanges) === ex && <Button appearance="subtle" disabledFocusable={sendHeld} title={sendHeld ? HOLD_FOR_CHANGES : undefined} onClick={() => redoWithOwner(ex)}>{`Redo with ${bot.name}`}</Button>}</article>}{waiting && <article className="message assistant"><div className="message-byline">{bot.name}<span><Badge appearance="tint" color={stateColor(s.state)} size="small">{s.state.replace('_', ' ')}</Badge></span></div><div className="message-content">{s.state === 'paused' ? s.pause_reason : 'Waiting for your approval.'}</div></article>}{(streaming || (pendingNow && s?.state === 'running')) && <div className="working-state od-row"><Spinner size="tiny"/><span>{!streaming ? 'Working' : live.events.at(-1)?.kind === 'tool_call' ? `Tool: ${live.events.at(-1).data?.tool || ''}` : live.events.at(-1)?.kind === 'turn' ? 'Thinking…' : live.events.at(-1)?.kind === 'pause' ? 'Paused' : 'Working'}…</span></div>}</React.Fragment>; })}{scopePrompt?.botId === bot.id && <div className="inline-note od-stack"><ShieldCheckmark24Regular/><span>This looks like a change of {scopePrompt.change.new_goal ? 'goal' : 'constraints'} (confidence {Number(scopePrompt.change.probability).toFixed(2)}). Confirm to make “{short(scopePrompt.text, 80)}” the protected task, or reject to treat it as a refinement.</span><div className="od-row"><Button appearance="primary" onClick={() => resolveScope(true)}>Confirm scope change</Button><Button appearance="outline" onClick={() => resolveScope(false)}>Reject, just refine</Button></div></div>}{importJob && bot.id === ASSISTANT_ID && <article className="message assistant"><div className="message-byline">{bot.name}<span><Badge appearance="tint" color={importJob.state === 'running' ? 'brand' : importJob.state === 'done' ? 'success' : 'warning'} size="small">{importJob.state === 'running' ? 'importing' : importJob.state === 'stopping' ? 'stopping…' : importJob.state}</Badge></span></div><div className="message-content">{importJob.state === 'running' ? `${importJob.done} / ${importJob.total} · ${importJob.current ? importJob.current.slice(importJob.dir.length + 1) : 'starting'}` : importJob.state === 'stopping' ? `Stopping… ${importJob.done} / ${importJob.total} done. A file already being saved finishes first.` : `${importJob.state === 'stopped' ? 'Stopped. ' : ''}Imported ${importJob.imported} ${importJob.imported === 1 ? 'file' : 'files'}, ${importJob.unchanged} unchanged, ${importJob.refused} refused.`}</div>{importJob.state === 'running' || importJob.state === 'stopping' ? <Button appearance="subtle" icon={<Stop24Regular/>} disabled={importJob.state === 'stopping'} onClick={stopImport}>{importJob.state === 'stopping' ? 'Stopping…' : 'Stop import'}</Button> : <Button appearance="subtle" icon={<People24Regular/>} onClick={() => navigate('Knowledge')}>Open Knowledge</Button>}</article>}{progressNote && bot.id === ASSISTANT_ID && <div className="inline-note" role="status">{progressNote}</div>}{busy && <div className="working-state od-row"><Spinner size="tiny"/><span>Thinking…</span></div>}{routing && <div className="working-state od-row" role="status"><Spinner size="tiny"/><span>Finding the right bot…</span></div>}<div ref={endRef}/></div>{bot.narrates ? <div className="inline-note" role="note">The Narrator reads other bots' replies aloud when the Read aloud button in their chat is on. It does not take tasks; change its prompt or model with Edit bot.</div> : <form className="composer" onSubmit={e => { e.preventDefault(); send(composer); }} onDragOver={e => { if (canAttach && e.dataTransfer?.types?.includes('Files')) e.preventDefault(); }} onDrop={e => { if (!canAttach || !e.dataTransfer?.files?.length) return; e.preventDefault(); addFiles(e.dataTransfer.files); }}><PickChips picks={picks} onPicks={setPicks}/><FileChips chips={chips} onRemove={dropChip}/><label htmlFor="task-input">Message {bot.name}</label><Textarea id="task-input" value={composer} onChange={(e, v) => setComposer(v.value)} onKeyDown={submitOnEnter} onPaste={e => { if (canAttach) pasteFiles(e); }} placeholder="Give your bot a clear task…" resize="vertical" rows={2}/>{blindLine(bot, chips) && <p className="field-hint composer-note" role="status">{blindLine(bot, chips)}</p>}<div className="composer-bottom od-row"><span role={sendHeld || fileHold ? 'status' : undefined}>{sendHeld ? HOLD_FOR_CHANGES : fileHold ? fileHold : bound ? 'Sends, publishes, and writes outside allowed folders wait for your approval' : 'Bind a provider in Settings to send'}</span><div className="od-fill"/>{!interviewing && <><input ref={fileInput} type="file" multiple hidden accept={[...Object.keys(PICTURE_TYPES), ...DOCUMENT_SUFFIXES].join(',')} onChange={e => { addFiles(e.target.files); e.target.value = ''; }}/><Button appearance="subtle" icon={<Attach24Regular/>} aria-label="Attach files" title="Attach pictures or documents" disabled={!canAttach} onClick={() => fileInput.current?.click()}/></>}{bot.id === ASSISTANT_ID && !canPick && <Input className="dir-field" value={dirField} onChange={(e, v) => setDirField(v.value)} placeholder="Folder or file path to import" aria-label="Folder or file path to import"/>}{bot.id === ASSISTANT_ID && <Button appearance="outline" icon={<Document24Regular/>} disabled={!online || !bound || importJob?.state === 'running' || importJob?.state === 'stopping'} onClick={pickFile}>Import a file</Button>}{bot.id === ASSISTANT_ID && <Button appearance="outline" icon={<Folder24Regular/>} disabled={!online || !bound || importJob?.state === 'running' || importJob?.state === 'stopping'} onClick={pickFolder}>Import a folder</Button>}{bot.id === ASSISTANT_ID && !interviewing && <Button appearance={newTopic ? 'primary' : 'outline'} aria-pressed={newTopic} icon={<Add24Regular/>} title="The next message starts a new room instead of continuing a matching one" onClick={() => setNewTopic(v => !v)}>New topic</Button>}{live?.botId === bot.id ? <Button icon={<Stop24Regular/>} onClick={stopTask}>Stop task</Button> : <Button appearance="primary" type="submit" icon={<ArrowUp24Regular/>} disabled={!(composer.trim() || picks.some(p => p.note.trim()) || sendable(chips).ids.length) || !online || routing || sendHeld || !!fileHold || switchingBot === bot.id} title={sendHeld ? HOLD_FOR_CHANGES : fileHold ? fileHold : switchingBot === bot.id ? WAIT_FOR_SWITCH : undefined}>Send</Button>}</div></form>}</section>{revisions.length > 0 && <DesignPane key={conv.record.id} api={api} convId={conv.record.id} revisions={revisions} urlFor={id => api.conversationAttachmentUrl(conv.record.id, id)} picks={picks} onPicks={setPicks} pending={designChanges} onPending={setDesignChanges} onSaved={showSavedConversation} onStale={() => loadConversation(bot.id)} disabled={live?.botId === bot.id} reveal={revealDesign}/>}<aside className="task-panel activity-side"><header className="feed-header od-row"><h3>Activity</h3>{live?.botId === bot.id ? <span className="live-pill" role="status"><span className="live-dot" aria-hidden="true"/>Live</span> : latest && <Badge appearance="tint" color={stateColor(latest.state)} size="small">{latest.state.replace('_', ' ')}</Badge>}<div className="od-fill"/>{latest && <span className="feed-steps">{latest.steps} {latest.steps === 1 ? 'step' : 'steps'}</span>}</header>{latest && <SessionStatus s={latest}/>}<ActivityFeed rows={activityFeed(live?.botId === bot.id ? live.events : trail.sessionId === latest?.id ? trail.events : [])} live={live?.botId === bot.id} task={latest?.task}/>{latest && <details className="feed-routing"><summary>Skills and protected task</summary><SessionPanel s={latest}/></details>}</aside></div>}
           {page === 'Music' && <MusicArea key={musicKey} api={api} status={musicStatus} refreshStatus={refreshMusic} notify={setNotice}/>}
           {page === 'Sonos' && <><PageHeading title="Sonos" description="Play your Sonos Favorites on the speakers you choose."/><SonosPage api={api} online={online} bots={bots} notify={setNotice} onMorningRoutine={draft => setRoutineDialog({ draft })} openSonosSettings={() => { navigate('Settings'); openSettings('apps', anchorId('apps', 'Sonos')); }}/></>}
           {page === 'AgentMail' && <MailPage api={api} online={online} email={mailStatus?.inbox?.email || ''}/>}
@@ -1032,6 +1085,11 @@ function App() {
 const FEED_ICONS = { search: Search20Regular, web: Globe20Regular, shell: WindowConsole20Regular, think: BrainCircuit20Regular, reply: ChatSparkle20Regular, tool: Wrench20Regular, start: Play20Regular, done: CheckmarkCircle20Regular, end: Flag20Regular, error: ErrorCircle20Regular, pause: Pause20Regular, approval: ShieldCheckmark20Regular, supervisor: ShieldCheckmark20Regular, compact: ArrowMinimize20Regular, learn: BookOpen20Regular, agent: Code20Regular, memory: Database20Regular };
 // The bot's session as it happens: searches, page reads, tool calls, thinking, approvals. Follows the
 // newest row while the reader is at the bottom; scrolling up to read an older row stops the follow.
+// The files added to the message: name, size, a spinner while it uploads, the refusal's sentence, and a remove button.
+function FileChips({ chips, onRemove }) {
+  if (!chips.length) return null;
+  return <ul className="file-chips" aria-label="Files to send">{chips.map(c => <li key={c.key} className={`file-chip od-row ${c.state}`}>{c.state === 'uploading' && <Spinner size="extra-tiny" aria-label="Uploading"/>}<span className="file-chip-name" title={c.name}>{c.name}</span><span className="file-chip-size">{sizeLabel(c.size)}</span>{c.state === 'refused' && <span className="file-chip-error" role="alert">{c.error}</span>}<Button appearance="subtle" size="small" icon={<Dismiss16Regular/>} aria-label={`Remove ${c.name}`} title="Remove" onClick={() => onRemove(c)}/></li>)}</ul>;
+}
 function ActivityFeed({ rows, live, task }) {
   const box = useRef(null);
   const pinned = useRef(true);

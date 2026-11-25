@@ -15,6 +15,7 @@ from typing import Any
 from ..context.render import render_transcript
 from ..memory.exclusion import exclusion
 from ..providers.interface import Message
+from .chat_turn import attached
 
 __all__ = [
     "SUMMARY_PREFIX",
@@ -61,6 +62,7 @@ class Exchange:
     bot: str = ""  # the bot that answered, when it is not the conversation's owner
     set_aside: bool = False  # a helper's change the user sent back to the owner
     answers_to: str = ""  # the session id of the reply whose question form this message answers
+    files: list[dict[str, str]] = field(default_factory=list)  # {id, name, kind, path}: files the user sent with the message; path (vault-relative) never leaves the harness
 
 
 def reply_text(ex: Exchange) -> str:
@@ -72,6 +74,16 @@ def reply_text(ex: Exchange) -> str:
         text = f"({ex.bot} changed the design) {text}"
         if ex.set_aside:
             text += " (These changes were set aside.)"
+    return text
+
+
+def user_text(ex: Exchange) -> str:
+    """The user side of an exchange as later turns read it: the text, the comment block, then one line per file
+    the user sent (its name and vault path, never its content)."""
+    text = f"{ex.user}\n\n{ex.addendum}" if ex.addendum else ex.user
+    if ex.files:
+        lines = "\n".join(attached(f.get("name", ""), f.get("path", "")) for f in ex.files)
+        text = f"{text}\n\n{lines}" if text else lines
     return text
 
 
@@ -138,7 +150,7 @@ class Conversation:
             if ex.outcome == "edit":
                 msgs.append(Message("user", edit_note(ex)))
             else:
-                msgs.append(Message("user", f"{ex.user}\n\n{ex.addendum}" if ex.addendum else ex.user))
+                msgs.append(Message("user", user_text(ex)))
             msgs.append(Message("assistant", reply_text(ex)))
         return msgs
 
@@ -259,7 +271,7 @@ class Conversations:
     def begin(
         self, owner: str, user_text: str, session_id: str = "", conv_id: str | None = None,
         comments: list[dict[str, str]] | None = None, addendum: str = "", bot: str = "",
-        answers_to: str = "",
+        answers_to: str = "", files: list[dict[str, str]] | None = None,
     ) -> tuple[Conversation, Exchange]:
         c = self.get(conv_id) if conv_id else self.current(owner)
         if conv_id and (c is None or c.owner != owner):
@@ -267,9 +279,9 @@ class Conversations:
         if c is None:
             c = self.start_new(owner)
         if not c.title:
-            c.title = title_of(user_text)
+            c.title = title_of(user_text) if user_text.strip() or not files else title_of(files[0].get("name", ""))
         ex = Exchange(user=user_text, session_id=session_id, comments=list(comments or []), addendum=addendum,
-                      bot=bot, answers_to=answers_to)
+                      bot=bot, answers_to=answers_to, files=[dict(f) for f in files or []])
         c.exchanges.append(ex)
         self._touch(c)
         return c, ex
@@ -354,7 +366,7 @@ class Conversations:
         call per fold. The exchanges stay in the record for display; only
         the history drops them. On a generator error the history is kept
         as it was and the failure goes to the ledger."""
-        sizes = [len(edit_note(ex) if ex.outcome == "edit" else ex.user) + len(reply_text(ex)) for ex in conv.exchanges]
+        sizes = [len(edit_note(ex) if ex.outcome == "edit" else user_text(ex)) + len(reply_text(ex)) for ex in conv.exchanges]
         unfolded = sum(sizes[conv.folded :])
         if unfolded <= budget_chars:
             return False
@@ -373,7 +385,7 @@ class Conversations:
             return False
         before = history_chars(conv.history())
         old = conv.exchanges[conv.folded : end]
-        msgs = [m for ex in old for m in (Message("user", edit_note(ex) if ex.outcome == "edit" else ex.user), Message("assistant", reply_text(ex)))]
+        msgs = [m for ex in old for m in (Message("user", edit_note(ex) if ex.outcome == "edit" else user_text(ex)), Message("assistant", reply_text(ex)))]
         try:
             latest = await generator.compact(render_transcript(msgs), goal=conv.title or None)
             summary = await generator.fold(conv.summary, latest)

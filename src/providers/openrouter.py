@@ -16,9 +16,12 @@ exclusion filter so the ledger redacts it if it ever appears in text.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import re
 from collections.abc import Iterable
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -28,6 +31,8 @@ from src.memory.exclusion import exclusion
 from . import registry
 from . import tracing
 from .interface import (
+    CANT_SEE,
+    IMAGES_REFUSED,
     Completion,
     Message,
     Provider,
@@ -228,8 +233,16 @@ class OpenRouterProvider(Provider):
             ]
         meta = {"provider": self.kind, "tools": [t.name for t in tools or []]}
         with tracing.observe(tracing.step_name("generate-response"), as_type="generation", model=payload["model"],
-                             input=payload["messages"], metadata=meta) as gen:
-            data = await self._post(payload)
+                             input=_traced_messages(payload["messages"]), metadata=meta) as gen:
+            dropped = False
+            try:
+                data = await self._post(payload)
+            except ProviderError as e:
+                if e.status not in IMAGES_REFUSED or not any(m.images for m in messages):
+                    raise
+                dropped = True
+                payload = {**payload, "messages": [_to_openai(_without_images(m), names) for m in messages]}
+                data = await self._post(payload)
             try:
                 choice = data["choices"][0]
                 raw = choice["message"]
@@ -248,6 +261,7 @@ class OpenRouterProvider(Provider):
                 ),
                 kind=self.kind,
                 reasoning=_reasoning(raw),
+                images_dropped=dropped,
             )
             u = completion.usage
             gen.update(model=completion.model, output=_traced_output(raw, completion.reasoning, names),
@@ -311,6 +325,10 @@ class ToolNames:
 def _to_openai(m: Message, names: ToolNames | None = None) -> dict[str, Any]:
     names = names or ToolNames([])
     d: dict[str, Any] = {"role": m.role, "content": m.content}
+    if m.images:
+        d["content"] = [{"type": "text", "text": m.content}] + [
+            {"type": "image_url", "image_url": {"url": u}} for u in m.images
+        ]
     if m.role == "assistant" and m.tool_calls:
         d["tool_calls"] = [
             {"id": c.id, "type": "function", "function": {"name": names.wire(c.name), "arguments": json.dumps(c.arguments)}}
@@ -321,6 +339,39 @@ def _to_openai(m: Message, names: ToolNames | None = None) -> dict[str, Any]:
         if m.name:
             d["name"] = names.wire(m.name)
     return d
+
+
+def _without_images(m: Message) -> Message:
+    """A copy of the message with no pictures and `CANT_SEE` after its text; the caller's message is untouched."""
+    if not m.images:
+        return m
+    return replace(m, images=[], content=f"{m.content}\n{CANT_SEE}" if m.content else CANT_SEE)
+
+
+def _traced_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The payload's messages for a trace, each picture's data URI replaced by its type and size."""
+    out = []
+    for m in messages:
+        if isinstance(m.get("content"), list):
+            parts = []
+            for p in m["content"]:
+                if isinstance(p, dict) and p.get("type") == "image_url":
+                    parts.append({"type": "image_url", "image_url": {"url": _describe(str((p.get("image_url") or {}).get("url", "")))}})
+                else:
+                    parts.append(p)
+            m = {**m, "content": parts}
+        out.append(m)
+    return out
+
+
+def _describe(uri: str) -> str:
+    head, _, data = uri.partition(",")
+    mime = head[5:].split(";")[0] if head.startswith("data:") else "unknown"
+    try:
+        size = len(base64.b64decode(data, validate=False))
+    except (binascii.Error, ValueError):
+        size = 0
+    return f"[image: {mime}, {size} bytes]"
 
 
 def _reasoning(raw: dict[str, Any]) -> str:

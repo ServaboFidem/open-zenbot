@@ -29,6 +29,7 @@ LEDGER_FILE = "ledger.jsonl"
 
 class Kind(StrEnum):
     session = "session"
+    upload = "upload"
     turn = "turn"
     tool_start = "tool_start"
     tool_call = "tool_call"

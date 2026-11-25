@@ -358,3 +358,34 @@ async def test_a_fold_keeps_the_note_of_an_edit_exchange(tmp_path, ledger):
     assert await convs.fold_if_needed(conv, gen, budget_chars=1000, keep=2) is True
     rendered, _ = gen.compacted[0]
     assert "(The user changed the design in the app, not through you: You changed 2 texts.)" in rendered
+
+
+def test_files_only_begin_takes_its_title_from_the_first_file(tmp_path, ledger):
+    convs = make(tmp_path, ledger)
+    files = [{"id": "a" * 32, "name": "report.pdf", "kind": "document", "path": "uploads/chat/" + "a" * 32 + "/report.pdf"}]
+    conv, ex = convs.begin("me", "", session_id="s1", files=files)
+    assert conv.title == "report.pdf" and ex.user == "" and ex.files == files
+
+
+def test_history_names_files_by_line_and_never_their_content(tmp_path, ledger):
+    convs = make(tmp_path, ledger)
+    files = [{"id": "a" * 32, "name": "a.webp", "kind": "image", "path": f"uploads/chat/{'a' * 32}/a.webp"},
+             {"id": "b" * 32, "name": "n.txt", "kind": "document", "path": f"uploads/chat/{'b' * 32}/n.txt"}]
+    conv, _ = convs.begin("me", "look", session_id="s1", files=files)
+    convs.finish(conv.id, "s1", "done", "seen")
+    [user, _] = conv.history()
+    assert user.content == (f"look\n\nAttached: a.webp (uploads/chat/{'a' * 32}/a.webp)\n"
+                            f"Attached: n.txt (uploads/chat/{'b' * 32}/n.txt)")
+    assert user.images == []
+
+
+async def test_a_fold_keeps_the_attached_lines_of_a_files_only_exchange(tmp_path, ledger):
+    convs = make(tmp_path, ledger)
+    files = [{"id": "b" * 32, "name": "report.pdf", "kind": "document", "path": f"uploads/chat/{'b' * 32}/report.pdf"}]
+    conv, _ = convs.begin("me", "", session_id="f1", files=files)
+    convs.finish(conv.id, "f1", "done", "read it " + "y" * 200)
+    _fill(convs, 6)
+    gen = FakeGenerator()
+    assert await convs.fold_if_needed(conv, gen, budget_chars=1000, keep=2) is True
+    rendered, _ = gen.compacted[0]
+    assert f"Attached: report.pdf (uploads/chat/{'b' * 32}/report.pdf)" in rendered

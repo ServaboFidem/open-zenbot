@@ -53,3 +53,12 @@
 .update-notice .od-row{gap:var(--s3);flex-wrap:wrap}.update-notes{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;margin:var(--s2) 0 0;font:inherit;font-size:var(--small)}
 .welcome-key{position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center;padding:var(--s4);background:var(--canvas);overflow-y:auto}.welcome-card{width:min(520px,100%);display:flex;flex-direction:column;gap:var(--s4);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:var(--s6)}.welcome-card p{font-size:var(--small);line-height:1.6}.welcome-actions{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+/* files added to a chat message, and the ones a sent message carried */
+.file-chips{list-style:none;margin:0 0 var(--s3);padding:0;display:flex;flex-wrap:wrap;gap:var(--s2)}
+.file-chip{gap:var(--s2);max-width:100%;padding:2px 2px 2px var(--s3);border:1px solid var(--border);border-radius:var(--small-radius);background:var(--canvas);font-size:var(--small)}
+.file-chip-name{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:28ch}
+.file-chip-size{color:var(--muted);font-size:var(--tiny);white-space:nowrap}
+.file-chip.refused{border-color:#c50f1f;background:#fdf3f4}
+.file-chip-error{color:#b10e1c;font-size:var(--tiny);overflow-wrap:anywhere}
+.composer-note{margin-top:var(--s2);color:var(--warning)}
+.sent-files .media-grid{margin:var(--s2) 0 0}
