@@ -20,10 +20,11 @@ test('the status line says what is off, what is set up and when it last sent', (
 });
 
 test('each error kind has its own sentence, and a capped day says how many were skipped', () => {
-  for (const kind of ['network', 'key', 'refused', 'invalid', 'provider', 'uncertain', 'interrupted']) {
+  for (const kind of ['network', 'key', 'forbidden', 'refused', 'invalid', 'provider', 'uncertain', 'interrupted']) {
     assert.ok(ERRORS[kind]);
     assert.ok(statusLine({ ...ready, last_error: kind }).endsWith(ERRORS[kind]));
   }
+  assert.ok(!/key/i.test(ERRORS.forbidden)); // a 403 is the account's limit, not the key
   assert.ok(statusLine({ ...ready, last_error: 'odd' }).endsWith(ERRORS.provider));
   assert.ok(statusLine({ ...ready, sent_today: 30, skipped_today: 4 }).endsWith('30 texts were sent today; 4 more were skipped.'));
 });

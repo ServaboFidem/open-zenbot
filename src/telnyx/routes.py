@@ -25,8 +25,11 @@ KEY_NOT_SAVED = "The key could not be saved."
 UNREACHABLE = "Telnyx could not be reached."
 NOT_SET_UP = "Set up Telnyx and your phone number first."
 WAIT = "Wait a minute between test texts, or until tomorrow after 30 texts in a day."
+FORBIDDEN = ("Telnyx refused this for your account. If your Telnyx account may only text verified numbers, verify "
+             "your phone in the Telnyx portal or upgrade the account.")
 GENERAL = {
     "key": (401, "Telnyx no longer accepts the saved key. Save a new one."),
+    "forbidden": (403, FORBIDDEN),  # the key works; the account may not do this (a 403 is never a bad key)
     "refused": (429, "Telnyx is busy. Try again in a moment."),
     "network": (502, UNREACHABLE),
 }
@@ -56,7 +59,9 @@ def telnyx_router(service: TelnyxService) -> APIRouter:
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
         except TelnyxError as err:
-            raise _fail(err, {"key": (422, "Telnyx did not accept this key.")}) from None
+            raise _fail(err, {"key": (422, "Telnyx did not accept this key."),
+                              "forbidden": (422, "This key may not list your Telnyx numbers. Check its permissions.")
+                              }) from None
         except Exception as e:  # noqa: BLE001 - the key is in this call's frames, so no exception may leave it
             log.warning("telnyx key save failed: %s", type(e).__name__)
             raise HTTPException(500, KEY_NOT_SAVED) from None

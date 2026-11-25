@@ -10,7 +10,7 @@ from src.harness.api import Harness, create_app
 from src.harness.config import HarnessConfig
 from src.memory.ledger import Ledger
 from src.skills.catalog import Catalog
-from src.telnyx.routes import telnyx_router
+from src.telnyx.routes import FORBIDDEN, telnyx_router
 from src.telnyx.service import TelnyxService
 from src.telnyx.settings import TEXTS_FILE
 from src.vault_settings import settings_dir
@@ -125,6 +125,33 @@ async def test_test_route_send_failure(client, vault, fake_telnyx):
     fake_telnyx.fail["POST /messages"] = 422
     got = await client.post("/telnyx/test", json={})
     assert got.status_code == 422 and "refused" in got.json()["detail"]
+
+
+async def test_test_route_account_limit_does_not_blame_the_key(client, vault, fake_telnyx):
+    # Telnyx answers 403 (code 10039) when the account may only text verified numbers; the key itself is fine
+    await setup(client)
+    phone(vault)
+    fake_telnyx.fail["POST /messages"] = 403
+    got = await client.post("/telnyx/test", json={})
+    assert (got.status_code, got.json()["detail"]) == (403, FORBIDDEN)
+    assert "key" not in got.json()["detail"]
+
+
+async def test_numbers_403_is_not_a_bad_key(client, fake_telnyx):
+    await client.put("/telnyx/key", json={"key": KEY})
+    fake_telnyx.fail["GET /messaging_profiles"] = 403
+    got = await client.get("/telnyx/numbers")
+    assert (got.status_code, got.json()["detail"]) == (403, FORBIDDEN)
+    fake_telnyx.fail["GET /messaging_profiles"] = 401
+    got = await client.get("/telnyx/numbers")
+    assert (got.status_code, got.json()["detail"]) == (401, "Telnyx no longer accepts the saved key. Save a new one.")
+
+
+async def test_key_save_refused_by_permission(client, fake_telnyx):
+    fake_telnyx.fail["GET /messaging_profiles"] = 403
+    got = await client.put("/telnyx/key", json={"key": KEY})
+    assert (got.status_code, got.json()["detail"]) == \
+        (422, "This key may not list your Telnyx numbers. Check its permissions.")
 
 
 async def test_forget_key(client):
