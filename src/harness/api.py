@@ -740,16 +740,43 @@ class Harness:
         if bot is None or not done:
             return ""
         ex = done[-1]
-        try:
-            minutes = float(os.environ.get("ZEN_ROUTE_CONTEXT_MINUTES", "30"))
-        except ValueError:
-            minutes = 30.0
         at = datetime.fromisoformat(ex.at)
-        if datetime.now(timezone.utc) - at > timedelta(minutes=minutes):
+        if datetime.now(timezone.utc) - at > _route_window():
             return ""
         if self._last_routed_at is not None and self._last_routed_at > at:
             return ""
         return f"User: {ex.user[:500]}\n{bot.name}: {ex.reply[:1500]}"
+
+    def recent_files(self, bot_id: str) -> list[str]:
+        """Every file in the bot's current conversation from the last ZEN_ROUTE_CONTEXT_MINUTES, whatever was routed
+        in between: the files the user sent and the ones the bot attached, oldest first, each path once, as
+        `Attached:` lines. A room the next message goes to gets them, so its bots can work with the files."""
+        conv = self.conversations.current(bot_id)
+        if conv is None:
+            return []
+        since = datetime.now(timezone.utc) - _route_window()
+        vault = self.config.vault_root.resolve()
+        lines: list[str] = []
+        seen: set[str] = set()
+        for ex in conv.exchanges:
+            try:
+                if datetime.fromisoformat(ex.at) < since:
+                    continue
+            except ValueError:
+                continue
+            named = [(f.get("name", ""), f.get("path", "")) for f in ex.files]
+            for a in ex.attachments:
+                path = Path(a.get("path", ""))
+                try:  # a file in the vault by its vault path, as the user's own files are named
+                    shown = path.resolve().relative_to(vault).as_posix()
+                except (OSError, ValueError):
+                    shown = str(path)
+                named.append((a.get("title", ""), shown if a.get("path") else ""))
+            for name, path in named:
+                if path and path not in seen:
+                    seen.add(path)
+                    lines.append(chat_turn.attached(name, path))
+        return lines
 
     def settings(self) -> dict[str, Any]:
         c = self.config
@@ -1208,6 +1235,15 @@ class Harness:
 
 
 _ENDED = (SessionState.done, SessionState.failed, SessionState.stopped)
+
+
+def _route_window() -> timedelta:
+    """How far back ZenBot's chat goes with a message routed to a room: ZEN_ROUTE_CONTEXT_MINUTES, default 30."""
+    try:
+        minutes = float(os.environ.get("ZEN_ROUTE_CONTEXT_MINUTES", "30"))
+    except ValueError:
+        minutes = 30.0
+    return timedelta(minutes=minutes)
 
 
 def _outcome(session: Session) -> tuple[str, str]:
@@ -3374,7 +3410,8 @@ def create_app(h: Harness) -> FastAPI:
         if h.orchestrator is None or ASSISTANT_ID not in h.bots:
             return {"outcome": "task"}
         try:
-            out = await h.orchestrator.route(body.text, context=h.recent_exchange(ASSISTANT_ID), new_topic=body.new_topic)
+            out = await h.orchestrator.route(body.text, context=h.recent_exchange(ASSISTANT_ID),
+                                             files=h.recent_files(ASSISTANT_ID), new_topic=body.new_topic)
         except (ProviderError, RoomError) as e:  # RoomError: a room refused the text; answer directly instead
             err = f"{type(e).__name__}: {e}"
             h.ledger.append("error", ASSISTANT_ID, "", where="orchestrate", error=err)

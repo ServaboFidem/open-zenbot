@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Sequence
 
 from src.decider.interface import BandConfig, DecisionRefused, DecisionRequest, NoulQuestion, Outcome, decide_and_log, select_band
 from src.providers.interface import ProviderError
@@ -19,6 +19,14 @@ from .room import Post, Room, RoomService, refusal
 
 if TYPE_CHECKING:
     from src.harness.bot import Bot
+
+FILES_HEADER = "Files from our chat:"
+
+
+def _unseen(room: Room, files: list[str]) -> list[str]:
+    """The file lines the room's current conversation has not been given yet."""
+    posts = [p.text for p in room.current_posts()]
+    return [f for f in files if not any(f in text for text in posts)]
 
 
 def _env_float(name: str, default: float) -> float:
@@ -75,7 +83,9 @@ class Orchestrator:
         mine.sort(key=lambda r: r.last_active, reverse=True)
         return mine[: self.config.max_candidate_rooms]
 
-    async def route(self, text: str, *, context: str = "", new_topic: bool = False) -> RouteOutcome:
+    async def route(self, text: str, *, context: str = "", files: Sequence[str] = (), new_topic: bool = False) -> RouteOutcome:
+        """`files` are `Attached:` lines naming the files of the lead's recent chat; the room the message goes to
+        is given every one it does not have yet, so its bots can work with them."""
         cfg = self.config
         candidates = self._candidates(new_topic)
         specialists = [b for bid, b in self.bots.items()
@@ -90,6 +100,7 @@ class Orchestrator:
             return self._done(RouteOutcome("task", fallback="refused in room: " + refused))
         if context and refusal(context):
             context = ""  # never quoted into a room, never shown to the scorer
+        files = [f for f in files if not refusal(f)]  # the same rule for each file line; the others still go
 
         questions: dict[str, NoulQuestion] = {}
         for r in candidates:
@@ -98,7 +109,10 @@ class Orchestrator:
         for b in specialists:
             questions[f"bot:{b.id}"] = NoulQuestion(
                 f"Is {b.name} ({b.role}) clearly a better fit for this message than a generalist assistant?")
-        request = DecisionRequest(state={"message": text, "recent": context}, questions=questions, purpose="orchestration")
+        state = {"message": text, "recent": context}
+        if files:
+            state["files"] = "\n".join(files)
+        request = DecisionRequest(state=state, questions=questions, purpose="orchestration")
         try:
             decision = await decide_and_log(self.scorer, request, self.ledger, self.lead_id, "")
             scores = {qid: decision.noul(qid).noul for qid in questions}
@@ -111,6 +125,9 @@ class Orchestrator:
         if room_scores:
             best = max(room_scores, key=lambda k: room_scores[k])
             if room_scores[best] >= cfg.continue_threshold:
+                new = _unseen(self.rooms.get(best), files)
+                if new:
+                    await self.rooms.post(best, self.lead_id, FILES_HEADER + "\n" + "\n".join(new), schedule=False)
                 await self.rooms.post(best, "user", text)
                 return self._done(RouteOutcome("room", best, created=False, scores=scores))
 
@@ -123,8 +140,11 @@ class Orchestrator:
                 return self._done(RouteOutcome("studio", scores=scores, bot_id=winners[0]))
             name, topic = await self.topic_writer(text)
             room = self.rooms.create(name, [self.lead_id, *winners], lead=self.lead_id, topic=topic)
-            if context:
-                await self.rooms.post(room.id, self.lead_id, "From our chat just now:\n\n" + context, schedule=False)
+            intro = [f"From our chat just now:\n\n{context}"] if context else []
+            if files:
+                intro.append(FILES_HEADER + "\n" + "\n".join(files))
+            if intro:
+                await self.rooms.post(room.id, self.lead_id, "\n\n".join(intro), schedule=False)
             await self.rooms.post(room.id, "user", text, schedule=False)
             await self.rooms.post(room.id, self.lead_id, "Over to you, " + " ".join(f"@{w}" for w in winners) + ".")
             return self._done(RouteOutcome("room", room.id, created=True, scores=scores))

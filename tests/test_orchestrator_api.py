@@ -148,6 +148,52 @@ async def test_recent_exchange_reads_zenbots_conversation(harness: Harness):
     assert harness.recent_exchange("personal-assistant") == "User: direct q\nZenBot: direct a"
 
 
+def upload(name: str, char: str) -> dict[str, str]:
+    return {"id": char * 32, "name": name, "kind": "image", "path": f"uploads/chat/{char * 32}/{name}"}
+
+
+def line(name: str, char: str) -> str:
+    return f"Attached: {name} (uploads/chat/{char * 32}/{name})"
+
+
+async def test_recent_files_lists_every_file_of_the_last_half_hour(harness: Harness, vault: Path, tmp_path: Path):
+    assert harness.recent_files("personal-assistant") == []
+    old = direct_exchange(harness, "old photo", "seen", age_minutes=31)
+    old.files = [upload("old.webp", "a")]
+    first = direct_exchange(harness, "what is this?", "a cat", age_minutes=20)
+    first.files = [upload("cat.webp", "b")]
+    # a file the bot attached: one in the vault is named by its vault path, one elsewhere by its full path
+    first.attachments = [{"id": "x1", "title": "Cat, cropped", "path": str(vault / "workspace" / "crop.png")},
+                         {"id": "x2", "title": "Notes", "path": str(tmp_path / "notes.txt")}]
+    harness.conversations.record("personal-assistant", "bees?", "routed", "(Sent to the room 'Bees'.)")
+    later = direct_exchange(harness, "and this one?", "a dog", age_minutes=5)
+    later.files = [upload("dog.webp", "c"), upload("cat.webp", "b")]  # the same file twice is named once
+    assert harness.recent_files("personal-assistant") == [
+        line("cat.webp", "b"),
+        "Attached: Cat, cropped (workspace/crop.png)",
+        f"Attached: Notes ({tmp_path / 'notes.txt'})",
+        line("dog.webp", "c"),
+    ]
+
+
+async def test_recent_files_follows_the_route_context_minutes(harness: Harness, monkeypatch):
+    ex = direct_exchange(harness, "photo", "seen", age_minutes=10)
+    ex.files = [upload("cat.webp", "a")]
+    assert harness.recent_files("personal-assistant") == [line("cat.webp", "a")]
+    monkeypatch.setenv("ZEN_ROUTE_CONTEXT_MINUTES", "5")
+    assert harness.recent_files("personal-assistant") == []
+
+
+async def test_a_routed_message_takes_the_conversations_files_into_the_room(client, harness: Harness):
+    ex = direct_exchange(harness, "what is in this photo?", "A cat on a sofa.")
+    ex.files = [upload("cat.webp", "a")]
+    r = await client.post("/orchestrate", json={"text": "Make it black and white"})
+    assert r.json()["outcome"] == "room"
+    room = harness.rooms.get(r.json()["room_id"])
+    assert line("cat.webp", "a") in room.posts[0].text
+    await harness.rooms.settle(room.id)
+
+
 async def test_rebind_keeps_rooms_and_reregisters_tools(harness: Harness):
     room = harness.rooms.create("r", ["personal-assistant", "research-partner"])
     harness.rebind(ScriptedProvider(), MockScorer(scores()))

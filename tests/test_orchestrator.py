@@ -66,6 +66,66 @@ async def test_context_is_copied_into_a_new_room(ledger: Ledger, tmp_path: Path)
     assert room.posts[1].text == "draft it" and "@writer" in room.posts[2].text
 
 
+CAT = "Attached: cat.webp (uploads/chat/aaaa/cat.webp)"
+DOG = "Attached: dog.webp (uploads/chat/bbbb/dog.webp)"
+
+
+async def test_files_from_the_chat_go_into_a_new_room(ledger: Ledger, tmp_path: Path):
+    svc = make(provider(), ledger, tmp_path)
+    scorer = MockScorer(scores(**{"bot:writer": 0.9}))
+    out = await orch(scorer, svc, ledger).route("make it black and white", context="User: x\nLead: y", files=[CAT, DOG])
+    room = svc.get(out.room_id)
+    assert room.posts[0].author == "lead"
+    assert room.posts[0].text == f"From our chat just now:\n\nUser: x\nLead: y\n\nFiles from our chat:\n{CAT}\n{DOG}"
+    assert room.posts[1].text == "make it black and white"
+    assert scorer.requests[0].state["files"] == f"{CAT}\n{DOG}"  # the scorer knows what "it" may be
+    await svc.settle(room.id)
+
+
+async def test_files_go_into_a_new_room_without_recent_chat(ledger: Ledger, tmp_path: Path):
+    svc = make(provider(), ledger, tmp_path)
+    out = await orch(MockScorer(scores(**{"bot:writer": 0.9})), svc, ledger).route("make it black and white", files=[CAT])
+    room = svc.get(out.room_id)
+    assert room.posts[0].text == f"Files from our chat:\n{CAT}" and room.posts[1].text == "make it black and white"
+    await svc.settle(room.id)
+
+
+async def test_a_follow_up_brings_only_the_files_the_room_lacks(ledger: Ledger, tmp_path: Path):
+    svc = make(ScriptedProvider([completion("Lead: sure.") for _ in range(4)]), ledger, tmp_path)
+    room = svc.create("Bees", ["lead", "writer"], lead="lead", topic="Beekeeping")
+    o = orch(MockScorer(scores(**{f"room:{room.id}": 0.8})), svc, ledger)
+    await o.route("make it black and white", files=[CAT])
+    await svc.settle(room.id)
+    assert [(p.author, p.text) for p in room.posts[:2]] == [("lead", f"Files from our chat:\n{CAT}"),
+                                                             ("user", "make it black and white")]
+    await o.route("and this one too", files=[CAT, DOG])
+    await svc.settle(room.id)
+    tail = [(p.author, p.text) for p in room.posts[3:5]]
+    assert tail == [("lead", f"Files from our chat:\n{DOG}"), ("user", "and this one too")]
+    await o.route("thanks", files=[CAT, DOG])  # nothing new: no files post
+    await svc.settle(room.id)
+    assert [p.author for p in room.posts[6:]] == ["user", "lead"]
+
+
+async def test_refused_file_lines_are_dropped(ledger: Ledger, tmp_path: Path):
+    svc = make(provider(), ledger, tmp_path)
+    scorer = MockScorer(scores(**{"bot:writer": 0.9}))
+    out = await orch(scorer, svc, ledger).route("draft it", files=["Attached: api_key=YOUR_API_KEY.png (x/y.png)"])
+    room = svc.get(out.room_id)
+    assert room.posts[0].text == "draft it" and not any("Files from our chat" in p.text for p in room.posts)
+    assert "files" not in scorer.requests[0].state
+    await svc.settle(room.id)
+
+
+async def test_a_refused_file_line_leaves_the_others(ledger: Ledger, tmp_path: Path):
+    svc = make(provider(), ledger, tmp_path)
+    out = await orch(MockScorer(scores(**{"bot:writer": 0.9})), svc, ledger).route(
+        "draft it", files=[CAT, "Attached: api_key=YOUR_API_KEY.png (x/y.png)"])
+    room = svc.get(out.room_id)
+    assert room.posts[0].text == f"Files from our chat:\n{CAT}"
+    await svc.settle(room.id)
+
+
 async def test_a_follow_up_continues_the_room(ledger: Ledger, tmp_path: Path):
     svc = make(ScriptedProvider([completion("Lead: sure.")]), ledger, tmp_path)
     room = svc.create("Bees", ["lead", "writer"], lead="lead", topic="Beekeeping")
