@@ -29,8 +29,12 @@ MAX_NUMBERS = 500
 
 
 class TelnyxError(Exception):
-    """A failed Telnyx request. ``kind``: network, key, refused, invalid, provider. ``before_request`` is true only
-    when the request certainly never left (no connection was made), so a send may be tried again."""
+    """A failed Telnyx request. ``kind``: network, key (401), forbidden (403), refused, invalid, provider.
+    ``before_request`` is true only when the request certainly never left (no connection was made), so a send may be
+    tried again.
+
+    A 403 is not a bad key: Telnyx answers it for a key that works but may not do this, as when the account level
+    allows texts only to verified numbers (code 10039, seen on a real send on 2026-11-24)."""
 
     def __init__(self, kind: str, *, status: int = 0, before_request: bool = False):
         super().__init__(kind)
@@ -40,8 +44,10 @@ class TelnyxError(Exception):
 
 
 def _kind(status: int) -> str:
-    if status in (401, 403):
+    if status == 401:
         return "key"
+    if status == 403:
+        return "forbidden"
     if status == 429:
         return "refused"
     if status in (400, 422):

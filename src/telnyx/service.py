@@ -145,7 +145,7 @@ class TelnyxService:
             if err.before_request or err.status == 429:
                 # tried once more on a later pass; out of tries, it failed (so Settings shows it, never stuck)
                 state = "retry" if self.record.attempts(key) < MAX_ATTEMPTS else "failed"
-            elif err.kind in ("key", "invalid"):
+            elif err.kind in ("key", "forbidden", "invalid"):
                 state = "failed"
             else:
                 state = "uncertain"

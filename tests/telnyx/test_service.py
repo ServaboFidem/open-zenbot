@@ -114,6 +114,7 @@ async def test_never_twice_after_crash(vault, ledger, store, fake_telnyx):
     (500, False),
     (422, False),
     (401, False),
+    (403, False),
 ])
 async def test_retry_rules(vault, ledger, store, fake_telnyx, answer, retried):
     service = await ready(vault, ledger, store, fake_telnyx)
@@ -135,6 +136,17 @@ async def test_a_refused_number_is_failed_and_shown(vault, ledger, store, fake_t
     assert service.status(NOW)["last_error"] == "invalid"
     assert [e for e in entries(ledger) if e.get("event") == "failed"] == \
         [{"event": "failed", "type": "before", "error": "invalid", "retry": False}]
+
+
+async def test_an_account_limit_is_forbidden_not_a_bad_key(vault, ledger, store, fake_telnyx):
+    # Telnyx answers 403 (code 10039) when the account may only text verified numbers; the key itself is fine
+    service = await ready(vault, ledger, store, fake_telnyx)
+    event(store, "Dentist", NOW + timedelta(minutes=20))
+    fake_telnyx.fail["POST /messages"] = 403
+    await service.tick(NOW)
+    assert service.status(NOW)["last_error"] == "forbidden"
+    assert [e for e in entries(ledger) if e.get("event") == "failed"] == \
+        [{"event": "failed", "type": "before", "error": "forbidden", "retry": False}]
 
 
 async def test_a_timeout_is_uncertain(vault, ledger, store, fake_telnyx):

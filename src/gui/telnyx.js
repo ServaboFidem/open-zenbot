@@ -13,6 +13,7 @@ export const leadLabel = m => (m % 60 === 0 ? `${m / 60} hour${m === 60 ? '' : '
 export const ERRORS = {
   network: 'The last text could not reach Telnyx.',
   key: 'Telnyx refused the saved key. Save a new one.',
+  forbidden: 'Telnyx refused the last text for your account. If it may only text verified numbers, verify your phone in the Telnyx portal or upgrade the account.',
   refused: 'Telnyx was busy and did not take the last text.',
   invalid: "Telnyx refused the last text. Check the number's messaging setup and registration.",
   provider: 'Telnyx answered the last text in a way ZenBot could not read. It may not have been sent.',

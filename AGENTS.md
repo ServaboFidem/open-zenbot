@@ -908,9 +908,11 @@ Calls and webhooks (replies, delivery reports) are not built.
   `Authorization: Bearer` header. 30 s timeout, an answer over 1,000,000 bytes refused, no 3xx followed. Three
   requests: `POST /messages` `{from, to, text}` (answers `data.id`); `GET /messaging_profiles?page[size]=250` (at most
   20 profiles) and each profile's `GET /messaging_profiles/{id}/phone_numbers` (at most 500 numbers in all). Errors
-  are `TelnyxError(kind)`: `network`, `key` (401, 403), `refused` (429), `invalid` (400, 422), `provider` (anything
-  else, or an answer not in the expected JSON shape). A `network` error raised before the request left
-  (`ConnectError`, `ConnectTimeout`, `PoolTimeout`) carries `before_request`.
+  are `TelnyxError(kind)`: `network`, `key` (401), `forbidden` (403), `refused` (429), `invalid` (400, 422),
+  `provider` (anything else, or an answer not in the expected JSON shape). A 403 is never a bad key: Telnyx answers it
+  for a key that works but may not do this, as when the account level allows texts only to verified numbers (code
+  10039). A `network` error raised before the request left (`ConnectError`, `ConnectTimeout`, `PoolTimeout`) carries
+  `before_request`.
 - **What is due** (`due.py`). Read from the built-in calendar's store each pass, visible calendars only. A reminder is
   due from `lead_minutes` (10, 15, 30, 60 or 120) before a timed event's start until the start; its key is
   `before:<event>:<start>`, so a moved event is reminded again. A pulled Google event is known by its Google event id
@@ -936,7 +938,7 @@ Calls and webhooks (replies, delivery reports) are not built.
   is never sent again: a text twice is worse than a text missed. Only a failure where Telnyx certainly never took the
   text (`before_request`, or 429) becomes `retry`, tried once more on the next pass if still due (at most 2 attempts;
   a second such failure is `failed`). A timeout after the request left, a 5xx or an unreadable answer is `uncertain`;
-  a refused key or text (`key`, `invalid`) is `failed`. `settle` records its rows with the error `interrupted`. Rows older than 30 days are pruned.
+  a refused key, account or text (`key`, `forbidden`, `invalid`) is `failed`. `settle` records its rows with the error `interrupted`. Rows older than 30 days are pruned.
 - **The loop.** `TelnyxService.run` (started and cancelled in the `lifespan`, beside the morning mail) settles, then
   looks once a minute (`INTERVAL_S`) and sends only with a key, a number and `telnyx_texts.json` saying a phone and at
   least one kind on. A `settle` that fails is tried again on the next pass, and nothing is sent until it has worked.
@@ -955,7 +957,8 @@ Calls and webhooks (replies, delivery reports) are not built.
   `last_error`, `sent_today`, `skipped_today`; `last_error` is about the newest text counted toward the cap: empty
   when it was sent, its error kind when it failed or waits to be tried again, `uncertain` when it may have gone, or
   `interrupted` when the harness stopped mid-send); `PUT /key` (`{key}`; checked by listing the numbers before it is saved;
-  422 "Telnyx did not accept this key.", 502 when unreachable, 500 "The key could not be saved." on any other
+  422 "Telnyx did not accept this key." on a 401, 422 "This key may not list your Telnyx numbers. Check its
+  permissions." on a 403, 502 when unreachable, 500 "The key could not be saved." on any other
   exception, class name logged; the body is checked in the route, not by a model, so a malformed one is 422 without
   echoing the key; a chosen number the new key cannot see is cleared, and is out of use at once even if clearing its
   file fails); `DELETE /key` (forgets the key and the number; nothing changes at Telnyx; the key is out of use once its
@@ -964,8 +967,10 @@ Calls and webhooks (replies, delivery reports) are not built.
   was read); `POST /test` (`NothingIn`; sends "This is a test text from ZenBot." to the
   saved phone; 409 "Set up Telnyx and your phone number first.", 429 "Wait a minute between test texts, or until
   tomorrow after 30 texts in a day.", and the send's failure: 422 "Telnyx refused the text. Check the number's
-  messaging setup and registration.", 401, 429, else 502 "The test text may not have been sent."). The only POST
-  takes a required JSON body.
+  messaging setup and registration.", 401, 403 (`FORBIDDEN`: the account may only text verified numbers, or may not
+  do this), 429, else 502 "The test text may not have been sent."). Elsewhere a `key` failure is 401 "Telnyx no
+  longer accepts the saved key. Save a new one." and a `forbidden` one 403 with `FORBIDDEN`, which never blames the
+  key. The only POST takes a required JSON body.
 - **The desktop side.** The owner's phone, the lead time, the evening time and the two switches are saved only by the
   Electron main process (`src/electron/telnyx-texts.cjs`, channels `telnyx-texts:get` and `telnyx-texts:save`,
   answering the workspace's main frame only, tmp-then-rename, mode `0o600`), through the preload's `telnyxTexts`. A
@@ -986,11 +991,15 @@ Calls and webhooks (replies, delivery reports) are not built.
   test text to the owner (within the minute gap and the daily cap), read the status, forget the key or change the
   sending number. It cannot set the recipient or any text. It can add events to the calendar (see the calendar's
   residual risk), which then get reminders within the cap. Do not describe Telnyx as out of bots' reach.
-- **Unverified.** Nothing here has reached Telnyx: the tests use `FakeTelnyx`, and the first real key save is the first
-  live check. The numbers endpoints and the shape of their answers are as Telnyx's docs give them; whether an
-  unregistered number is refused when the text is sent (an `invalid`) or accepted and dropped later by the carrier is
-  unknown; the segment counting has not been checked against a real bill. The settings section and the desktop form
-  have not been seen on screen by anyone: only `npm test` and the build have run them.
+- **Partly verified (2026-11-24), by hand, against Telnyx itself** (one account, one US long code on a messaging
+  profile). A key save (which lists the messaging profiles and their numbers), choosing the number, and the test text
+  all worked through the settings section. Before that, every send answered 403 code 10039 "Feature limited: Only
+  pre-verified destinations are allowed at this account level": the account could text only verified numbers. It
+  showed as "Telnyx no longer accepts the saved key", since a 403 was then counted as `key`; it is now `forbidden`.
+  Adding the owner's phone as a verified number in the Telnyx portal fixed it. A send to an undeliverable number
+  answered 400 code 10002 (`invalid`). Not checked: the reminders and the rundown sent by the loop, whether an
+  unregistered number (10DLC) is refused when the text is sent (an `invalid`) or accepted and dropped later by the
+  carrier, and the segment counting against a real bill.
 
 Rules for contributors: no Telnyx tool for bots and no catalog entry. No route that sets where texts go or what they
 say: the recipient is written only by the desktop app. Claim a text in the send record before it is sent, and never

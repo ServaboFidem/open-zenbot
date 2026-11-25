@@ -37,7 +37,7 @@ async def test_numbers_lists_across_profiles_sorted(fake_telnyx):
 
 
 @pytest.mark.parametrize("answer, kind", [
-    (401, "key"), (403, "key"), (429, "refused"), (400, "invalid"), (422, "invalid"), (500, "provider"),
+    (401, "key"), (403, "forbidden"), (429, "refused"), (400, "invalid"), (422, "invalid"), (500, "provider"),
     (httpx.Response(302, headers={"Location": "https://elsewhere.test/"}), "provider"),
     (httpx.Response(200, json={"data": {}}), "provider"),
     (httpx.Response(200, content=b"x" * 1_000_001), "provider"),
