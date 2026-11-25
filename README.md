@@ -6,7 +6,7 @@
 
 An open-source AI workspace for your desktop: local-first, self-learning, and actually useful for daily life. Bring your own keys.
 
-> **Just want to use it? [Download the installer (0.2.0 beta)](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.2.0)** for Windows or Ubuntu/Debian, then follow [Install](#install). No Python, Node.js or developer tools needed. To run it from the source code, see [Run from source](#run-from-source-development-builds).
+> **Just want to use it? [Download the installer (0.3.0 beta)](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.3.0)** for Windows or Ubuntu/Debian, then follow [Install](#install). No Python, Node.js or developer tools needed. To run it from the source code, see [Run from source](#run-from-source-development-builds).
 
 > **Status: experimental.** open-zenbot is a passion project, not a product. Expect rough edges, breaking changes and features that are half-built. For more information, see the [wiki](https://github.com/ServaboFidem/open-zenbot/wiki). It is a work in progress: a few pages so far, with more on the way. Where it has no answer yet, this README, `AGENTS.md` and `.env.example` are the best guides.
 
@@ -61,7 +61,7 @@ Routing is a scoring job, not a writing job. Before each task, the router asks t
 
 For people who just want to use OpenZenBot. You do not need Python, Node.js or any developer tools.
 
-1. Open the [0.2.0 beta release](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.2.0) and download the installer for your computer from its Assets list: the `.exe` for Windows, the `.deb` for Ubuntu or Debian. Later versions appear on the [Releases page](https://github.com/ServaboFidem/open-zenbot/releases).
+1. Open the [0.3.0 beta release](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.3.0) and download the installer for your computer from its Assets list: the `.exe` for Windows, the `.deb` for Ubuntu or Debian. Later versions appear on the [Releases page](https://github.com/ServaboFidem/open-zenbot/releases).
 2. **Windows:** run `OpenZenBot-Setup-<version>.exe`. The installer is not signed yet, so Windows SmartScreen warns about an unknown publisher: click "More info", then "Run anyway". **Ubuntu or Debian:** open a terminal in the download folder and run `sudo apt install ./OpenZenBot_<version>_amd64.deb`, then start OpenZenBot from your applications menu (or run `openzenbot`).
 3. The first time you start it, OpenZenBot sets itself up. It needs a connection to the internet and about 5 GB of free disk space: it checks first and does not start with less (an update over an existing install needs about 1 GB). The Python environment takes about 2 GB of that on Linux, and roughly 2 GB more is fetched the first time the app starts (models and tool servers). This can take several minutes. You see each step as it happens. This happens once, and again after an update that changes what it needs.
 4. It then asks for an [OpenRouter](https://openrouter.ai/) key. OpenZenBot needs an OpenRouter account for one thing: the decider model, which picks the right skills and tools for each task and checks shell commands before they run. Everything else can run on your own computer or through NVIDIA NIM: the models your bots talk with are your choice, in Settings. The key is kept in your OpenZenBot settings, not in the app.
@@ -269,6 +269,28 @@ Good to know:
 - **Bots and the mail.** No bot has a mail tool. But like the calendar, the harness's local API has no login, so a bot
   allowed to run shell commands or drive the browser could read the mail through it. See `AGENTS.md`, `### AgentMail`.
 
+## Text reminders
+
+New in 0.3.0. ZenBot can text you through [Telnyx](https://telnyx.com) about what is on your calendar: a reminder
+before each timed event (10, 15, 30, 60 or 120 minutes before), and each evening a rundown of tomorrow.
+
+1. Make a Telnyx account, buy a number that can send texts, and copy an API key.
+2. In OpenZenBot open Settings > Connected apps and paste the key under **Telnyx**. The harness checks it with Telnyx
+   before saving it, keeps it in `vault-settings/telnyx_keys.json` (readable by you only) and never sends it back to
+   the app. Then pick the number ZenBot sends from.
+3. In the desktop app, enter your own phone number and choose which texts you want and when. Only the desktop app can
+   set where texts go, so nothing else on your computer can point them at another number.
+4. **Send a test text** to check it works.
+
+Good to know:
+
+- **US numbers need registering.** US carriers block texts from numbers that are not registered for business texting
+  (10DLC). The settings link Telnyx's guide.
+- **At most 30 texts a day.** Anyone who invites you to an event could otherwise run up your bill. A text is never
+  sent twice, even if the app stops in the middle of sending.
+- **Web addresses are never sent.** A link in an event's title or place becomes `[link]`.
+- **Not tried against Telnyx itself yet.** The tests use a stand-in; the first key you save is the first real check.
+
 ## Sonos
 
 If you have Sonos speakers on your home network, you can ask ZenBot to play music in a room: "play Morning Jazz in
@@ -295,6 +317,35 @@ Good to know:
 - **No login on the speakers.** Anything on your home network can control Sonos speakers, and the harness's local
   API has no login either, so a bot allowed to run shell commands or drive the browser could play music or change the
   volume. See `AGENTS.md`, `### Sonos`.
+
+## Spoken morning briefing
+
+New in 0.3.0. ZenBot can wake the house with a short spoken briefing on your Sonos speakers. At the times you set,
+every speaker stops what it is playing. A voice says good morning by name, tells a joke it has not told you before,
+gives the weather, says whose birthday it is and what is on your calendar today. Then each speaker goes back to
+exactly what it was doing: its group, its volume and its music.
+
+Open the **Routines** page and choose **Add a morning briefing** under Briefings. Set one or more lines of days and a
+time (weekdays at 6:45, weekends at 8:30), the speakers (all of them, or the ones you pick) and the volume. **Play
+now** plays one straight away.
+
+- **Your calendar stays on this computer.** Only the greeting and the joke are written by your chat model, and it is
+  sent your first name, the date and the jokes already told, never an event, a birthday or the forecast. The rest is
+  filled in by ZenBot itself. The voice is the one chosen for [Read aloud](#read-aloud): Kokoro makes it on this
+  computer, a hosted voice sends the briefing's words to its provider.
+- **Never louder than your limit.** It plays at the lower of the briefing's volume and Sonos's **Highest volume
+  ZenBot may set**.
+- **Ready when it is due.** On Windows the desktop app wakes the computer a few minutes before each briefing and keeps
+  it awake until the briefing has played. In the installed app you can also have ZenBot start when you sign in. A
+  briefing whose time passed while the computer was off is skipped, not played late.
+
+Good to know:
+
+- **Not played on real speakers yet.** The tests use stand-ins for the speakers. Windows accepted the wake-up task in
+  a hand check, but no sleeping computer has been woken for a briefing yet. The first time a briefing plays, Windows
+  may ask whether ZenBot may use the network; until you allow it, the speakers cannot fetch the briefing.
+- **A phone's music is paused, not resumed.** A speaker playing from a phone (Spotify Connect or AirPlay) is paused
+  for the briefing, and you start it again yourself. A speaker playing the TV is left alone.
 
 ## Read aloud
 
@@ -350,6 +401,16 @@ Settings opens on a page of tiles with a search box over every setting: models a
 
 Images, video, PDFs, diagrams and files in a bot's reply show under it as preview cards, in rooms and in one-to-one chat. Each card has Save…, which opens the system save dialog in the last folder you saved to (Pictures or Downloads the first time); images and video also have Open and Copy link, and PDFs and diagrams open larger with View. Remote media loads through the harness: hosts on the trusted list (Pexels, plus `ZEN_MEDIA_TRUSTED_HOSTS`) load at once, and any other host waits until you click Load. A bot shares a file it made with `attach_file`.
 
+New in 0.3.0: **attach files to a message.** Use the paperclip, drag files onto the message box or paste a picture.
+A message takes up to 10 files, at most 4 of them pictures. Pictures can be PNG, JPEG, WebP or still GIF; they are
+turned into WebP with their hidden data (such as location) removed, and the original is never kept. Documents can be
+PDF, Word, PowerPoint, Excel, EPUB, CSV, JSON, Markdown or plain text. The bot gets the document's text, and the
+pictures too when its model can see them; otherwise a line under the message says it cannot. Files you attach but
+never send are deleted after a day.
+
+New in 0.3.0: **closing the window keeps ZenBot running** in the system tray, so routines, reminders, briefings and
+dreaming carry on. Click the tray icon to open the window again, or right-click it and choose **Quit ZenBot** to stop.
+
 On first launch, with nothing in memory yet, the Overview offers to introduce you to the ZenBot: a short interview (name, work, hobbies, people) whose answers every bot can recall, then buttons that import a single file, or a directory of your files after showing you the count. `ZEN_IMPORT_MAX_BYTES` (default 20 MB) caps the file size an import takes.
 
 ### HTTP API
@@ -384,6 +445,8 @@ OPENROUTER_API_KEY=... uv run pytest -k live   # opt-in live check
 | `src/events/` | The built-in calendar and Google sync; event discovery: the Eventbrite and FindLocal readers, the event pool, digests |
 | `src/helper/` | The Facebook browser helper: an observe-only Chrome extension that reads your Facebook events, invites and birthdays and sends them to the harness on this computer (see [Facebook browser helper](#facebook-browser-helper)) |
 | `src/mail/` | ZenBot's AgentMail inbox and scheduled morning digest delivery (see [AgentMail](#agentmail)) |
+| `src/telnyx/` | Text reminders through Telnyx: what is due from the calendar, the texts, the daily cap and the send record (see [Text reminders](#text-reminders)) |
+| `src/briefing/` | The spoken morning briefing: its schedule, its words and the runner (see [Spoken morning briefing](#spoken-morning-briefing)) |
 | `src/sonos/` | Sonos: finding speakers, the `sonos_*` tools, the volume ceiling and the Sonos page's routes (see [Sonos](#sonos)) |
 | `src/speakers/` | Wi-Fi speakers: finding AirPlay, Chromecast and DLNA speakers and the default speaker (see [Wi-Fi speakers](#wi-fi-speakers)) |
 | `src/kokoro/` | The Kokoro voice made on this computer for Read aloud: the pinned model download and the engine (see [Read aloud](#read-aloud)) |
