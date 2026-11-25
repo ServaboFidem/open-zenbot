@@ -6,7 +6,7 @@
 
 An open-source AI workspace for your desktop: local-first, self-learning, and actually useful for daily life. Bring your own keys.
 
-> **Just want to use it? [Download the installer (0.3.0 beta)](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.3.0)** for Windows or Ubuntu/Debian, then follow [Install](#install). No Python, Node.js or developer tools needed. To run it from the source code, see [Run from source](#run-from-source-development-builds).
+> **Just want to use it? [Download the installer (0.3.1 beta)](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.3.1)** for Windows or Ubuntu/Debian, then follow [Install](#install). No Python, Node.js or developer tools needed. To run it from the source code, see [Run from source](#run-from-source-development-builds).
 
 > **Status: experimental.** open-zenbot is a passion project, not a product. Expect rough edges, breaking changes and features that are half-built. For more information, see the [wiki](https://github.com/ServaboFidem/open-zenbot/wiki). It is a work in progress: a few pages so far, with more on the way. Where it has no answer yet, this README, `AGENTS.md` and `.env.example` are the best guides.
 
@@ -61,7 +61,7 @@ Routing is a scoring job, not a writing job. Before each task, the router asks t
 
 For people who just want to use OpenZenBot. You do not need Python, Node.js or any developer tools.
 
-1. Open the [0.3.0 beta release](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.3.0) and download the installer for your computer from its Assets list: the `.exe` for Windows, the `.deb` for Ubuntu or Debian. Later versions appear on the [Releases page](https://github.com/ServaboFidem/open-zenbot/releases).
+1. Open the [0.3.1 beta release](https://github.com/ServaboFidem/open-zenbot/releases/tag/v0.3.1) and download the installer for your computer from its Assets list: the `.exe` for Windows, the `.deb` for Ubuntu or Debian. Later versions appear on the [Releases page](https://github.com/ServaboFidem/open-zenbot/releases).
 2. **Windows:** run `OpenZenBot-Setup-<version>.exe`. The installer is not signed yet, so Windows SmartScreen warns about an unknown publisher: click "More info", then "Run anyway". **Ubuntu or Debian:** open a terminal in the download folder and run `sudo apt install ./OpenZenBot_<version>_amd64.deb`, then start OpenZenBot from your applications menu (or run `openzenbot`).
 3. The first time you start it, OpenZenBot sets itself up. It needs a connection to the internet and about 5 GB of free disk space: it checks first and does not start with less (an update over an existing install needs about 1 GB). The Python environment takes about 2 GB of that on Linux, and roughly 2 GB more is fetched the first time the app starts (models and tool servers). This can take several minutes. You see each step as it happens. This happens once, and again after an update that changes what it needs.
 4. It then asks for an [OpenRouter](https://openrouter.ai/) key. OpenZenBot needs an OpenRouter account for one thing: the decider model, which picks the right skills and tools for each task and checks shell commands before they run. Everything else can run on your own computer or through NVIDIA NIM: the models your bots talk with are your choice, in Settings. The key is kept in your OpenZenBot settings, not in the app.
