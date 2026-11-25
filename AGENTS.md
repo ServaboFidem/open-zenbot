@@ -1594,7 +1594,14 @@ was done on).
   file)" unless the model is known to take pictures (`CANT_SEE_LINE`). Later turns read the same line from the
   exchange (`conversations.user_text`), never the content; a conversation fold summarises those lines like any other
   text. A message with files to ZenBot is ZenBot's own task: the page
-  does not call `/orchestrate`, so no room takes it. A studio message with files goes to the Designer and never to a
+  does not call `/orchestrate`, so no room takes it. When ZenBot routes a later message to a room, every file of its
+  current conversation from the last `ZEN_ROUTE_CONTEXT_MINUTES` (default 30) goes with it, whatever was routed in
+  between: the files the user sent and the ones ZenBot attached, as `Attached:` lines (`Harness.recent_files`; a
+  bot's file in the vault by its vault path, else its full path). A new room gets them under "Files from our chat:"
+  in ZenBot's opening post; an existing room gets a post of only the lines its current conversation has not had yet
+  (`orchestrator._unseen`), before the user's message. The scorer sees them as `files`. Each line goes through the
+  same `refusal` check as the quoted chat; a refused line is dropped and the others still go. Names and paths only,
+  never content. A studio message with files goes to the Designer and never to a
   helper (`_helper_turn` is skipped). Files go only with a normal composer send, never with a Redo or a design change.
   Every upload is read again at send, so a file swapped in the vault after the upload (a bot can write there) is
   refused unless it still passes the checks above.
