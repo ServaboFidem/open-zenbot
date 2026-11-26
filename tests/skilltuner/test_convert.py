@@ -53,12 +53,40 @@ def test_clean_conversion_refusals():
     for bad in [
         dict(CONV, name="bad\nname"), dict(CONV, use="x\x07"), dict(CONV, slug="Bad Slug"), dict(CONV, slug="a/b"),
         dict(CONV, use=""), dict(CONV, name=""), dict(CONV, use="u" * 301), dict(CONV, name="n" * 81), dict(CONV, slug="s" * 65),
-        dict(CONV, inputs=["x"] * 9), dict(CONV, inputs=["x" * 201]), dict(CONV, inputs="x"),
+        dict(CONV, inputs=["x"] * 9), dict(CONV, inputs=["x" * 201]), dict(CONV, inputs="x" * 201), dict(CONV, inputs="a\nb"),
+        dict(CONV, inputs=3),
         dict(CONV, inputs=["a\u2029b"]), dict(CONV, **{"return": "r" * 301}), dict(CONV, **{"return": "a\nb"}),
         dict(CONV, name=3), "x", None,
     ]:
         with pytest.raises(ValueError):
             clean_conversion(bad, set())
+
+
+def test_clean_conversion_takes_one_string_as_one_input():
+    assert clean_conversion(dict(CONV, inputs="  a filing  "), set())["inputs"] == ["a filing"]
+    with pytest.raises(ValueError):
+        clean_conversion(dict(CONV, inputs="   "), set())
+
+
+def _prompt_examples() -> list[dict]:
+    """Every line of the SkillTuner prompt that is a JSON object: the answer shapes it shows the model."""
+    import json
+    from pathlib import Path
+    text = (Path(__file__).resolve().parents[2] / "bot-prompts" / "skill-tuner.md").read_text(encoding="utf-8")
+    return [json.loads(line) for line in text.splitlines() if line.startswith("{")]
+
+
+def test_prompt_examples_pass_the_parsers():
+    examples = _prompt_examples()
+    needs = [e for e in examples if "needs" in e]
+    convs = [e for e in examples if "slug" in e]
+    assert needs and convs
+    for e in needs:
+        assert len(clean_needs(e)) == len(e["needs"])
+    for e in convs:
+        got = clean_conversion(e, set())
+        assert set(got) == set(e)  # nothing in the example is dropped: inputs and return included
+        assert isinstance(e["inputs"], list)
 
 
 def test_clean_conversion_boundaries():

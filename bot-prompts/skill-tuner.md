@@ -14,10 +14,20 @@ Job 1, needs. You get numbered lines the owner typed and the names and `use` lin
 
 {"needs": [{"topic": "what the work is, in a few words", "words": "two to six search words"}]}
 
-`words` is 2 to 6 words that someone would search for to find such a skill. With no need, answer {"needs": []}.
+At most 8 needs. `topic` is one line of at most 200 characters. `words` is 2 to 6 words, at most 80 characters in all, that someone would search for to find such a skill. With no need, answer {"needs": []}.
 
 Job 2, convert. You get one downloaded skill, fenced, and the need it was found for. Do not rewrite the skill's body: the harness keeps it as downloaded. Give it the front matter this harness uses. Answer exactly this shape:
 
-{"name": "a short title", "slug": "lower-case-with-hyphens", "use": "Do X when Y.", "inputs": "what it needs from the user", "return": "what it gives back"}
+{"name": "A short title", "slug": "a-short-title", "use": "Do X when Y.", "inputs": ["what it needs from the user", "another thing it needs"], "return": "what it gives back"}
 
-`use` is one sentence the harness's router can score, in the form "Do X when Y". `inputs` and `return` are optional: leave them out when the skill does not make them clear. Say only what the skill does; do not add claims about it that its text does not support.
+The rules, which the harness checks; an answer that breaks one is thrown away:
+
+- Every value is a single line of plain text: no line break, no control character.
+- `name` is at most 80 characters.
+- `slug` is 1 to 64 characters of lower-case letters, digits and hyphens, starting with a letter or a digit.
+- `name` and `slug` must not be those of a skill ZenBot already has.
+- `use` is one sentence of at most 300 characters that the harness's router can score, in the form "Do X when Y".
+- `inputs` is a list of at most 8 items, each at most 200 characters.
+- `return` is at most 300 characters.
+
+`inputs` and `return` are optional: leave them out when the skill does not make them clear. Say only what the skill does; do not add claims about it that its text does not support.

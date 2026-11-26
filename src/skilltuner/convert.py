@@ -85,6 +85,8 @@ def clean_conversion(raw: Any, taken: set[str]) -> dict[str, Any]:
     out: dict[str, Any] = {"name": name, "slug": slug, "use": use}
     if raw.get("inputs") is not None:
         items = raw["inputs"]
+        if isinstance(items, str):  # one input given as a string, as the loader's `_as_list` reads it
+            items = [items]
         if not isinstance(items, list) or len(items) > INPUTS_MAX:
             raise ValueError("inputs are not usable")
         cleaned = [_plain(i, INPUT_MAX) for i in items]
