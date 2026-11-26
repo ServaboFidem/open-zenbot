@@ -331,7 +331,7 @@ async def test_a_429_pauses_until_tomorrow_and_counts_nothing(t):
 
 
 @pytest.mark.parametrize("exc, kind", [(ProviderUnavailable("down"), "unreachable"),
-                                       (ProviderError("rate", status=429), "provider")])
+                                       (ProviderError("rate", status=429), "model_provider")])
 async def test_a_model_outage_pauses_until_tomorrow(t, exc, kind):
     c = t.conv("Draft an investment memo for the Acme deal")
     t.model.answers = [exc]

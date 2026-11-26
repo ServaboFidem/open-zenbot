@@ -249,8 +249,8 @@ class SkillTuner:
             raise
         except Exception as e:  # noqa: BLE001 - told apart by kind below
             kind = error_kind(e)
-            if kind in MODEL_SYSTEMIC:
-                raise _Stop(kind, pause=True) from None
+            if kind in MODEL_SYSTEMIC:  # "provider" is CaseMark's kind too: the model's gets a name of its own
+                raise _Stop("model_provider" if kind == "provider" else kind, pause=True) from None
             raise _ModelFailed(type(e).__name__) from None
         return done.message.content
 

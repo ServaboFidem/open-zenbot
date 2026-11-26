@@ -5,7 +5,7 @@
 const enc = encodeURIComponent;
 export const BUDGET = 40;
 const NET = new Set(['network', 'refused', 'provider', 'source_changed']);
-const MODEL = new Set(['unreachable', 'model']);
+const MODEL = new Set(['unreachable', 'model', 'model_provider']);
 
 // `fetchJson(method, path, body)` is createApi's `call`. Every POST carries a JSON body.
 export function tunerApi(fetchJson) {
@@ -27,10 +27,12 @@ export function statusLine(status) {
   if (!s.ready) return s.why_not || 'SkillTuner is not ready.';
   if (NET.has(s.error)) return 'agentskills.finance could not be reached. Trying again tomorrow.';
   if (MODEL.has(s.error)) return "SkillTuner's model could not be reached. Trying again tomorrow.";
+  if (s.error === 'decider') return 'The decision model could not be reached. Trying again tomorrow.';
+  if (s.error === 'store') return 'A suggestion could not be saved. Trying again tomorrow.';
   const d = s.last_pass_at ? new Date(s.last_pass_at) : null;
   const when = d && !Number.isNaN(d.getTime()) ? `Last looked ${d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}.` : 'Has not looked yet.';
   const n = s.pending || 0;
-  return `${when} ${n} ${n === 1 ? 'suggestion' : 'suggestions'} waiting. ${s.spent_today || 0} of ${s.budget || BUDGET} searches used today.`;
+  return `${when} ${n} ${n === 1 ? 'suggestion' : 'suggestions'} waiting. ${s.spent_today || 0} of ${s.budget || BUDGET} requests used today.`;
 }
 
 // The bots a skill may be given to: not the Narrator, SkillTuner, a closed bot or a studio bot.

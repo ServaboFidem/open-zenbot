@@ -24,11 +24,13 @@ test('statusLine', () => {
   assert.equal(statusLine({ enabled: false }), 'SkillTuner is off.');
   assert.equal(statusLine({ enabled: true, ready: false, why_not: 'Choose a decision model first.' }), 'Choose a decision model first.');
   for (const e of ['network', 'refused', 'provider', 'source_changed']) assert.equal(statusLine({ enabled: true, ready: true, error: e }), 'agentskills.finance could not be reached. Trying again tomorrow.');
-  for (const e of ['unreachable', 'model']) assert.equal(statusLine({ enabled: true, ready: true, error: e }), "SkillTuner's model could not be reached. Trying again tomorrow.");
+  for (const e of ['unreachable', 'model', 'model_provider']) assert.equal(statusLine({ enabled: true, ready: true, error: e }), "SkillTuner's model could not be reached. Trying again tomorrow.");
+  assert.equal(statusLine({ enabled: true, ready: true, error: 'decider' }), 'The decision model could not be reached. Trying again tomorrow.');
+  assert.equal(statusLine({ enabled: true, ready: true, error: 'store' }), 'A suggestion could not be saved. Trying again tomorrow.');
   const at = new Date(2026, 10, 19, 3, 12).toISOString();
   const day = new Date(at).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-  assert.equal(statusLine({ enabled: true, ready: true, last_pass_at: at, pending: 2, spent_today: 7 }), `Last looked ${day}. 2 suggestions waiting. 7 of 40 searches used today.`);
-  assert.equal(statusLine({ enabled: true, ready: true, last_pass_at: null, pending: 0, spent_today: 0 }), 'Has not looked yet. 0 suggestions waiting. 0 of 40 searches used today.');
+  assert.equal(statusLine({ enabled: true, ready: true, last_pass_at: at, pending: 2, spent_today: 7 }), `Last looked ${day}. 2 suggestions waiting. 7 of 40 requests used today.`);
+  assert.equal(statusLine({ enabled: true, ready: true, last_pass_at: null, pending: 0, spent_today: 0 }), 'Has not looked yet. 0 suggestions waiting. 0 of 40 requests used today.');
   assert.match(statusLine({ enabled: true, ready: true, last_pass_at: at, pending: 1, spent_today: 1 }), /1 suggestion waiting\./);
 });
 
