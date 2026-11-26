@@ -323,7 +323,8 @@ async def test_a_429_pauses_until_tomorrow_and_counts_nothing(t):
     t.model.answers = [needs((TOPIC, WORDS))]
     got = await t.tune()
     assert got["searches"] == 0 and got["suggested"] == 0
-    assert t.state.paused(TODAY) and not t.state.paused("2027-01-16") and t.state.last_error == "refused"
+    assert t.state.source_paused("casemark", TODAY) and not t.state.source_paused("casemark", "2027-01-16")
+    assert not t.state.paused(TODAY) and t.state.last_error == "refused"
     assert [n.words for n in t.state.due_needs("2027-01-16", 8)] == [WORDS]  # not counted as searched
     assert t.tuner.waiting() == 0 and t.tuner.status()["error"] == "refused"
     assert await t.tune() == {"messages": 0, "needs": 0, "searches": 0, "suggested": 0, "dropped": 0}
@@ -548,7 +549,7 @@ async def test_a_systemic_failure_after_midnight_pauses_until_the_day_after(t):
     t.site.status = 429
     t.state.add_need(TOPIC, WORDS)
     await t.tune()
-    assert t.state.paused("2027-01-16") and not t.state.paused("2027-01-17")
+    assert t.state.source_paused("casemark", "2027-01-16") and not t.state.source_paused("casemark", "2027-01-17")
 
 
 async def test_the_store_filling_mid_pass_gives_the_other_winner_back(t, monkeypatch):

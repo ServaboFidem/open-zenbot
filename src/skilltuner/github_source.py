@@ -136,7 +136,7 @@ class GitHubSkills:
             _clean(meta.get("description") or listed.description, SUMMARY_MAX),
             body, [listed.category] if listed.category else [], sha[:12], entry.owner, licence,
             [(p, p) for p in files], f"github.com/{entry.owner}/{entry.repo}",
-            f"https://github.com/{entry.owner}/{entry.repo}/tree/{sha}/{path}", left_out)
+            f"https://github.com/{entry.owner}/{entry.repo}/tree/{sha}/{path}", left_out, sha)
 
     async def _licence(self, entry: RepoEntry, sha: str, path: str, declared: str, inside: list[str]) -> str:
         if canonical(declared):
@@ -161,11 +161,16 @@ class GitHubSkills:
         raw = await self.client.raw(entry.owner, entry.repo, stored.commit, f"{listed.path}/{path}", FILE_LIMIT)
         return _clean(raw.decode("utf-8", errors="replace"), FILE_LIMIT)
 
-    def stale(self, now: float) -> RepoEntry | None:
+    def has_skills(self) -> bool:
+        """Whether any stored list holds a skill, so a search could find something."""
+        return any(s.skills for _, s in self._stored())
+
+    def stale(self, now: float, skip: frozenset[str] | set[str] = frozenset()) -> RepoEntry | None:
+        """The repository most due a read; ids in `skip` (ones already tried) are passed over."""
         never: RepoEntry | None = None
         oldest: tuple[float, RepoEntry] | None = None
         for entry in self.entries():
-            if entry.id in self.reading:
+            if entry.id in self.reading or entry.id in skip:
                 continue
             stored = self.store.get(entry.id)
             at = _when(stored.read_at) if stored else None

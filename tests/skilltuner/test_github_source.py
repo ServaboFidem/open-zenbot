@@ -223,3 +223,15 @@ def test_the_store_round_trips_and_refuses_odd_ids(tmp_path):
     assert store.get("abc") is None
     with pytest.raises(ValueError):
         store.get("../x")
+
+
+def test_stale_passes_over_the_ids_asked_to_skip_and_has_skills_says_if_anything_is_stored(fake_github, tmp_path):
+    a, b = entry(id="aaaaaaaaaaaaaaaa"), entry(id="bbbbbbbbbbbbbbbb", repo="s")
+    gs, store = source(fake_github, tmp_path, [a, b])
+    assert gs.has_skills() is False and gs.stale(NOW) is a
+    assert gs.stale(NOW, {"aaaaaaaaaaaaaaaa"}) is b and gs.stale(NOW, {a.id, b.id}) is None
+    from src.skilltuner.index import Listed
+    store.put(a.id, RepoList(GH_SHA, "MIT", datetime.fromtimestamp(NOW, timezone.utc).isoformat(), "", "", 0, [], False))
+    assert gs.has_skills() is False
+    store.put(a.id, RepoList(GH_SHA, "MIT", "", "", "", 0, [Listed("p", "n", "d", "")], False))
+    assert gs.has_skills() is True

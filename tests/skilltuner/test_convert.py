@@ -187,3 +187,38 @@ def test_conversion_extras_never_reach_file():
     sk = parse_skill(b.files["SKILL.md"])
     assert sk.access == [] and sk.approvals == [] and sk.steps == []
     assert "access" not in b.files["SKILL.md"].split("\n---", 1)[0]
+
+
+GH = "gh:o/r:skills/memo"
+COMMIT = "6dcb09b5b57875f334f61aebed695e2e4193db5e"
+
+
+def gh_downloaded(**kw) -> Downloaded:
+    return downloaded(slug=GH, version=COMMIT[:12], author="o", license="MIT", source="github.com/o/r",
+                      url=f"https://github.com/o/r/tree/{COMMIT}/skills/memo", commit=COMMIT, **kw)
+
+
+def test_a_github_skill_names_its_repository_and_commit():
+    import yaml
+    built = build_skill(gh_downloaded(), CONV, [], "2027-01-15", SkillConfig())
+    head = yaml.safe_load(built.files["SKILL.md"].split("---\n")[1])
+    assert head["source"] == "github.com/o/r" and head["source_slug"] == GH
+    assert head["source_version"] == COMMIT
+    assert head["source_url"] == f"https://github.com/o/r/tree/{COMMIT}/skills/memo"
+    assert "github.com/o/r" in built.files["NOTICE.txt"] and COMMIT in built.files["NOTICE.txt"]
+    note = built.files["SKILL.md"].split("---\n", 2)[2].strip().splitlines()[0]
+    assert note.startswith("> From github.com/o/r (gh:o/r:skills/memo, version " + COMMIT)
+
+
+def test_a_casemark_skill_is_built_as_before():
+    import yaml
+    d = downloaded()
+    head = yaml.safe_load(build_skill(d, CONV, [], "2027-01-15", SkillConfig()).files["SKILL.md"].split("---\n")[1])
+    assert head["source"] == "agentskills.finance" and head["source_version"] == "1.2"
+    assert head["source_url"] == "https://agentskills.finance/skills/analyzing-insurance-financials"
+
+
+def test_a_slug_that_is_neither_a_slug_nor_a_github_id_is_refused():
+    for bad in ("Bad Slug", "gh:o/r:../x", "gh:o/r:", "x:o/r:a", ""):
+        with pytest.raises(ValueError, match="invalid"):
+            build_skill(downloaded(slug=bad), CONV, [], "2027-01-15", SkillConfig())

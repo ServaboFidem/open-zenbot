@@ -121,18 +121,26 @@ def build_skill(d: Downloaded, conv: dict, references: list[tuple[str, str]], to
     """The skill folder's files for a downloaded skill; ValueError(reason) with `licence`, `invalid` or `too_large`."""
     if not licence_ok(d.license):
         raise ValueError("licence")
+    from src.skilltuner.github_source import parse_gh_id  # here: github_source reaches `licences`, which needs LICENCES above
+    github = False
     if not SLUG.fullmatch(d.slug or ""):
-        raise ValueError("invalid")
+        try:
+            parse_gh_id(d.slug)
+        except ValueError:
+            raise ValueError("invalid") from None
+        github = True
     licence = _line(d.license)
-    url = SOURCE_URL + d.slug
+    url = d.url or SOURCE_URL + d.slug
+    source = _line(d.source)
+    version = _line(d.commit or d.version)
     meta: dict[str, Any] = {"name": conv["name"], "slug": conv["slug"], "use": conv["use"]}
     if conv.get("inputs"):
         meta["inputs"] = list(conv["inputs"])
     if conv.get("return"):
         meta["return"] = conv["return"]
-    meta.update(source=SOURCE, source_slug=d.slug, source_version=_line(d.version), source_url=url, license=licence)
+    meta.update(source=source, source_slug=d.slug, source_version=version, source_url=url, license=licence)
     head = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True)
-    note = (f"> From {SOURCE} ({d.slug}, version {_line(d.version)}), {licence}. Converted by SkillTuner on "
+    note = (f"> From {source} ({d.slug}, version {version}), {licence}. Converted by SkillTuner on "
             f"{_line(today)}: the frontmatter was rewritten; the text below is as published.")
     body = note + "\n\n" + d.body
     for path, text in references:
@@ -150,6 +158,7 @@ def build_skill(d: Downloaded, conv: dict, references: list[tuple[str, str]], to
         licence_txt = _apache_text()
     else:
         licence_txt = f"Licensed under {licence} (SPDX id). See {url}"
-    notice = (f"This skill is from {SOURCE} ({url}), by {_line(d.author)}, under {licence}. "
+    origin = f"the GitHub repository {source}, commit {version}" if github else source
+    notice = (f"This skill is from {origin} ({url}), by {_line(d.author)}, under {licence}. "
               f"Modified by SkillTuner on {_line(today)}: frontmatter rewritten.")
     return BuiltSkill(conv["slug"], {"SKILL.md": skill_md, "LICENSE.txt": licence_txt, "NOTICE.txt": notice})

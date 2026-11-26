@@ -2,10 +2,12 @@
 
 1. Needs: up to BATCHES_PER_PASS batches of the owner's own unread messages (dreaming's rules and quiet time,
    SkillTuner's own marks), one model call each; each need's words pass the exclusion check before they are kept.
-2. Search: each due need on CaseMark; results already known or in the catalog are dropped; the decider scores the
-   rest; a single clear winner (FIT_MIN, FIT_BAND) is kept.
-3. Convert: each winner is read, its licence checked, its bundled files read, one model call gives its frontmatter,
-   and the built folder becomes a suggestion awaiting the owner.
+2. Refresh: at most one of the owner's GitHub repositories whose stored list is stale is read again.
+3. Search: each due need on CaseMark and, from this computer's stored lists, on GitHub; the two sets are ranked by one
+   score and cut to five; results already known, rejected by name, in the catalog or repeated are dropped; the decider
+   scores the rest in one request; a single clear winner (FIT_MIN, FIT_BAND) is kept.
+4. Convert: each winner is read from its own source, its licence checked, its bundled files read, one model call gives
+   its frontmatter, and the built folder becomes a suggestion awaiting the owner.
 
 The caller's `may_go` is checked before each model call, each network call and each write, and every model and
 network call goes through the caller's `guarded`, which cancels it when a rule stops holding (`Interrupted`); a
@@ -32,6 +34,7 @@ from src.providers.interface import Message, ProviderError
 from src.skills.loader import SkillConfig
 from src.skilltuner.casemark import CaseMark, Downloaded, Found, SourceError
 from src.skilltuner.convert import SOURCE_URL, build_skill, clean_conversion, clean_needs, licence_ok
+from src.skilltuner.github_source import GH_ID, GitHubSkills, github_wide
 from src.skilltuner.settings import DAILY_REQUESTS, TunerSettings, TunerState
 from src.skilltuner.suggestions import Suggestion, SuggestionStore
 
@@ -76,6 +79,11 @@ class _Winner:
     topic: str
     found: Found
     score: float
+    searched: dict[str, list[str]]  # per need's words, the sources its mark was set for: given back with it
+
+    @property
+    def github(self) -> bool:
+        return GH_ID.fullmatch(self.found.slug) is not None
 
 
 def _epoch(stamp: str) -> float | None:
@@ -112,11 +120,13 @@ class SkillTuner:
                  conversations: Callable[[], list[Conversation]], catalog: Catalog,
                  model: Callable[[], tuple[Provider, str | None] | None], scorer: Callable[[], Scorer | None],
                  bot: Callable[[], Bot | None], clean: Callable[[str], bool], today: Callable[[], str],
-                 clock: Callable[[], float] = time.time, config: SkillConfig | None = None) -> None:
+                 clock: Callable[[], float] = time.time, config: SkillConfig | None = None,
+                 github: GitHubSkills | None = None) -> None:
         self.vault_root = Path(vault_root)
         self.state = state
         self.store = store
         self.source = source
+        self.github = github
         self.ledger = ledger
         self._conversations = conversations
         self.catalog = catalog
@@ -129,6 +139,8 @@ class SkillTuner:
         self.config = config or SkillConfig()
         self.settings = TunerSettings.load(self.vault_root)
         self._running = False
+        self._soft = ""  # the kind of a source failure this pass went on after
+        self._tried: dict[str, str] = {}  # repository id -> the local date its refresh was last tried
 
     def set_settings(self, s: TunerSettings) -> None:
         s.save(self.vault_root)
@@ -140,10 +152,30 @@ class SkillTuner:
         return (self.settings.enabled and self._bot() is not None and self._model() is not None
                 and self._scorer() is not None)
 
+    def _github_on(self, today: str) -> bool:
+        return self.github is not None and not self.state.source_paused("github", today)
+
+    def _open_sources(self, today: str) -> list[str]:
+        """The sources a need may be searched on now: CaseMark while unpaused with budget left, GitHub while unpaused
+        and holding a stored skill (its search is local, so it has no budget)."""
+        out = []
+        if not self.state.source_paused("casemark", today) and self.state.spent(today) < DAILY_REQUESTS:
+            out.append("casemark")
+        if self._github_on(today) and self.github.has_skills():
+            out.append("github")
+        return out
+
+    def _stale(self, today: str):
+        """The repository to read again, if GitHub is on and one is due that was not already tried today."""
+        if not self._github_on(today):
+            return None
+        tried = {i for i, day in self._tried.items() if day == today}
+        return self.github.stale(self._clock(), tried)
+
     def _open_today(self, today: str) -> bool:
-        """Not paused, budget left and room for a suggestion: else nothing is worth a pass today."""
-        return (not self.state.paused(today) and self.state.spent(today) < DAILY_REQUESTS
-                and self.store.count() < PENDING_MAX)
+        """Not paused, a source to use and room for a suggestion: else nothing is worth a pass today."""
+        return (not self.state.paused(today) and self.store.count() < PENDING_MAX
+                and bool(self._open_sources(today) or self._stale(today) is not None))
 
     def _quiet(self) -> list[Conversation]:
         now = self._clock()
@@ -167,8 +199,9 @@ class SkillTuner:
             return 0
         reading = self.state.batches_read(today) < BATCHES_PER_DAY
         unread = sum(1 for c in self._quiet() if self._unread(c)) if reading else 0
-        left = self._searches_left(today)
-        return unread + (len(self.state.due_needs(today, left)) if left else 0)
+        left, sources = self._searches_left(today), self._open_sources(today)
+        due = len(self.state.due_needs(today, left, tuple(sources))) if left and sources else 0
+        return unread + due + (1 if self._stale(today) is not None else 0)
 
     def status(self) -> dict[str, Any]:
         today = self._today()
@@ -179,7 +212,7 @@ class SkillTuner:
             "waiting": self.waiting(),
             "last_pass_at": self.state.last_pass_at,
             "error": self.state.last_error,
-            "paused": self.state.paused(today),
+            "paused": self.state.paused(today) or self._all_paused(today),
             "pending": self.store.count(),
             "spent_today": self.state.spent(today),
             "budget": DAILY_REQUESTS,
@@ -187,11 +220,19 @@ class SkillTuner:
             "suggested_today": self.state.converted(today),
         }
 
+    def _all_paused(self, today: str) -> bool:
+        """Every source that could be searched is paused (GitHub counts only while it holds a stored skill)."""
+        searchable = ["casemark"]
+        if self.github is not None and self.github.has_skills():
+            searchable.append("github")
+        return all(self.state.source_paused(s, today) for s in searchable)
+
     # -- a pass --------------------------------------------------------------------------------------------
 
     async def tune(self, *, may_go: Callable[[], bool],
                    guarded: Callable[[Awaitable[Any]], Awaitable[Any]]) -> dict[str, int]:
         counts = _empty()
+        self._soft = ""
         if self._running or not self.ready() or not may_go() or not self.waiting():
             return counts
         self._running = True
@@ -206,6 +247,7 @@ class SkillTuner:
             self.ledger.append(Kind.skilltuner, "", "", event="pass_start")
             try:
                 await self._read_needs(today, go, guarded, counts)
+                await self._refresh_github(today, go, guarded)
                 winners = await self._search(today, go, guarded, counts)
                 await self._convert(today, winners, go, guarded, counts)
             except Interrupted:
@@ -220,6 +262,7 @@ class SkillTuner:
         finally:
             self._running = False
             try:
+                error = error or self._soft
                 if error or not interrupted:
                     self.state.last_error = error
                 self.state.last_pass_at = _at(self._clock())
@@ -228,6 +271,38 @@ class SkillTuner:
                 self.ledger.append(Kind.skilltuner, "", "", event="pass_end", **counts, error=error,
                                    interrupted=interrupted, **extra)
         return counts
+
+    def _tomorrow(self) -> str:
+        return (date.fromisoformat(self._today()) + timedelta(days=1)).isoformat()  # read now: past midnight counts
+
+    def _pause_source(self, source: str, kind: str) -> None:
+        """A source-wide failure pauses that source until tomorrow; the pass goes on with the others. A spent budget
+        pauses quietly, as CaseMark's does."""
+        self.state.pause_source(source, self._tomorrow())
+        if kind != "budget":
+            self._soft = self._soft or kind
+
+    async def _refresh_github(self, today: str, go, guarded) -> None:
+        """Read at most one stale repository again. A GitHub-wide failure pauses GitHub; any other is only that
+        repository's (the source stores it with the old list)."""
+        entry = self._stale(today)
+        if entry is None:
+            return
+        go()
+        self._tried[entry.id] = today
+        try:
+            got = await guarded(self.github.read_repo(entry, go))
+        except SourceError as e:
+            self.ledger.append(Kind.skilltuner, "", "", event="repo_read", id=entry.id, error=e.kind)
+            if github_wide(e):
+                self._pause_source("github", e.kind)
+            return
+        self.ledger.append(Kind.skilltuner, "", "", event="repo_read", id=entry.id, skills=len(got.skills),
+                           skipped=got.skipped, index=bool(got.index) and not got.one_by_one, error="",
+                           commit=got.commit[:12])
+        if self.github.changed:
+            self.state.reset_github()  # a read that changed a list makes every need due again for GitHub
+            self.github.changed = False
 
     def _system(self, bot: Bot) -> str:
         system = f"You are {bot.name}. Your role: {bot.role}"
@@ -331,47 +406,91 @@ class SkillTuner:
         return winners
 
     async def _search_each(self, today: str, go, guarded, counts: dict[str, int], winners: list[_Winner]) -> None:
-        for need in self.state.due_needs(today, self._searches_left(today)):
+        for need in self.state.due_needs(today, self._searches_left(today), tuple(self._open_sources(today))):
             go()
             if not self._clean(need.words):  # a secret registered since the need was kept: dropped, never sent
                 self.state.drop_need(need.words)
                 self.ledger.append(Kind.skilltuner, "", "", event="search", results=0, error="excluded")
                 continue
-            if self.state.spent(today) >= DAILY_REQUESTS:
-                raise _Stop("", pause=False)
+            # a source paused or out of budget since the list was made is skipped for this need, and asked next time
+            open_ = self._open_sources(today)
+            due = [s for s in self.state.due_for(need, today) if s in open_]
+            if not due:
+                continue
             self.state.add_search(today)  # counted as sent: giving the need back later does not lower it
-            try:
-                found = await guarded(self.source.search(need.words))
-            except SourceError as e:
-                self.ledger.append(Kind.skilltuner, "", "", event="search", results=0, error=e.kind)
-                if e.kind == "budget":
-                    raise _Stop("", pause=False) from None
-                if e.kind == "not_found":
-                    self.state.mark_searched(need.words, today, "not_found")
-                    continue
-                raise _Stop(e.kind, pause=e.kind in SOURCE_SYSTEMIC) from None
+            answers: dict[str, list[Found]] = {}
+            if "casemark" in due:
+                found = await self._search_casemark(need.words, today, guarded)
+                if found is not None:
+                    answers["casemark"] = found
+            if "github" in due:
+                found = self.github.search(need.words)
+                self.ledger.append(Kind.skilltuner, "", "", event="search", source="github", results=len(found),
+                                   error="")
+                answers["github"] = found
+            if not answers:
+                continue
             counts["searches"] += 1
-            self.ledger.append(Kind.skilltuner, "", "", event="search", results=len(found), error="")
-            known = self.state.known
-            slugs, names = self._taken()
-            fresh: dict[str, Found] = {}
-            for r in found[:RESULTS_PER_SEARCH]:
-                if r.slug in known or r.slug in slugs or r.name.casefold() in names or r.slug in fresh:
-                    self._dropped(counts, "duplicate", r.slug)
-                    continue
-                fresh[r.slug] = r
+            fresh = self._fresh(need.words, answers, counts)
             if not fresh:
-                self.state.mark_searched(need.words, today, "none")
+                for source in answers:
+                    self.state.mark_searched(need.words, today, "none", source)
                 continue
             outcome, slug, score = await self._fit(need.words, fresh, go, guarded)
             # `undecided` is due again from the next local date (`TunerState.due_needs`), not at once
-            self.state.mark_searched(need.words, today, outcome)
+            for source in answers:
+                self.state.mark_searched(need.words, today, outcome, source)
             if slug:
                 same = next((w for w in winners if w.found.slug == slug), None)
                 if same is None:
-                    winners.append(_Winner([need.words], need.topic, fresh[slug], score))
+                    winners.append(_Winner([need.words], need.topic, fresh[slug], score, {need.words: list(answers)}))
                 else:
                     same.needs.append(need.words)  # one conversion for the slug, but this need depends on it too
+                    same.searched[need.words] = list(answers)
+
+    async def _search_casemark(self, words: str, today: str, guarded) -> list[Found] | None:
+        """CaseMark's results, or None when it gave none to use: a spent budget, a not-found (marked here) or a
+        failure that pauses CaseMark until tomorrow while the pass goes on."""
+        try:
+            found = await guarded(self.source.search(words))
+        except SourceError as e:
+            self.ledger.append(Kind.skilltuner, "", "", event="search", source="casemark", results=0, error=e.kind)
+            if e.kind == "not_found":
+                self.state.mark_searched(words, today, "not_found")
+            elif e.kind != "budget":
+                self._pause_source("casemark", e.kind)
+            return None
+        self.ledger.append(Kind.skilltuner, "", "", event="search", source="casemark", results=len(found), error="")
+        return found
+
+    def _fresh(self, words: str, answers: dict[str, list[Found]], counts: dict[str, int]) -> dict[str, Found]:
+        """What goes to the decider: the sources' results (ranked by one score when both answered), without the known,
+        rejected, catalogued, pending or repeated ones, at most RESULTS_PER_SEARCH."""
+        casemark, github = answers.get("casemark", []), answers.get("github", [])
+        if len(answers) == 2:
+            matcher = self.github.matcher()
+            rows = [(-matcher.score(words, r.name, r.summary), 0, i, r) for i, r in enumerate(casemark[:RESULTS_PER_SEARCH])]
+            rows += [(-r.score, 1, i, r) for i, r in enumerate(github[:RESULTS_PER_SEARCH])]
+            ranked = [r for *_, r in sorted(rows, key=lambda row: row[:3])]
+        else:
+            ranked = (casemark or github)[:RESULTS_PER_SEARCH]
+        known, rejected = self.state.known, self.state.rejected_names
+        slugs, names = self._taken()
+        for s in self.store.list():
+            slugs.add(s.source_slug)
+            if s.source_name:
+                names.add(s.source_name.casefold())
+        fresh: dict[str, Found] = {}
+        for r in ranked:
+            name = r.name.strip().casefold()
+            if len(fresh) == RESULTS_PER_SEARCH:
+                break
+            if r.slug in known or r.slug in slugs or name in names or name in rejected or r.slug in fresh:
+                self._dropped(counts, "duplicate", r.slug)
+                continue
+            fresh[r.slug] = r
+            names.add(name)  # a repeat of this name from another repository is dropped, the first by rank stays
+        return fresh
 
     async def _fit(self, words: str, fresh: dict[str, Found], go, guarded) -> tuple[str, str, float]:
         """(outcome, winner's slug, its score): `winner` for a single clear winner, `none` when there is none,
@@ -414,30 +533,49 @@ class SkillTuner:
     def _give_back(self, winners: list[_Winner]) -> None:
         for w in winners:
             for words in w.needs:
-                self.state.mark_searched(words, "", "")
+                for source in w.searched.get(words, ["casemark"]):
+                    self.state.mark_searched(words, "", "", source)
 
     async def _one(self, today: str, w: _Winner, go, guarded, counts: dict[str, int]) -> None:
         slug = w.found.slug
         if slug in self.state.known:
             self._dropped(counts, "duplicate", slug)
             return
+        source_name = "github" if w.github else "casemark"
+        reader = self.github if w.github else self.source
+        if reader is None or self.state.source_paused(source_name, today):
+            self._give_back([w])  # its source went quiet since it was found: looked for again, not lost
+            return
         go()
         try:
-            d: Downloaded = await guarded(self.source.read(slug))
+            d: Downloaded = await guarded(reader.read(slug))
             if not licence_ok(d.license):
                 self._dropped(counts, "licence", slug)
                 return
             references = []
             for path, _file_slug in d.files:
                 go()
-                references.append((path, await guarded(self.source.read_file(d.slug, path))))
+                references.append((path, await guarded(reader.read_file(d.slug, path))))
         except SourceError as e:
+            if w.github:
+                if github_wide(e):  # about GitHub or this computer: GitHub waits until tomorrow, the pass goes on
+                    self._pause_source("github", e.kind)
+                    self._give_back([w])
+                elif e.kind == "not_found":
+                    self._dropped(counts, "not_found", slug)
+                else:  # that repository's own trouble: only this skill is dropped
+                    self._dropped(counts, "invalid", slug)
+                return
             if e.kind == "budget":
                 raise _Stop("", pause=False) from None
             if e.kind == "not_found":
                 self._dropped(counts, "not_found", slug)
                 return
-            raise _Stop(e.kind, pause=e.kind in SOURCE_SYSTEMIC) from None
+            if e.kind in SOURCE_SYSTEMIC:
+                self._pause_source("casemark", e.kind)
+                self._give_back([w])
+                return
+            raise _Stop(e.kind, pause=False) from None
         except ValueError:
             self._dropped(counts, "invalid", slug)
             return
@@ -465,8 +603,9 @@ class SkillTuner:
             return
         go()
         s = Suggestion(id=secrets.token_hex(16), slug=built.slug, source_slug=d.slug, name=conv["name"], use=conv["use"],
-                       topic=w.topic, score=w.score, license=d.license, source_url=SOURCE_URL + d.slug,
-                       original=d.body, converted=built.files["SKILL.md"], at=_at(self._clock()))
+                       topic=w.topic, score=w.score, license=d.license, source_url=d.url or SOURCE_URL + d.slug,
+                       original=d.body, converted=built.files["SKILL.md"], at=_at(self._clock()), source=d.source,
+                       source_name=d.name, left_out=d.left_out)
         try:
             self.store.add(s, built)
         except (OSError, ValueError):
