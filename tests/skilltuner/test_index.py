@@ -54,7 +54,7 @@ def test_parse_an_object_index_resolves_paths_against_its_folder():
 
 
 def test_index_paths_that_escape_are_skipped():
-    bad = ["../../etc", "/abs", "https://x/y", "a\\b", "skills/nothing", "../skills/a", ""]
+    bad = ["../../etc", "/abs", "https://x/y", "a\\b", "skills/nothing", "../nothing", "../../a/../skills/a", ""]
     data = [{"name": f"n{i}", "path": p} for i, p in enumerate(bad)] + [{"name": "ok", "path": "skills/a"}]
     listed, skipped = ix.parse_index(json.dumps(data).encode(), "skills_index.json", {"skills/a"})
     assert [x.path for x in listed] == ["skills/a"]
@@ -90,3 +90,12 @@ def test_frontmatter_reads_name_description_licence():
 def test_extras():
     assert ix.extras(blobs("s/a/SKILL.md", "s/a/scripts/run.py"), "s/a")
     assert not ix.extras(blobs("s/a/SKILL.md", "s/a/LICENSE", "s/a/references/a.md", "s/ab/x.py"), "s/a")
+
+
+def test_an_index_path_climbing_above_the_root_is_tried_without_its_leading_dots():
+    d = "agent-launcher/skills/agent-launcher-orchestrator"
+    data = [{"name": "agent-launcher-orchestrator", "source": "../../" + d, "description": "x"}]
+    b = blobs(d + "/SKILL.md", ".codex/skills-index.json")
+    listed, skipped = ix.parse_index(json.dumps({"skills": data}).encode(), ".codex/skills-index.json",
+                                     set(ix.skill_folders(b, "")))
+    assert [x.path for x in listed] == [d] and skipped == 0

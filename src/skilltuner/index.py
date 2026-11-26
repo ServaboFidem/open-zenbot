@@ -69,6 +69,13 @@ def _resolve(raw: object, index_dir: str, folders: set[str]) -> str | None:
         p = posixpath.normpath(posixpath.join(base, raw))
         if p in folders:
             return p
+    parts = raw.split("/")
+    while parts and parts[0] == "..":
+        parts.pop(0)
+    if len(parts) < len(raw.split("/")) and ".." not in parts:
+        p = "/".join(parts)
+        if p in folders:
+            return p
     return None
 
 
