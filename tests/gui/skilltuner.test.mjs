@@ -170,6 +170,7 @@ test('repoLine', () => {
   assert.equal(repoLine({ ...base, skills: 1, licence: '' }), '1 skill from skills_index.json · no licence · read 26 Nov');
   assert.equal(repoLine({ skills: 0, licence: 'MIT', last_read_at: null, reading: false, error: '' }), 'MIT · Not read yet');
   assert.equal(repoLine({ skills: 0, licence: 'MIT', last_read_at: null, reading: true, error: '' }), 'MIT · Reading…');
+  assert.equal(repoLine({ ...base, skills: 0, index: '', one_by_one: true }), '0 skills · MIT · read 26 Nov');
 });
 
 test('repoErrorLine', () => {

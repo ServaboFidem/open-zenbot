@@ -325,6 +325,8 @@ def skilltuner_router(h) -> APIRouter:
             try:
                 h.suggestions.remove(id)
                 h.tuner_state.remember(s.source_slug, "approved")
+                if s.source_name:
+                    h.tuner_state.remember_name(s.source_name, "approved")
             except Exception as e:  # noqa: BLE001
                 log.warning("skilltuner approve bookkeeping failed: %s", type(e).__name__)
             log_event("approved", id=id, slug=s.slug, name=s.name, files=len(files))

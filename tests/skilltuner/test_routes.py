@@ -574,3 +574,13 @@ async def test_get_one_suggestion_carries_source_and_left_out(client, harness):
     s = suggest(harness)
     full = (await client.get(f"/skilltuner/suggestions/{s.id}")).json()
     assert full["source"] == "agentskills.finance" and full["left_out"] is False
+
+
+async def test_approve_remembers_the_skills_own_name(client, harness):
+    s = suggest(harness)
+    harness.suggestions.add(
+        Suggestion(**{**s.__dict__, "id": secrets.token_hex(16), "slug": "y-tool", "source_name": "Beta Skill"}),
+        BuiltSkill(slug="y-tool", files={"SKILL.md": SKILL}))
+    other = [x for x in harness.suggestions.list() if x.slug == "y-tool"][0]
+    assert (await client.post(f"/skilltuner/suggestions/{other.id}/approve", json={})).status_code == 200
+    assert harness.tuner_state.approved_names == {"beta skill"} and harness.tuner_state.rejected_names == set()

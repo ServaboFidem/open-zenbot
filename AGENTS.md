@@ -441,7 +441,7 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   cut (name 120, summary 1,000, body or file 200,000). It logs nothing.
 - **GitHub repositories** (`repos.py`, `github.py`, `index.py`, `match.py`, `licences.py`, `github_source.py`; design
   `docs/superpowers/specs/2026-11-26-skilltuner-github-sources-design.md`, git-ignored). The owner adds a repository on
-  Settings > Skill discovery (routes below; the panel is not built yet): `https://github.com/<owner>/<repo>`, optionally
+  Settings > Skill discovery (routes below): `https://github.com/<owner>/<repo>`, optionally
   `/tree/<ref>/<folder>`, and a licence for skills with none of their own. At most 10; the same owner, repo, ref and
   folder (case-folded) twice is refused.
   - *The address* (`repos.parse_address`) is a security boundary: `https`, host exactly `github.com`, owner and repo
@@ -460,7 +460,7 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
     goes on with CaseMark; any other failure belongs to that repository (stored with its old list, which stays in use).
   - *Reading.* The commit is resolved first; an unchanged commit fetches nothing more. The tree gives the skill folders
     (`<dir>/SKILL.md`); an index file (the owner's path, else the first `skills_index.json` style name) lists them with
-    descriptions, else each `SKILL.md`'s frontmatter is read, at most 300 folders (`no_index` above that). A repository
+    descriptions, else each `SKILL.md`'s frontmatter is read, at most 300 folders (`no_index` above that; a tree with more than 5,000 `SKILL.md` files is `too_large`). A repository
     is read again when its last good read is 7 days old, one per pass, under dreaming's rules; a read the owner starts
     (`Harness.start_repo_read`: a task the harness keeps and cancels at shutdown, one at a time per repository, run at
     once and whether or not SkillTuner is on) goes through the same client and budget. **A read writes its list only
@@ -470,11 +470,17 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   - *Searching* is local: words matched against each stored skill's name, description and category with IDF weights
     (name matches count double). CaseMark's and GitHub's results are ranked together by one score and the best five go
     to the decider. A need's search mark is per source; a read that changed a list makes every need due for GitHub again.
-    Rejecting a suggestion remembers its source skill's name, and a result with a rejected name is dropped.
+    Rejecting or approving a suggestion remembers its source skill's name (`rejected_names`, `approved_names`), and a result
+    with either name is dropped; known, rejected, approved and catalogued skills are dropped from GitHub's ranking before it
+    is cut to five, so they never take a place. The decider's questions are keyed by position (`r:0` to `r:4`), never by a
+    source's text; the `fit` entry still names source ids.
   - *Fetching and licence.* A GitHub winner's `SKILL.md` and `references/` files are fetched at the stored commit. The
-    licence is the frontmatter's `license` when one of the five accepted; else a `LICENSE`, `LICENSE.md` or `LICENSE.txt`
-    beside the skill that is wholly one of the five standard texts; else the licence the owner chose for the repository
-    (empty, "Don't use", means such skills are dropped as `licence`). A skill that came with scripts or other files not
+    licence rules run in order and stop at the first that applies: (1) the frontmatter's `license` when one of the five
+    accepted, and any other `license` (`GPL-3.0`, `Proprietary`, "Complete terms in LICENSE.txt") drops the skill as
+    `licence`; (2) a `LICENSE`, `LICENSE.md`, `LICENSE.txt` or `COPYING` (any case) directly in the skill's folder, which
+    must be wholly one of the five standard texts, and one that is not drops the skill (a file that is not found or too
+    large to read is passed over); (3) only when the folder has no licence file and the frontmatter names no `license`,
+    the licence the owner chose for the repository (empty, "Don't use", means such skills are dropped as `licence`). A skill that came with scripts or other files not
     brought over is suggested with `left_out`. A suggestion's `source` is `github.com/<owner>/<repo>`, its source id
     `gh:<owner>/<repo>:<path>`, its `source_url` `https://github.com/<owner>/<repo>/tree/<sha>/<path>`.
 - **The recorded answer shapes** (2026-11-25, the real endpoint). A `tools/call` answer is `{"result": {"content":
@@ -590,7 +596,7 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   (folder, slug, reason `invalid`, `duplicate`, `refused` or `error`, with the class name for `error`) and `error` (a
   scan or a sweep, by class name), and the store's `error` (reason `sweep`, class name). Source slugs and skill names are
   public catalog data and may be logged; never a need's topic or words, a message, or skill text. The decider's own
-  `decider_score` entry carries the question keys `r:<slug>`. Errors log the exception's class name only.
+  `decider_score` entry carries the question keys `r:<n>` (the position in the request; `fit` names the source ids). Errors log the exception's class name only.
 - **Bots and SkillTuner (a known residual risk).** The harness API has no authentication, so a bot with `shell` (curl) or
   the `browser` server can call the `/skilltuner` routes: switch it on, read the suggestions, and approve one, which puts
   a downloaded skill in the catalog without the owner, and attach it through `/fits` and `/bots`. It cannot write a

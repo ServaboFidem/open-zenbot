@@ -40,6 +40,14 @@ def _inside(path: str, folder: str) -> bool:
     return not folder or path.startswith(folder + "/")
 
 
+def _parents(path: str):
+    """Each folder above `path`, nearest first."""
+    d = path.rpartition("/")[0]
+    while d:
+        yield d
+        d = d.rpartition("/")[0]
+
+
 def skill_folders(blobs: list[tuple[str, int]], folder: str) -> list[str]:
     """Each directory holding a SKILL.md inside `folder`; a folder inside another skill folder is dropped."""
     dirs = set()
@@ -47,11 +55,13 @@ def skill_folders(blobs: list[tuple[str, int]], folder: str) -> list[str]:
         d, _, base = path.rpartition("/")
         if base == SKILL_FILE and d and _inside(d, folder) and _plain(d):
             dirs.add(d)
-    return sorted(d for d in dirs if not any(d.startswith(o + "/") for o in dirs))
+    return sorted(d for d in dirs if not any(a in dirs for a in _parents(d)))
 
 
 def find_index(blobs: list[tuple[str, int]], folder: str, named: str) -> str | None:
-    paths = {p for p, _ in blobs}
+    """The index to read: the one the owner named, else the shortest in or above `folder`. Only a path whose every
+    segment is plain is taken, so nothing here can name a file the client would refuse."""
+    paths = {p for p, _ in blobs if _plain(p)}
     if named and named in paths:
         return named
     found = []
@@ -158,14 +168,28 @@ def frontmatter(text: str) -> dict[str, str]:
     return out
 
 
-def extras(blobs: list[tuple[str, int]], folder: str) -> bool:
-    """True when the skill folder holds a file other than SKILL.md, LICENSE* and references/*."""
-    prefix = folder + "/"
+LICENCE_PREFIXES = ("license", "copying", "notice")
+
+
+def _extra(rest: str) -> bool:
+    """Whether a file inside a skill folder (its path below the folder) is more than the skill, its licence files and
+    its references."""
+    first = rest.split("/", 1)[0].casefold()
+    return not (rest == SKILL_FILE or first.startswith(LICENCE_PREFIXES) or first == "references")
+
+
+def extras_by_folder(blobs: list[tuple[str, int]], folders: set[str]) -> dict[str, bool]:
+    """For each skill folder, whether it holds a file other than SKILL.md, LICENSE*, COPYING*, NOTICE* and
+    references/*: every blob is looked at once, by the skill folder above it."""
+    out = {f: False for f in folders}
     for path, _size in blobs:
-        if not path.startswith(prefix):
-            continue
-        rest = path[len(prefix):]
-        if rest == SKILL_FILE or rest.startswith("LICENSE") or rest.startswith("references/"):
-            continue
-        return True
-    return False
+        for d in _parents(path):
+            if d in out:
+                if not out[d] and _extra(path[len(d) + 1:]):
+                    out[d] = True
+                break
+    return out
+
+
+def extras(blobs: list[tuple[str, int]], folder: str) -> bool:
+    return extras_by_folder(blobs, {folder})[folder]

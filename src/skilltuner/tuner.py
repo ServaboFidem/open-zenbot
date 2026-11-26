@@ -141,6 +141,7 @@ class SkillTuner:
         self._running = False
         self._soft = ("", "")  # (kind, source) of a source failure this pass went on after
         self._tried: dict[str, str] = {}  # repository id -> the local date its refresh was last tried
+        self._fit_order: list[str] = []  # the source ids of the last fit, by the position its questions were keyed
 
     def set_settings(self, s: TunerSettings) -> None:
         s.save(self.vault_root)
@@ -311,7 +312,7 @@ class SkillTuner:
             return
         self._tried[entry.id] = today
         self.ledger.append(Kind.skilltuner, "", "", event="repo_read", id=entry.id, skills=len(got.skills),
-                           skipped=got.skipped, index=bool(got.index) and not got.one_by_one, error="",
+                           skipped=got.skipped, **{"from": "index" if got.index and not got.one_by_one else "one_by_one"}, error="",
                            commit=got.commit[:12])
         if self.github.changed:
             self.state.reset_github()  # a read that changed a list makes every need due again for GitHub
@@ -439,7 +440,17 @@ class SkillTuner:
                 if found is not None:
                     answers["casemark"] = found
             if "github" in due:
-                found = self.github.search(need.words)
+                slugs, names = self._exclusions()
+                passed: list[str] = []
+
+                def keep(f: Found) -> bool:
+                    if f.slug in slugs or f.name.strip().casefold() in names:
+                        passed.append(f.slug)
+                        return False
+                    return True
+                found = self.github.search(need.words, keep=keep)
+                for slug in passed[:RESULTS_PER_SEARCH]:  # the ledger names the first few skills passed over
+                    self._dropped(counts, "duplicate", slug)
                 self.ledger.append(Kind.skilltuner, "", "", event="search", source="github", results=len(found),
                                    error="")
                 answers["github"] = found
@@ -478,6 +489,18 @@ class SkillTuner:
         self.ledger.append(Kind.skilltuner, "", "", event="search", source="casemark", results=len(found), error="")
         return found
 
+    def _exclusions(self) -> tuple[set[str], set[str]]:
+        """Source slugs and case-folded names a result must not have: known, catalogued, pending, or a name the owner
+        rejected or approved (a copy of it in another repository is the same skill)."""
+        slugs, names = self._taken()
+        slugs |= self.state.known
+        names = {n.strip().casefold() for n in names} | self.state.rejected_names | self.state.approved_names
+        for s in self.store.list():
+            slugs.add(s.source_slug)
+            if s.source_name.strip():
+                names.add(s.source_name.strip().casefold())
+        return slugs, names
+
     def _fresh(self, words: str, answers: dict[str, list[Found]], counts: dict[str, int]) -> dict[str, Found]:
         """What goes to the decider: the sources' results (ranked by one score when both answered), without the known,
         rejected, catalogued, pending or repeated ones, at most RESULTS_PER_SEARCH."""
@@ -489,19 +512,13 @@ class SkillTuner:
             ranked = [r for *_, r in sorted(rows, key=lambda row: row[:3])]
         else:
             ranked = (casemark or github)[:RESULTS_PER_SEARCH]
-        known, rejected = self.state.known, self.state.rejected_names
-        slugs, names = self._taken()
-        names = {n.strip().casefold() for n in names}
-        for s in self.store.list():
-            slugs.add(s.source_slug)
-            if s.source_name.strip():
-                names.add(s.source_name.strip().casefold())
+        slugs, names = self._exclusions()
         fresh: dict[str, Found] = {}
         for r in ranked:
             name = r.name.strip().casefold()
             if len(fresh) == RESULTS_PER_SEARCH:
                 break
-            if r.slug in known or r.slug in slugs or name in names or name in rejected or r.slug in fresh:
+            if r.slug in slugs or name in names or r.slug in fresh:
                 self._dropped(counts, "duplicate", r.slug)
                 continue
             fresh[r.slug] = r
@@ -514,15 +531,17 @@ class SkillTuner:
         scorer, bot = self._scorer(), self._bot()
         if scorer is None or bot is None:
             raise Interrupted()
+        order = list(fresh)  # the questions are keyed by position, never by text a source wrote
+        self._fit_order = order
         request = DecisionRequest(
             state={"words": words},
-            questions={f"r:{s}": NoulQuestion(f"Would the skill {_flat(f.name)} help with this need? "
-                                              f"Its summary: {_flat(f.summary)}") for s, f in fresh.items()},
+            questions={f"r:{i}": NoulQuestion(f"Would the skill {_flat(fresh[s].name)} help with this need? "
+                                              f"Its summary: {_flat(fresh[s].summary)}") for i, s in enumerate(order)},
             purpose="skilltuner")
         go()
         try:
             decision = await guarded(decide_and_log(scorer, request, self.ledger, bot.id, ""))
-            scores = {s: float(decision.noul(f"r:{s}").noul) for s in fresh}
+            scores = {s: float(decision.noul(f"r:{i}").noul) for i, s in enumerate(order)}
         except ProviderError:
             raise _Stop("decider", pause=True) from None
         except (DecisionRefused, KeyError, TypeError, ValueError):

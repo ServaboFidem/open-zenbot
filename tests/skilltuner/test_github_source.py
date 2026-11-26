@@ -235,3 +235,49 @@ def test_stale_passes_over_the_ids_asked_to_skip_and_has_skills_says_if_anything
     assert gs.has_skills() is False
     store.put(a.id, RepoList(GH_SHA, "MIT", "", "", "", 0, [Listed("p", "n", "d", "")], False))
     assert gs.has_skills() is True
+
+
+async def test_over_five_thousand_skill_files_is_too_large_before_any_work(fake_github, tmp_path):
+    fake_github.trees[f"o/r/{GH_SHA}"] = tree_of([f"s/{i}/SKILL.md" for i in range(5001)])
+    gs, store = source(fake_github, tmp_path)
+    with pytest.raises(SourceError) as e:
+        await gs.read_repo(entry())
+    assert e.value.kind == "too_large" and file_count(fake_github) == 0
+    assert store.get("0123456789abcdef").error == "too_large"
+
+
+async def test_a_tree_path_the_client_refuses_is_a_stored_failure_not_a_crash(fake_github, tmp_path):
+    fake_github.trees[f"o/r/{GH_SHA}"] = tree_of(["My Skills/skills_index.json", "skills/a/SKILL.md"])
+    fake_github.files[f"o/r/{GH_SHA}/skills/a/SKILL.md"] = skill_md("A")
+    gs, store = source(fake_github, tmp_path)
+    got = await gs.read_repo(entry())  # the odd index is never taken: read one by one
+    assert [s.name for s in got.skills] == ["A"] and got.one_by_one is True
+
+    async def refuse(*a, **k):
+        raise ValueError("not a path")
+    gs.client.raw = refuse
+    fake_github.trees[f"o/r/{'c' * 40}"] = tree_of(["skills/a/SKILL.md"])
+    fake_github.commits["o/r/main"] = {"sha": "c" * 40}
+    with pytest.raises(SourceError) as e:
+        await gs.read_repo(entry())
+    assert e.value.kind == "source_changed" and store.get("0123456789abcdef").error == "source_changed"
+
+
+async def test_removing_a_repository_stops_a_read_under_way(fake_github, tmp_path):
+    n = 20
+    fake_github.trees[f"o/r/{GH_SHA}"] = tree_of([f"s/{i}/SKILL.md" for i in range(n)])
+    for i in range(n):
+        fake_github.files[f"o/r/{GH_SHA}/s/{i}/SKILL.md"] = skill_md(f"Skill {i}")
+    es = [entry()]
+    gs, store = source(fake_github, tmp_path, es)
+    real = gs.client.raw
+
+    async def raw(*a, **k):
+        got = await real(*a, **k)
+        es.clear()  # the owner removes the repository after the first file
+        return got
+    gs.client.raw = raw
+    with pytest.raises(SourceError) as e:
+        await gs.read_repo(entry())
+    assert e.value.kind == "removed" and file_count(fake_github) == 1
+    assert store.get("0123456789abcdef") is None and gs.reading == set()

@@ -14,7 +14,8 @@ from src.events.eventbrite import SourceError
 
 from .casemark import FILE_PATH, Downloaded, Found, _clean
 from .github import GitHub, Tree
-from .index import Listed, extras, find_index, frontmatter, parse_index, skill_folders, split_frontmatter
+from .index import (SKILL_FILE, Listed, extras_by_folder, find_index, frontmatter, parse_index, skill_folders,
+                    split_frontmatter)
 from .licences import canonical, licence_of_text
 from .match import Matcher, top
 from .repos import OWNER, REPO, SEGMENT, RepoEntry, RepoList, RepoStore
@@ -22,6 +23,7 @@ from .repos import OWNER, REPO, SEGMENT, RepoEntry, RepoList, RepoStore
 INDEX_LIMIT = 10_000_000
 SKILL_LIMIT = 1_000_000
 ONE_BY_ONE_MAX = 300
+SKILL_FILES_MAX = 5_000
 REFRESH_DAYS = 7
 GITHUB_WIDE = ("network", "refused", "budget")
 PER_FILE = ("not_found", "too_large")
@@ -96,15 +98,23 @@ class GitHubSkills:
             self._matcher = (key, Matcher((k.name, k.description, k.category) for _, s in stored for k in s.skills))
         return self._matcher[1]
 
-    def search(self, words: str) -> list[Found]:
-        """The best skills of the stored lists for a need's words; no network."""
+    def search(self, words: str, keep: Callable[[Found], bool] | None = None) -> list[Found]:
+        """The best skills of the stored lists for a need's words; no network. `keep` is asked of each skill in rank
+        order and the first RESULTS it accepts are returned, so skills the caller would drop never take a place."""
         stored = self._stored()
         items = [(e, k) for e, s in stored for k in s.skills]
         matcher = self._matcher_of(stored)
-        best = top(words, items, key=lambda it: (it[1].name, it[1].description, it[1].category),
-                   n=RESULTS, matcher=matcher)
-        return [Found(gh_id(e.owner, e.repo, k.path), k.name, k.description, [k.category] if k.category else [],
-                      matcher.score(words, k.name, k.description, k.category)) for e, k in best]
+        ranked = top(words, items, key=lambda it: (it[1].name, it[1].description, it[1].category),
+                     n=len(items), matcher=matcher)
+        out: list[Found] = []
+        for e, k in ranked:
+            found = Found(gh_id(e.owner, e.repo, k.path), k.name, k.description, [k.category] if k.category else [],
+                          matcher.score(words, k.name, k.description, k.category))
+            if keep is None or keep(found):
+                out.append(found)
+                if len(out) == RESULTS:
+                    break
+        return out
 
     def _find(self, id: str) -> tuple[RepoEntry, RepoList, Listed]:
         owner, repo, path = parse_gh_id(id)
@@ -131,7 +141,9 @@ class GitHubSkills:
         body = _clean(parts[1] if parts else text, 200_000)
         files = sorted(p for p in inside if FILE_PATH.fullmatch(p))[:REFERENCES_MAX]
         self._files[id] = set(files)
-        left_out = listed.has_extra or any(p.startswith("scripts/") for p in inside)
+        refs = [p for p in inside if p.startswith("references/")]
+        left_out = (listed.has_extra or any(p.startswith("scripts/") for p in inside)
+                    or len(refs) > len(files) or any(FILE_PATH.fullmatch(p) is None for p in refs))
         licence = await self._licence(entry, sha, path, meta.get("license", ""), inside)
         return Downloaded(
             id, _clean(meta.get("name") or listed.name, NAME_MAX),
@@ -141,8 +153,11 @@ class GitHubSkills:
             f"https://github.com/{entry.owner}/{entry.repo}/tree/{sha}/{path}", left_out, sha)
 
     async def _licence(self, entry: RepoEntry, sha: str, path: str, declared: str, inside: list[str]) -> str:
-        if canonical(declared):
-            return canonical(declared)
+        """The spec's rules in order: (1) the frontmatter's `license` when one of the five; a `license` that names
+        anything else drops the skill; (2) a licence file in the skill's own folder, wholly one of the five texts, and
+        one that is not recognised drops the skill; (3) only with neither, the licence the owner chose."""
+        if declared:
+            return canonical(declared)  # "" when it names something outside the five
         names = sorted(p for p in inside if "/" not in p and p.casefold() in LICENCE_FILES)
         if names:
             try:
@@ -151,9 +166,7 @@ class GitHubSkills:
                 if e.kind not in PER_FILE:
                     raise
             else:
-                found = licence_of_text(raw.decode("utf-8", errors="replace"))
-                if found:
-                    return found
+                return licence_of_text(raw.decode("utf-8", errors="replace"))
         return canonical(entry.licence)
 
     async def read_file(self, id: str, path: str) -> str:
@@ -198,9 +211,16 @@ class GitHubSkills:
         return False
 
     async def read_repo(self, entry: RepoEntry, go: Callable[[], None] = lambda: None) -> RepoList:
+        """Read the repository; `go` is called before each request. A repository the owner removes meanwhile ends the
+        read at the next request (`removed`), whoever started it, so it spends no more of the day's budget."""
+        def alive() -> None:
+            if not self.listed(entry.id):
+                raise _fail("removed")
+            go()
+
         self.reading.add(entry.id)
         try:
-            got = await self._read(entry, go)
+            got = await self._read_checked(entry, alive)
             self.errors.pop(entry.id, None)  # any completed read, the pass's or the owner's, clears it
             return got
         except SourceError as e:
@@ -213,6 +233,12 @@ class GitHubSkills:
             raise
         finally:
             self.reading.discard(entry.id)
+
+    async def _read_checked(self, entry: RepoEntry, go: Callable[[], None]) -> RepoList:
+        try:
+            return await self._read(entry, go)
+        except ValueError:  # the client refused a path or an id it would not build a request for
+            raise _fail("source_changed") from None
 
     async def _read(self, entry: RepoEntry, go: Callable[[], None]) -> RepoList:
         owner, repo = entry.owner, entry.repo
@@ -227,18 +253,21 @@ class GitHubSkills:
             self._put(entry.id, old)
             return old
         blobs = await self._blobs(entry, sha, go)
+        if sum(1 for p, _ in blobs if p == SKILL_FILE or p.endswith("/" + SKILL_FILE)) > SKILL_FILES_MAX:
+            raise _fail("too_large")
         folders = skill_folders(blobs, entry.folder)
+        extra = extras_by_folder(blobs, set(folders))
         index = find_index(blobs, entry.folder, entry.index)
         skills: list[Listed] = []
         skipped, used = 0, ""
         if index:
-            skills, skipped = await self._from_index(entry, sha, index, blobs, folders, go)
+            skills, skipped = await self._from_index(entry, sha, index, extra, folders, go)
             used = index if skills else ""
         one_by_one = not skills
         if one_by_one:
             if len(folders) > ONE_BY_ONE_MAX:
                 raise _fail("no_index")
-            skills, skipped = await self._one_by_one(entry, sha, folders, blobs, go)
+            skills, skipped = await self._one_by_one(entry, sha, folders, extra, go)
         stored = RepoList(sha, info.licence, at, "", used, skipped, skills, one_by_one)
         if self._put(entry.id, stored) and (old is None or old.skills != skills):
             self.changed = True
@@ -264,7 +293,7 @@ class GitHubSkills:
             raise _fail("too_large")
         return [(f"{entry.folder}/{p}", size) for p, size in sub.blobs]
 
-    async def _from_index(self, entry, sha, index, blobs, folders, go) -> tuple[list[Listed], int]:
+    async def _from_index(self, entry, sha, index, extra, folders, go) -> tuple[list[Listed], int]:
         go()
         try:
             raw = await self.client.raw(entry.owner, entry.repo, sha, index, INDEX_LIMIT)
@@ -277,10 +306,10 @@ class GitHubSkills:
         except ValueError:
             return [], 0
         for k in listed:
-            k.has_extra = extras(blobs, k.path)
+            k.has_extra = extra.get(k.path, False)
         return listed, skipped
 
-    async def _one_by_one(self, entry, sha, folders, blobs, go) -> tuple[list[Listed], int]:
+    async def _one_by_one(self, entry, sha, folders, extra, go) -> tuple[list[Listed], int]:
         skills: list[Listed] = []
         skipped = 0
         for path in folders:
@@ -296,5 +325,5 @@ class GitHubSkills:
             if not meta.get("name") or not meta.get("description"):
                 skipped += 1
                 continue
-            skills.append(Listed(path, meta["name"], meta["description"], "", extras(blobs, path)))
+            skills.append(Listed(path, meta["name"], meta["description"], "", extra.get(path, False)))
         return skills, skipped

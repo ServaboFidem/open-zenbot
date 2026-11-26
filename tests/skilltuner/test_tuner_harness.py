@@ -140,6 +140,7 @@ async def test_an_added_repository_is_searched_and_suggested_by_a_pass(harness):
     scorer.scores = {gh_id("o", "r", "skills/memo"): 0.95}
     h.add_bot(tuner_bot())
     t = h.tuner
+    scorer.order = lambda: t._fit_order
     t._model, t._scorer, t._bot, t._clean = (lambda: (model, "m")), (lambda: scorer), h._tuner_bot, (lambda s: True)
     t._conversations = lambda: [Conversation(
         owner="b", exchanges=[Exchange(user="Draft an investment memo for the Acme deal", outcome="done", reply="r")],

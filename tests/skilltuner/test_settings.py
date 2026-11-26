@@ -276,3 +276,11 @@ def test_malformed_new_field_is_damaged(tmp_path):
     p.write_text(json.dumps(d), encoding="utf-8")
     st = TunerState(p)
     assert p.with_name("skilltuner.json.bad").exists() and st.due_needs("2027-01-11", 8, sources=("github",)) == []
+
+
+def test_approved_names_are_kept_apart_casefolded_and_persist(tmp_path):
+    st = TunerState(tmp_path / "s.json")
+    st.remember_name("  PDF Maker ", "approved")
+    st.remember_name("Other")
+    assert st.approved_names == {"pdf maker"} and st.rejected_names == {"other"}
+    assert TunerState(st.path).approved_names == {"pdf maker"}

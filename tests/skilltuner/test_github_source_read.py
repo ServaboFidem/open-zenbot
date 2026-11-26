@@ -65,11 +65,24 @@ async def test_read_takes_body_references_and_marks_extras(fake_github, tmp_path
     assert got.left_out is True and got.name == "Investment Memo" and got.slug == "gh:o/r:skills/memo"
 
 
-async def test_no_extras_means_not_left_out_and_references_are_capped(fake_github, tmp_path):
+async def test_references_over_twenty_are_capped_and_the_skill_is_left_out(fake_github, tmp_path):
     paths = ["skills/memo/SKILL.md"] + [f"skills/memo/references/r{i}.md" for i in range(25)]
     gs = await listed(fake_github, tmp_path, paths)
     got = await gs.read("gh:o/r:skills/memo")
-    assert got.left_out is False and len(got.files) == 20
+    assert got.left_out is True and len(got.files) == 20
+
+
+async def test_a_skill_with_only_what_is_taken_is_not_left_out(fake_github, tmp_path):
+    paths = ["skills/memo/SKILL.md", "skills/memo/license.TXT", "skills/memo/NOTICE", "skills/memo/references/a.md"]
+    gs = await listed(fake_github, tmp_path, paths)
+    got = await gs.read("gh:o/r:skills/memo")
+    assert got.left_out is False and len(got.files) == 1
+
+
+async def test_a_reference_that_is_not_text_leaves_the_skill_out(fake_github, tmp_path):
+    for odd in ("references/b.bin", "references/sub/c.md"):
+        gs = await listed(fake_github, tmp_path, ["skills/memo/SKILL.md", f"skills/memo/{odd}"])
+        assert (await gs.read("gh:o/r:skills/memo")).left_out is True
 
 
 async def test_licence_rules_in_order(fake_github, tmp_path):
@@ -84,9 +97,13 @@ async def test_licence_rules_in_order(fake_github, tmp_path):
     put(fake_github, "skills/memo/license.md", APACHE_HEAD)
     assert (await gs.read("gh:o/r:skills/memo")).license == "Apache-2.0"
 
-    gs = await listed(fake_github, tmp_path, base + ["skills/memo/LICENSE"], MEMO, licence="")
+    gs = await listed(fake_github, tmp_path, base + ["skills/memo/LICENSE"], MEMO, licence="MIT")
     put(fake_github, "skills/memo/LICENSE", "All rights reserved.")
-    assert (await gs.read("gh:o/r:skills/memo")).license == ""
+    assert (await gs.read("gh:o/r:skills/memo")).license == ""  # a file that is not recognised: no fall-through
+
+    gs = await listed(fake_github, tmp_path, base + ["skills/memo/COPYING"], MEMO, licence="")
+    put(fake_github, "skills/memo/COPYING", APACHE_HEAD)
+    assert (await gs.read("gh:o/r:skills/memo")).license == "Apache-2.0"
 
     gs = await listed(fake_github, tmp_path, base, MEMO, licence="CC-BY-4.0")
     assert (await gs.read("gh:o/r:skills/memo")).license == "CC-BY-4.0"
@@ -94,10 +111,18 @@ async def test_licence_rules_in_order(fake_github, tmp_path):
     assert (await gs.read("gh:o/r:skills/memo")).license == ""
 
 
-async def test_a_frontmatter_licence_that_is_not_one_of_five_falls_through(fake_github, tmp_path):
-    text = MEMO.replace("description:", "license: Complete terms in LICENSE.txt\ndescription:", 1)
-    gs = await listed(fake_github, tmp_path, ["skills/memo/SKILL.md"], text, licence="MIT")
-    assert (await gs.read("gh:o/r:skills/memo")).license == "MIT"
+async def test_a_frontmatter_licence_that_is_not_one_of_five_drops_the_skill(fake_github, tmp_path):
+    for declared in ("Complete terms in LICENSE.txt", "GPL-3.0", "Proprietary"):
+        text = MEMO.replace("description:", f"license: {declared}"+chr(10)+"description:", 1)
+        gs = await listed(fake_github, tmp_path, ["skills/memo/SKILL.md"], text, licence="MIT")
+        assert (await gs.read("gh:o/r:skills/memo")).license == ""
+
+
+async def test_a_proprietary_licence_file_beats_the_repository_licence(fake_github, tmp_path):
+    gs = await listed(fake_github, tmp_path, ["skills/memo/SKILL.md", "skills/memo/LICENSE.txt"], MEMO,
+                      licence="Apache-2.0")
+    put(fake_github, "skills/memo/LICENSE.txt", "Proprietary. Copyright Acme. You may not copy this.")
+    assert (await gs.read("gh:o/r:skills/memo")).license == ""
 
 
 async def test_a_skill_gone_from_the_commit_is_not_found(fake_github, tmp_path):

@@ -77,7 +77,7 @@ async def test_a_need_is_searched_in_both_sources_and_one_fit_decides(t):
     t.model.answers = [CONVERTED]
     got = await t.tune()
     assert got["suggested"] == 1 and got["searches"] == 1
-    assert len(t.scorer.requests) == 1 and set(t.scorer.requests[0].questions) == {f"r:{WIN}", f"r:{MEMO_ID}"}
+    assert len(t.scorer.requests) == 1 and set(t.scorer.requests[0].questions) == {"r:0", "r:1"}
     [s] = t.store.list()
     assert (s.source, s.source_slug, s.source_name, s.left_out) == ("github.com/o/r", MEMO_ID, "Memo Writer", False)
     assert s.source_url == f"https://github.com/o/r/tree/{GH_SHA}/skills/memo" and s.license == "MIT"
@@ -97,7 +97,7 @@ async def test_the_same_skill_in_two_repositories_reaches_the_decider_once(t):
     add_need(t)
     await t.tune()
     [req] = t.scorer.requests
-    assert list(req.questions) == [f"r:{MEMO_ID}"]
+    assert list(req.questions) == ["r:0"]
     [dropped] = t.events("dropped")
     assert dropped["reason"] == "duplicate" and dropped["source_slug"] == gh_id("p", "q", "skills/memo")
 
@@ -114,9 +114,9 @@ async def test_merged_results_are_ranked_by_one_score_and_cut_to_five(t):
     rows += [(-m.score(WORDS, f"Investment Memo {w}", "Memo for a deal."), 1, i, gh_id("o", "r", f"skills/m{i}"))
              for i, w in enumerate(greek)]
     await t.tune()
-    keys = set(t.scorer.requests[0].questions)
-    assert keys == {f"r:{row[3]}" for row in sorted(rows)[:5]} and len(keys) == 5
-    assert any(k.startswith("r:gh:") for k in keys) and any(k.startswith("r:cm-") for k in keys)
+    keys, order = set(t.scorer.requests[0].questions), t.tuner._fit_order
+    assert keys == {f"r:{i}" for i in range(5)} and set(order) == {row[3] for row in sorted(rows)[:5]}
+    assert any(k.startswith("gh:") for k in order) and any(k.startswith("cm-") for k in order)
     assert len(rows) == 8  # the union was cut, not just each list
 
 
@@ -126,7 +126,7 @@ async def test_a_rejected_name_is_dropped_from_any_source(t):
     t.state.remember_name("memo writer")
     add_need(t)
     await t.tune()
-    assert set(t.scorer.requests[0].questions) == {"r:cm-2"}
+    assert set(t.scorer.requests[0].questions) == {"r:0"}
     assert sorted(e["source_slug"] for e in t.events("dropped")) == sorted(["cm-1", MEMO_ID])
 
 
@@ -418,3 +418,47 @@ async def test_the_excluded_entry_names_its_source(t):
     await t.tune()
     got = [e["source"] for e in t.events("search") if e["error"] == "excluded"]
     assert sorted(got) == ["casemark", "github"]
+
+
+async def test_known_skills_do_not_take_the_places_of_the_five(t):
+    names = [f"Investment Memo {w}" for w in ("One", "Two", "Three", "Four", "Five", "Six")]
+    store(t, entry(), [listed(n, f"skills/m{i}", "Write an investment memo from a deal.") for i, n in enumerate(names)])
+    sixth = gh_id("o", "r", "skills/m5")
+    for i in range(5):  # the five that rank first are known already
+        t.state.remember(gh_id("o", "r", f"skills/m{i}"), "rejected")
+    add_need(t)
+    await t.tune()
+    [req] = t.scorer.requests
+    assert list(req.questions) == ["r:0"] and t.tuner._fit_order == [sixth]
+
+
+async def test_an_approved_name_is_dropped_from_a_copy_in_another_repository(t):
+    store(t, entry(), [listed("Memo Writer")])
+    t.state.remember_name("Memo Writer", "approved")
+    add_need(t)
+    await t.tune()
+    assert t.scorer.requests == [] and [e["source_slug"] for e in t.events("dropped")] == [MEMO_ID]
+
+
+async def test_the_fit_entry_names_source_ids_while_the_questions_are_positional(t):
+    store(t, entry(), [listed()])
+    files(t)
+    t.scorer.scores = {MEMO_ID: 0.95}
+    add_need(t)
+    t.model.answers = [CONVERTED]
+    await t.tune()
+    assert all(k.startswith("r:") and k[2:].isdigit() for k in t.scorer.requests[0].questions)
+    assert set(t.events("fit")[0]["scores"]) <= {MEMO_ID, WIN, "other-skill"} and MEMO_ID in t.events("fit")[0]["scores"]
+    assert t.state.known == {MEMO_ID}
+
+
+async def test_a_path_with_a_space_in_the_tree_does_not_stop_the_pass(t):
+    t.owned.append(entry())  # never read: the pass reads it first
+    t.fake.trees[f"o/r/{GH_SHA}"] = tree_of(["My Skills/skills_index.json", "skills/memo/SKILL.md"])
+    t.fake.files[f"o/r/{GH_SHA}/skills/memo/SKILL.md"] = MEMO.encode()
+    add_need(t)
+    got = await t.tune()
+    [read] = t.events("repo_read")
+    assert read["error"] == "" and read["skills"] == 1 and read["from"] == "one_by_one" and "index" not in read
+    assert got["searches"] == 1 and [e["source"] for e in t.events("search")] == ["casemark", "github"]
+    assert t.events("pass_end")[0]["error"] == ""

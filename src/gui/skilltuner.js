@@ -96,12 +96,14 @@ export const repoErrorLine = kind => (!kind ? '' : REPO_ERRORS[kind] || 'This re
 export function repoLine(repo) {
   const r = repo || {};
   const n = r.skills || 0;
+  const d = r.last_read_at ? new Date(r.last_read_at) : null;
+  const read = !!d && !Number.isNaN(d.getTime());
   const parts = [];
   if (n > 0) parts.push(`${n.toLocaleString('en-US')} ${n === 1 ? 'skill' : 'skills'}${r.index ? ` from ${r.index}` : ', read one by one'}`);
+  else if (read) parts.push('0 skills'); // a read that found none is shown, so the owner sees it
   parts.push(r.licence || 'no licence');
-  const d = r.last_read_at ? new Date(r.last_read_at) : null;
   if (r.reading) parts.push('Reading…');
-  else if (d && !Number.isNaN(d.getTime())) parts.push(`read ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })}`);
+  else if (read) parts.push(`read ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })}`);
   else if (!r.error) parts.push('Not read yet');
   return parts.join(' · ');
 }

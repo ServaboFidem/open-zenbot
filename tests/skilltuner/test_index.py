@@ -129,3 +129,28 @@ def test_frontmatter_closes_only_on_a_line_of_three_dashes():
     assert ix.frontmatter("---\nname: a\n---x\n") == {}
     assert ix.frontmatter("---\nname: a\n----\n") == {}
     assert ix.frontmatter("---\nname: a\n---\nbody: ---x\n") == {"name": "a"}
+
+
+def test_extras_treats_licence_files_in_any_case_and_notice_as_taken():
+    assert not ix.extras(blobs("s/a/SKILL.md", "s/a/license.txt", "s/a/Copying", "s/a/NOTICE.md", "s/a/LICENSE-MIT"), "s/a")
+    assert ix.extras(blobs("s/a/SKILL.md", "s/a/notes.md"), "s/a")
+
+
+def test_find_index_takes_only_plain_paths():
+    assert ix.find_index(blobs("My Skills/skills_index.json"), "", "") is None
+    assert ix.find_index(blobs("a/b c/skills_index.json", "x/skills_index.json"), "", "") == "x/skills_index.json"
+    assert ix.find_index(blobs("My Skills/i.json"), "", "My Skills/i.json") is None
+
+
+def test_twenty_thousand_skill_folders_are_grouped_at_once():
+    import time
+    b = []
+    for i in range(20_000):
+        base = f"skills/g{i % 200}/s{i}"
+        b += [(f"{base}/SKILL.md", 1), (f"{base}/references/a.md", 1), (f"{base}/scripts/x.py", 1)]
+    b.append(("skills/g0/s0/inner/SKILL.md", 1))
+    start = time.perf_counter()
+    folders = ix.skill_folders(b, "skills")
+    extra = ix.extras_by_folder(b, set(folders))
+    assert time.perf_counter() - start < 1.0
+    assert len(folders) == 20_000 and all(extra.values())

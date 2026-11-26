@@ -128,6 +128,7 @@ class TunerState:
         self._source_pauses: dict[str, str] = {}
         self._github_spent: dict[str, dict[str, int]] = {}  # per local date: api and file counts
         self._names: list[str] = []  # rejected skill names, case-folded, oldest first
+        self._approved: list[str] = []  # approved skill names, the same
         self._last_pass_at = ""
         self._last_error = ""
         self._error_source = ""
@@ -156,6 +157,9 @@ class TunerState:
             names = d.get("rejected_names", [])
             if not isinstance(names, list) or not all(isinstance(x, str) for x in names):
                 raise TypeError("rejected names are malformed")
+            approved = d.get("approved_names", [])
+            if not isinstance(approved, list) or not all(isinstance(x, str) for x in approved):
+                raise TypeError("approved names are malformed")
             known = d["known"]
             if not isinstance(known, dict) or not all(isinstance(k, str) and v in HOWS for k, v in known.items()):
                 raise TypeError("known is malformed")
@@ -175,6 +179,7 @@ class TunerState:
         self._searches, self._batches = searches, read_batches
         self._source_pauses, self._github_spent = dict(pauses), {k: dict(v) for k, v in gspent.items()}
         self._names = list(names)[-NAMES_CAP:]
+        self._approved = list(approved)[-NAMES_CAP:]
         self._known, self._paused_until, self._last_pass_at, self._last_error = known, paused, at, err
         self._error_source = err_source
 
@@ -184,7 +189,7 @@ class TunerState:
             "spent": self._spent, "converted": self._converted, "searches": self._searches,
             "batches": self._batches, "known": self._known,
             "source_pauses": self._source_pauses, "github_spent": self._github_spent,
-            "rejected_names": self._names,
+            "rejected_names": self._names, "approved_names": self._approved,
             "paused_until": self._paused_until, "last_pass_at": self._last_pass_at,
             "last_error": self._last_error, "last_error_source": self._error_source})
 
@@ -341,15 +346,22 @@ class TunerState:
         with self._lock:
             return set(self._names)
 
-    def remember_name(self, name: str) -> None:
+    @property
+    def approved_names(self) -> set[str]:
+        with self._lock:
+            return set(self._approved)
+
+    def remember_name(self, name: str, how: str = "rejected") -> None:
+        """Keep a skill's name (case-folded) so a copy of it in another repository is not suggested again."""
         key = name.strip().casefold()
         if not key:
             return
         with self._lock:
-            if key in self._names:
-                self._names.remove(key)
-            self._names.append(key)
-            del self._names[:-NAMES_CAP]
+            names = self._approved if how == "approved" else self._names
+            if key in names:
+                names.remove(key)
+            names.append(key)
+            del names[:-NAMES_CAP]
             self._save()
 
     @property
