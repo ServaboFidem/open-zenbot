@@ -106,3 +106,58 @@ def test_the_tuner_clean_without_a_profile_ends_the_pass(harness):
     harness.profile = None
     with pytest.raises(Interrupted):
         harness._tuner_clean("investment memo drafting")
+
+
+async def test_an_added_repository_is_searched_and_suggested_by_a_pass(harness):
+    """End to end on the real harness: add a repository through the route, let its read finish, run a pass."""
+    import asyncio
+    import time
+
+    import httpx
+
+    from src.harness.api import create_app
+    from src.harness.conversations import Conversation, Exchange
+    from src.skilltuner.casemark import CaseMark
+    from src.skilltuner.github import GitHub
+    from src.skilltuner.github_source import gh_id
+
+    from .conftest import GH_SHA, FakeCaseMark, FakeGitHub
+    from .test_tuner import CONVERTED, TOPIC, WORDS, FakeModel, FakeScorer, iso, needs, results
+
+    h = harness
+    fake = FakeGitHub()
+    memo = "---\nname: Memo Writer\ndescription: Write an investment memo for a deal.\n---\n# Memo\n\nSteps.\n"
+    fake.trees[f"o/r/{GH_SHA}"] = {"truncated": False, "tree": [
+        {"path": "skills/memo/SKILL.md", "type": "blob", "sha": "a" * 40, "size": 10}]}
+    fake.files[f"o/r/{GH_SHA}/skills/memo/SKILL.md"] = memo.encode()
+    h.github.client = GitHub(lambda: fake.client, sleep=fake.sleep,
+                             on_send=lambda k: h.tuner_state.spend_github(h.tuner._today(), k))
+    cm = FakeCaseMark()
+    cm.search_answer = results()
+    h.tuner.source = CaseMark(lambda: cm.client, sleep=cm.sleep, on_send=lambda: True)
+    model, scorer = FakeModel(), FakeScorer()
+    model.answers = [needs((TOPIC, WORDS)), CONVERTED]
+    scorer.scores = {gh_id("o", "r", "skills/memo"): 0.95}
+    h.add_bot(tuner_bot())
+    t = h.tuner
+    t._model, t._scorer, t._bot, t._clean = (lambda: (model, "m")), (lambda: scorer), h._tuner_bot, (lambda s: True)
+    t._conversations = lambda: [Conversation(
+        owner="b", exchanges=[Exchange(user="Draft an investment memo for the Acme deal", outcome="done", reply="r")],
+        updated_at=iso(time.time() - 3600))]
+    from dataclasses import replace
+    t.set_settings(replace(t.settings, enabled=True))
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(h)), base_url="http://localhost") as c:
+        r = await c.post("/skilltuner/repos", json={"address": "https://github.com/o/r", "licence": "MIT"})
+        assert r.status_code == 200, r.text
+    await asyncio.gather(*list(h.repo_tasks))
+    assert t.waiting() >= 1
+
+    async def guarded(coro):
+        return await coro
+
+    got = await t.tune(may_go=lambda: True, guarded=guarded)
+    assert got["suggested"] == 1
+    [s] = h.suggestions.list()
+    assert s.source == "github.com/o/r" and s.source_slug == gh_id("o", "r", "skills/memo") and s.license == "MIT"
+    await h.dreamer.close()

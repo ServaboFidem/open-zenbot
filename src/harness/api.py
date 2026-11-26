@@ -39,6 +39,9 @@ from src.decider.interface import BandConfig, ConfirmState, Scorer
 from src.decider.router import CatalogRouter, RouterConfig
 from src.memory.dream import DreamMarks, Dreamer, Interrupted
 from src.skilltuner.casemark import CaseMark, new_client as casemark_client
+from src.skilltuner.github import GitHub, new_client as github_client
+from src.skilltuner.github_source import GitHubSkills, github_wide
+from src.skilltuner.repos import RepoEntry, RepoStore
 from src.skilltuner.settings import TunerState
 from src.skilltuner.suggestions import SuggestionStore
 from src.skilltuner.routes import skilltuner_router
@@ -99,6 +102,7 @@ from src.context.protected import ProtectedBlock, ScopeGuard
 from src.decider.supervisor import LoopSupervisor
 from src.generation.generator import Generator
 from src.events.discover_routes import discover_router
+from src.events.eventbrite import SourceError
 from src.events.facebook_routes import facebook_router
 from src.events.morning_digest import MorningDigest, morning_router
 from src.events.routes import calendar_router
@@ -247,6 +251,10 @@ class Harness:
     _dream_gen: tuple[tuple, Generator] | None = field(default=None, init=False, repr=False)  # (the dream choice's settings, its generator)
     _tuner_gen: tuple[tuple, Provider] | None = field(default=None, init=False, repr=False)  # (the dream choice's settings, SkillTuner's client)
     _tuner_http: Any = field(default=None, init=False, repr=False)  # the CaseMark connector's own client, made on first use
+    _github_http: Any = field(default=None, init=False, repr=False)  # the GitHub connector's own client, made on first use
+    github: GitHubSkills | None = None  # the owner's GitHub repositories as a skill source; built once with the tuner
+    repo_tasks: set = field(default_factory=set, init=False, repr=False)  # owner-started repository reads under way
+    repo_errors: dict = field(default_factory=dict, init=False, repr=False)  # id -> kind of an owner read that failed
     media: MediaProxy | None = None  # remote images, video and PDFs for the chat; trusted hosts at once, others on a click
     task_attachments: dict[str, list[Attachment]] = field(default_factory=dict)  # session id -> files attached in a one-to-one task
     # chat upload id -> how many task routes are sending it right now: not deletable or sweepable while above 0
@@ -439,10 +447,15 @@ class Harness:
                 return date.today().isoformat()
 
             source = CaseMark(self._tuner_client, on_send=lambda: state.spend(today()))  # the budget on today's date
+            if self.github is None:  # its stored lists sit in the ledger folder, which no bot reaches
+                self.github = GitHubSkills(
+                    GitHub(self._github_client, on_send=lambda kind: state.spend_github(today(), kind)),
+                    RepoStore(ledger_path_for(c.vault_root) / "skilltuner-repos"),
+                    lambda: self.tuner.settings.repos if self.tuner is not None else [], time.time)
             self.tuner = SkillTuner(vault_root=c.vault_root, state=state, store=self.suggestions, source=source,
                                     ledger=self.ledger, conversations=self._dream_conversations, catalog=self.catalog,
                                     model=self._tuner_model, scorer=lambda: self.scorer, bot=self._tuner_bot,
-                                    clean=self._tuner_clean, today=today, config=self.skill_config)
+                                    clean=self._tuner_clean, today=today, config=self.skill_config, github=self.github)
         if self.skill_watcher is None:
             self.skill_watcher = SkillWatcher(discovered_skills_dir(c.vault_root), self.catalog, lambda: list(self.bots.values()),
                                               self.ledger, self.skill_config, on_change=lambda: self.router.bump_scope() if self.router is not None else None)  # a same-size edit must not keep a stale score
@@ -661,7 +674,58 @@ class Harness:
             self._tuner_http = casemark_client()
         return self._tuner_http
 
+    def _github_client(self) -> Any:
+        """The GitHub connector's client: no proxy from the environment, no redirect followed; closed at shutdown."""
+        if self._github_http is None:
+            self._github_http = github_client()
+        return self._github_http
+
+    def start_repo_read(self, entry: RepoEntry) -> None:
+        """Read one repository now, in the background: the owner asked, so it runs whether or not the computer is idle.
+        The task is kept here and cancelled at shutdown. A failure is shown with the repository, never raised."""
+        if self.github is None or entry.id in self.github.reading:
+            return
+        self.github.reading.add(entry.id)  # at once, so a second ask sees it before the task has started
+        task = asyncio.create_task(self._read_repo(entry))
+        self.repo_tasks.add(task)
+        task.add_done_callback(self.repo_tasks.discard)
+
+    async def _read_repo(self, entry: RepoEntry) -> None:
+        gh = self.github
+        event: dict[str, Any] = {"id": entry.id}
+        try:
+            got = await gh.read_repo(entry)
+            self.repo_errors.pop(entry.id, None)
+            event |= {"skills": len(got.skills), "skipped": got.skipped,
+                      "from": "index" if got.index and not got.one_by_one else "one_by_one",
+                      "error": "", "commit": got.commit[:12]}
+            if gh.changed:
+                self.tuner_state.reset_github()  # a changed list makes every need due again for GitHub
+                gh.changed = False
+        except asyncio.CancelledError:
+            raise
+        except SourceError as e:
+            if github_wide(e) or e.kind == "budget":
+                self.repo_errors[entry.id] = e.kind
+            else:
+                self.repo_errors.pop(entry.id, None)  # the stored list carries this error
+            event["error"] = e.kind
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger(__name__).warning("repository read failed: %s", type(e).__name__)
+            self.repo_errors[entry.id] = "provider"
+            event["error"] = "provider"
+        finally:
+            gh.reading.discard(entry.id)
+        self.ledger.append(Kind.skilltuner, "", "", event="repo_read", **event)
+
     async def close_tuner(self) -> None:
+        tasks = list(self.repo_tasks)
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if self._github_http is not None:
+            await self._github_http.aclose()
+            self._github_http = None
         if self._tuner_http is not None:
             await self._tuner_http.aclose()
             self._tuner_http = None

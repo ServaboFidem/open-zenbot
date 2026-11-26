@@ -185,12 +185,21 @@ class GitHubSkills:
                 oldest = (at, entry)
         return never or (oldest[1] if oldest else None)
 
+    def _listed(self, id: str) -> bool:
+        return any(e.id == id for e in self.entries())
+
+    def _put(self, id: str, stored: RepoList) -> None:
+        """Keep a read's list only while the owner still lists the repository: one removed during the read stays
+        removed (no stored list is left behind)."""
+        if self._listed(id):
+            self.store.put(id, stored)
+
     async def read_repo(self, entry: RepoEntry, go: Callable[[], None] = lambda: None) -> RepoList:
         self.reading.add(entry.id)
         try:
             return await self._read(entry, go)
         except SourceError as e:
-            if not github_wide(e):
+            if not github_wide(e) and self._listed(entry.id):
                 self.store.set_error(entry.id, e.kind)
             raise
         finally:
@@ -206,7 +215,7 @@ class GitHubSkills:
         at = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat(timespec="seconds")
         if old is not None and old.commit == sha and old.read_at:
             old = replace(old, licence_label=info.licence, read_at=at, error="")  # the stored copy is shared
-            self.store.put(entry.id, old)
+            self._put(entry.id, old)
             return old
         blobs = await self._blobs(entry, sha, go)
         folders = skill_folders(blobs, entry.folder)
@@ -222,7 +231,7 @@ class GitHubSkills:
                 raise _fail("no_index")
             skills, skipped = await self._one_by_one(entry, sha, folders, blobs, go)
         stored = RepoList(sha, info.licence, at, "", used, skipped, skills, one_by_one)
-        self.store.put(entry.id, stored)
+        self._put(entry.id, stored)
         if old is None or old.skills != skills:
             self.changed = True
         return stored

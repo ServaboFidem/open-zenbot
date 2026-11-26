@@ -9,18 +9,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
 import stat
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, StrictBool
 
+from src.events.eventbrite import SourceError
 from src.events.routes import NothingIn
 from src.memory.ledger import Kind
 from src.skills.catalog import skill_entry
-from src.skilltuner.settings import TunerSettings
+from src.skilltuner.licences import CANON, canonical
+from src.skilltuner.repos import RepoEntry, RepoList, parse_address, parse_index_path
+from src.skilltuner.settings import DAILY_REQUESTS, GH_API_PER_DAY, GH_FILES_PER_DAY
 from src.skilltuner.watcher import FOLDER, _is_reparse, _norm
 from src.vault_settings import discovered_skills_dir
 
@@ -35,12 +39,40 @@ NOT_REMOVED = "The skill could not be removed."
 NOT_SAVED = "The setting could not be saved."
 LINKED = "That skill's folder is a link and was left alone."
 LIST_OUT = ("original", "converted")
+DUPLICATE = "That repository is already listed."
+TOO_MANY = "At most 10 repositories."
+NO_REPO = "No such repository."
+READING = "That repository is being read already."
+BAD_LICENCE = "Pick a licence from the list."
+MAX_REPOS = 10
+GITHUB_ERRORS = {  # a GitHub failure on the check route: (status, sentence)
+    "not_found": (404, "No such public repository on GitHub."),
+    "refused": (429, "GitHub is limiting requests. Try again later."),
+    "budget": (429, "SkillTuner's GitHub requests for today are used up. Try again tomorrow."),
+    "network": (502, "GitHub could not be reached."),
+    "source_changed": (502, "GitHub answered in a way SkillTuner does not understand."),
+}
+GITHUB_OTHER = (502, "GitHub could not answer. Try again later.")
 
 log = logging.getLogger(__name__)
 
 
 class TunerSettingsIn(BaseModel):
     enabled: StrictBool
+
+
+class AddressIn(BaseModel):
+    address: str
+
+
+class RepoIn(BaseModel):
+    address: str
+    licence: str
+    index: str = ""
+
+
+class LicenceIn(BaseModel):
+    licence: str
 
 
 def _kind(p: Path) -> int | None:
@@ -92,7 +124,35 @@ def skilltuner_router(h) -> APIRouter:
     def status() -> dict[str, Any]:
         s = h.tuner.status()
         return {"enabled": s["enabled"], "ready": s["ready"], "why_not": why_not(), "last_pass_at": s["last_pass_at"],
-                "error": s["error"], "pending": s["pending"], "spent_today": s["spent_today"], "budget": s["budget"]}
+                "error": s["error"], "error_source": s["error_source"], "pending": s["pending"],
+                "spent_today": s["spent_today"], "budget": s["budget"]}
+
+    def repo_view(e: RepoEntry) -> dict[str, Any]:
+        stored = h.github.store.get(e.id) or RepoList()
+        return {"id": e.id, "address": e.address(), "label": e.label(), "folder": e.folder, "index": stored.index,
+                "one_by_one": stored.one_by_one, "skills": len(stored.skills), "skipped": stored.skipped,
+                "last_read_at": stored.read_at, "commit": stored.commit[:12], "reading": e.id in h.github.reading,
+                "error": h.repo_errors.get(e.id) or stored.error, "licence": e.licence}
+
+    def save_repos(repos: list[RepoEntry]) -> None:
+        try:
+            h.tuner.set_settings(replace(h.tuner.settings, repos=repos))
+        except OSError:
+            raise HTTPException(500, NOT_SAVED) from None
+
+    def entry_of(id: str) -> RepoEntry:
+        found = next((e for e in h.tuner.settings.repos if e.id == id), None)
+        if found is None:
+            raise HTTPException(404, NO_REPO)
+        return found
+
+    def licence_of(text: str) -> str:
+        if text == "":
+            return ""
+        got = canonical(text)
+        if not got:
+            raise HTTPException(422, BAD_LICENCE)
+        return got
 
     def folder() -> Path:
         return discovered_skills_dir(h.config.vault_root)
@@ -111,11 +171,94 @@ def skilltuner_router(h) -> APIRouter:
         if body.enabled and not h.dreamer.settings.enabled:
             raise HTTPException(409, NEED_DREAMING)
         try:
-            h.tuner.set_settings(TunerSettings(body.enabled))
+            h.tuner.set_settings(replace(h.tuner.settings, enabled=body.enabled))
         except OSError:
             raise HTTPException(500, NOT_SAVED) from None
         log_event("settings", enabled=body.enabled)
         return status()
+
+    @r.get("/sources")
+    async def get_sources() -> dict[str, Any]:
+        today = h.tuner._today()
+        spent = h.tuner_state.github_spent(today)
+        return {"casemark": {"label": "agentskills.finance", "builtin": True, "spent_today": h.tuner_state.spent(today),
+                             "budget": DAILY_REQUESTS, "paused": h.tuner_state.source_paused("casemark", today)},
+                "github": {"api_today": spent["api"], "files_today": spent["file"],
+                           "api_budget": GH_API_PER_DAY, "files_budget": GH_FILES_PER_DAY,
+                           "paused": h.tuner_state.source_paused("github", today)},
+                "repos": [repo_view(e) for e in h.tuner.settings.repos],
+                "licences": list(CANON.values())}
+
+    @r.post("/repos/check")
+    async def check_repo(body: AddressIn) -> dict[str, Any]:
+        try:
+            owner, repo, ref, folder = parse_address(body.address)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        try:
+            info = await h.github.client.repo(owner, repo)
+        except SourceError as e:
+            code, sentence = GITHUB_ERRORS.get(e.kind, GITHUB_OTHER)
+            raise HTTPException(code, sentence) from None
+        shown = RepoEntry("", owner, repo, ref, folder, "", "")
+        return {"address": shown.address(), "default_branch": info.default_branch, "github_licence": info.licence,
+                "licence": canonical(info.licence)}
+
+    @r.post("/repos")
+    async def add_repo(body: RepoIn) -> dict[str, Any]:
+        try:
+            owner, repo, ref, folder = parse_address(body.address)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        licence = licence_of(body.licence)
+        try:
+            index = parse_index_path(body.index)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        async with lock:
+            repos = list(h.tuner.settings.repos)
+            same = (owner.casefold(), repo.casefold(), ref.casefold(), folder.casefold())
+            if any((e.owner.casefold(), e.repo.casefold(), e.ref.casefold(), e.folder.casefold()) == same
+                   for e in repos):
+                raise HTTPException(409, DUPLICATE)
+            if len(repos) >= MAX_REPOS:
+                raise HTTPException(409, TOO_MANY)
+            entry = RepoEntry(secrets.token_hex(8), owner, repo, ref, folder, index, licence)
+            save_repos(repos + [entry])
+            log_event("repo_added", id=entry.id, owner=owner, repo=repo)
+            h.start_repo_read(entry)
+            return repo_view(entry)
+
+    @r.put("/repos/{id}")
+    async def put_repo(id: str, body: LicenceIn) -> dict[str, Any]:
+        async with lock:
+            entry = entry_of(id)
+            licence = licence_of(body.licence)
+            changed = replace(entry, licence=licence)
+            save_repos([changed if e.id == id else e for e in h.tuner.settings.repos])
+            return repo_view(changed)
+
+    @r.post("/repos/{id}/read")
+    async def read_repo(id: str, _: NothingIn) -> dict[str, Any]:
+        async with lock:
+            entry = entry_of(id)
+            if id in h.github.reading:
+                raise HTTPException(409, READING)
+            h.start_repo_read(entry)
+            return repo_view(entry)
+
+    @r.delete("/repos/{id}")
+    async def delete_repo(id: str) -> dict[str, bool]:
+        async with lock:
+            entry_of(id)
+            save_repos([e for e in h.tuner.settings.repos if e.id != id])  # first: a read in flight then writes nothing
+            try:
+                h.github.store.remove(id)
+            except (OSError, ValueError) as e:
+                log.warning("skilltuner repo list not removed: %s", type(e).__name__)
+            h.repo_errors.pop(id, None)
+            log_event("repo_removed", id=id)
+        return {"ok": True}
 
     @r.get("/discovered")
     async def get_discovered() -> dict[str, Any]:
@@ -201,6 +344,8 @@ def skilltuner_router(h) -> APIRouter:
                 raise HTTPException(404, NO_SUGGESTION)
             h.suggestions.remove(id)
             h.tuner_state.remember(s.source_slug, "rejected")
+            if s.source_name:
+                h.tuner_state.remember_name(s.source_name)
             log_event("rejected", id=id, slug=s.slug, name=s.name)
         return {"ok": True}
 
