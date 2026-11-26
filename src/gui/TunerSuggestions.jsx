@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
-import { attachChosen, createLatest, createQueue, doneLine, initialPicks, offeredBots, sameSlugs } from './skilltuner.js';
+import { LEFT_OUT, attachChosen, cardSource, createLatest, createQueue, doneLine, initialPicks, offeredBots, sameSlugs } from './skilltuner.js';
 
 const POLL_MS = 15000;
 
@@ -92,7 +92,8 @@ export function TunerSuggestions({ ctx, bots, onChanged, onDiscovered }) {
       {list.map(s => <article className="resource-row od-stack" key={s.id}>
         <div className="od-field"><h3>{s.name}</h3><p>{s.use}</p>
           <p className="quiet-label">Found for: {s.topic}</p>
-          <p className="quiet-label">From agentskills.finance · {s.license}</p></div>
+          <p className="quiet-label">{cardSource(s)}</p>
+          {s.left_out && <p className="quiet-label">{LEFT_OUT}</p>}</div>
         {open[s.id] && <div className="od-row-top">
           <div className="od-field od-fill"><span className="quiet-label">Original</span><pre className="full-text">{open[s.id].original}</pre></div>
           <div className="od-field od-fill"><span className="quiet-label">Converted</span><pre className="full-text">{open[s.id].converted}</pre></div>

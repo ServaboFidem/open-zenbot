@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PANELS, SECTIONS, anchorId, liveSections, searchSettings } from '../../src/gui/settings-index.js';
 
-test('panels are the fourteen, in order', () => {
-  assert.deepEqual(PANELS.map(p => p.id), ['harness', 'providers', 'tools', 'mcps', 'skills', 'agents', 'folders', 'calendar', 'tracing', 'ledger', 'memory', 'apps', 'speakers', 'about']);
+test('panels are the fifteen, in order', () => {
+  assert.deepEqual(PANELS.map(p => p.id), ['harness', 'providers', 'tools', 'mcps', 'skills', 'discovery', 'agents', 'folders', 'calendar', 'tracing', 'ledger', 'memory', 'apps', 'speakers', 'about']);
   for (const p of PANELS) assert.ok(p.name && p.description);
 });
 test('every section belongs to a panel and its anchor is anchorId', () => {
@@ -134,4 +134,8 @@ test('the Read aloud card is found by its local voice words', () => {
   const live = liveSections(null, [{ id: 'speech', name: 'Read aloud', summary }]);
   assert.equal(searchSettings('kokoro', live)[0].anchor, 'settings-tools-speech');
   assert.ok(searchSettings('on this computer', live).some(m => m.anchor === 'settings-tools-speech'));
+});
+
+test('the Settings search finds Skill discovery', () => {
+  for (const q of ['Skill discovery', 'GitHub', 'repository']) assert.ok(searchSettings(q).some(m => m.panel === 'discovery'), q);
 });

@@ -18,6 +18,12 @@ export function tunerApi(fetchJson) {
     reject: id => fetchJson('POST', `/skilltuner/suggestions/${enc(id)}/reject`, {}),
     remove: slug => fetchJson('POST', `/skilltuner/skills/${enc(slug)}/remove`, {}),
     discovered: () => fetchJson('GET', '/skilltuner/discovered'),
+    sources: () => fetchJson('GET', '/skilltuner/sources'),
+    checkRepo: address => fetchJson('POST', '/skilltuner/repos/check', { address }),
+    addRepo: ({ address, licence, index }) => fetchJson('POST', '/skilltuner/repos', { address, licence, index }),
+    setRepoLicence: (id, licence) => fetchJson('PUT', `/skilltuner/repos/${enc(id)}`, { licence }),
+    readRepo: id => fetchJson('POST', `/skilltuner/repos/${enc(id)}/read`, {}),
+    removeRepo: id => fetchJson('DELETE', `/skilltuner/repos/${enc(id)}`),
   };
 }
 
@@ -25,6 +31,9 @@ export function statusLine(status) {
   const s = status || {};
   if (!s.enabled) return 'SkillTuner is off.';
   if (!s.ready) return s.why_not || 'SkillTuner is not ready.';
+  if (s.error_source === 'github' && (s.error === 'budget' || NET.has(s.error))) {
+    return `${s.error === 'budget' ? "Today's GitHub reads are used up." : 'GitHub could not be reached.'} Trying again tomorrow.`;
+  }
   if (NET.has(s.error)) return 'agentskills.finance could not be reached. Trying again tomorrow.';
   if (MODEL.has(s.error)) return "SkillTuner's model could not be reached. Trying again tomorrow.";
   if (s.error === 'decider') return 'The decision model could not be reached. Trying again tomorrow.';
@@ -62,7 +71,53 @@ export function doneLine(names) {
 }
 
 // Under the switch (also in the search index).
-export const PRIVACY = "SkillTuner reads what you asked for while the computer dreams, and searches agentskills.finance for a skill that fits. The words of a need are sent to that site and to the decision model you chose. Nothing is installed until you approve it.";
+export const PRIVACY = "SkillTuner reads what you asked for while the computer dreams, and looks for a skill that fits in agentskills.finance and in the GitHub repositories you add. Repositories are searched on this computer: only agentskills.finance and the decision model you chose receive the words of a need. Nothing is installed until you approve it.";
+
+// A suggestion that came with files other than instructions and references.
+export const LEFT_OUT = 'This skill came with scripts or other files that were not brought over.';
+
+export const LICENCE_CHOICES = [
+  ...['Apache-2.0', 'MIT', 'BSD-2-Clause', 'BSD-3-Clause', 'CC-BY-4.0'].map(v => ({ value: v, label: v })),
+  { value: '', label: "Don't use" },
+];
+
+const REPO_ERRORS = {
+  not_found: 'GitHub has no such public repository.',
+  source_changed: 'The repository moved or changed. Remove it and add it again.',
+  no_index: 'This repository has no skill index and too many skills to read one by one.',
+  too_large: 'This repository is too large to read.',
+  network: 'GitHub could not be reached. Trying again tomorrow.',
+  refused: 'GitHub could not be reached. Trying again tomorrow.',
+  budget: "Today's GitHub reads are used up.",
+};
+export const repoErrorLine = kind => (!kind ? '' : REPO_ERRORS[kind] || 'This repository could not be read.');
+
+// "3,046 skills from skills_index.json · MIT · read 26 Nov". The date is the UTC day of the read.
+export function repoLine(repo) {
+  const r = repo || {};
+  const n = r.skills || 0;
+  const parts = [];
+  if (n > 0) parts.push(`${n.toLocaleString('en-US')} ${n === 1 ? 'skill' : 'skills'}${r.index ? ` from ${r.index}` : ', read one by one'}`);
+  parts.push(r.licence || 'no licence');
+  const d = r.last_read_at ? new Date(r.last_read_at) : null;
+  if (r.reading) parts.push('Reading…');
+  else if (d && !Number.isNaN(d.getTime())) parts.push(`read ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })}`);
+  else if (!r.error) parts.push('Not read yet');
+  return parts.join(' · ');
+}
+
+export const casemarkLine = src => `built in · ${src?.spent_today || 0} of ${src?.budget || BUDGET} requests today`;
+
+// The suggestion card's source: an older suggestion has none and came from agentskills.finance.
+export const cardSource = s => `From ${s?.source || 'agentskills.finance'} · ${s?.license}`;
+
+// Add is offered once this address was checked (and not edited since) and a licence choice is on the form.
+// licence is null until the check answers; '' is a choice (Don't use).
+export const canAdd = form => {
+  const f = form || {};
+  const a = String(f.address || '').trim();
+  return !!a && f.checked === a && LICENCE_CHOICES.some(c => c.value === f.licence);
+};
 
 // A read answers only if nothing newer was started since: `start()` gives a token, `fresh(token)` says whether it
 // is still the newest, and `bump()` (an action that changes the data) makes every read in flight stale.
