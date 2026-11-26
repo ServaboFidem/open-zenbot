@@ -958,3 +958,46 @@ async def test_the_loop_starts_nothing_when_neither_is_waiting(d, monkeypatch):
     stop.set()
     await asyncio.wait_for(loop, 1.0)
     assert stub.passes == 0
+
+
+class SwitchedTuner(StubTuner):
+    """A tuner whose model call hangs until it is cancelled; `on` is its switch."""
+
+    def __init__(self):
+        super().__init__()
+        self.on = True
+        self.calling = asyncio.Event()
+        self.cancelled = False
+        self.ended = ""
+
+    def ready(self):
+        return self.on
+
+    async def tune(self, *, may_go, guarded):
+        self.passes += 1
+
+        async def hang():
+            self.calling.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+
+        try:
+            await guarded(hang())
+            self.ended = "done"
+        except dream_mod.Interrupted:
+            self.ended = "interrupted"
+        return {}
+
+
+async def test_switching_skilltuner_off_cancels_its_call_in_flight(d, monkeypatch):
+    monkeypatch.setattr(dream_mod, "GUARD_S", 0.02)
+    d.dreamer.tuner = stub = SwitchedTuner()
+    d.dreamer.report_idle(600)
+    run = asyncio.ensure_future(d.dreamer.dream())
+    await asyncio.wait_for(stub.calling.wait(), 1.0)
+    stub.on = False  # the owner switches SkillTuner off; dreaming's own rules still hold
+    await asyncio.wait_for(run, 1.0)
+    assert stub.cancelled and stub.ended == "interrupted"

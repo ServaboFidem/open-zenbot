@@ -485,7 +485,11 @@ class Dreamer:
 
     async def _tune(self) -> None:
         try:
-            await self.tuner.tune(may_go=lambda: self._may_go(False), guarded=lambda c: self._guarded(c, False))
+            # its own switch counts too: switching SkillTuner off cancels a call it has out
+            def go() -> bool:
+                return self._may_go(False) and self.tuner.ready()
+
+            await self.tuner.tune(may_go=go, guarded=lambda c: self._guarded(c, False, go))
         except Exception as e:  # noqa: BLE001 - a SkillTuner bug must not touch the fact pass
             self.ledger.append(Kind.error, "", "", where="skilltuner", error=type(e).__name__)
 
@@ -606,8 +610,8 @@ class Dreamer:
         if not kept:
             self.marks.set_read(conv.id, end)
 
-    async def _guarded(self, coro: Awaitable[Any], manual: bool) -> Any:
-        """Await a model call, re-checking the rules every GUARD_S; cancel it when one fails."""
+    async def _guarded(self, coro: Awaitable[Any], manual: bool, may_go: Callable[[], bool] | None = None) -> Any:
+        """Await a model call, re-checking the rules (`may_go`, else `_may_go`) every GUARD_S; cancel it when one fails."""
         task = asyncio.ensure_future(coro)
         self._call = task
         try:
@@ -617,7 +621,7 @@ class Dreamer:
                     if task.cancelled():  # close() or reset_attempts() cancelled it
                         raise Interrupted()
                     return task.result()
-                if not self._may_go(manual):
+                if not (may_go() if may_go is not None else self._may_go(manual)):
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
                     raise Interrupted()
