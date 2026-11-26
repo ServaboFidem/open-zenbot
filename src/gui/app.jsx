@@ -41,6 +41,7 @@ import MusicArea from './music/MusicArea';
 import EventsArea from './events/EventsArea';
 import RoutineDialog from './RoutineSchedule';
 import BriefingsSection from './BriefingsSection.jsx';
+import { TunerSuggestions } from './TunerSuggestions.jsx';
 import ApprovalDialog from './ApprovalDialog';
 import { applyDecided, botLabel, countLine, keepDeferred, nextApproval, readOrder } from './approval-dialog.js';
 import { importLegacyRoutines, persistWorkspace, dropLegacyRoutines, importNotice } from './routines-import.js';
@@ -171,6 +172,7 @@ function App() {
   useEffect(() => { if (page === 'Sonos' && sonosStatus && !sonosOn) setPage('Music'); }, [page, sonosStatus, sonosOn]);
   const [musicStatus, setMusicStatus] = useState(null);  // GET /music/status: the Music badge and area read it
   const [fits, setFits] = useState([]);
+  const [discoveredSkills, setDiscoveredSkills] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [rooms, setRooms] = useState([]);
   const [designs, setDesigns] = useState(null);  // Design page: every design made with a studio bot; null until loaded
@@ -914,6 +916,17 @@ function App() {
       setNotice(approved ? 'Approved. The bot continues with that action.' : 'Rejected. The bot continues without it.');
     } finally { decidingRef.current = false; setDeciding(false); }
   }
+  async function refreshSkillLists() {
+    setBots(await api.bots().catch(() => bots)); setSkills(await api.skills().catch(() => skills)); setFits(await api.fits().catch(() => fits));
+  }
+  async function removeDiscovered(skill) {
+    if (!window.confirm(`Remove ${skill.name}? Its folder is deleted and bots lose it.`)) return;
+    const r = await guard(() => api.tuner.remove(skill.ref));
+    if (!r) return;
+    setDiscoveredSkills(list => list.filter(x => x !== skill.ref));
+    await refreshSkillLists();
+    setNotice(`${skill.name} was removed.`);
+  }
   async function suggestFit(skill) {
     const fit = await guard(() => api.suggestFit(skill.ref));
     if (!fit) return;
@@ -1057,8 +1070,9 @@ function App() {
             <div className="list-panel">{Object.entries(mcps).map(([name, m]) => ({ name, ...m })).filter(matches).map(m => <article className="resource-row od-row-top" key={m.name} id={anchorId('mcps', m.name)}><span className="resource-icon"><PlugConnected24Regular/></span><div className="od-field od-fill"><h3>{m.name} <Badge appearance="tint" size="small" color={m.state === 'connected' ? 'success' : m.state === 'failed' ? 'danger' : m.state === 'needs_install' ? 'warning' : 'subtle'}>{m.state}</Badge></h3><p>{m.use || 'No description.'}</p><span className="quiet-label">{m.transport} · {m.target}</span>{m.error && <p className="field-hint">{m.error}</p>}<McpDeps server={m} ctx={settingsCtx} onSaved={setMcps}/><McpKeys server={m} ctx={settingsCtx} onSaved={setMcps}/><details><summary>{m.tools.length} {m.tools.length === 1 ? 'tool' : 'tools'}</summary><dl className="full-text">{m.tools.map(t => <div key={t}><dt>{m.name}.{t}</dt></div>)}</dl></details></div></article>)}</div>{!Object.keys(mcps).length && <Empty title={online ? 'No MCP servers configured' : 'Harness offline'} text={online ? 'Add one to mcp.json at the repo root and restart the harness.' : 'MCP servers are listed by the harness.'}/>}
           </>}
             {settingsTab === 'skills' && <><Search query={query} setQuery={setQuery} label="Search skills"/>
+            <TunerSuggestions ctx={settingsCtx} bots={bots} onDiscovered={setDiscoveredSkills} onChanged={refreshSkillLists}/>
             {fits.filter(f => f.state === 'pending').length > 0 && <><div className="section-heading"><h2>Fit suggestions</h2></div><div className="list-panel">{fits.filter(f => f.state === 'pending').map(f => <article className="resource-row od-row-top" key={f.id}><span className="resource-icon"><Sparkle24Regular/></span><div className="od-field od-fill"><h3>{f.skill}</h3><p>{f.bot_ids.length ? `Suggested: ${f.bot_ids.map(id => `${bots.find(b => b.id === id)?.name || id} (${Number(f.role_scores?.[id] ?? 0).toFixed(2)})`).join(', ')}` : 'No bot scored high enough. Choose one yourself.'}</p></div><div className="approval-actions"><Button appearance="primary" onClick={() => { setFitChoice(c => ({ ...c, [f.id]: (c[f.id] ?? f.bot_ids[0]) || '' })); setActiveFitId(f.id); }}>Review</Button></div></article>)}</div></>}
-            <div className="list-panel">{skills.filter(s => s.kind !== 'mcp').filter(matches).map(s => <article className="resource-row od-row-top" key={s.ref} id={anchorId('skills', s.ref)}><span className="resource-icon"><Sparkle24Regular/></span><div className="od-field od-fill"><h3>{s.name} <Badge appearance="outline" size="small">{s.kind}</Badge></h3><p>{s.use}</p><p className="quiet-label">Bots with this skill: {bots.filter(b => b.skills.includes(s.ref)).map(b => b.name).join(', ') || 'no bot yet'}</p><details><summary>Frontmatter</summary><dl className="full-text"><div><dt>ref</dt><dd>{s.ref}</dd></div>{s.inputs?.length > 0 && <div><dt>inputs</dt><dd>{s.inputs.map(i => typeof i === 'string' ? i : Object.entries(i).map(([k, v]) => `${k}: ${v}`).join('; ')).join(', ')}</dd></div>}{s.needs?.length > 0 && <div><dt>needs</dt><dd>{s.needs.join(', ')}</dd></div>}{s.limits?.length > 0 && <div><dt>limits</dt><dd>{s.limits.join(', ')}</dd></div>}{s.band_width != null && <div><dt>band width</dt><dd>{s.band_width}</dd></div>}</dl></details></div><Button appearance="outline" disabled={!harness.settings?.scorer || !bots.length} onClick={() => suggestFit(s)}>Suggest a fit</Button></article>)}</div>{!skills.filter(s => s.kind !== 'mcp').filter(matches).length && <Empty title={online ? 'No skills found' : 'Harness offline'} text={online ? 'Teach a task from the Bots page to draft a skill, or add one under the skills directory.' : 'Skills come from the harness catalog.'}/>}
+            <div className="list-panel">{skills.filter(s => s.kind !== 'mcp').filter(matches).map(s => <article className="resource-row od-row-top" key={s.ref} id={anchorId('skills', s.ref)}><span className="resource-icon"><Sparkle24Regular/></span><div className="od-field od-fill"><h3>{s.name} <Badge appearance="outline" size="small">{s.kind}</Badge></h3><p>{s.use}</p><p className="quiet-label">Bots with this skill: {bots.filter(b => b.skills.includes(s.ref)).map(b => b.name).join(', ') || 'no bot yet'}</p><details><summary>Frontmatter</summary><dl className="full-text"><div><dt>ref</dt><dd>{s.ref}</dd></div>{s.inputs?.length > 0 && <div><dt>inputs</dt><dd>{s.inputs.map(i => typeof i === 'string' ? i : Object.entries(i).map(([k, v]) => `${k}: ${v}`).join('; ')).join(', ')}</dd></div>}{s.needs?.length > 0 && <div><dt>needs</dt><dd>{s.needs.join(', ')}</dd></div>}{s.limits?.length > 0 && <div><dt>limits</dt><dd>{s.limits.join(', ')}</dd></div>}{s.band_width != null && <div><dt>band width</dt><dd>{s.band_width}</dd></div>}</dl></details></div><Button appearance="outline" disabled={!harness.settings?.scorer || !bots.length} onClick={() => suggestFit(s)}>Suggest a fit</Button>{discoveredSkills.includes(s.ref) && <Button appearance="outline" disabled={!online} onClick={() => removeDiscovered(s)}>Remove</Button>}</article>)}</div>{!skills.filter(s => s.kind !== 'mcp').filter(matches).length && <Empty title={online ? 'No skills found' : 'Harness offline'} text={online ? 'Teach a task from the Bots page to draft a skill, or add one under the skills directory.' : 'Skills come from the harness catalog.'}/>}
           </>}
             {settingsTab === 'agents' && <CodingAgentsSection ctx={settingsCtx}/>}
             {settingsTab === 'folders' && <AllowedFoldersTab ctx={settingsCtx}/>}

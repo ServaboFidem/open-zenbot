@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Button, Field, Input } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
 import { KIND_LABELS, choiceKey, enabledByKind, modelLabel, parseChoice } from './models.js';
+import { SkillTunerSection } from './SkillTunerSection.jsx';
 import { MAX_MINUTES, MIN_MINUTES, PRIVACY, canEnable, canRunNow, errorLine, factsChanged, needsDesktopNote, statusLine, validMinutes } from './dream.js';
 
 const POLL_MS = 5000;
@@ -80,6 +81,7 @@ export function DreamSection({ ctx, providers, roles, onSaved, openProviders }) 
         {needsDesktopNote(status) && <p className="field-hint">Dreaming starts on its own only in the desktop app. Use Dream now here.</p>}
         <p className="quiet-line" aria-live="polite">{statusLine(status)}</p>
         {(problem || error) && <p className="form-error" role="alert">{error || problem}</p>}
+        <SkillTunerSection ctx={ctx} dreamingOn={!!status.enabled}/>
         <h4>What was learned</h4>
         {facts === null ? null : facts.length === 0 ? <p className="quiet-line">Nothing yet.</p>
           : <ul className="model-list" aria-label="What was learned">{facts.map(f => <li key={f.id}><div className="od-row-top">

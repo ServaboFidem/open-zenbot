@@ -11,6 +11,7 @@ import { createBriefingsApi } from './briefings-api.js';
 import { createSpeakersApi } from './speakers-api.js';
 import { createFrameParser, END_MISSING } from './speech.js';
 import { dreamApi } from './dream.js';
+import { tunerApi } from './skilltuner.js';
 
 export const DEFAULT_HARNESS = 'http://127.0.0.1:8765';
 
@@ -85,6 +86,7 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     briefings: createBriefingsApi(call),
     speakers: createSpeakersApi(call),
     dream: dreamApi(call),
+    tuner: tunerApi(call),
     morning: {
       agenda: () => get('/morning/agenda'),
       forecast: () => get('/morning/forecast'),

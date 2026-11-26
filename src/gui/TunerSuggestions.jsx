@@ -1,0 +1,109 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { Button } from '@fluentui/react-components';
+import { anchorId } from './settings-index';
+import { attachPlan, doneLine, initialPicks, offeredBots } from './skilltuner.js';
+
+const POLL_MS = 15000;
+
+// The cards at the top of Settings > Skills. Everything a suggestion carries is untrusted and shown as plain text
+// children, never as HTML or Markdown. ctx: { api, online, notify }; onChanged() reads bots, skills and fits again;
+// onDiscovered(slugs) tells the list which skills Remove may act on.
+export function TunerSuggestions({ ctx, bots, onChanged, onDiscovered }) {
+  const { api, online, notify } = ctx;
+  const [list, setList] = useState([]);
+  const [open, setOpen] = useState({});      // id -> full suggestion (See what changed)
+  const [errors, setErrors] = useState({});  // id or skill ref -> sentence
+  const [busy, setBusy] = useState('');
+  const [chosen, setChosen] = useState([]);  // approved, bots not chosen yet: { skill, fit, picks, dialog }
+  const botsRef = useRef(bots); botsRef.current = bots;
+
+  const load = () => {
+    api.tuner.suggestions().then(l => { if (Array.isArray(l)) setList(l); }).catch(() => {});
+    api.tuner.discovered().then(d => onDiscovered?.(d?.slugs || [])).catch(() => {});
+  };
+  useEffect(() => {
+    if (!online) return undefined;
+    load();
+    const t = setInterval(load, POLL_MS);
+    return () => clearInterval(t);
+  }, [online]);
+
+  const fail = (id, e) => setErrors(x => ({ ...x, [id]: e?.message || 'Something went wrong.' }));
+  const clear = id => setErrors(x => ({ ...x, [id]: '' }));
+  async function toggleChanges(s) {
+    if (open[s.id]) { setOpen(o => ({ ...o, [s.id]: null })); return; }
+    clear(s.id);
+    try { const full = await api.tuner.suggestion(s.id); setOpen(o => ({ ...o, [s.id]: full })); } catch (e) { fail(s.id, e); }
+  }
+  async function approve(s) {
+    clear(s.id); setBusy(s.id);
+    try {
+      const r = await api.tuner.approve(s.id);
+      setList(l => l.filter(x => x.id !== s.id));
+      setChosen(c => [...c, { skill: r.skill, fit: r.fit || null, picks: initialPicks(botsRef.current, r.fit), dialog: true }]);
+      notify(`${s.name} was added to the skills`);
+      onChanged?.(); load();
+    } catch (e) { fail(s.id, e); } finally { setBusy(''); }
+  }
+  async function reject(s) {
+    clear(s.id); setBusy(s.id);
+    try { await api.tuner.reject(s.id); setList(l => l.filter(x => x.id !== s.id)); load(); } catch (e) { fail(s.id, e); } finally { setBusy(''); }
+  }
+  const patch = (ref, fn) => setChosen(c => c.map(x => (x.skill.ref === ref ? fn(x) : x)));
+  async function done(item) {
+    const ref = item.skill.ref;
+    const plan = attachPlan(item.fit, item.picks, botsRef.current, ref);
+    clear(ref); setBusy(ref);
+    try {
+      for (const id of plan.confirm) await api.confirmFit(item.fit.id, id);
+      for (const u of plan.update) await api.patchBot(u.id, { skills: u.skills });
+      if (!plan.confirm.length && item.fit) await api.denyFit(item.fit.id).catch(() => {});
+      const names = [...plan.confirm, ...plan.update.map(u => u.id)].map(id => botsRef.current.find(b => b.id === id)?.name || id);
+      notify(doneLine(names));
+      setChosen(c => c.filter(x => x.skill.ref !== ref));
+      onChanged?.();
+    } catch (e) { fail(ref, e); } finally { setBusy(''); }
+  }
+
+  const offered = offeredBots(bots);
+  const placed = ref => (bots || []).some(b => (b.skills || []).includes(ref));
+  const waiting = chosen.filter(x => !placed(x.skill.ref));
+  if (!list.length && !waiting.length) return null;
+  return <>
+    <div className="section-heading"><h2 id={anchorId('skills', 'Suggested by SkillTuner')}>Suggested by SkillTuner</h2></div>
+    <div className="list-panel">
+      {list.map(s => <article className="resource-row od-stack" key={s.id}>
+        <div className="od-field"><h3>{s.name}</h3><p>{s.use}</p>
+          <p className="quiet-label">Found for: {s.topic}</p>
+          <p className="quiet-label">From agentskills.finance · {s.license}</p></div>
+        {open[s.id] && <div className="od-row-top">
+          <div className="od-field od-fill"><span className="quiet-label">Original</span><pre className="full-text">{open[s.id].original}</pre></div>
+          <div className="od-field od-fill"><span className="quiet-label">Converted</span><pre className="full-text">{open[s.id].converted}</pre></div>
+        </div>}
+        {errors[s.id] && <p className="form-error" role="alert">{errors[s.id]}</p>}
+        <div className="approval-actions">
+          <Button appearance="outline" disabled={!online} onClick={() => toggleChanges(s)}>See what changed</Button>
+          <Button appearance="primary" disabled={!online || busy === s.id} onClick={() => approve(s)}>Approve</Button>
+          <Button appearance="outline" disabled={!online || busy === s.id} onClick={() => reject(s)}>Reject</Button>
+        </div>
+      </article>)}
+      {waiting.map(x => x.dialog
+        ? <article className="resource-row od-stack" key={x.skill.ref}>
+          <div className="od-field"><h3>{x.skill.name}</h3><p className="quiet-label">Which bots should use it?</p></div>
+          {offered.length ? <ul className="model-list" aria-label="Which bots should use it?">{offered.map(b => <li key={b.id}><label className="od-row">
+            <input type="checkbox" checked={x.picks.has(b.id)} onChange={e => patch(x.skill.ref, it => { const p = new Set(it.picks); if (e.target.checked) p.add(b.id); else p.delete(b.id); return { ...it, picks: p }; })}/>
+            {b.name}{x.fit?.bot_ids?.includes(b.id) && <span className="quiet-label"> ({Number(x.fit.role_scores?.[b.id] ?? 0).toFixed(2)})</span>}</label></li>)}</ul>
+            : <p className="quiet-line">No bot can use a skill yet.</p>}
+          {errors[x.skill.ref] && <p className="form-error" role="alert">{errors[x.skill.ref]}</p>}
+          <div className="approval-actions">
+            <Button appearance="subtle" onClick={() => patch(x.skill.ref, it => ({ ...it, dialog: false }))}>Close</Button>
+            <Button appearance="primary" disabled={busy === x.skill.ref} onClick={() => done(x)}>Done</Button>
+          </div>
+        </article>
+        : <article className="resource-row od-row" key={x.skill.ref}>
+          <div className="od-field od-fill"><span className="model-name">{x.skill.name}</span><span className="quiet-label">{doneLine([])}</span></div>
+          <Button appearance="outline" onClick={() => patch(x.skill.ref, it => ({ ...it, dialog: true }))}>Choose bots</Button>
+        </article>)}
+    </div>
+  </>;
+}
