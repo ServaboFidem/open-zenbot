@@ -8,8 +8,7 @@ from .test_github_source import api_count, entry, file_count, source, tree_of
 
 MEMO = ("---\nname: Investment Memo\ndescription: Write an investment memo from a deal.\n---\n"
         "# Memo\n\nSteps.\n")
-APACHE_HEAD = "\n".join(__import__("importlib").resources.files("src.skilltuner")
-                        .joinpath("apache-2.0.txt").read_text("utf-8").splitlines()[:30])
+APACHE_HEAD = __import__("importlib").resources.files("src.skilltuner").joinpath("apache-2.0.txt").read_text("utf-8")
 
 
 def put(fake, path, data):

@@ -41,7 +41,15 @@ modification, are permitted provided that the following conditions are met:
    and/or other materials provided with the distribution.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED.
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
 BSD3 = BSD2.replace("BSD 2-Clause", "BSD 3-Clause").replace(
@@ -61,15 +69,19 @@ Creative Commons Attribution 4.0 International Public License
 By exercising the Licensed Rights (defined below), You accept and agree
 to be bound by the terms and conditions of this Creative Commons
 Attribution 4.0 International Public License.
+
+Section 1 -- Definitions.
+
+Section 8 -- Interpretation.
 """
 
+APACHE = resources.files("src.skilltuner").joinpath("apache-2.0.txt").read_text("utf-8")
 GPL = "GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n\nCopyright (C) 2007 Free Software Foundation"
 
 
 def test_the_five_standard_texts_are_recognised():
-    apache = "\n".join(resources.files("src.skilltuner").joinpath("apache-2.0.txt").read_text("utf-8").splitlines()[:30])
     assert licence_of_text(MIT) == "MIT"
-    assert licence_of_text(apache) == "Apache-2.0"
+    assert licence_of_text(APACHE) == "Apache-2.0"
     assert licence_of_text(BSD2) == "BSD-2-Clause"
     assert licence_of_text(BSD3) == "BSD-3-Clause"
     assert licence_of_text(CCBY) == "CC-BY-4.0"
@@ -90,3 +102,17 @@ def test_canonical_names():
     assert canonical("cc-by-4.0") == "CC-BY-4.0"
     assert canonical("GPL-3.0") == ""
     assert canonical("") == ""
+
+
+def test_added_restrictions_or_mere_mentions_are_not_recognised():
+    assert licence_of_text(MIT + "\nCommercial use is prohibited.\n") == ""
+    assert licence_of_text("Non-commercial use only. Licensed under MIT:\n\n" + MIT) == ""
+    assert licence_of_text(MIT + "\nAll rights reserved.\n") == "MIT"
+    assert licence_of_text(BSD2 + "\nUse for military purposes is forbidden.\n") == ""
+    assert licence_of_text("Note: free for personal use.\n" + BSD3) == ""
+    assert licence_of_text(APACHE + "\n\nYou may not use this for profit.\n") == ""
+    assert licence_of_text(APACHE.replace("END OF TERMS AND CONDITIONS", "Terms end here")) == ""
+    assert licence_of_text(APACHE[:APACHE.index("APPENDIX")]) == "Apache-2.0"
+    assert licence_of_text("This project uses the Creative Commons Attribution 4.0 International Public License.\n"
+                           "Section 1 -- Definitions.\nSection 8 -- Interpretation.") == ""
+    assert licence_of_text("Our README\n\n" + CCBY) == ""

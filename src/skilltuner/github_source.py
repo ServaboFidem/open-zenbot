@@ -86,7 +86,9 @@ class GitHubSkills:
 
     def matcher(self) -> Matcher:
         """IDF weights over every stored skill; rebuilt only when the stored lists change."""
-        stored = self._stored()
+        return self._matcher_of(self._stored())
+
+    def _matcher_of(self, stored: list[tuple[RepoEntry, RepoList]]) -> Matcher:
         key = frozenset((e.id, s.commit, s.read_at) for e, s in stored)
         if self._matcher is None or self._matcher[0] != key:
             self._matcher = (key, Matcher((k.name, k.description, k.category) for _, s in stored for k in s.skills))
@@ -94,8 +96,9 @@ class GitHubSkills:
 
     def search(self, words: str) -> list[Found]:
         """The best skills of the stored lists for a need's words; no network."""
-        items = [(e, k) for e, s in self._stored() for k in s.skills]
-        matcher = self.matcher()
+        stored = self._stored()
+        items = [(e, k) for e, s in stored for k in s.skills]
+        matcher = self._matcher_of(stored)
         best = top(words, items, key=lambda it: (it[1].name, it[1].description, it[1].category),
                    n=RESULTS, matcher=matcher)
         return [Found(gh_id(e.owner, e.repo, k.path), k.name, k.description, [k.category] if k.category else [],
