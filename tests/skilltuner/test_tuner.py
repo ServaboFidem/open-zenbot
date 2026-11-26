@@ -406,7 +406,7 @@ async def test_no_ledger_entry_holds_a_needs_words_topic_or_message(t):
 
 async def test_status_says_what_the_routes_need(t):
     s = t.tuner.status()
-    assert s == {"enabled": True, "ready": True, "tuning": False, "waiting": 0, "last_pass_at": "", "error": "",
+    assert s == {"enabled": True, "ready": True, "tuning": False, "waiting": 0, "last_pass_at": "", "error": "", "error_source": "",
                  "paused": False, "pending": 0, "spent_today": 0, "budget": 40, "searched_today": 0,
                  "suggested_today": 0}
 

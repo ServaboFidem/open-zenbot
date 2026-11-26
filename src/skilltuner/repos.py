@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -132,6 +132,9 @@ class RepoStore:
 
     def __init__(self, folder: Path):
         self.folder = Path(folder)
+        # id -> (mtime_ns, size, list): status and the loop ask often, so a file is parsed again only when it changed.
+        # The list is shared: a caller that changes one copies it first (`dataclasses.replace`) and then `put`s it.
+        self._cache: dict[str, tuple[int, int, RepoList]] = {}
 
     def _path(self, id: str) -> Path:
         if re.fullmatch(STORE_ID, id) is None:
@@ -141,27 +144,38 @@ class RepoStore:
     def get(self, id: str) -> RepoList | None:
         path = self._path(id)
         try:
+            st = path.stat()
+            key = (st.st_mtime_ns, st.st_size)
+            cached = self._cache.get(id)
+            if cached is not None and cached[:2] == key:
+                return cached[2]
             text = path.read_text(encoding="utf-8")
         except OSError:
+            self._cache.pop(id, None)
             return None
         try:
-            return _list_of(json.loads(text))
+            got = _list_of(json.loads(text))
         except (ValueError, TypeError, KeyError, RecursionError):
+            self._cache.pop(id, None)
             try:
                 path.replace(path.with_name(path.name + ".bad"))
             except OSError:
                 pass
             return None
+        self._cache[id] = (*key, got)
+        return got
 
     def put(self, id: str, stored: RepoList) -> None:
         from .settings import _replace_file
+        self._cache.pop(id, None)
         _replace_file(self._path(id), asdict(stored))
+        self._cache.pop(id, None)
 
     def set_error(self, id: str, kind: str) -> None:
         """Record a failed read, keeping the list (and its last good read time) that was there."""
-        old = self.get(id) or RepoList()
-        old.error = kind
+        old = replace(self.get(id) or RepoList(), error=kind)
         self.put(id, old)
 
     def remove(self, id: str) -> None:
+        self._cache.pop(id, None)
         self._path(id).unlink(missing_ok=True)

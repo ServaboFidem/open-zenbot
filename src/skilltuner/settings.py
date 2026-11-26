@@ -130,6 +130,7 @@ class TunerState:
         self._names: list[str] = []  # rejected skill names, case-folded, oldest first
         self._last_pass_at = ""
         self._last_error = ""
+        self._error_source = ""
         self._load()
 
     def _load(self) -> None:
@@ -161,6 +162,9 @@ class TunerState:
             paused, at, err = d["paused_until"], d["last_pass_at"], d["last_error"]
             if not all(isinstance(x, str) for x in (paused, at, err)):
                 raise TypeError("a text value has the wrong type")
+            err_source = d.get("last_error_source", "")
+            if not isinstance(err_source, str):
+                raise TypeError("a text value has the wrong type")
         except (ValueError, KeyError, TypeError, AttributeError):
             try:
                 self.path.replace(self.path.with_name(self.path.name + ".bad"))
@@ -172,6 +176,7 @@ class TunerState:
         self._source_pauses, self._github_spent = dict(pauses), {k: dict(v) for k, v in gspent.items()}
         self._names = list(names)[-NAMES_CAP:]
         self._known, self._paused_until, self._last_pass_at, self._last_error = known, paused, at, err
+        self._error_source = err_source
 
     def _save(self) -> None:  # caller holds the lock
         _replace_file(self.path, {
@@ -181,7 +186,7 @@ class TunerState:
             "source_pauses": self._source_pauses, "github_spent": self._github_spent,
             "rejected_names": self._names,
             "paused_until": self._paused_until, "last_pass_at": self._last_pass_at,
-            "last_error": self._last_error})
+            "last_error": self._last_error, "last_error_source": self._error_source})
 
     def read(self, conv_id: str) -> int:
         with self._lock:
@@ -377,4 +382,14 @@ class TunerState:
     def last_error(self, v: str) -> None:
         with self._lock:
             self._last_error = v
+            self._save()
+
+    @property
+    def error_source(self) -> str:
+        """Which source the last error belongs to: `casemark`, `github`, or empty (decider, model, store)."""
+        return self._error_source
+
+    def set_error(self, kind: str, source: str = "") -> None:
+        with self._lock:
+            self._last_error, self._error_source = kind, source if kind else ""
             self._save()

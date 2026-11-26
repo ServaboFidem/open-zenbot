@@ -283,3 +283,138 @@ async def test_no_ledger_entry_holds_need_words_or_skill_names_on_the_github_pat
     for text in (TOPIC, WORDS, "Secretive Memo Name", "Quartz hippo", "Acme deal", "Steps."):
         assert text not in blob
     assert all(e["source"] in ("casemark", "github") for e in t.events("search"))
+
+
+async def test_the_error_names_its_source_and_a_clean_pass_elsewhere_keeps_it_while_the_pause_holds(t):
+    store(t, entry(), [listed()])
+    t.site.status = 429
+    add_need(t)
+    await t.tune()
+    assert t.tuner.status()["error"] == "refused" and t.tuner.status()["error_source"] == "casemark"
+    t.site.status = 200
+    add_need(t, "second need words")  # GitHub-only work: CaseMark is still paused
+    await t.tune()
+    assert t.state.last_error == "refused" and t.state.error_source == "casemark"  # not cleared
+    t.today = "2027-01-16"  # the pause has ended: a clean pass clears it
+    add_need(t, "third need words")
+    await t.tune()
+    assert t.state.last_error == "" and t.tuner.status()["error_source"] == ""
+
+
+async def test_a_github_outage_is_marked_github_and_model_failures_have_no_source(t):
+    t.owned.append(entry())
+    t.fake.raises = httpx.ConnectError("down")
+    add_need(t)
+    await t.tune()
+    assert (t.state.last_error, t.state.error_source) == ("network", "github")
+    t.state.set_error("decider")
+    assert t.state.error_source == ""
+
+
+def test_an_older_state_file_loads_with_no_error_source(tmp_path):
+    from src.skilltuner.settings import TunerState
+    path = tmp_path / "s.json"
+    st = TunerState(path)
+    st.set_error("refused", "casemark")
+    d = json.loads(path.read_text("utf-8"))
+    del d["last_error_source"]
+    path.write_text(json.dumps(d), encoding="utf-8")
+    assert TunerState(path).error_source == ""
+    d["last_error_source"] = 3
+    path.write_text(json.dumps(d), encoding="utf-8")
+    assert TunerState(path).last_error == ""  # a wrongly typed file is set aside, as any other
+
+
+async def test_status_reads_each_stored_list_once_while_nothing_changes(t, monkeypatch):
+    store(t, entry(), [listed()])
+    store(t, entry(id="fedcba9876543210", owner="p", repo="q"), [listed("Other", "skills/o")])
+    import src.skilltuner.repos as repos_mod
+    real, count = repos_mod.json.loads, []
+    monkeypatch.setattr(repos_mod.json, "loads", lambda *a, **k: (count.append(1), real(*a, **k))[1])
+    t.tuner.status()
+    first = len(count)
+    t.tuner.status()
+    t.tuner.waiting()
+    assert first == 2 and len(count) == first
+    t.repos.set_error("0123456789abcdef", "network")  # a change is read again
+    t.tuner.status()
+    assert len(count) == first + 1
+
+
+async def test_casemark_budget_ending_during_a_read_gives_its_winner_back_and_github_winners_go_on(t):
+    store(t, entry(), [listed()])
+    files(t)
+    t.state.add_need(TOPIC, WORDS)
+    t.state.add_need(TOPIC, WORDS)  # searched first: CaseMark only wins here
+    add_need(t, "memo writer deal")
+    for _ in range(38):
+        t.state.spend(TODAY)
+    # need 1 (WORDS): CaseMark result WIN wins; need 2: only GitHub answers with a winner (CaseMark has no budget left)
+    t.site.search_answer = results((WIN, "Drafting Investment Memos"))
+    t.scorer.scores = {WIN: 0.9, MEMO_ID: 0.0}
+    original = t.tuner._fit
+
+    async def fit(words, fresh, go, guarded):
+        if words == "memo writer deal":
+            t.scorer.scores = {MEMO_ID: 0.95}
+        return await original(words, fresh, go, guarded)
+
+    t.tuner._fit = fit
+    t.model.answers = [CONVERTED]
+    got = await t.tune()
+    assert got["suggested"] == 1 and t.store.list()[0].source_slug == MEMO_ID
+    assert WIN not in t.state.known and not t.state.paused(TODAY)
+    assert "casemark" in t.state.due_for(next(n for n in t.state._needs.values() if n.words == WORDS), "2027-01-16")
+
+
+async def test_a_github_wide_failure_during_a_winners_read_pauses_github_and_gives_the_winner_back(t):
+    store(t, entry(), [listed()])
+    files(t)
+    t.scorer.scores = {MEMO_ID: 0.95}
+    add_need(t)
+
+    async def down(request):
+        raise httpx.ConnectError("down")
+
+    t.fake.client = httpx.AsyncClient(transport=httpx.MockTransport(down))
+    got = await t.tune()
+    assert got["suggested"] == 0 and t.state.source_paused("github", TODAY) and not t.state.paused(TODAY)
+    assert (t.state.last_error, t.state.error_source) == ("network", "github")
+    assert t.state.due_for(the_need(t), "2027-01-16") == ["casemark", "github"] and t.state.known == set()
+    assert t.store.count() == 0
+
+
+async def test_an_interrupted_refresh_is_tried_again_the_next_pass(t):
+    store(t, entry(), [listed("Old Memo", "skills/old")], commit=OLD, read_at=iso(t.now - LONG_AGO))
+    files(t)
+    t.fake.hold = asyncio.Event()
+    add_need(t)
+    run = asyncio.ensure_future(t.tune())
+    await wait_for_tree(t)
+    t.busy = True
+    await asyncio.wait_for(run, 2.0)
+    t.busy = False
+    t.fake.hold = None
+    await t.tune()
+    assert [s.name for s in t.repos.get("0123456789abcdef").skills] == ["Memo Writer"]  # read on the second pass
+
+
+async def test_a_pending_suggestions_name_is_compared_stripped_and_case_folded(t):
+    from src.skilltuner.suggestions import Suggestion
+    from src.skilltuner.convert import BuiltSkill
+    store(t, entry(), [listed("memo writer")])
+    t.store.add(Suggestion("a" * 32, "x-y", "gh:p/q:z", "N", "u", "t", 0.9, "MIT", "https://x", "o", "c", "2027-01-15T00:00:00Z",
+                           source_name="  MEMO Writer "), BuiltSkill("x-y", {"SKILL.md": "x"}))
+    add_need(t)
+    await t.tune()
+    assert t.scorer.requests == [] and t.events("dropped")[0]["reason"] == "duplicate"
+
+
+async def test_the_excluded_entry_names_its_source(t):
+    from src.memory.exclusion import exclusion
+    store(t, entry(), [listed()])
+    t.state.add_need(TOPIC, "memo zz-late-secret-55")
+    exclusion.register_secret_value("zz-late-secret-55")
+    await t.tune()
+    got = [e["source"] for e in t.events("search") if e["error"] == "excluded"]
+    assert sorted(got) == ["casemark", "github"]

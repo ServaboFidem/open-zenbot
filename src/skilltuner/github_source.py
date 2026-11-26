@@ -6,6 +6,7 @@ goes into an exception. Nothing here logs.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -163,7 +164,11 @@ class GitHubSkills:
 
     def has_skills(self) -> bool:
         """Whether any stored list holds a skill, so a search could find something."""
-        return any(s.skills for _, s in self._stored())
+        for entry in self.entries():
+            stored = self.store.get(entry.id)
+            if stored is not None and stored.commit and stored.skills:
+                return True
+        return False
 
     def stale(self, now: float, skip: frozenset[str] | set[str] = frozenset()) -> RepoEntry | None:
         """The repository most due a read; ids in `skip` (ones already tried) are passed over."""
@@ -200,7 +205,7 @@ class GitHubSkills:
         old = self.store.get(entry.id)
         at = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat(timespec="seconds")
         if old is not None and old.commit == sha and old.read_at:
-            old.licence_label, old.read_at, old.error = info.licence, at, ""
+            old = replace(old, licence_label=info.licence, read_at=at, error="")  # the stored copy is shared
             self.store.put(entry.id, old)
             return old
         blobs = await self._blobs(entry, sha, go)

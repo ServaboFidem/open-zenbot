@@ -139,7 +139,7 @@ class SkillTuner:
         self.config = config or SkillConfig()
         self.settings = TunerSettings.load(self.vault_root)
         self._running = False
-        self._soft = ""  # the kind of a source failure this pass went on after
+        self._soft = ("", "")  # (kind, source) of a source failure this pass went on after
         self._tried: dict[str, str] = {}  # repository id -> the local date its refresh was last tried
 
     def set_settings(self, s: TunerSettings) -> None:
@@ -212,6 +212,7 @@ class SkillTuner:
             "waiting": self.waiting(),
             "last_pass_at": self.state.last_pass_at,
             "error": self.state.last_error,
+            "error_source": self.state.error_source,
             "paused": self.state.paused(today) or self._all_paused(today),
             "pending": self.store.count(),
             "spent_today": self.state.spent(today),
@@ -232,7 +233,7 @@ class SkillTuner:
     async def tune(self, *, may_go: Callable[[], bool],
                    guarded: Callable[[Awaitable[Any]], Awaitable[Any]]) -> dict[str, int]:
         counts = _empty()
-        self._soft = ""
+        self._soft = ("", "")
         if self._running or not self.ready() or not may_go() or not self.waiting():
             return counts
         self._running = True
@@ -262,9 +263,16 @@ class SkillTuner:
         finally:
             self._running = False
             try:
-                error = error or self._soft
-                if error or not interrupted:
-                    self.state.last_error = error
+                source = ""
+                if not error:
+                    error, source = self._soft
+                if error:
+                    self.state.set_error(error, source)
+                elif not interrupted:
+                    # a source's error stays shown while its pause holds: a clean pass elsewhere does not clear it
+                    held = self.state.error_source and self.state.source_paused(self.state.error_source, self._today())
+                    if not held:
+                        self.state.set_error("")
                 self.state.last_pass_at = _at(self._clock())
             finally:
                 extra = {"exception": crashed} if crashed else {}
@@ -280,7 +288,7 @@ class SkillTuner:
         pauses quietly, as CaseMark's does."""
         self.state.pause_source(source, self._tomorrow())
         if kind != "budget":
-            self._soft = self._soft or kind
+            self._soft = self._soft if self._soft[0] else (kind, source)
 
     async def _refresh_github(self, today: str, go, guarded) -> None:
         """Read at most one stale repository again. A GitHub-wide failure pauses GitHub; any other is only that
@@ -289,14 +297,19 @@ class SkillTuner:
         if entry is None:
             return
         go()
-        self._tried[entry.id] = today
         try:
             got = await guarded(self.github.read_repo(entry, go))
-        except SourceError as e:
+        except Interrupted:
+            raise  # not tried: the owner came back, so the next pass reads it again
+        except Exception as e:
+            self._tried[entry.id] = today
+            if not isinstance(e, SourceError):
+                raise
             self.ledger.append(Kind.skilltuner, "", "", event="repo_read", id=entry.id, error=e.kind)
             if github_wide(e):
                 self._pause_source("github", e.kind)
             return
+        self._tried[entry.id] = today
         self.ledger.append(Kind.skilltuner, "", "", event="repo_read", id=entry.id, skills=len(got.skills),
                            skipped=got.skipped, index=bool(got.index) and not got.one_by_one, error="",
                            commit=got.commit[:12])
@@ -408,13 +421,15 @@ class SkillTuner:
     async def _search_each(self, today: str, go, guarded, counts: dict[str, int], winners: list[_Winner]) -> None:
         for need in self.state.due_needs(today, self._searches_left(today), tuple(self._open_sources(today))):
             go()
-            if not self._clean(need.words):  # a secret registered since the need was kept: dropped, never sent
-                self.state.drop_need(need.words)
-                self.ledger.append(Kind.skilltuner, "", "", event="search", results=0, error="excluded")
-                continue
             # a source paused or out of budget since the list was made is skipped for this need, and asked next time
             open_ = self._open_sources(today)
             due = [s for s in self.state.due_for(need, today) if s in open_]
+            if not self._clean(need.words):  # a secret registered since the need was kept: dropped, never sent
+                self.state.drop_need(need.words)
+                for source in due or [""]:
+                    self.ledger.append(Kind.skilltuner, "", "", event="search", source=source, results=0,
+                                       error="excluded")
+                continue
             if not due:
                 continue
             self.state.add_search(today)  # counted as sent: giving the need back later does not lower it
@@ -476,10 +491,11 @@ class SkillTuner:
             ranked = (casemark or github)[:RESULTS_PER_SEARCH]
         known, rejected = self.state.known, self.state.rejected_names
         slugs, names = self._taken()
+        names = {n.strip().casefold() for n in names}
         for s in self.store.list():
             slugs.add(s.source_slug)
-            if s.source_name:
-                names.add(s.source_name.casefold())
+            if s.source_name.strip():
+                names.add(s.source_name.strip().casefold())
         fresh: dict[str, Found] = {}
         for r in ranked:
             name = r.name.strip().casefold()
@@ -566,8 +582,9 @@ class SkillTuner:
                 else:  # that repository's own trouble: only this skill is dropped
                     self._dropped(counts, "invalid", slug)
                 return
-            if e.kind == "budget":
-                raise _Stop("", pause=False) from None
+            if e.kind == "budget":  # CaseMark's day is spent: its winners wait, GitHub's go on
+                self._give_back([w])
+                return
             if e.kind == "not_found":
                 self._dropped(counts, "not_found", slug)
                 return
