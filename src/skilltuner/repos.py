@@ -19,6 +19,10 @@ BAD_ADDRESS = ("Paste a GitHub address like https://github.com/owner/repo or "
 BAD_INDEX = "Give a plain path inside the repository, like data/skills_index.json."
 
 
+def _control(s: str) -> bool:
+    return any(ord(c) < 32 or 127 <= ord(c) < 160 for c in s)
+
+
 def _segment(s: str) -> bool:
     return re.fullmatch(SEGMENT, s) is not None and s not in (".", "..")
 
@@ -46,10 +50,10 @@ class RepoEntry:
 def parse_address(text: str) -> tuple[str, str, str, str]:
     """(owner, repo, ref, folder) of a github.com address, else `ValueError(BAD_ADDRESS)`."""
     try:
-        if not isinstance(text, str) or len(text) > ADDRESS_MAX or any(c in text for c in "\\%"):
+        if not isinstance(text, str) or len(text) > ADDRESS_MAX or any(c in text for c in "%\\") or _control(text):
             raise ValueError
         u = urlsplit(text.strip())
-        if (u.scheme != "https" or u.hostname not in ("github.com", "www.github.com") or u.username is not None
+        if (u.scheme != "https" or u.hostname != "github.com" or u.username is not None
                 or u.password is not None or u.port is not None or u.netloc != u.hostname
                 or u.query or u.fragment):
             raise ValueError
@@ -71,7 +75,7 @@ def parse_address(text: str) -> tuple[str, str, str, str]:
 
 def parse_index_path(text: str) -> str:
     """A plain relative path inside the repository, or "" for none."""
-    if not isinstance(text, str) or len(text) > INDEX_MAX:
+    if not isinstance(text, str) or len(text) > INDEX_MAX or _control(text):
         raise ValueError(BAD_INDEX)
     t = text.strip()
     if t and not all(_segment(s) for s in t.split("/")):

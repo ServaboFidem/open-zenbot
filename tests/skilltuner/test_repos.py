@@ -21,12 +21,16 @@ def test_address_forms():
     "https://github.com/a",
     "https://github.com/a/b/tree/main/../x",
     "https://github.com/a/b/tree/main/a%2Fb",
-    "https://github.com/a/b/tree/main/a\b",
+    "https://github.com/a/b/tree/main/a\\b",
     "https://github.com/a/b/blob/main/x",
     "https://github.com/" + "o" * 40 + "/b",
     "https://github.com/a/b/tree/main/" + "x" * 500,
     "https://github.com/a/b?x=1",
     "https://github.com/a/b#frag",
+    "https://www.github.com/a/b",
+    "https://github.com/a/b/tree/ma\tin/x",
+    "https://github.com/a/b/tree/ma\rin/x",
+    "https://github.com/a/b/tree/ma\nin/x",
 ])
 def test_addresses_refused(text):
     with pytest.raises(ValueError) as e:
@@ -44,6 +48,6 @@ def test_entry_address_and_label():
 def test_index_paths():
     assert parse_index_path("data/skills_index.json") == "data/skills_index.json"
     assert parse_index_path("") == ""
-    for bad in ("../x.json", "/x.json", "a\b.json", "https://x"):
+    for bad in ("../x.json", "/x.json", "a\\b.json", "https://x", "a\tb.json", "a\nb.json"):
         with pytest.raises(ValueError):
             parse_index_path(bad)
