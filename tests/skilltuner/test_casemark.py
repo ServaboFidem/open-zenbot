@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import json
 
@@ -6,6 +7,8 @@ import pytest
 
 from src.skilltuner.casemark import ANSWER_LIMIT, GAP_S, MCP_URL, CaseMark, SourceError
 from tests.skilltuner.conftest import fixture, rpc
+
+NL = chr(10)
 
 
 async def kind_of(coro) -> str:
@@ -51,7 +54,7 @@ async def test_read_parses_the_skill_and_keeps_only_reference_text_files(fake_ca
 
 
 async def test_read_refuses_a_bad_slug_before_any_request(fake_casemark):
-    for bad in ("../x", "A", "", "a" * 101, "a--file--references/x.md"):
+    for bad in ("../x", "A", "", "abc" + NL, "a" * 101, "a--file--references/x.md"):
         with pytest.raises(ValueError):
             await fake_casemark.reader().read(bad)
     assert fake_casemark.requests == []
@@ -65,7 +68,7 @@ async def test_read_file_answers_the_content(fake_casemark):
 
 
 async def test_read_file_refuses_a_bad_path_or_root(fake_casemark):
-    for root, path in (("ok", "references/../x.md"), ("ok", "scripts/x.md"), ("ok", "references/x.py"), ("Bad", "references/x.md")):
+    for root, path in (("ok", "references/../x.md"), ("ok", "references/x.md" + NL), ("ok" + NL, "references/x.md"), ("ok", "scripts/x.md"), ("ok", "references/x.py"), ("Bad", "references/x.md")):
         with pytest.raises(ValueError):
             await fake_casemark.reader().read_file(root, path)
     assert fake_casemark.requests == []
@@ -133,7 +136,7 @@ async def test_requests_are_a_gap_apart_and_the_first_is_not_delayed(fake_casema
     await reader.search("q")
     assert fake_casemark.sleeps == []
     await reader.read("drafting-investment-memos")
-    await reader.read_file("a", "references/x.md")
+    await reader.read_file("drafting-investment-memos", "references/MEMO-TEMPLATE.md")
     assert fake_casemark.sleeps == [GAP_S, GAP_S]
 
 
@@ -160,3 +163,43 @@ async def test_text_is_cleaned_and_capped(fake_casemark):
     fake_casemark.read_answer = {**fake_casemark.read_answer, "content": "x" * 300_000, "summary": "s" * 2000}
     got = await fake_casemark.reader().read("drafting-investment-memos")
     assert len(got.body) == 200_000 and len(got.summary) == 1000
+
+
+async def test_every_request_asks_for_identity_encoding(fake_casemark):
+    await fake_casemark.reader().search("q")
+    assert fake_casemark.requests[0].headers["accept-encoding"] == "identity"
+
+
+async def test_a_content_encoded_answer_is_source_changed(fake_casemark):
+    fake_casemark.raw = b"x"
+    fake_casemark.headers = {"content-type": "application/json", "content-encoding": "gzip"}
+    assert await kind_of(fake_casemark.reader().search("q")) == "source_changed"
+
+
+async def test_a_chunked_answer_over_the_limit_without_a_length_is_provider(fake_casemark):
+    async def chunks():
+        for _ in range(11):
+            yield b" " * 100_000
+
+    fake_casemark.stream = chunks
+    assert await kind_of(fake_casemark.reader().search("q")) == "provider"
+
+
+async def test_a_body_that_never_ends_times_out_as_network(fake_casemark):
+    async def forever():
+        yield b" "
+        await asyncio.sleep(3600)
+
+    fake_casemark.stream = forever
+    reader = CaseMark(lambda: fake_casemark.client, sleep=fake_casemark.sleep, timeout_s=0.05)
+    assert await kind_of(reader.search("q")) == "network"
+
+
+async def test_read_refuses_an_answer_for_another_slug(fake_casemark):
+    fake_casemark.read_answer = {**fake_casemark.read_answer, "slug": "someone-else"}
+    assert await kind_of(fake_casemark.reader().read("drafting-investment-memos")) == "source_changed"
+
+
+async def test_read_file_refuses_an_answer_for_another_file(fake_casemark):
+    fake_casemark.file_answer = {**fake_casemark.file_answer, "slug": "other--file--references/x.md"}
+    assert await kind_of(fake_casemark.reader().read_file("drafting-investment-memos", "references/MEMO-TEMPLATE.md")) == "source_changed"

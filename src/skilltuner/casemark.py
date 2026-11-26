@@ -85,10 +85,11 @@ def _score(value: object) -> float:
 class CaseMark:
     def __init__(self, http: Callable[[], httpx.AsyncClient],
                  sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-                 on_send: Callable[[], bool] = lambda: True):
+                 on_send: Callable[[], bool] = lambda: True, timeout_s: float = TIMEOUT_S):
         self._http = http
         self._sleep = sleep
         self._on_send = on_send
+        self._timeout_s = timeout_s
         self._lock = asyncio.Lock()
         self._sent = 0
 
@@ -102,22 +103,26 @@ class CaseMark:
             self._sent += 1
             payload = {"jsonrpc": "2.0", "id": self._sent, "method": "tools/call",
                        "params": {"name": tool, "arguments": arguments}}
-            headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+            headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+                       "Accept-Encoding": "identity"}  # so the size cap counts what is read, not what is inflated
             try:
-                async with self._http().stream("POST", MCP_URL, json=payload, headers=headers,
-                                               follow_redirects=False, timeout=TIMEOUT_S) as response:
-                    status = response.status_code
-                    if status == 429:
-                        raise SourceError("refused")
-                    if 300 <= status < 400:
-                        raise SourceError("source_changed")  # a redirect is never followed
-                    if status != 200:
-                        raise SourceError("provider")
-                    kind = response.headers.get("content-type", "").split(";")[0].strip().lower()
-                    if kind != "application/json":
-                        raise SourceError("source_changed")
-                    body = await _body(response, ANSWER_LIMIT)
-            except httpx.HTTPError:
+                async with asyncio.timeout(self._timeout_s):  # the whole request, send and body, not each read
+                    async with self._http().stream("POST", MCP_URL, json=payload, headers=headers,
+                                                   follow_redirects=False, timeout=TIMEOUT_S) as response:
+                        status = response.status_code
+                        if status == 429:
+                            raise SourceError("refused")
+                        if 300 <= status < 400:
+                            raise SourceError("source_changed")  # a redirect is never followed
+                        if status != 200:
+                            raise SourceError("provider")
+                        if response.headers.get("content-encoding", "identity").strip().lower() != "identity":
+                            raise SourceError("source_changed")
+                        kind = response.headers.get("content-type", "").split(";")[0].strip().lower()
+                        if kind != "application/json":
+                            raise SourceError("source_changed")
+                        body = await _body(response, ANSWER_LIMIT)
+            except (httpx.HTTPError, TimeoutError):
                 raise SourceError("network") from None
         if body is None:
             raise SourceError("provider")
@@ -157,7 +162,7 @@ class CaseMark:
             raise SourceError("source_changed")
         found: list[Found] = []
         for row in rows:
-            if not isinstance(row, dict) or not isinstance(row.get("slug"), str) or not SLUG.match(row["slug"]):
+            if not isinstance(row, dict) or not isinstance(row.get("slug"), str) or not SLUG.fullmatch(row["slug"]):
                 continue
             found.append(Found(row["slug"], _clean(row.get("name"), NAME_MAX), _clean(row.get("summary"), SUMMARY_MAX),
                                _tags(row.get("tags")), _score(row.get("score"))))
@@ -166,7 +171,7 @@ class CaseMark:
         return found
 
     async def read(self, slug: str) -> Downloaded:
-        if not isinstance(slug, str) or not SLUG.match(slug):
+        if not isinstance(slug, str) or not SLUG.fullmatch(slug):
             raise ValueError("not a skill slug")
         inner = await self._call("read_skill", {"slug": slug})
         if inner.get("slug") != slug or not isinstance(inner.get("content"), str):
@@ -178,7 +183,7 @@ class CaseMark:
             if not isinstance(item, dict):
                 continue
             path, file_slug, kind = item.get("path"), item.get("slug"), item.get("content_type")
-            if (isinstance(path, str) and FILE_PATH.match(path) and isinstance(file_slug, str)
+            if (isinstance(path, str) and FILE_PATH.fullmatch(path) and isinstance(file_slug, str)
                     and file_slug == f"{slug}--file--{path}" and isinstance(kind, str) and kind.startswith("text/")):
                 files.append((path, file_slug))
         version = inner.get("version")
@@ -190,9 +195,9 @@ class CaseMark:
 
     async def read_file(self, root: str, path: str) -> str:
         """The text of one bundled file of `root`; `path` must be a references/ text file."""
-        if not isinstance(root, str) or not SLUG.match(root) or not isinstance(path, str) or not FILE_PATH.match(path):
+        if not isinstance(root, str) or not SLUG.fullmatch(root) or not isinstance(path, str) or not FILE_PATH.fullmatch(path):
             raise ValueError("not a bundled file")
         inner = await self._call("read_skill", {"slug": f"{root}--file--{path}"})
-        if not isinstance(inner.get("content"), str):
+        if inner.get("slug") != f"{root}--file--{path}" or not isinstance(inner.get("content"), str):
             raise SourceError("source_changed")
         return _clean(inner["content"], BODY_MAX)

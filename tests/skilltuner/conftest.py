@@ -31,6 +31,7 @@ class FakeCaseMark:
         self.headers: dict[str, str] = {"content-type": "application/json"}
         self.raw: bytes | None = None
         self.raises: Exception | None = None
+        self.stream = None  # an async generator function: the body, sent with no Content-Length
         self.sleeps: list[float] = []
         self.allow = True
         self.client = httpx.AsyncClient(transport=httpx.MockTransport(self._handle))
@@ -41,6 +42,8 @@ class FakeCaseMark:
             raise self.raises
         if self.raw is not None:
             return httpx.Response(self.status, content=self.raw, headers=self.headers)
+        if self.stream is not None:
+            return httpx.Response(self.status, content=self.stream(), headers=self.headers)
         params = json.loads(request.content)["params"]
         if params["name"] == "resolve_skill":
             inner = self.search_answer
