@@ -41,7 +41,9 @@ from src.memory.dream import DreamMarks, Dreamer, Interrupted
 from src.skilltuner.casemark import CaseMark, new_client as casemark_client
 from src.skilltuner.settings import TunerState
 from src.skilltuner.suggestions import SuggestionStore
+from src.skilltuner.routes import skilltuner_router
 from src.skilltuner.tuner import SkillTuner
+from src.skilltuner.watcher import SkillWatcher
 from src.memory.exclusion import ExclusionError, exclusion
 from src.memory.graph import SHARED, MemoryGraph, SessionCache, Tier, make_store
 from src.memory.import_dir import DirImporter, ScanStore, scan_dir, scan_file, unchanged_in
@@ -79,7 +81,7 @@ from . import (agent_clis, design_images, design_parts, design_studio, design_sy
 from .studio_helpers import PartTurn
 from .agent_clis import Agents
 from .delegation import Delegator, Runner as DelegateRunner
-from src.vault_settings import settings_dir, tuner_dir
+from src.vault_settings import discovered_skills_dir, settings_dir, tuner_dir
 from src.providers import tracing as llm_tracing
 from .onboarding import ASSISTANT_ID, NEW_TOPICS, TOPICS, Interviewer
 from .config import HarnessConfig
@@ -233,6 +235,7 @@ class Harness:
     dreamer: Dreamer | None = None  # dreaming: learns facts from the user's own messages while idle; built once, a rebind keeps it
     tuner_state: TunerState | None = None  # SkillTuner's marks, needs and budget, <vault>-ledger/skilltuner.json
     suggestions: SuggestionStore | None = None  # skills SkillTuner found, waiting for the owner, in <vault>-skilltuner/
+    skill_watcher: SkillWatcher | None = None  # keeps the catalog in step with <vault>-skills/discovered/; built once
     tuner: SkillTuner | None = None  # SkillTuner: finds skills while ZenBot dreams, run by the dreamer; built once
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
     provider_store: ProviderStore | None = None  # vault-settings/providers.json: providers, their keys, their enabled models
@@ -437,6 +440,9 @@ class Harness:
                                     ledger=self.ledger, conversations=self._dream_conversations, catalog=self.catalog,
                                     model=self._tuner_model, scorer=lambda: self.scorer, bot=self._tuner_bot,
                                     clean=self._tuner_clean, today=today, config=self.skill_config)
+        if self.skill_watcher is None:
+            self.skill_watcher = SkillWatcher(discovered_skills_dir(c.vault_root), self.catalog, lambda: list(self.bots.values()),
+                                              self.ledger, self.skill_config, on_change=lambda: None)
         if self.dreamer is None:  # once: a rebind keeps it, and what it asks for is read from the harness at call time
             self.dreamer = Dreamer(vault_root=c.vault_root, marks=DreamMarks(ledger_path_for(c.vault_root) / "dreams.json"),
                                    ledger=self.ledger, conversations=self._dream_conversations,
@@ -1801,7 +1807,7 @@ def create_app(h: Harness) -> FastAPI:
     app_routers = [morning_router(morning), music_router(h.music, h), calendar_router(h.calendar), discover_router(h.discover, h),
                    facebook_router(h.discover, h), dream_router(h), speech_router(h), mail_router(h.mail), telnyx_router(h.telnyx),
                    sonos_router(h.sonos, h.sonos_tools), speakers_router(h.speakers),
-                   briefing_router(h.briefing), upload_router(h)]
+                   briefing_router(h.briefing), upload_router(h), skilltuner_router(h)]
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -1843,7 +1849,8 @@ def create_app(h: Harness) -> FastAPI:
         await h.speakers.start()  # a look for each speaker type that is on, and every 10 minutes after
         stop = asyncio.Event()
         extracting = asyncio.create_task(h.extract_queue.run(stop)) if h.extract_queue else None
-        dreaming = asyncio.create_task(h.dreamer.run(stop))  # a pass when the machine is idle and nothing is under way
+        dreaming = asyncio.create_task(h.dreamer.run(stop))
+        watching = asyncio.create_task(h.skill_watcher.run(stop))  # discovered/ -> catalog; sweeps stale .tmp- folders first  # a pass when the machine is idle and nothing is under way
         morning_mail = asyncio.create_task(morning.delivery.run())
         texting = asyncio.create_task(h.telnyx.run())  # reminders and the evening rundown, once a minute
         briefing = asyncio.create_task(h.briefing.run())  # the spoken briefing's slots, every 30 s
@@ -1881,6 +1888,7 @@ def create_app(h: Harness) -> FastAPI:
             # a dream's model call in flight is cancelled and its conversation's mark stays; a write in flight finishes
             await h.dreamer.close()
             await dreaming
+            await watching  # ends with `stop`
             if extracting is not None:  # the store in flight finishes; the rest of its job runs again at the next start
                 await h.extract_queue.shutdown(extracting)
             await h.mcps.close()

@@ -88,6 +88,9 @@ extraResources:
   - from: src/telnyx
     to: harness/src/telnyx
     filter: *python
+  - from: src/skilltuner
+    to: harness/src/skilltuner
+    filter: *python
   - from: src/kokoro
     to: harness/src/kokoro
     filter: *python
