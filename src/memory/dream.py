@@ -30,6 +30,7 @@ from .profile import OwnerUnknown
 if TYPE_CHECKING:  # the harness imports this package, so the import is for types only
     from ..generation.generator import Generator
     from ..harness.conversations import Conversation
+    from ..skilltuner.tuner import SkillTuner
     from .extract_queue import ExtractQueue
     from .profile import ProfileMemory
 
@@ -334,7 +335,8 @@ class Dreamer:
                  conversations: Callable[[], list[Conversation]],
                  generator: Callable[[], Generator | None],
                  profile: Callable[[], ProfileMemory | None], queue: Callable[[], ExtractQueue | None],
-                 busy: Callable[[], bool], clock: Callable[[], float] = time.time) -> None:
+                 busy: Callable[[], bool], clock: Callable[[], float] = time.time,
+                 tuner: SkillTuner | None = None) -> None:
         self.vault_root = Path(vault_root)
         self.marks = marks
         self.ledger = ledger
@@ -344,6 +346,7 @@ class Dreamer:
         self._queue = queue
         self._busy = busy
         self._clock = clock
+        self.tuner = tuner  # SkillTuner: a second job of an automatic pass, after the facts
         self.settings = DreamSettings.load(self.vault_root)
         self._report: tuple[float, float] | None = None  # (when it arrived, idle seconds it said)
         self._paused_until = 0.0
@@ -456,7 +459,12 @@ class Dreamer:
         """One pass over what is waiting. Returns the counts; does nothing while another pass runs or when the
         rules do not hold. An automatic pass also waits out the pause a systemic failure started; a manual one
         ("Dream now": the person has most likely just started their model or fixed its key) clears that pause and
-        every conversation's failed attempts and retry wait, so a skipped one is tried again."""
+        every conversation's failed attempts and retry wait, so a skipped one is tried again.
+
+        An automatic pass then gives SkillTuner its turn, under the same rules, unless the fact pass was interrupted
+        or ended systemic; "Dream now" never does. An automatic pass with no fact waiting skips the fact part (and
+        its ledger entries) and goes straight to SkillTuner. SkillTuner's own failures never change the counts or
+        the error returned here."""
         counts = _empty()
         if self._running or (not manual and self._paused()) or not self._may_go(manual):
             return counts
@@ -464,6 +472,25 @@ class Dreamer:
             self._paused_until = 0.0
             self.marks.reset_attempts()
         self._running = True
+        try:
+            if manual or self.waiting():
+                error, interrupted = await self._facts(manual, counts)
+            else:
+                error, interrupted = "", False
+            if not manual and self.tuner is not None and not interrupted and error not in SYSTEMIC:
+                await self._tune()
+        finally:
+            self._running = False
+        return counts
+
+    async def _tune(self) -> None:
+        try:
+            await self.tuner.tune(may_go=lambda: self._may_go(False), guarded=lambda c: self._guarded(c, False))
+        except Exception as e:  # noqa: BLE001 - a SkillTuner bug must not touch the fact pass
+            self.ledger.append(Kind.error, "", "", where="skilltuner", error=type(e).__name__)
+
+    async def _facts(self, manual: bool, counts: dict[str, int]) -> tuple[str, bool]:
+        """The fact pass: (its error kind, whether it was interrupted)."""
         error, interrupted, crashed = "", False, ""
         try:  # the first ledger entry too: a failed write must not leave `_running` set
             self.ledger.append(Kind.dream, "", "", event="pass_start", manual=manual)
@@ -491,13 +518,12 @@ class Dreamer:
             crashed = type(e).__name__
             raise
         finally:
-            self._running = False
             if error or not interrupted:
                 self._error = error
             extra = {"exception": crashed} if crashed else {}
             self.ledger.append(Kind.dream, "", "", event="pass_end", **counts, error=error, interrupted=interrupted,
                                **extra)
-        return counts
+        return error, interrupted
 
     async def _conversation(self, conv: Conversation, manual: bool, counts: dict[str, int]) -> str:
         """Read one conversation. Returns `done`, `interrupted`, or the error kind of a failed attempt."""
@@ -620,7 +646,7 @@ class Dreamer:
         while not stop.is_set():
             try:
                 if (not self._paused() and self.ready() and self.machine_idle() and not self._busy()
-                        and self.waiting()):
+                        and (self.waiting() or self._tuner_waiting())):
                     self.start(manual=False)
             except Exception as e:  # noqa: BLE001 - the loop outlives any one look
                 self.ledger.append(Kind.error, "", "", where="dream", error=type(e).__name__)
@@ -628,6 +654,9 @@ class Dreamer:
                 await asyncio.wait_for(stop.wait(), TICK_S)
             except TimeoutError:
                 pass
+
+    def _tuner_waiting(self) -> bool:
+        return self.tuner is not None and self.tuner.ready() and self.tuner.waiting() > 0
 
     async def close(self) -> None:
         """A model call in flight is cancelled; a write in flight finishes; no pass starts after."""
