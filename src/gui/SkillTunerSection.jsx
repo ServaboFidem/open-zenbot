@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { anchorId } from './settings-index';
-import { PRIVACY, statusLine } from './skilltuner.js';
+import { PRIVACY, createLatest, statusLine } from './skilltuner.js';
 
 const POLL_MS = 15000;
 
@@ -10,7 +10,8 @@ export function SkillTunerSection({ ctx, dreamingOn }) {
   const { api, online, notify } = ctx;
   const [status, setStatus] = useState(null);
   const [error, setError] = useState('');
-  const load = () => api.tuner.status().then(setStatus).catch(() => {});
+  const latest = useRef(createLatest()).current;  // a read that started before the newest one or a save is dropped
+  const load = () => { const t = latest.start(); api.tuner.status().then(s => { if (latest.fresh(t)) setStatus(s); }).catch(() => {}); };
   useEffect(() => {
     if (!online) return undefined;
     load();
@@ -19,7 +20,8 @@ export function SkillTunerSection({ ctx, dreamingOn }) {
   }, [online]);
   async function toggle(enabled) {
     setError('');
-    try { setStatus(await api.tuner.saveSettings({ enabled })); notify(enabled ? 'SkillTuner is on' : 'SkillTuner is off'); }
+    latest.bump();
+    try { const s = await api.tuner.saveSettings({ enabled }); latest.bump(); setStatus(s); notify(enabled ? 'SkillTuner is on' : 'SkillTuner is off'); }
     catch (e) { setError(e?.message || 'Something went wrong.'); }
   }
   return <div className="od-stack">

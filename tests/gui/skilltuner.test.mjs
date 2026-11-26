@@ -58,3 +58,23 @@ test('the search finds SkillTuner and the suggestions section', () => {
   assert.ok(searchSettings('SkillTuner').length > 0);
   assert.ok(searchSettings('Suggested by SkillTuner').some(m => m.panel === 'skills'));
 });
+
+import { createLatest, nextSteps, sameSlugs } from '../../src/gui/skilltuner.js';
+test('createLatest drops answers older than the newest request or action', () => {
+  const l = createLatest();
+  const a = l.start(), b = l.start();
+  assert.equal(l.fresh(a), false); assert.equal(l.fresh(b), true);
+  l.bump();
+  assert.equal(l.fresh(b), false);
+  assert.equal(l.fresh(l.start()), true);
+});
+test('sameSlugs', () => { assert.ok(sameSlugs(['a'], ['a'])); assert.ok(!sameSlugs(['a'], ['b'])); assert.ok(!sameSlugs([], ['a'])); });
+test('nextSteps skips what an earlier try did and never confirms twice', () => {
+  const bs = [{ id: 'a', skills: [] }, { id: 'b', skills: [] }, { id: 'c', skills: ['y'] }];
+  const fit = { id: 'f', skill: 'new', bot_ids: ['a', 'b'] };
+  const picks = new Set(['a', 'b', 'c']);
+  assert.deepEqual(nextSteps(fit, picks, bs, 'new'), { confirm: ['a'], update: [{ id: 'b', skills: ['new'] }, { id: 'c', skills: ['y', 'new'] }] });
+  assert.deepEqual(nextSteps(fit, picks, bs, 'new', { confirmed: ['a'], updated: [] }), { confirm: [], update: [{ id: 'b', skills: ['new'] }, { id: 'c', skills: ['y', 'new'] }] });
+  assert.deepEqual(nextSteps(fit, picks, bs, 'new', { confirmed: ['a'], updated: ['b'] }), { confirm: [], update: [{ id: 'c', skills: ['y', 'new'] }] });
+  assert.deepEqual(nextSteps(fit, new Set(['b']), bs, 'new', { confirmed: ['a'], updated: [] }), { confirm: [], update: [{ id: 'b', skills: ['new'] }] });
+});

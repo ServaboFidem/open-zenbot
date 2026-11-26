@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
-import { attachPlan, doneLine, initialPicks, offeredBots } from './skilltuner.js';
+import { createLatest, doneLine, initialPicks, nextSteps, offeredBots, sameSlugs } from './skilltuner.js';
 
 const POLL_MS = 15000;
 
@@ -17,9 +17,12 @@ export function TunerSuggestions({ ctx, bots, onChanged, onDiscovered }) {
   const [chosen, setChosen] = useState([]);  // approved, bots not chosen yet: { skill, fit, picks, dialog }
   const botsRef = useRef(bots); botsRef.current = bots;
 
+  const latest = useRef(createLatest()).current;  // a list read in flight during Approve or Reject is dropped
+  const slugs = useRef([]);
   const load = () => {
-    api.tuner.suggestions().then(l => { if (Array.isArray(l)) setList(l); }).catch(() => {});
-    api.tuner.discovered().then(d => onDiscovered?.(d?.slugs || [])).catch(() => {});
+    const t = latest.start();
+    api.tuner.suggestions().then(l => { if (Array.isArray(l) && latest.fresh(t)) setList(l); }).catch(() => {});
+    api.tuner.discovered().then(d => { const n = d?.slugs || []; if (latest.fresh(t) && !sameSlugs(slugs.current, n)) { slugs.current = n; onDiscovered?.(n); } }).catch(() => {});
   };
   useEffect(() => {
     if (!online) return undefined;
@@ -36,38 +39,44 @@ export function TunerSuggestions({ ctx, bots, onChanged, onDiscovered }) {
     try { const full = await api.tuner.suggestion(s.id); setOpen(o => ({ ...o, [s.id]: full })); } catch (e) { fail(s.id, e); }
   }
   async function approve(s) {
-    clear(s.id); setBusy(s.id);
+    clear(s.id); setBusy(s.id); latest.bump();
     try {
       const r = await api.tuner.approve(s.id);
+      latest.bump();
       setList(l => l.filter(x => x.id !== s.id));
-      setChosen(c => [...c, { skill: r.skill, fit: r.fit || null, picks: initialPicks(botsRef.current, r.fit), dialog: true }]);
+      setChosen(c => [...c, { skill: r.skill, fit: r.fit || null, picks: initialPicks(botsRef.current, r.fit), dialog: true, done: { confirmed: [], updated: [] } }]);
       notify(`${s.name} was added to the skills`);
       onChanged?.(); load();
     } catch (e) { fail(s.id, e); } finally { setBusy(''); }
   }
   async function reject(s) {
-    clear(s.id); setBusy(s.id);
-    try { await api.tuner.reject(s.id); setList(l => l.filter(x => x.id !== s.id)); load(); } catch (e) { fail(s.id, e); } finally { setBusy(''); }
+    clear(s.id); setBusy(s.id); latest.bump();
+    try { await api.tuner.reject(s.id); latest.bump(); setList(l => l.filter(x => x.id !== s.id)); load(); } catch (e) { fail(s.id, e); } finally { setBusy(''); }
   }
   const patch = (ref, fn) => setChosen(c => c.map(x => (x.skill.ref === ref ? fn(x) : x)));
   async function done(item) {
     const ref = item.skill.ref;
-    const plan = attachPlan(item.fit, item.picks, botsRef.current, ref);
+    const steps = nextSteps(item.fit, item.picks, botsRef.current, ref, item.done);
+    const progress = { confirmed: [...item.done.confirmed], updated: [...item.done.updated] };  // kept, so a retry skips these
     clear(ref); setBusy(ref);
     try {
-      for (const id of plan.confirm) await api.confirmFit(item.fit.id, id);
-      for (const u of plan.update) await api.patchBot(u.id, { skills: u.skills });
-      if (!plan.confirm.length && item.fit) await api.denyFit(item.fit.id).catch(() => {});
-      const names = [...plan.confirm, ...plan.update.map(u => u.id)].map(id => botsRef.current.find(b => b.id === id)?.name || id);
+      for (const id of steps.confirm) { await api.confirmFit(item.fit.id, id); progress.confirmed.push(id); }
+      for (const u of steps.update) { await api.patchBot(u.id, { skills: u.skills }); progress.updated.push(u.id); }
+      if (item.fit && !progress.confirmed.length) await api.denyFit(item.fit.id).catch(() => {});
+      const names = [...progress.confirmed, ...progress.updated].map(id => botsRef.current.find(b => b.id === id)?.name || id);
       notify(doneLine(names));
-      setChosen(c => c.filter(x => x.skill.ref !== ref));
+      // no bot ticked: the skill is still on no bot, so the small card stays
+      setChosen(c => (names.length ? c.filter(x => x.skill.ref !== ref) : c.map(x => (x.skill.ref === ref ? { ...x, dialog: false, done: progress } : x))));
       onChanged?.();
-    } catch (e) { fail(ref, e); } finally { setBusy(''); }
+    } catch (e) {
+      patch(ref, it => ({ ...it, done: progress, partial: true }));  // stays until Done works, even once a bot has it
+      fail(ref, e); onChanged?.();
+    } finally { setBusy(''); }
   }
 
   const offered = offeredBots(bots);
   const placed = ref => (bots || []).some(b => (b.skills || []).includes(ref));
-  const waiting = chosen.filter(x => !placed(x.skill.ref));
+  const waiting = chosen.filter(x => x.partial || !placed(x.skill.ref));
   if (!list.length && !waiting.length) return null;
   return <>
     <div className="section-heading"><h2 id={anchorId('skills', 'Suggested by SkillTuner')}>Suggested by SkillTuner</h2></div>

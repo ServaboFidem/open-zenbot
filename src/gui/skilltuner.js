@@ -61,3 +61,23 @@ export function doneLine(names) {
 
 // Under the switch (also in the search index).
 export const PRIVACY = "SkillTuner reads what you asked for while the computer dreams, and searches agentskills.finance for a skill that fits. The words of a need are sent to that site and to the decision model you chose. Nothing is installed until you approve it.";
+
+// A read answers only if nothing newer was started since: `start()` gives a token, `fresh(token)` says whether it
+// is still the newest, and `bump()` (an action that changes the data) makes every read in flight stale.
+export function createLatest() {
+  let n = 0;
+  return { start: () => ++n, fresh: t => t === n, bump: () => { n += 1; } };
+}
+
+export const sameSlugs = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+// What is still to do for Done, given what an earlier try already did (`done`: {confirmed: [], updated: []}).
+// Once the fit was confirmed it cannot be again, so every other ticked bot goes through an update.
+export function nextSteps(fit, picks, bots, slug, done = {}) {
+  const confirmed = done.confirmed || [], updated = done.updated || [];
+  const plan = attachPlan(confirmed.length ? { ...fit, bot_ids: [] } : fit, picks, bots, slug);
+  return {
+    confirm: plan.confirm.filter(id => !confirmed.includes(id)),
+    update: plan.update.filter(u => !updated.includes(u.id) && !confirmed.includes(u.id)),
+  };
+}
