@@ -3141,9 +3141,11 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(404, "no such fit")
         bot = _bot(h, body.bot_id)
         try:
-            return h.fit.confirm(fit_id, bot).to_dict()
+            done = h.fit.confirm(fit_id, bot)
         except ValueError as e:
             raise HTTPException(409, str(e)) from None
+        _persist(h, bot)
+        return done.to_dict()
 
     @app.post("/fits/{fit_id}/deny")
     async def deny_fit(fit_id: str) -> dict[str, Any]:

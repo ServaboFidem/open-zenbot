@@ -198,6 +198,17 @@ async def test_fit_suggest_confirm_deny_over_http(scored_client, scored_harness:
     assert (await c.post("/fits/nope/deny")).status_code == 404
 
 
+async def test_confirmed_fit_survives_a_restart(scored_client, scored_harness: Harness):
+    from src.harness.bot_prompts import load_dir
+
+    fit = (await scored_client.post("/skills/research-brief/fit")).json()
+    r = await scored_client.post(f"/fits/{fit['id']}/confirm", json={"bot_id": "bot1"})
+    assert r.status_code == 200 and r.json()["state"] == "confirmed"
+
+    saved = {p.id: p for p in load_dir(scored_harness.config.bots_write_dir)}
+    assert "research-brief" in saved["bot1"].skills
+
+
 async def test_route_detail_in_session_over_http(scored_client, scored_harness: Harness):
     scored_harness.bots["bot1"].attach_skill(scored_harness.catalog.skill("research-brief"))
     scored_harness.provider.script = [completion("Brief done.")]
