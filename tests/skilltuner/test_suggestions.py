@@ -1,4 +1,5 @@
 import json
+import os
 import secrets
 from pathlib import Path
 
@@ -130,3 +131,51 @@ def test_nothing_is_replaced_by_a_second_add_of_the_same_id(tmp_path):
     st.add(a, built())
     with pytest.raises(FileExistsError):
         st.add(a, built())
+
+
+def test_stale_temp_folders_are_swept_without_following_links(tmp_path):
+    st = SuggestionStore(tmp_path / "t")
+    kept = make()
+    st.add(kept, built())
+    root = tmp_path / "t"
+    (root / ".tmp-crashed" / "skill").mkdir(parents=True)
+    (root / ".tmp-crashed" / "skill" / "SKILL.md").write_text("half", encoding="utf-8")
+    (root / ".tmp-file").write_text("x", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "f").write_text("keep", encoding="utf-8")
+    linked = True
+    try:
+        (root / ".tmp-link").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        linked = False
+    errors: list[str] = []
+    st.sweep_temp(errors.append)
+    assert sorted(os.listdir(root)) == [kept.id] and errors == []
+    assert (outside / "f").read_text(encoding="utf-8") == "keep"
+    assert st.get(kept.id) == kept
+    if not linked:
+        pytest.skip("this system will not make links (the rest was checked)")
+
+
+def test_sweeping_a_missing_store_does_nothing(tmp_path):
+    SuggestionStore(tmp_path / "none").sweep_temp()
+    assert not (tmp_path / "none").exists()
+
+
+def test_the_harness_sweeps_the_store_when_it_builds_it(tmp_path):
+    from src.harness.api import Harness
+    from src.harness.config import HarnessConfig
+    from src.memory.ledger import Ledger
+    from src.skills.catalog import Catalog
+    from src.vault_settings import tuner_dir
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (tuner_dir(vault) / ".tmp-crashed").mkdir(parents=True)
+    h = Harness(config=HarnessConfig(vault_root=vault, shell_cwd=tmp_path), provider=None, ledger=Ledger(vault),
+                catalog=Catalog())
+    assert not (tuner_dir(vault) / ".tmp-crashed").exists()
+    (tuner_dir(vault) / ".tmp-in-flight").mkdir()
+    h.__post_init__()  # a rebind rebuilds the services but never sweeps: a pass may be writing one
+    assert (tuner_dir(vault) / ".tmp-in-flight").exists()

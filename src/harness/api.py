@@ -429,7 +429,10 @@ class Harness:
         self.discover.register()  # the scout's tools appear only while discovery is on with a place set
         if self.tuner is None:  # once, like the dreamer that runs it; what it asks for is read at call time
             self.tuner_state = self.tuner_state or TunerState(ledger_path_for(c.vault_root) / "skilltuner.json")
-            self.suggestions = self.suggestions or SuggestionStore(tuner_dir(c.vault_root))
+            if self.suggestions is None:  # built once, before any pass: staging a crash left behind goes now
+                self.suggestions = SuggestionStore(tuner_dir(c.vault_root))
+                self.suggestions.sweep_temp(
+                    lambda name: self.ledger.append(Kind.skilltuner, "", "", event="error", reason="sweep", error=name))
             state = self.tuner_state
 
             def today() -> str:

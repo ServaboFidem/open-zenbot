@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import stat
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
@@ -46,6 +47,14 @@ def _kind(p: Path) -> int | None:
         return stat.S_IFMT(p.lstat().st_mode)
     except OSError:
         return None
+
+
+def _is_reparse(p: Path) -> bool:
+    """A Windows reparse point (a junction or a link), told apart from a plain folder."""
+    try:
+        return bool(os.lstat(p).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        return False
 
 
 def _is_dir(p: Path) -> bool:
@@ -177,6 +186,34 @@ class SuggestionStore:
             if text is not None and FILE_NAME.fullmatch(n):
                 out[n] = text
         return out
+
+    def sweep_temp(self, on_error: Callable[[str], None] | None = None) -> None:
+        """Remove the `.tmp-*` staging folders a crash left behind; a link or junction is removed itself, never
+        followed. Run once, at harness start, before any pass can be writing one. `on_error` gets a failure's
+        exception class name."""
+        if not self._root_ok():
+            return
+        try:
+            names = [n for n in os.listdir(self.root) if n.startswith(".tmp-")]
+        except OSError as e:
+            if on_error:
+                on_error(type(e).__name__)
+            return
+        for n in names:
+            p = self.root / n
+            try:
+                if _is_reparse(p):
+                    if _kind(p) == stat.S_IFDIR:
+                        os.rmdir(p)  # a junction: removes the link only
+                    else:
+                        p.unlink()
+                elif _is_dir(p):
+                    shutil.rmtree(p)
+                else:
+                    p.unlink()  # a file or a symbolic link, never its target
+            except OSError as e:
+                if on_error:
+                    on_error(type(e).__name__)
 
     def remove(self, id: str) -> bool:
         folder = self._folder(id)
