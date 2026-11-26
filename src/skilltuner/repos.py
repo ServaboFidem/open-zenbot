@@ -46,7 +46,7 @@ class RepoEntry:
 def parse_address(text: str) -> tuple[str, str, str, str]:
     """(owner, repo, ref, folder) of a github.com address, else `ValueError(BAD_ADDRESS)`."""
     try:
-        if not isinstance(text, str) or len(text) > ADDRESS_MAX or any(c in text for c in "\%"):
+        if not isinstance(text, str) or len(text) > ADDRESS_MAX or any(c in text for c in "\\%"):
             raise ValueError
         u = urlsplit(text.strip())
         if (u.scheme != "https" or u.hostname not in ("github.com", "www.github.com") or u.username is not None
