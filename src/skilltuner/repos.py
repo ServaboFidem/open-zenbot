@@ -5,9 +5,15 @@ every request address is rebuilt from them, never taken from what the owner past
 """
 from __future__ import annotations
 
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
+
+if TYPE_CHECKING:
+    from .index import Listed
 
 OWNER = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})"
 REPO = r"[A-Za-z0-9._-]{1,100}"
@@ -81,3 +87,81 @@ def parse_index_path(text: str) -> str:
     if t and not all(_segment(s) for s in t.split("/")):
         raise ValueError(BAD_INDEX)
     return t
+
+
+STORE_ID = r"[A-Za-z0-9_-]{1,64}"
+
+
+@dataclass
+class RepoList:
+    """What was read from one repository: the skills it lists, and when and how the last read went."""
+    commit: str = ""
+    licence_label: str = ""
+    read_at: str = ""  # the last good read; empty while there has been none
+    error: str = ""
+    index: str = ""
+    skipped: int = 0
+    skills: "list[Listed]" = None  # type: ignore[assignment]
+    one_by_one: bool = False
+
+    def __post_init__(self) -> None:
+        if self.skills is None:
+            self.skills = []
+
+
+def _list_of(v: object) -> RepoList:
+    from .index import Listed
+    if not isinstance(v, dict):
+        raise TypeError("a stored list is not an object")
+    skills = [Listed(**x) for x in v["skills"]]
+    out = RepoList(**{**v, "skills": skills})
+    texts = (out.commit, out.licence_label, out.read_at, out.error, out.index)
+    if not all(isinstance(t, str) for t in texts) or isinstance(out.skipped, bool) or not isinstance(out.skipped, int):
+        raise TypeError("a stored list holds a value of the wrong type")
+    if not isinstance(out.one_by_one, bool):
+        raise TypeError("a stored list holds a value of the wrong type")
+    for k in skills:
+        if not (all(isinstance(t, str) for t in (k.path, k.name, k.description, k.category))
+                and isinstance(k.has_extra, bool)):
+            raise TypeError("a stored skill holds a value of the wrong type")
+    return out
+
+
+class RepoStore:
+    """Each repository's stored list, one file a repository, written tmp-then-replace."""
+
+    def __init__(self, folder: Path):
+        self.folder = Path(folder)
+
+    def _path(self, id: str) -> Path:
+        if re.fullmatch(STORE_ID, id) is None:
+            raise ValueError("bad id")
+        return self.folder / f"{id}.json"
+
+    def get(self, id: str) -> RepoList | None:
+        path = self._path(id)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        try:
+            return _list_of(json.loads(text))
+        except (ValueError, TypeError, KeyError, RecursionError):
+            try:
+                path.replace(path.with_name(path.name + ".bad"))
+            except OSError:
+                pass
+            return None
+
+    def put(self, id: str, stored: RepoList) -> None:
+        from .settings import _replace_file
+        _replace_file(self._path(id), asdict(stored))
+
+    def set_error(self, id: str, kind: str) -> None:
+        """Record a failed read, keeping the list (and its last good read time) that was there."""
+        old = self.get(id) or RepoList()
+        old.error = kind
+        self.put(id, old)
+
+    def remove(self, id: str) -> None:
+        self._path(id).unlink(missing_ok=True)
