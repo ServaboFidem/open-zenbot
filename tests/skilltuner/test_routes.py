@@ -295,3 +295,13 @@ async def test_a_rejected_source_is_not_suggested_by_a_later_pass(client, harnes
     await t.tune()
     assert WIN not in {q.removeprefix("r:") for r in t.scorer.requests for q in r.questions}
     assert all(x.source_slug != WIN for x in t.store.list())
+
+
+async def test_discovered_lists_only_the_watchers_skills(client, harness):
+    assert (await client.get("/skilltuner/discovered")).json() == {"slugs": []}
+    s = suggest(harness)
+    await client.post(f"/skilltuner/suggestions/{s.id}/approve", json={})
+    harness.catalog.add_skill(parse_skill("---\nname: Other\nuse: x\n---\nb\n"))
+    r = await client.get("/skilltuner/discovered")
+    assert r.status_code == 200 and r.json() == {"slugs": ["pdf-tool"]}
+    assert str(harness.config.vault_root) not in r.text

@@ -117,6 +117,11 @@ def skilltuner_router(h) -> APIRouter:
         log_event("settings", enabled=body.enabled)
         return status()
 
+    @r.get("/discovered")
+    async def get_discovered() -> dict[str, Any]:
+        """The catalog slugs of skills that live in discovered/ (the ones Remove may act on). Slugs only."""
+        return {"slugs": sorted(set(h.skill_watcher._owned().values()))}
+
     @r.get("/suggestions")
     async def list_suggestions() -> list[dict[str, Any]]:
         return [{k: v for k, v in asdict(s).items() if k not in LIST_OUT} for s in h.suggestions.list()]
