@@ -66,12 +66,10 @@ class HarnessConfig:
 
     @property
     def skills_write_dir(self) -> Path:
-        """Where a skill recorded in the app is saved."""
-        if self.user_content:
-            from src.vault_settings import user_skills_dir
+        """Where a skill recorded in the app is saved: always the user's folder, never the shipped one."""
+        from src.vault_settings import user_skills_dir
 
-            return user_skills_dir(self.vault_root)
-        return self.skills_dir
+        return user_skills_dir(self.vault_root)
 
     def validate(self) -> None:
         if self.host not in LOOPBACK:

@@ -60,6 +60,14 @@ class Catalog:
         self._skills[skill.slug] = skill
         return AddResult(SkillState.added)
 
+    def replace_skill(self, skill: Skill) -> AddResult:
+        """Swap the entry of the same slug; a name held by a different slug is still refused."""
+        for s in self._skills.values():
+            if s.slug != skill.slug and s.name == skill.name:
+                return AddResult(SkillState.nothing, Reason.duplicate)
+        self._skills[skill.slug] = skill
+        return AddResult(SkillState.added)
+
     def _duplicate(self, skill: Skill) -> bool:
         for s in self._skills.values():
             if s.slug == skill.slug:

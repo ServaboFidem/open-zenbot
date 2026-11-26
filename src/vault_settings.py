@@ -38,6 +38,11 @@ def user_skills_dir(vault_root: Path) -> Path:
     return vault_root.parent / f"{vault_root.name}{SKILLS_SUFFIX}"
 
 
+def discovered_skills_dir(vault_root: Path) -> Path:
+    """Skills the user approved from SkillTuner, inside the user's skills folder."""
+    return user_skills_dir(vault_root) / "discovered"
+
+
 def models_dir(vault_root: Path) -> Path:
     """Downloaded model files (`kokoro/`), beside the vault: large, not for bots to read or replace."""
     vault_root = Path(vault_root)

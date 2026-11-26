@@ -65,11 +65,9 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
     ledger = Ledger(config.vault_root)
     catalog = Catalog()
     # the catalog keeps the first skill of a slug, so the user's folder goes first and wins
-    folders = [config.skills_dir]
-    if config.user_content:
-        from src.vault_settings import user_skills_dir
+    from src.vault_settings import user_skills_dir
 
-        folders.insert(0, user_skills_dir(config.vault_root))
+    folders = [user_skills_dir(config.vault_root), config.skills_dir]
     for folder in folders:
         for r in load_dir(folder, skill_config(config)):
             if r.ok:
