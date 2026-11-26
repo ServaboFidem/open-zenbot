@@ -1,0 +1,5 @@
+{"version": "1.0.0", "name": "claude-skills", "skills": [
+  {"name": "agent-launcher-orchestrator", "source": "../agent-launcher/skills/agent-launcher-orchestrator", "category": "agent-development", "description": "Launch and coordinate agents."},
+  {"name": "senior-qa", "source": "../engineering/senior-qa", "category": "engineering", "description": "QA planning."},
+  {"name": "copywriter", "source": "../marketing/copywriter", "category": "marketing", "description": "Write copy."}
+]}
