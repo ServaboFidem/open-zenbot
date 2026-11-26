@@ -358,16 +358,20 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   - Suggestions: `<vault>-skilltuner/<id>/` (`SuggestionStore`, `vault_settings.tuner_dir`): the converted skill's files
     and `record.json` (need topic, score, source page, licence, the original and converted `SKILL.md`, the date). A
     private folder (`allowed_folders.private_folders`), so no bot tool reaches it and none can plant a suggestion or clear
-    a rejection. At most 30 pending (`PENDING_MAX`).
+    a rejection. At most 30 pending (`PENDING_MAX`). A suggestion is staged in `.tmp-<id>/` and renamed into place;
+    the harness sweeps stale `.tmp-*` entries once, when it builds the store (`SuggestionStore.sweep_temp`, never
+    following a link; a rebind does not sweep, since a pass may be writing one).
   - Approved skills: `<vault>-skills/discovered/<slug>/` (`vault_settings.discovered_skills_dir`), inside the private
     `<vault>-skills/`.
 - **Skill folders** (the owner's decision, 2026-11-25). Shipped `skills/` is read-only at run time: no route, recorder
   or SkillTuner path writes there, with `ZEN_USER_CONTENT` on or off. `HarnessConfig.skills_write_dir` always answers
-  `<vault>-skills/` (a recorded skill goes there; the recorder's draft never takes a shipped slug), and `build_harness`
-  always loads `<vault>-skills/` before the shipped folder, so the owner's skill of a slug wins as before. `discovered/`
-  loads with it at start (`load_dir` reads one level down and skips folders whose name starts with `.`, such as the
-  `.tmp-*` staging folders), so a bot's saved file keeps its discovered slugs at start. A discovered skill never takes a
-  shipped or owner's slug or name: such a folder is not loaded and a `dropped` entry says why.
+  `<vault>-skills/` (a recorded skill goes there; the recorder's draft never takes a shipped slug, nor a discovered
+  skill's slug or name), and `build_harness` always loads `<vault>-skills/` before the shipped folder, so the owner's
+  skill of a slug wins as before. That load skips `discovered/` (`load_dir(skip=...)`; it also skips folders whose name
+  starts with `.`, such as the `.tmp-*` staging folders): once the owner's and the shipped skills are in, `build_harness`
+  has the watcher scan once, so discovered skills load last, under the watcher's rules, and before the bots are made, so a
+  bot's saved file keeps its discovered slugs at start. A discovered skill never takes a shipped or owner's slug or name:
+  such a folder is not loaded and a `dropped` entry (reason `duplicate`) says why.
 - **When it runs** (`Dreamer.run`, `Dreamer._tune`). A second job of the dreaming loop, under dreaming's rules
   (`_may_go`: ready, idle, `Harness.busy` false, checked before each model call, network call and write and every 2 s
   while a call is in flight; a call in flight is cancelled, a write never). An automatic pass runs the fact pass first
@@ -375,7 +379,8 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   skips the fact part (no `dream` entries) and goes to SkillTuner. The loop also starts a pass when only SkillTuner has
   something waiting. "Dream now" never runs it. `_running` stays set through its turn, so the two never overlap. It runs
   only when `TunerSettings.enabled`, `SkillTuner.ready()` (the bot, a model and a decider all exist) and dreaming's own
-  `ready()` hold. A SkillTuner bug is a `Kind.error` entry (`where: skilltuner`, the class name) and never changes the
+  `ready()` hold. Its calls are guarded by `SkillTuner.ready()` as well as dreaming's rules, so switching SkillTuner off
+  cancels a call it has out and the pass ends interrupted. A SkillTuner bug is a `Kind.error` entry (`where: skilltuner`, the class name) and never changes the
   fact pass's counts or error.
 - **The model.** `Harness._tuner_model`: the bot's own model when `bot_models` names one that checks, else the dreaming
   model through a client of SkillTuner's own (the same 600 s timeout and thinking switch, but no `response_format`, since
@@ -400,12 +405,15 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   4. *Convert.* At most `SKILLS_PER_DAY` (3) a local date and never past `PENDING_MAX`. Read the skill, check its licence,
      read each bundled file, one model call (the skill fenced as content) answering `name`, `slug`, `use`, optional `inputs`
      and `return`, then `convert.clean_conversion` (plain text; `name` at most 80, `use` 300, `slug`
-     `[a-z0-9][a-z0-9-]{0,63}` and not taken, at most 8 inputs of 200, `return` 300) and `convert.build_skill`. The result
+     `[a-z0-9][a-z0-9-]{0,63}` and not taken, at most 8 inputs of 200 (one string counts as one input), `return` 300)
+     and `convert.build_skill`. The prompt (`bot-prompts/skill-tuner.md`) states these caps, and its example answers
+     pass the parsers (`tests/skilltuner/test_convert.py`). The result
      must pass `parse_skill` and `SkillConfig.max_bytes`. A failure drops that skill (`dropped`: `licence`, `invalid`,
      `duplicate`, `too_large`, `not_found`).
 - **Budget and failures.** At most `DAILY_REQUESTS` (40) requests to CaseMark a local date, counted as each is sent
   (`TunerState.spend`, through the connector's `on_send`); a spent budget ends the pass quietly. A systemic failure
-  (CaseMark `network`, `refused`, `provider`, `source_changed`; the model `unreachable` or `provider`; the decider's
+  (CaseMark `network`, `refused`, `provider`, `source_changed`; the model `unreachable`, or `model_provider` for the
+  model's `provider` failure, named apart from CaseMark's; the decider's
   `ProviderError`, kind `decider`; a suggestion that cannot be written, kind `store`) ends the pass and pauses SkillTuner
   until the next local date (`pause_until`, dated when it happens), counted against nothing. A `not_found`, a licence, a
   conversion or a build failure only drops that need or skill. A bad needs answer moves the mark past that batch.
@@ -439,13 +447,14 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   `extraResources`, which must keep shipping `apache-2.0.txt`.
 - **The watcher** (`watcher.SkillWatcher`, started in the `lifespan` beside dreaming, awaited after `stop.set()`). A
   plain polling scan every `POLL_S` (3 s) of `<vault>-skills/discovered/`, run on the event loop under a lock, so every
-  catalog and bot change happens there. It owns every catalog entry whose `SKILL.md` lies inside `discovered/`, including
-  ones the startup load put there (adopted at its first scan). A folder name must match `FOLDER`
+  catalog and bot change happens there. It owns every catalog entry whose `SKILL.md` lies inside `discovered/`; its
+  first scan runs in `build_harness` (see Skill folders). A folder name must match `FOLDER`
   (`[a-z0-9][a-z0-9-]{0,63}`). A link, junction, non-regular file or `SKILL.md` with more than one hard link is refused.
-  A new folder is loaded, a changed one (by modification time and size) is loaded again with `replace_skill`, a removed
+  A new folder is loaded, a changed one (by modification time and size) is loaded again with `replace_skill` and put in
+  place of the copy each bot holds (routing reads `bot.skills`; bot files hold slugs, so nothing is written), a removed
   one leaves the catalog and every bot's skills in memory (a bot's saved file keeps the slug, so the skill returns if the
   folder does). One that fails to load, or collides with another skill, is left out and its earlier copy removed, with a
-  `dropped` entry; one bad folder never stops the scan. Removals run before loads. `sweep_temp` deletes stale `.tmp-*`
+  `dropped` entry (reason `invalid`, `duplicate`, `refused` or `error`); one bad folder never stops the scan. Removals run before loads. `sweep_temp` deletes stale `.tmp-*`
   folders at start. A change calls `on_change` once per scan, which bumps the router's scope version
   (`bump_scope`). The watcher never writes a skill.
 - **Routes** (`src/skilltuner/routes.py`, under `/skilltuner`; no answer carries a disk path; every POST takes a required
@@ -486,12 +495,18 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   `PATCH /bots/{id}` with their full skills list (`nextSteps`); with no proposed bot ticked the fit is denied. A Done that
   partly failed keeps its card and a retry skips the steps that worked. A skill left with no bot keeps a "Choose bots"
   card until one has it (kept in component memory, lost on a reload). Reads older than the newest read or action are
-  dropped (`createLatest`). Remove (with a `window.confirm`) is offered on skills whose slug `GET /skilltuner/discovered`
+  dropped (`createLatest`). The status line names a pass error by kind (`statusLine`): CaseMark's kinds "agentskills.finance
+  could not be reached.", `unreachable` and `model_provider` "SkillTuner's model could not be reached.", `decider` "The
+  decision model could not be reached.", `store` "A suggestion could not be saved.", each followed by "Trying again
+  tomorrow."; otherwise it ends "<spent> of 40 requests used today." (every request to CaseMark counts). Remove (with a `window.confirm`) is offered on skills whose slug `GET /skilltuner/discovered`
   lists.
-- **Ledger.** Kind `skilltuner`, events `pass_start`, `need` (counts), `search` (results, error kind), `fit` (scores by
-  source slug, the winner), `dropped` (reason, source slug), `suggested` (source slug, new slug), `pass_end` (counts,
-  error kind, interrupted), `settings`, `approved`, `rejected`, `removed`, and the watcher's `loaded`, `reloaded`,
-  `removed`, `dropped` and `error` (folder names, slugs, reason codes, class names). Source slugs and skill names are
+- **Ledger.** Kind `skilltuner`, events `pass_start`, `need` (counts; `error: model` and the class name when the answer
+  could not be used), `search` (results, error kind), `fit` (scores by source slug, the winner; `error: refused`, empty
+  scores, when the decider refused or answered something unusable), `dropped` (reason `duplicate`, `licence`, `invalid`,
+  `too_large` or `not_found`, source slug), `suggested` (source slug, new slug), `pass_end` (counts, error kind,
+  interrupted), `settings`, `approved`, `rejected`, `removed`, the watcher's `loaded`, `reloaded`, `removed`, `dropped`
+  (folder, slug, reason `invalid`, `duplicate`, `refused` or `error`, with the class name for `error`) and `error` (a
+  scan or a sweep, by class name), and the store's `error` (reason `sweep`, class name). Source slugs and skill names are
   public catalog data and may be logged; never a need's topic or words, a message, or skill text. The decider's own
   `decider_score` entry carries the question keys `r:<slug>`. Errors log the exception's class name only.
 - **Bots and SkillTuner (a known residual risk).** The harness API has no authentication, so a bot with `shell` (curl) or
@@ -507,10 +522,16 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
     file.
   - `resolve_skill`'s description says "Search legal skills", so the endpoint may also return CaseMark's legal skills; the
     answers had no field to tell them apart, so nothing filters on it and the decider's fit is the only filter.
-  - A need's search words reach CaseMark and the decider's trace; the topic goes only to the dreaming model.
+  - A need's search words reach CaseMark and the decider's trace; the topic goes only to SkillTuner's model (its own
+    model when one is set, else the dreaming model).
   - Windows has no `dir_fd`: the suggestion store checks with `lstat` and then opens, a known limit as with chat files.
   - The watcher notices a change by modification time and size, so a rewrite of the same size within the same timestamp
     is missed.
+  - Winners are held in memory between the search and the conversion. A pass that ends or is cancelled gives them back,
+    but a hard kill (the process ended between the two) loses that day's winner: its need is marked searched and is not
+    looked for again for 30 days.
+  - On Windows, a vault in a OneDrive-backed folder has its discovered skills refused: OneDrive's placeholders read as
+    reparse points, which the watcher refuses as it does junctions.
 - **Unverified.** No pass has run with a real model or decider: the tests use a fake provider, a fake scorer and
   `FakeCaseMark` (an `httpx.MockTransport`). How a small local dreaming model writes needs and `use` lines, and how the
   decider scores finance summaries, are not known. The free tier's real daily limit and whether every skill in the
