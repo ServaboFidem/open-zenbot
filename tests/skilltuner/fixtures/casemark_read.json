@@ -1,0 +1,26 @@
+{
+ "slug": "drafting-investment-memos",
+ "name": "Drafting Investment Memos",
+ "summary": "Creates structured investment memoranda with business description, financial analysis, valuation, and risk assessment for deal review. Use when writing investment memos, preparing deal summaries, or documenting investment recommendations. Memos addressed to an investment committee for an approval decision go to writing-investment-committee-memos.",
+ "content": "# Drafting Investment Memos\n\nInvestment memos are the core decision document for deploying capital. They synthesize diligence into a structured argument that enables an investment committee, board, or deal team to make a go/no-go decision with full awareness of the thesis, the risks, and the expected returns. The memo is not a summary \u00e2\u20ac\u201d it is the decision artifact.\n\n## When To Use\n\n- Preparing a deal for investment committee review (screening, LOI, or final IC)\n- Writing a deal summary or recommendation for board presentation\n- Documenting the investment rationale for a platform acquisition, add-on, growth investment, refinancing, IPO, or secondary transaction\n- Creating a post-close retrospective memo evaluating realized vs. projected returns\n- Supporting a fairness opinion or strategic alternatives analysis with structured deal analysis\n\n## Inputs To Gather\n\nConfirm ALL of the following before drafting. Do not proceed with defaults \u00e2\u20ac\u201d wrong audience framing invalidates the entire draft.\n\n### Deal Context (All Required)\n\n| Field | Notes |\n|---|---|\n| Company/Asset Name | Legal name + common name if different |\n| Asset Class | Private equity, growth equity, credit, public equity, real assets, venture |\n| Transaction Type | Platform acquisition, add-on, growth investment, refinancing, IPO, secondary |\n| Deal Stage | Preliminary screening, LOI stage, final IC, post-close retrospective |\n| Deal Size / Check Size | Enterprise value, equity check, total capitalization |\n| Sourc",
+ "tags": [
+  "drafting",
+  "investment-banking",
+  "risk",
+  "investment"
+ ],
+ "version": 4,
+ "author_name": "casemark",
+ "license": "Apache-2.0",
+ "bundle": {
+  "role": "root",
+  "files": [
+   {
+    "slug": "drafting-investment-memos--file--references/MEMO-TEMPLATE.md",
+    "path": "references/MEMO-TEMPLATE.md",
+    "name": "references/MEMO-TEMPLATE.md",
+    "content_type": "text/markdown"
+   }
+  ]
+ }
+}

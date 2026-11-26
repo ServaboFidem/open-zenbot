@@ -1,0 +1,19 @@
+{
+ "slug": "drafting-investment-memos--file--references/MEMO-TEMPLATE.md",
+ "name": "references/MEMO-TEMPLATE.md",
+ "summary": "Companion file for drafting-investment-memos: references/MEMO-TEMPLATE.md",
+ "content": "# Investment Memo Template\n\n> Use this template as the structural backbone for all investment memoranda. Adapt section depth to the audience and deal stage identified in Checkpoint A.\n\n---\n\n## 1. Executive Summary\n\n> **Write this section LAST. Position it FIRST.** One page maximum.\n\n**Company/Asset:** [Name]\n**Transaction Type:** [Platform acquisition / Add-on / Growth investment / etc.]\n**Deal Size:** [Enterprise Value: $___M | Equity Check: $___M]\n**Date:** [IC Date or Draft Date]\n**Prepared By:** [Analyst / Associate / Team]\n\n### Recommendation\n\n> State clearly: **Invest**, **Pass**, or **Requires Additional Diligence**. No hedging.\n\n[One sentence recommendation with conditions if applicable.]\n\n### Investment Highlights\n\n| Item | Detail |\n|---|---|\n| Thesis (one-line) | [Concise statement of why this investment generates returns] |\n| Expected Return | [IRR: __% / MOIC: __x (PE) or Upside: __% to price target (public)] |\n| Entry Valuation | [EV/EBITDA: __x | EV/Revenue: __x | other relevant metric] |\n| Key Risk | [Single most significant risk in one sentence] |\n| Source of Edge | [Why this opportunity exists and why we capture it] |\n| Timeline | [Expected close date, hold period, or catalyst timeline] |\n\n---\n\n## 2. Company / Asset Overview\n\n### Business Description\n\n[2-3 paragraphs covering: what the company does, how it makes money, its market position, and its operating history. Include founding date, headquarters, employee count, and ownership structure.]\n\n### Products &",
+ "tags": [
+  "__bundle_file",
+  "__content_type:text/markdown"
+ ],
+ "version": 1,
+ "author_name": "casemark",
+ "license": "Apache-2.0",
+ "bundle": {
+  "role": "file",
+  "root_slug": "drafting-investment-memos",
+  "path": "references/MEMO-TEMPLATE.md",
+  "content_type": "text/markdown"
+ }
+}

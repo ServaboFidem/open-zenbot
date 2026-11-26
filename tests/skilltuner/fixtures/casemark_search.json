@@ -1,0 +1,115 @@
+{
+ "results": [
+  {
+   "slug": "analyzing-insurance-financials",
+   "name": "Analyzing Insurance Financials",
+   "summary": "Structures insurance company financial analysis with combined ratio, reserve adequacy, and capital metrics. Use when analyzing insurance financials, evaluating combined ratios, or assessing reserve strength. Actuarial loss and LAE reserve estimates and adequacy re-estimates go to analyzing-loss-reserves.",
+   "tags": [
+    "analysis",
+    "insurance"
+   ],
+   "score": 1
+  },
+  {
+   "slug": "managing-insurance-planning",
+   "name": "Managing Insurance Planning",
+   "summary": "Evaluates insurance needs with gap analysis, product comparison, and coverage adequacy assessment. Use when analyzing insurance needs, comparing insurance products, or identifying coverage gaps.",
+   "tags": [
+    "management",
+    "wealth-management",
+    "insurance"
+   ],
+   "score": 0.6366062895016453
+  },
+  {
+   "slug": "managing-insurance-regulatory-filings",
+   "name": "Managing Insurance Regulatory Filings",
+   "summary": "Structures statutory filing preparation with SAP differences, risk-based capital, and annual statement schedules. Use when preparing statutory filings, calculating RBC, or managing regulatory submissions.",
+   "tags": [
+    "management",
+    "insurance",
+    "regulatory",
+    "risk"
+   ],
+   "score": 0.5708169497992448
+  },
+  {
+   "slug": "analyzing-insurance-investments",
+   "name": "Analyzing Insurance Investments",
+   "summary": "Evaluates insurance company investment portfolios with ALM considerations and regulatory constraints. Use when analyzing insurer investments, managing ALM, or evaluating portfolio compliance.",
+   "tags": [
+    "analysis",
+    "insurance",
+    "compliance",
+    "regulatory"
+   ],
+   "score": 0.5613618760569775
+  },
+  {
+   "slug": "analyzing-life-insurance-products",
+   "name": "Analyzing Life Insurance Products",
+   "summary": "Evaluates life insurance product structures with cash value analysis, cost comparisons, and suitability assessment. Use when analyzing life products, comparing insurance costs, or assessing product suitability.",
+   "tags": [
+    "analysis",
+    "insurance"
+   ],
+   "score": 0.5070280790232167
+  },
+  {
+   "slug": "managing-insurance-programs",
+   "name": "Managing Insurance Programs",
+   "summary": "Structures corporate insurance program analysis with coverage adequacy and renewal documentation. Use when managing insurance programs, analyzing coverage, or documenting insurance renewals.",
+   "tags": [
+    "management",
+    "corporate-finance",
+    "insurance"
+   ],
+   "score": 0.4585199558748414
+  },
+  {
+   "slug": "insurance-policy-summary",
+   "name": "Insurance Policy Summary",
+   "summary": "Produces structured, citation-backed summaries of U.S. insurance policies, endorsements, claims files, and coverage correspondence for coverage analysis and insurance litigation. Use when summarizing policies, declarations, claims files, reservation-of-rights letters, denial letters, or coverage disputes.",
+   "tags": [],
+   "score": 0.35858993256513105
+  },
+  {
+   "slug": "managing-cyber-risk-financial",
+   "name": "Managing Cyber Risk Financial",
+   "summary": "Structures financial sector cyber risk assessment with scenario quantification and insurance evaluation. Use when assessing cyber risk, quantifying cyber exposure, or evaluating cyber insurance.",
+   "tags": [
+    "management",
+    "risk-management",
+    "risk",
+    "valuation"
+   ],
+   "score": 0.3329539377740743
+  },
+  {
+   "slug": "creating-financial-plans",
+   "name": "Creating Financial Plans",
+   "summary": "Structures comprehensive financial plans with cash flow projection, goal analysis, and strategy integration. Use when building financial plans, projecting retirement needs, or creating comprehensive wealth strategies.",
+   "tags": [
+    "drafting",
+    "wealth-management"
+   ],
+   "score": 0.3063749784130768
+  },
+  {
+   "slug": "analyzing-cyber-insurance",
+   "name": "Analyzing Cyber Insurance",
+   "summary": "Structures cyber insurance evaluation with coverage assessment, limit adequacy, and claims scenario analysis. Use when evaluating cyber coverage, analyzing policy terms, or assessing cyber insurance adequacy.",
+   "tags": [
+    "analysis",
+    "insurance",
+    "valuation"
+   ],
+   "score": 0.2966290022323779
+  }
+ ],
+ "query": "insurance financials",
+ "methods_used": [
+  "semantic",
+  "bm25"
+ ]
+}
