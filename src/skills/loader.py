@@ -192,11 +192,13 @@ def load_dir(root: Path, config: SkillConfig | None = None) -> list[LoadResult]:
     if not root.exists():
         return []
     results = []
-    for child in sorted(p for p in root.iterdir() if p.is_dir()):
+    # Folders whose name starts with "." (staging folders like discovered/.tmp-*) are never skills.
+    for child in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")):
         if (child / SKILL_FILENAME).exists():
             results.append(load_skill(child, config))
         else:
-            results.extend(load_skill(sub, config) for sub in sorted(p for p in child.iterdir() if p.is_dir())
+            results.extend(load_skill(sub, config)
+                           for sub in sorted(p for p in child.iterdir() if p.is_dir() and not p.name.startswith("."))
                            if (sub / SKILL_FILENAME).exists())
     return results
 

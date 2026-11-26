@@ -33,7 +33,7 @@ class Led:
         self.rows.append((kind, data))
 
     def events(self):
-        return [(d["event"], d.get("slug"), d.get("reason")) for _, d in self.rows]
+        return [(d["event"], d.get("folder", d.get("slug")), d.get("reason")) for _, d in self.rows]
 
 
 class Rig:
@@ -202,3 +202,78 @@ async def test_run_survives_errors_and_stops(rig, monkeypatch):
 
 def test_poll_constant():
     assert POLL_S == 3.0
+
+
+def test_concurrent_scans_load_once(rig):
+    import threading
+    put(rig.folder, "alpha")
+    ts = [threading.Thread(target=rig.w.scan) for _ in range(2)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert [e[0] for e in rig.ledger.events()] == ["loaded"]
+    (rig.folder / "alpha" / "SKILL.md").unlink()
+    (rig.folder / "alpha").rmdir()
+    rig.w.scan()
+    assert rig.catalog.skills() == []
+
+
+def test_junction_folder_refused(rig, tmp_path):
+    import subprocess
+    import sys
+    if sys.platform != "win32":
+        pytest.skip("junctions are Windows only")
+    other = tmp_path / "other"
+    put(other, "x")
+    r = subprocess.run(["cmd", "/c", "mklink", "/J", str(rig.folder / "alpha"), str(other / "x")], capture_output=True)
+    if r.returncode:
+        pytest.skip("cannot make a junction")
+    assert rig.w.scan()["refused"] == 1
+    assert rig.catalog.skills() == []
+
+
+def test_startup_loaded_skill_is_adopted(rig):
+    from src.skills.loader import load_dir
+    put(rig.folder, "alpha")
+    put(rig.folder, ".tmp-x", md("Tmp", "t"))
+    for r in load_dir(rig.folder):
+        rig.catalog.add_skill(r.skill)
+    assert [s.slug for s in rig.catalog.skills()] == ["alpha-skill"]
+    rig.bots[0].attach_skill(rig.catalog.skill("alpha-skill"))
+    assert rig.w.scan() == {"added": 0, "changed": 0, "removed": 0, "refused": 0}
+    assert rig.ledger.events() == []
+    (rig.folder / "alpha" / "SKILL.md").unlink()
+    (rig.folder / "alpha").rmdir()
+    assert rig.w.scan()["removed"] == 1
+    assert rig.catalog.skills() == [] and rig.bots[0].skills == []
+
+
+def test_startup_loaded_hard_link_is_removed(rig, tmp_path):
+    from src.skills.loader import load_dir
+    real = tmp_path / "real.md"
+    real.write_text(md(), encoding="utf-8")
+    d = rig.folder / "alpha"
+    d.mkdir()
+    os.link(real, d / "SKILL.md")
+    for r in load_dir(rig.folder):
+        rig.catalog.add_skill(r.skill)
+    rig.bots[0].attach_skill(rig.catalog.skill("alpha-skill"))
+    rig.w.scan()
+    assert rig.catalog.skills() == [] and rig.bots[0].skills == []
+    assert ("dropped", "alpha", "refused") in rig.ledger.events()
+
+
+def test_one_folder_exception_does_not_abort_scan(rig, monkeypatch):
+    put(rig.folder, "alpha")
+    put(rig.folder, "beta", md("Beta", "b"))
+    import src.skilltuner.watcher as w
+    real = w.load_skill
+
+    def boom(path, cfg):
+        if "alpha" in str(path):
+            raise OSError("x")
+        return real(path, cfg)
+
+    monkeypatch.setattr(w, "load_skill", boom)
+    rig.w.scan()
+    assert rig.catalog.skill("beta") is not None
+    assert any(d.get("error") == "OSError" and d["event"] == "dropped" for _, d in rig.ledger.rows)
