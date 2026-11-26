@@ -3546,10 +3546,9 @@ def create_app(h: Harness) -> FastAPI:
         rec = _rec()
         if rec.last is None:
             raise HTTPException(409, "nothing recorded yet")
-        taken: set[str] = set()
-        if h.config.user_content:  # a draft never takes the slug of a shipped skill
-            mine = h.config.skills_write_dir.resolve()
-            taken = {s.slug for s in h.catalog.skills() if not (s.path and Path(s.path).resolve().is_relative_to(mine))}
+        # a draft never takes the slug of a shipped skill: the user folder loads first and would shadow it
+        mine = h.config.skills_write_dir.resolve()
+        taken = {s.slug for s in h.catalog.skills() if not (s.path and Path(s.path).resolve().is_relative_to(mine))}
         res = draft_skill(rec.last, name=body.name, use=body.use, skills_dir=h.config.skills_write_dir, catalog=h.catalog, config=h.skill_config, taken=taken)
         return {
             "state": str(res.state), "reason": str(res.reason) if res.reason else None, "detail": res.detail,
