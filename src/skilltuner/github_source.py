@@ -5,14 +5,18 @@ goes into an exception. Nothing here logs.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 
 from src.events.eventbrite import SourceError
 
+from .casemark import FILE_PATH, Downloaded, Found, _clean
 from .github import GitHub, Tree
-from .index import Listed, extras, find_index, frontmatter, parse_index, skill_folders
-from .repos import RepoEntry, RepoList, RepoStore
+from .index import Listed, extras, find_index, frontmatter, parse_index, skill_folders, split_frontmatter
+from .licences import canonical, licence_of_text
+from .match import Matcher, top
+from .repos import OWNER, REPO, SEGMENT, RepoEntry, RepoList, RepoStore
 
 INDEX_LIMIT = 10_000_000
 SKILL_LIMIT = 1_000_000
@@ -20,6 +24,26 @@ ONE_BY_ONE_MAX = 300
 REFRESH_DAYS = 7
 GITHUB_WIDE = ("network", "refused", "budget")
 PER_FILE = ("not_found", "too_large")
+GH_ID = re.compile(rf"gh:({OWNER})/({REPO}):({SEGMENT}(?:/{SEGMENT})*)")
+ID_MAX = 512
+RESULTS = 5
+REFERENCES_MAX = 20
+FILE_LIMIT = 200_000
+NAME_MAX = 120
+SUMMARY_MAX = 1_000
+LICENCE_FILES = ("license", "license.md", "license.txt", "copying")
+
+
+def gh_id(owner: str, repo: str, path: str) -> str:
+    return f"gh:{owner}/{repo}:{path}"
+
+
+def parse_gh_id(text: str) -> tuple[str, str, str]:
+    """(owner, repo, path) of a source id this module made, else ValueError."""
+    m = GH_ID.fullmatch(text) if isinstance(text, str) and len(text) <= ID_MAX else None
+    if m is None or {".", ".."} & set(m.group(3).split("/")) or m.group(2) in (".", ".."):
+        raise ValueError("Not a GitHub skill id.")
+    return m.group(1), m.group(2), m.group(3)
 
 
 def _fail(kind: str) -> SourceError:
@@ -49,6 +73,90 @@ class GitHubSkills:
         self.clock = clock
         self.reading: set[str] = set()
         self.changed = False
+        self._matcher: tuple[frozenset, Matcher] | None = None
+        self._files: dict[str, set[str]] = {}
+
+    def _stored(self) -> list[tuple[RepoEntry, RepoList]]:
+        out = []
+        for entry in self.entries():
+            stored = self.store.get(entry.id)
+            if stored is not None and stored.commit:
+                out.append((entry, stored))
+        return out
+
+    def matcher(self) -> Matcher:
+        """IDF weights over every stored skill; rebuilt only when the stored lists change."""
+        stored = self._stored()
+        key = frozenset((e.id, s.commit, s.read_at) for e, s in stored)
+        if self._matcher is None or self._matcher[0] != key:
+            self._matcher = (key, Matcher((k.name, k.description, k.category) for _, s in stored for k in s.skills))
+        return self._matcher[1]
+
+    def search(self, words: str) -> list[Found]:
+        """The best skills of the stored lists for a need's words; no network."""
+        items = [(e, k) for e, s in self._stored() for k in s.skills]
+        matcher = self.matcher()
+        best = top(words, items, key=lambda it: (it[1].name, it[1].description, it[1].category),
+                   n=RESULTS, matcher=matcher)
+        return [Found(gh_id(e.owner, e.repo, k.path), k.name, k.description, [k.category] if k.category else [],
+                      matcher.score(words, k.name, k.description, k.category)) for e, k in best]
+
+    def _find(self, id: str) -> tuple[RepoEntry, RepoList, Listed]:
+        owner, repo, path = parse_gh_id(id)
+        for entry, stored in self._stored():
+            if entry.owner == owner and entry.repo == repo:
+                for k in stored.skills:
+                    if k.path == path:
+                        return entry, stored, k
+        raise _fail("not_found")
+
+    async def read(self, id: str) -> Downloaded:
+        """The skill's SKILL.md and references at the stored commit, with the licence the rules chose."""
+        entry, stored, listed = self._find(id)
+        sha, path = stored.commit, listed.path
+        blobs = await self._blobs(entry, sha, lambda: None)
+        prefix = path + "/"
+        inside = [p[len(prefix):] for p, _ in blobs if p.startswith(prefix)]
+        if "SKILL.md" not in inside:
+            raise _fail("not_found")
+        raw = await self.client.raw(entry.owner, entry.repo, sha, f"{path}/SKILL.md", SKILL_LIMIT)
+        text = raw.decode("utf-8", errors="replace")
+        meta = frontmatter(text)
+        parts = split_frontmatter(text)
+        body = _clean(parts[1] if parts else text, 200_000)
+        files = sorted(p for p in inside if FILE_PATH.fullmatch(p))[:REFERENCES_MAX]
+        self._files[id] = set(files)
+        left_out = listed.has_extra or any(p.startswith("scripts/") for p in inside)
+        licence = await self._licence(entry, sha, path, meta.get("license", ""), inside)
+        return Downloaded(
+            id, _clean(meta.get("name") or listed.name, NAME_MAX),
+            _clean(meta.get("description") or listed.description, SUMMARY_MAX),
+            body, [listed.category] if listed.category else [], sha[:12], entry.owner, licence,
+            [(p, p) for p in files], f"github.com/{entry.owner}/{entry.repo}",
+            f"https://github.com/{entry.owner}/{entry.repo}/tree/{sha}/{path}", left_out)
+
+    async def _licence(self, entry: RepoEntry, sha: str, path: str, declared: str, inside: list[str]) -> str:
+        if canonical(declared):
+            return canonical(declared)
+        names = sorted(p for p in inside if "/" not in p and p.casefold() in LICENCE_FILES)
+        if names:
+            try:
+                raw = await self.client.raw(entry.owner, entry.repo, sha, f"{path}/{names[0]}", FILE_LIMIT)
+            except SourceError as e:
+                if e.kind not in PER_FILE:
+                    raise
+            else:
+                found = licence_of_text(raw.decode("utf-8", errors="replace"))
+                if found:
+                    return found
+        return canonical(entry.licence)
+
+    async def read_file(self, id: str, path: str) -> str:
+        if path not in self._files.get(id, set()) or FILE_PATH.fullmatch(path) is None:
+            raise ValueError("Not a file of this skill.")
+        entry, stored, listed = self._find(id)
+        raw = await self.client.raw(entry.owner, entry.repo, stored.commit, f"{listed.path}/{path}", FILE_LIMIT)
+        return _clean(raw.decode("utf-8", errors="replace"), FILE_LIMIT)
 
     def stale(self, now: float) -> RepoEntry | None:
         never: RepoEntry | None = None

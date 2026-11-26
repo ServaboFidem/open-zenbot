@@ -126,16 +126,24 @@ class _NoAliases(yaml.SafeLoader):
         return super().compose_node(parent, index)
 
 
-def frontmatter(text: str) -> dict[str, str]:
-    """`name`, `description` and `license` from a SKILL.md's frontmatter, when plain strings; else `{}`."""
+def split_frontmatter(text: str) -> tuple[str, str] | None:
+    """(the frontmatter's text, the body after it) when `text` opens with a `---` block, else None."""
     lines = text.split("\n")
     if lines[0].rstrip() != "---":
-        return {}
+        return None
     end = next((i for i in range(1, len(lines)) if lines[i].rstrip() == "---"), None)
     if end is None:
+        return None
+    return "\n".join(lines[1:end]), "\n".join(lines[end + 1:])
+
+
+def frontmatter(text: str) -> dict[str, str]:
+    """`name`, `description` and `license` from a SKILL.md's frontmatter, when plain strings; else `{}`."""
+    parts = split_frontmatter(text)
+    if parts is None:
         return {}
     try:
-        meta = yaml.load("\n".join(lines[1:end]), Loader=_NoAliases)  # noqa: S506 (a SafeLoader subclass)
+        meta = yaml.load(parts[0], Loader=_NoAliases)  # noqa: S506 (a SafeLoader subclass)
     except (yaml.YAMLError, RecursionError):
         return {}
     if not isinstance(meta, dict):

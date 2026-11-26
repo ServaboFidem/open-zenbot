@@ -97,3 +97,12 @@ def test_three_thousand_docs_score_under_half_a_second():
     elapsed = time.perf_counter() - start
     assert result and result[0][0] == "Tax Return Helper"
     assert elapsed < 0.5
+
+
+def test_top_uses_a_given_matcher_instead_of_building_one():
+    items = [("alpha beta", "", ""), ("beta gamma", "", "")]
+    # a matcher built over other documents weighs "alpha" heavily and "beta" lightly
+    given = Matcher([("beta", "", "")] * 5 + [("alpha", "", "")])
+    got = top("alpha beta", items, key=lambda x: x, n=2, matcher=given)
+    assert got == [items[0], items[1]]
+    assert given.score("alpha beta", *items[0]) > given.score("alpha beta", *items[1])

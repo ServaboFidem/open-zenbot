@@ -56,13 +56,18 @@ def top(
     items: Iterable[T],
     key: Callable[[T], tuple[str, str, str]],
     n: int,
+    *,
+    matcher: Matcher | None = None,
 ) -> list[T]:
-    """The at most n items scoring above zero, best first; ties keep input order."""
+    """The at most n items scoring above zero, best first; ties keep input order.
+
+    A given `matcher` is used as it is; otherwise one is built over the items.
+    """
     rows = list(items)
     if n <= 0 or not rows:
         return []
     keys = [key(item) for item in rows]
-    matcher = Matcher(keys)
+    matcher = matcher or Matcher(keys)
     scored = []
     for item, (name, description, category) in zip(rows, keys):
         s = matcher.score(query, name, description, category)
