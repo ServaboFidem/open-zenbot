@@ -54,7 +54,7 @@ def test_the_harness_settings_ledger_and_music_folders_are_refused(tmp_path: Pat
     zen = tmp_path / ".zen-agents"
     vault = zen / "vault"
     private = af.private_folders(vault)
-    assert private == [zen / "vault-settings", zen / "vault-ledger", zen / "vault-music", zen / "vault-calendar", zen / "vault-bots", zen / "vault-skills", zen / "vault-models"]
+    assert private == [zen / "vault-settings", zen / "vault-ledger", zen / "vault-music", zen / "vault-calendar", zen / "vault-bots", zen / "vault-skills", zen / "vault-models", zen / "vault-skilltuner"]
     for d in (vault / "notes", *private, zen / "vault-settings" / "sub"):
         d.mkdir(parents=True, exist_ok=True)
     home = tmp_path / "home"
@@ -228,3 +228,13 @@ def test_a_saved_folder_that_is_private_now_is_not_loaded(tmp_path: Path, capsys
     assert said.count("allowed folder not used") == 3 and str(skills) in said
     AllowedFolders.load(vault)
     assert capsys.readouterr().err == ""  # each one is reported once a run
+
+
+def test_the_skilltuner_folder_is_private_and_refused(tmp_path: Path):
+    from src.vault_settings import tuner_dir
+    vault = tmp_path / "vault"
+    assert tuner_dir(vault) == tmp_path / "vault-skilltuner"
+    assert tuner_dir(vault) in af.private_folders(vault)
+    tuner_dir(vault).mkdir(parents=True)
+    with pytest.raises(FolderRefused):
+        af.check(str(tuner_dir(vault)), private=af.private_folders(vault))
