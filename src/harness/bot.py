@@ -46,9 +46,15 @@ class Bot:
     places: list[str] = field(default_factory=list)  # the bot file's `places`: "text" and/or "images", what it can place in a design
     closed: bool = False  # the bot file's `closed`: only the tools of `mcps`, whatever the router or a skill adds
     narrates: bool = False  # the bot file's `narrates`: the Narrator, asked directly to rewrite replies for speech; takes no task
+    tunes_skills: bool = False  # the bot file's `tunes_skills`: SkillTuner, asked directly while ZenBot dreams; takes no task
+
+    @property
+    def asked_directly(self) -> bool:
+        """Takes no task, no room turn and no skills: the harness asks it one question at a time."""
+        return self.narrates or self.tunes_skills
 
     def attach_skill(self, skill: Skill, max_per_bot: int = 250) -> tuple[SkillState, Reason | None]:
-        if self.narrates:  # the Narrator has no skills: its file would no longer load with one
+        if self.asked_directly:  # the Narrator and SkillTuner have no skills: its file would no longer load with one
             return SkillState.nothing, Reason.unsupported
         if any(s.slug == skill.slug for s in self.skills):
             return SkillState.nothing, Reason.duplicate
@@ -107,4 +113,5 @@ class Bot:
             "places": list(self.places),
             "closed": self.closed,
             "narrates": self.narrates,
+            "tunes_skills": self.tunes_skills,
         }

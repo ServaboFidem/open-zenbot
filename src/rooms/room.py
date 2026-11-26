@@ -347,7 +347,7 @@ class RoomService:
     def joinable(bot) -> bool:
         """A closed bot (it reads untrusted pages) works in its own conversation and routine only: what it
         writes in a room would be read by bots with shell and browser."""
-        return not getattr(bot, "closed", False) and not getattr(bot, "narrates", False)  # the Narrator takes no turn
+        return not getattr(bot, "closed", False) and not getattr(bot, "asked_directly", False)  # the Narrator and SkillTuner take no turn
 
     def _check_members(self, members: list[str]) -> list[str]:
         members = list(dict.fromkeys(members))

@@ -549,3 +549,9 @@ def test_a_narrator_cannot_be_a_room_member(ledger: Ledger, tmp_path: Path):
     svc, bs = make(ScriptedProvider(), ledger, tmp_path)
     bs["critic"].narrates = True
     assert svc.joinable(bs["writer"]) and not svc.joinable(bs["critic"])
+
+
+def test_a_skill_tuner_cannot_be_a_room_member(ledger: Ledger, tmp_path: Path):
+    svc, bs = make(ScriptedProvider(), ledger, tmp_path)
+    bs["critic"].tunes_skills = True
+    assert svc.joinable(bs["writer"]) and not svc.joinable(bs["critic"])

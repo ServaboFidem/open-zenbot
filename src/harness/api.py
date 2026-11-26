@@ -1275,6 +1275,7 @@ class OpenRouterKeyIn(BaseModel):
 
 
 NARRATOR_NO_TASK = "The Narrator reads replies aloud; it does not take tasks."
+TUNER_NO_TASK = "SkillTuner works only while ZenBot dreams and takes no task."
 MAX_PICTURES = 4
 TOO_MANY_PICTURES = "At most 4 pictures a message."
 
@@ -1690,8 +1691,8 @@ def create_app(h: Harness) -> FastAPI:
         bot = h.bots.get(r.bot)
         if bot is None:
             raise RoutineError(f"Routine {r.name!r}: bot {r.bot!r} does not exist.")
-        if bot.narrates:
-            raise RoutineError(f"Routine {r.name!r}: {bot.name} reads replies aloud and runs no routine.")
+        if bot.asked_directly:
+            raise RoutineError(f"Routine {r.name!r}: {bot.name} {'reads replies aloud' if bot.narrates else 'works only while ZenBot dreams'} and runs no routine.")
         skill = next((sk for sk in bot.skills if sk.slug == r.skill), None)
         if skill is None:
             raise RoutineError(f"Routine {r.name!r}: skill {r.skill!r} is not attached to {bot.id}.")
@@ -3091,8 +3092,8 @@ def create_app(h: Harness) -> FastAPI:
         bot = _bot(h, bot_id)
         if bot.closed and body.mcps is not None and list(body.mcps) != list(bot.mcps):
             raise HTTPException(422, "This bot's tools are fixed in its file.")
-        if bot.narrates and body.mcps:  # its file would no longer load with any
-            raise HTTPException(422, "The Narrator has no tool groups.")
+        if bot.asked_directly and body.mcps:  # its file would no longer load with any
+            raise HTTPException(422, f"{'The Narrator' if bot.narrates else 'SkillTuner'} has no tool groups.")
         if body.name is not None:
             bot.name = body.name
         if body.role is not None:
@@ -3216,8 +3217,8 @@ def create_app(h: Harness) -> FastAPI:
     @app.post("/bots/{bot_id}/tasks", status_code=202)
     async def start_task(bot_id: str, body: TaskIn) -> dict[str, Any]:
         bot = _bot(h, bot_id)
-        if bot.narrates:
-            raise HTTPException(409, NARRATOR_NO_TASK)
+        if bot.asked_directly:
+            raise HTTPException(409, NARRATOR_NO_TASK if bot.narrates else TUNER_NO_TASK)
         if not body.task.strip() and not body.uploads:
             raise HTTPException(422, "task is empty")
         if not h.bound:
@@ -3572,7 +3573,7 @@ def _persist(h: Harness, bot: Bot) -> None:
     taken: set[str] = set()
     if h.config.user_content:  # the user's folder is empty of shipped ids: a new bot must not take one, or it would shadow it
         taken = set(h.bots) | {f.stem for f in h.config.bot_prompts_dir.glob("*.md")} if h.config.bot_prompts_dir.is_dir() else set(h.bots)
-    p = save_bot_prompt(h.config.bots_write_dir, BotPrompt(id=bot.id, name=bot.name, role=bot.role, instructions=bot.instructions, skills=[s.slug for s in bot.skills], mcps=list(bot.mcps) or None, studio=bot.studio, places=list(bot.places), closed=bot.closed, narrates=bot.narrates), taken)
+    p = save_bot_prompt(h.config.bots_write_dir, BotPrompt(id=bot.id, name=bot.name, role=bot.role, instructions=bot.instructions, skills=[s.slug for s in bot.skills], mcps=list(bot.mcps) or None, studio=bot.studio, places=list(bot.places), closed=bot.closed, narrates=bot.narrates, tunes_skills=bot.tunes_skills), taken)
     bot.id = p.id
 
 
