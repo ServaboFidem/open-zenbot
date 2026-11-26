@@ -155,6 +155,9 @@ class SkillWatcher:
             skill = res.skill
             if held is not None and skill.slug == held:
                 added = self.catalog.replace_skill(skill)
+                if added.state.value == "added":  # routing reads bot.skills: each bot gets the new text
+                    for bot in self.bots():
+                        bot.skills = [skill if s.slug == held else s for s in bot.skills]
             else:
                 if held is not None:
                     self._unload(held)  # its slug changed: the earlier copy goes first

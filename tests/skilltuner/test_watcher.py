@@ -277,3 +277,17 @@ def test_one_folder_exception_does_not_abort_scan(rig, monkeypatch):
     rig.w.scan()
     assert rig.catalog.skill("beta") is not None
     assert any(d.get("error") == "OSError" and d["event"] == "dropped" for _, d in rig.ledger.rows)
+
+
+def test_a_reloaded_skill_replaces_the_copy_each_bot_holds(rig):
+    put(rig.folder, "alpha", md(), mtime_ns=1_000_000_000)
+    rig.w.scan()
+    other = Bot(id="c", name="C", role="r", instructions="")
+    rig.bots.append(other)
+    rig.bots[0].attach_skill(rig.catalog.skill("alpha-skill"))
+    put(rig.folder, "alpha", md(use="Does it better.") + "New body.\n", mtime_ns=2_000_000_000)
+    assert rig.w.scan()["changed"] == 1
+    held = rig.bots[0].skills
+    assert len(held) == 1 and held[0] is rig.catalog.skill("alpha-skill")
+    assert held[0].use == "Does it better." and "New body." in held[0].body
+    assert other.skills == []  # a bot that did not have it is not given it
