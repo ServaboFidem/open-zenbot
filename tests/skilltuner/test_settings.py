@@ -94,7 +94,7 @@ def test_converted_pause_known_and_last(tmp_path):
     assert st.converted("2026-11-25") == 1 and st.converted("2026-11-26") == 0
     assert not st.paused("2026-11-25")
     st.pause_until("2026-11-27")
-    assert st.paused("2026-11-27") and not st.paused("2026-11-28")
+    assert st.paused("2026-11-26") and not st.paused("2026-11-27")
     st.remember("s1", "suggested")
     st.remember("s2", "rejected")
     st.last_pass_at = "x"
@@ -102,7 +102,7 @@ def test_converted_pause_known_and_last(tmp_path):
     st2 = TunerState(st.path)
     assert st2.known == {"s1", "s2"}
     assert (st2.last_pass_at, st2.last_error) == ("x", "boom")
-    assert st2.paused("2026-11-27")
+    assert st2.paused("2026-11-26")
     try:
         st.remember("s3", "bogus")
     except ValueError:

@@ -197,7 +197,7 @@ class TunerState:
 
     def paused(self, today: str) -> bool:
         with self._lock:
-            return bool(self._paused_until) and today <= self._paused_until
+            return bool(self._paused_until) and today < self._paused_until
 
     @property
     def known(self) -> set[str]:
