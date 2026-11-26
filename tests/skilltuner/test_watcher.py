@@ -291,3 +291,38 @@ def test_a_reloaded_skill_replaces_the_copy_each_bot_holds(rig):
     assert len(held) == 1 and held[0] is rig.catalog.skill("alpha-skill")
     assert held[0].use == "Does it better." and "New body." in held[0].body
     assert other.skills == []  # a bot that did not have it is not given it
+
+
+def _fails_while(rig, monkeypatch, failing: list[bool]):
+    import src.skilltuner.watcher as w
+    real = w.load_skill
+
+    def flaky(path, cfg):
+        if failing[0]:
+            raise OSError("x")
+        return real(path, cfg)
+
+    monkeypatch.setattr(w, "load_skill", flaky)
+
+
+def test_a_skill_whose_read_failed_once_loads_on_the_next_scan_unchanged(rig, monkeypatch):
+    put(rig.folder, "alpha", mtime_ns=1_000_000_000)
+    failing = [True]
+    _fails_while(rig, monkeypatch, failing)
+    rig.w.scan()
+    assert rig.catalog.skill("alpha-skill") is None
+    failing[0] = False  # the filesystem recovers; the file is not touched
+    assert rig.w.scan()["added"] == 1 and rig.catalog.skill("alpha-skill") is not None
+    assert [e[0] for e in rig.ledger.events()] == ["dropped", "loaded"]
+    assert rig.w.scan() == {"added": 0, "changed": 0, "removed": 0, "refused": 0}  # loaded: not read again
+
+
+def test_a_read_that_keeps_failing_is_tried_each_scan_but_logged_once(rig, monkeypatch):
+    put(rig.folder, "alpha", mtime_ns=1_000_000_000)
+    _fails_while(rig, monkeypatch, [True])
+    for _ in range(3):
+        rig.w.scan()
+    assert [e for e in rig.ledger.events() if e[0] == "dropped"] == [("dropped", "alpha", "error")]
+    put(rig.folder, "alpha", md(use="Does alpha thing."), mtime_ns=2_000_000_000)  # a new version fails anew
+    rig.w.scan()
+    assert len([e for e in rig.ledger.events() if e[0] == "dropped"]) == 2

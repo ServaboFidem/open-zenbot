@@ -51,6 +51,7 @@ class SkillWatcher:
         self.config = config
         self.on_change = on_change
         self._seen: dict[str, object] = {}  # folder name -> signature last handled
+        self._failing: dict[str, object] = {}  # folder name -> signature whose load raised (logged once, retried)
         self._lock = threading.Lock()
 
     def _log(self, event: str, **data) -> None:
@@ -112,6 +113,7 @@ class SkillWatcher:
                     out["removed"] += 1
                     self._log("removed", folder=name, slug=held)
                 self._seen.pop(name, None)
+                self._failing.pop(name, None)
                 continue
             if not FOLDER.match(name):
                 if held is not None:
@@ -136,12 +138,18 @@ class SkillWatcher:
             self._seen[name] = sig
             todo.append((name, held))
         for name, held in todo:
+            sig = self._seen.get(name)
             try:
                 self._load(name, held, out)
             except Exception as e:  # noqa: BLE001
+                self._seen.pop(name, None)  # not handled: read again on the next scan, as after a passing failure
                 if self._unload(held):
                     out["removed"] += 1
-                self._log("dropped", folder=name, slug=held, reason="error", error=type(e).__name__)
+                if self._failing.get(name) != sig:  # one entry per version of the file, not one every scan
+                    self._failing[name] = sig
+                    self._log("dropped", folder=name, slug=held, reason="error", error=type(e).__name__)
+            else:
+                self._failing.pop(name, None)
         if out["added"] or out["changed"] or out["removed"]:
             self.on_change()
         return out

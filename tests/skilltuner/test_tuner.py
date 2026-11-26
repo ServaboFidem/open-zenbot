@@ -570,3 +570,40 @@ async def test_a_winner_whose_read_is_interrupted_is_given_back(t):
     t.busy = True
     await asyncio.wait_for(run, 1.0)
     assert cancelled and [n.words for n in t.state.due_needs(TODAY, 8)] == [WORDS]
+
+
+async def test_a_need_whose_words_became_a_secret_after_it_was_kept_is_not_searched(t):
+    t.state.add_need(TOPIC, "memo tuner-late-secret-91")
+    exclusion.register_secret_value("tuner-late-secret-91")  # registered after the need passed the check
+    got = await t.tune()
+    assert t.site.requests == [] and got["searches"] == 0 and t.state.searched(TODAY) == 0
+    assert t.state.due_needs(TODAY, 8) == [] and t.tuner.waiting() == 0  # dropped, not kept for a later search
+    assert "tuner-late-secret-91" not in json.dumps([e.data for e in t.entries()])
+
+
+async def test_two_needs_sharing_a_winner_are_both_given_back_when_its_read_is_interrupted(t):
+    t.state.add_need(TOPIC, WORDS)
+    t.state.add_need(TOPIC, WORDS)  # seen twice: searched first
+    t.state.add_need("memos again", "memo writing")  # finds the same winner
+    cancelled, entered = route(t, hang_on=lambda p: p["name"] == "read_skill")
+    run = asyncio.ensure_future(t.tune())
+    await asyncio.wait_for(entered.wait(), 1.0)
+    t.busy = True
+    await asyncio.wait_for(run, 1.0)
+    assert cancelled and {n.words for n in t.state.due_needs(TODAY, 8)} == {WORDS, "memo writing"}
+    assert [p["name"] for p in t.sent()].count("read_skill") == 1  # one conversion for the shared slug
+
+
+async def test_a_conversion_whose_slug_is_not_text_is_dropped_and_the_pass_goes_on(t):
+    two_needs(t)
+
+    def second_reads(params):  # the read fixture is WIN's skill: serve it under SECOND's slug when asked for that
+        if params["name"] == "read_skill" and params["arguments"]["slug"] == SECOND:
+            t.site.read_answer = {**fixture("read"), "slug": SECOND}
+
+    route(t, before=second_reads)
+    t.model.answers = [json.dumps({"name": "Memos", "slug": [], "use": "Do memos when asked."}), CONVERTED]
+    got = await t.tune()
+    assert got["suggested"] == 1 and t.store.count() == 1 and t.store.list()[0].source_slug == SECOND
+    assert [e["reason"] for e in t.events("dropped")] == ["invalid"]
+    assert [e for e in t.events("pass_end") if e.get("error")] == []

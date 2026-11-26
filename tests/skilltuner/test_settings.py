@@ -54,6 +54,17 @@ def test_damaged_state_kept_aside(tmp_path):
     assert TunerState(st.path).read("c") == 1
 
 
+def test_state_that_is_not_utf8_is_kept_aside(tmp_path):
+    vault, st = _state(tmp_path)
+    st.path.parent.mkdir(parents=True)
+    st.path.write_bytes(b'{"marks": "\xff\xfe"}')
+    st2 = TunerState(st.path)
+    assert st2.read("c") == 0
+    assert (st.path.parent / "skilltuner.json.bad").read_bytes() == b'{"marks": "\xff\xfe"}'
+    st2.set_read("c", 1)
+    assert TunerState(st.path).read("c") == 1
+
+
 def test_spend_stops_at_limit_and_resets(tmp_path):
     _, st = _state(tmp_path)
     for _ in range(40):

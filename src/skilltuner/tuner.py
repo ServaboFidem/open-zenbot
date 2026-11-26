@@ -72,7 +72,7 @@ class _Stop(Exception):
 
 @dataclass
 class _Winner:
-    words: str
+    needs: list[str]  # the words of every need that picked this skill: all are given back if it is not made
     topic: str
     found: Found
     score: float
@@ -333,6 +333,10 @@ class SkillTuner:
     async def _search_each(self, today: str, go, guarded, counts: dict[str, int], winners: list[_Winner]) -> None:
         for need in self.state.due_needs(today, self._searches_left(today)):
             go()
+            if not self._clean(need.words):  # a secret registered since the need was kept: dropped, never sent
+                self.state.drop_need(need.words)
+                self.ledger.append(Kind.skilltuner, "", "", event="search", results=0, error="excluded")
+                continue
             if self.state.spent(today) >= DAILY_REQUESTS:
                 raise _Stop("", pause=False)
             self.state.add_search(today)  # counted as sent: giving the need back later does not lower it
@@ -362,8 +366,12 @@ class SkillTuner:
             outcome, slug, score = await self._fit(need.words, fresh, go, guarded)
             # `undecided` is due again from the next local date (`TunerState.due_needs`), not at once
             self.state.mark_searched(need.words, today, outcome)
-            if slug and all(w.found.slug != slug for w in winners):
-                winners.append(_Winner(need.words, need.topic, fresh[slug], score))
+            if slug:
+                same = next((w for w in winners if w.found.slug == slug), None)
+                if same is None:
+                    winners.append(_Winner([need.words], need.topic, fresh[slug], score))
+                else:
+                    same.needs.append(need.words)  # one conversion for the slug, but this need depends on it too
 
     async def _fit(self, words: str, fresh: dict[str, Found], go, guarded) -> tuple[str, str, float]:
         """(outcome, winner's slug, its score): `winner` for a single clear winner, `none` when there is none,
@@ -405,7 +413,8 @@ class SkillTuner:
 
     def _give_back(self, winners: list[_Winner]) -> None:
         for w in winners:
-            self.state.mark_searched(w.words, "", "")
+            for words in w.needs:
+                self.state.mark_searched(words, "", "")
 
     async def _one(self, today: str, w: _Winner, go, guarded, counts: dict[str, int]) -> None:
         slug = w.found.slug
@@ -444,7 +453,7 @@ class SkillTuner:
         try:
             conv = clean_conversion(raw, taken)
         except ValueError:
-            dup = (isinstance(raw, dict) and (raw.get("slug") in slugs
+            dup = (isinstance(raw, dict) and ((isinstance(raw.get("slug"), str) and raw["slug"] in slugs)
                                               or (isinstance(raw.get("name"), str) and raw["name"].strip().casefold() in names)))
             self._dropped(counts, "duplicate" if dup else "invalid", slug)
             return

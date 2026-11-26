@@ -80,3 +80,64 @@ test('nextSteps skips what an earlier try did and never confirms twice', () => {
   assert.deepEqual(nextSteps(fit, picks, bs, 'new', { confirmed: ['a'], updated: ['b'] }), { confirm: [], update: [{ id: 'c', skills: ['y', 'new'] }] });
   assert.deepEqual(nextSteps(fit, new Set(['b']), bs, 'new', { confirmed: ['a'], updated: [] }), { confirm: [], update: [{ id: 'b', skills: ['new'] }] });
 });
+
+import { attachChosen, createQueue } from '../../src/gui/skilltuner.js';
+// A harness stand-in: PATCH /bots/{id} replaces the skills list, as the real route does; every call yields first.
+function fakeHarness(bots) {
+  const store = new Map(bots.map(b => [b.id, { ...b, skills: [...b.skills] }]));
+  const tick = () => new Promise(r => setTimeout(r, 0));
+  const calls = [];
+  return {
+    store, calls, failPatch: 0,
+    async bots() { calls.push('bots'); await tick(); return [...store.values()].map(b => ({ ...b, skills: [...b.skills] })); },
+    async patchBot(id, body) {
+      calls.push(`patch:${id}`); await tick();
+      if (this.failPatch > 0) { this.failPatch -= 1; throw new Error('offline'); }
+      store.get(id).skills = [...body.skills];
+    },
+    async confirmFit(fitId, id) { calls.push(`confirm:${id}`); await tick(); const b = store.get(id); if (!b.skills.includes(fitId)) b.skills.push(fitId); },
+    async denyFit() { calls.push('deny'); },
+  };
+}
+const chosen = (ref, picks, fit = null) => ({ skill: { ref }, fit, picks: new Set(picks) });
+
+test('createQueue runs one action at a time and goes on after a failure', async () => {
+  const q = createQueue(), seen = [];
+  const step = (name, fail) => async () => { seen.push(`start ${name}`); await new Promise(r => setTimeout(r, 5)); seen.push(`end ${name}`); if (fail) throw new Error(name); return name; };
+  const a = q.run(step('a', true)), b = q.run(step('b'));
+  await assert.rejects(a, /a/);
+  assert.equal(await b, 'b');
+  assert.deepEqual(seen, ['start a', 'end a', 'start b', 'end b']);
+});
+
+test('two Done actions on one bot started together keep both skills', async () => {
+  const api = fakeHarness([{ id: 'a', name: 'Alpha', skills: ['old'] }]);
+  const q = createQueue();
+  const one = q.run(() => attachChosen(api, chosen('x', ['a']), { confirmed: [], updated: [] }));
+  const two = q.run(() => attachChosen(api, chosen('y', ['a']), { confirmed: [], updated: [] }));
+  assert.deepEqual(await one, ['Alpha']); assert.deepEqual(await two, ['Alpha']);
+  assert.deepEqual(api.store.get('a').skills, ['old', 'x', 'y']);
+});
+
+test('Done reads the stored skills, not a list the page holds, and a retry does too', async () => {
+  const api = fakeHarness([{ id: 'a', name: 'Alpha', skills: [] }, { id: 'b', name: 'Beta', skills: [] }]);
+  api.failPatch = 1;
+  const progress = { confirmed: [], updated: [] };
+  const item = chosen('x', ['a', 'b']);
+  await assert.rejects(attachChosen(api, item, progress), /offline/);
+  assert.deepEqual(progress, { confirmed: [], updated: [] });
+  api.store.get('a').skills.push('z');  // added elsewhere before the retry
+  assert.deepEqual(await attachChosen(api, item, progress), ['Alpha', 'Beta']);
+  assert.deepEqual(api.store.get('a').skills, ['z', 'x']);
+  assert.deepEqual(api.store.get('b').skills, ['x']);
+});
+
+test('Done confirms the fit once and denies a fit no bot took', async () => {
+  const api = fakeHarness([{ id: 'a', name: 'Alpha', skills: [] }, { id: 'b', name: 'Beta', skills: [] }]);
+  const fit = { id: 'x', skill: 'x', bot_ids: ['a'] };
+  assert.deepEqual(await attachChosen(api, chosen('x', ['a', 'b'], fit), { confirmed: [], updated: [] }), ['Alpha', 'Beta']);
+  assert.deepEqual(api.calls, ['bots', 'confirm:a', 'patch:b']);
+  const api2 = fakeHarness([{ id: 'b', name: 'Beta', skills: [] }]);
+  await attachChosen(api2, chosen('x', ['b'], { id: 'x', skill: 'x', bot_ids: ['a'] }), { confirmed: [], updated: [] });
+  assert.deepEqual(api2.calls, ['bots', 'patch:b', 'deny']);
+});

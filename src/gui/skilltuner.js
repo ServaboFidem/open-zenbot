@@ -73,6 +73,32 @@ export function createLatest() {
 
 export const sameSlugs = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
+// One action at a time (Approve, Reject, Done): each starts once the one before it has settled, failed or not.
+export function createQueue() {
+  let last = Promise.resolve();
+  return {
+    run(fn) {
+      const p = last.then(() => fn());
+      last = p.catch(() => {});
+      return p;
+    },
+  };
+}
+
+// Done for one approved skill: confirm the fit's bot, add the skill to each other ticked bot, deny an unused fit.
+// The bots' skills are read from the harness first, never taken from a list the page holds: PATCH /bots/{id}
+// replaces the whole list, so a stale one would drop a skill an earlier Done added. `progress`
+// ({confirmed, updated}) is filled as each step lands, so a retry skips those; on a failure it throws with
+// `progress` as far as it got. Answers the names of the bots that now have the skill.
+export async function attachChosen(api, item, progress) {
+  const bots = await api.bots();
+  const steps = nextSteps(item.fit, item.picks, bots, item.skill.ref, progress);
+  for (const id of steps.confirm) { await api.confirmFit(item.fit.id, id); progress.confirmed.push(id); }
+  for (const u of steps.update) { await api.patchBot(u.id, { skills: u.skills }); progress.updated.push(u.id); }
+  if (item.fit && !progress.confirmed.length) await api.denyFit(item.fit.id).catch(() => {});
+  return [...progress.confirmed, ...progress.updated].map(id => bots.find(b => b.id === id)?.name || id);
+}
+
 // What is still to do for Done, given what an earlier try already did (`done`: {confirmed: [], updated: []}).
 // Once the fit was confirmed it cannot be again, so every other ticked bot goes through an update.
 export function nextSteps(fit, picks, bots, slug, done = {}) {

@@ -98,11 +98,11 @@ class TunerState:
 
     def _load(self) -> None:
         try:
-            text = self.path.read_text(encoding="utf-8")
+            raw = self.path.read_bytes()
         except FileNotFoundError:
             return
         try:
-            d = json.loads(text)
+            d = json.loads(raw.decode("utf-8"))  # a UnicodeDecodeError is a ValueError: kept aside like bad JSON
             marks = _counts_of(d["marks"])
             needs = {k: _need_of(v) for k, v in d["needs"].items()}
             spent, conv = _counts_of(d["spent"]), _counts_of(d["converted"])
@@ -148,6 +148,11 @@ class TunerState:
             else:
                 self._needs[key] = Need(words=words, topic=topic)
             self._save()
+
+    def drop_need(self, words: str) -> None:
+        with self._lock:
+            if self._needs.pop(words.casefold(), None) is not None:
+                self._save()
 
     def due_needs(self, today: str, limit: int) -> list[Need]:
         """Needs not searched in the last RESEARCH_AFTER_DAYS, most seen first; a need the decider could not judge

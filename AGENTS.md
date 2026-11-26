@@ -392,7 +392,9 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
      `BATCHES_PER_PASS` (3) model calls a pass and `BATCHES_PER_DAY` (3) a local date; the rest waits for the next
      day. The call gets the numbered lines and the installed skills' names and `use` lines and answers
      `{"needs": [{"topic", "words"}]}`: at most 8 needs a batch, `words` 2 to 6 words and 80 characters, `topic` 200
-     (`convert.clean_needs`). Each need's words go through the exclusion filter again before they are kept.
+     (`convert.clean_needs`). Each need's words go through the exclusion filter again before they are kept, and once
+     more just before each search: a need whose words no longer pass (a secret registered since) is dropped from the
+     state unsent (`search` entry with `error: excluded`).
   2. *Search.* At most `NEEDS_PER_DAY` (8) needs searched a local date, up to `RESULTS_PER_SEARCH` (5) results each; a
      searched need is due again after `RESEARCH_AFTER_DAYS` (30) days, an `undecided` one the next local date. A result
      already in `state.known`, the catalog (slug or case-folded name), a pending suggestion or repeated is dropped
@@ -400,7 +402,8 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   3. *Fit.* One `DecisionRequest` per need (`purpose="skilltuner"`, through `decide_and_log`): the state is the search words
      only, never the topic; one question per result ("Would the skill <name> help with this need? ..."). A winner scores at
      least `FIT_MIN` (0.7) with no other result within `FIT_BAND` (0.1) (`select_band`). A refusal or an unusable answer
-     marks the need `undecided`. A winner not converted because the pass ended or a cap was reached is given back
+     marks the need `undecided`. Two needs that pick the same skill share one conversion, and both depend on it. A winner
+     not converted because the pass ended or a cap was reached is given back, with every need that picked it
      (searched again, not lost for 30 days; the day's search count is not lowered).
   4. *Convert.* At most `SKILLS_PER_DAY` (3) a local date and never past `PENDING_MAX`. Read the skill, check its licence,
      read each bundled file, one model call (the skill fenced as content) answering `name`, `slug`, `use`, optional `inputs`
@@ -454,7 +457,9 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   place of the copy each bot holds (routing reads `bot.skills`; bot files hold slugs, so nothing is written), a removed
   one leaves the catalog and every bot's skills in memory (a bot's saved file keeps the slug, so the skill returns if the
   folder does). One that fails to load, or collides with another skill, is left out and its earlier copy removed, with a
-  `dropped` entry (reason `invalid`, `duplicate`, `refused` or `error`); one bad folder never stops the scan. Removals run before loads. `sweep_temp` deletes stale `.tmp-*`
+  `dropped` entry (reason `invalid`, `duplicate`, `refused` or `error`); one bad folder never stops the scan. A load
+  that raised (reason `error`, as an `OSError` on a read) is tried again on every scan until it works, unchanged file
+  or not, with one `dropped` entry per version of the file (by modification time and size), not one every 3 s. Removals run before loads. `sweep_temp` deletes stale `.tmp-*`
   folders at start. A change calls `on_change` once per scan, which bumps the router's scope version
   (`bump_scope`). The watcher never writes a skill.
 - **Routes** (`src/skilltuner/routes.py`, under `/skilltuner`; no answer carries a disk path; every POST takes a required
@@ -492,7 +497,10 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   licence and a before and after of the original and converted text, as plain text, never HTML or Markdown. Approve opens a
   "Which bots should use it?" step: every offered bot, those the fit proposed ticked with their scores. A fit can be
   confirmed only once, so Done confirms the first ticked proposed bot and attaches the other ticked bots through
-  `PATCH /bots/{id}` with their full skills list (`nextSteps`); with no proposed bot ticked the fit is denied. A Done that
+  `PATCH /bots/{id}` with their full skills list (`nextSteps`); with no proposed bot ticked the fit is denied. That route
+  replaces the list, so Done reads the bots' stored skills from `GET /bots` first (`attachChosen`), never the page's
+  copy, and Approve, Reject and Done run one at a time (`createQueue`), each button off from its click until its own
+  action ends; two Done actions on one bot cannot then drop each other's skill. A Done that
   partly failed keeps its card and a retry skips the steps that worked. A skill left with no bot keeps a "Choose bots"
   card until one has it (kept in component memory, lost on a reload). Reads older than the newest read or action are
   dropped (`createLatest`). The status line names a pass error by kind (`statusLine`): CaseMark's kinds "agentskills.finance
@@ -501,7 +509,7 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   tomorrow."; otherwise it ends "<spent> of 40 requests used today." (every request to CaseMark counts). Remove (with a `window.confirm`) is offered on skills whose slug `GET /skilltuner/discovered`
   lists.
 - **Ledger.** Kind `skilltuner`, events `pass_start`, `need` (counts; `error: model` and the class name when the answer
-  could not be used), `search` (results, error kind), `fit` (scores by source slug, the winner; `error: refused`, empty
+  could not be used), `search` (results, error kind, or `excluded` for a need dropped unsent), `fit` (scores by source slug, the winner; `error: refused`, empty
   scores, when the decider refused or answered something unusable), `dropped` (reason `duplicate`, `licence`, `invalid`,
   `too_large` or `not_found`, source slug), `suggested` (source slug, new slug), `pass_end` (counts, error kind,
   interrupted), `settings`, `approved`, `rejected`, `removed`, the watcher's `loaded`, `reloaded`, `removed`, `dropped`
