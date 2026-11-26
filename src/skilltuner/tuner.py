@@ -42,13 +42,14 @@ if TYPE_CHECKING:
     from src.providers.interface import Provider
     from src.skills.catalog import Catalog
 
-__all__ = ["DAILY_REQUESTS", "NEEDS_PER_DAY", "RESULTS_PER_SEARCH", "SKILLS_PER_DAY", "BATCHES_PER_PASS", "PENDING_MAX",
+__all__ = ["DAILY_REQUESTS", "NEEDS_PER_DAY", "RESULTS_PER_SEARCH", "SKILLS_PER_DAY", "BATCHES_PER_PASS", "BATCHES_PER_DAY", "PENDING_MAX",
            "FIT_MIN", "FIT_BAND", "SkillTuner"]
 
 NEEDS_PER_DAY = 8
 RESULTS_PER_SEARCH = 5
 SKILLS_PER_DAY = 3
 BATCHES_PER_PASS = 3
+BATCHES_PER_DAY = 3  # batches of messages read a local date; the rest waits for the next day
 PENDING_MAX = 30
 FIT_MIN = 0.7
 FIT_BAND = 0.1
@@ -164,7 +165,8 @@ class SkillTuner:
         today = self._today()
         if not self._open_today(today):
             return 0
-        unread = sum(1 for c in self._quiet() if self._unread(c))
+        reading = self.state.batches_read(today) < BATCHES_PER_DAY
+        unread = sum(1 for c in self._quiet() if self._unread(c)) if reading else 0
         left = self._searches_left(today)
         return unread + (len(self.state.due_needs(today, left)) if left else 0)
 
@@ -203,15 +205,15 @@ class SkillTuner:
         try:
             self.ledger.append(Kind.skilltuner, "", "", event="pass_start")
             try:
-                await self._read_needs(go, guarded, counts)
+                await self._read_needs(today, go, guarded, counts)
                 winners = await self._search(today, go, guarded, counts)
                 await self._convert(today, winners, go, guarded, counts)
             except Interrupted:
                 interrupted = True
             except _Stop as s:
                 error = s.kind
-                if s.pause:
-                    self.state.pause_until((date.fromisoformat(today) + timedelta(days=1)).isoformat())
+                if s.pause:  # the date read now: a pass that ran past midnight pauses through the new day
+                    self.state.pause_until((date.fromisoformat(self._today()) + timedelta(days=1)).isoformat())
         except BaseException as e:  # a bug, or the task cancelled: logged by class name, then raised
             crashed = type(e).__name__
             raise
@@ -256,8 +258,8 @@ class SkillTuner:
         lines = [f"{_flat(s.name)}: {_flat(s.use)}" for s in self.catalog.skills()]
         return "\n".join(lines) if lines else "(none)"
 
-    async def _read_needs(self, go, guarded, counts: dict[str, int]) -> None:
-        left = BATCHES_PER_PASS
+    async def _read_needs(self, today: str, go, guarded, counts: dict[str, int]) -> None:
+        left = min(BATCHES_PER_PASS, BATCHES_PER_DAY - self.state.batches_read(today))
         for conv in self._quiet():
             if left <= 0:
                 return
@@ -296,6 +298,7 @@ class SkillTuner:
                     kept_n += 1
                 # a batch the model could not read is not retried: the marks move on, as a bounded loss
                 self.state.set_read(conv.id, mark)
+                self.state.add_batch(today)
                 counts["messages"] += len(group)
                 counts["needs"] += kept_n
                 entry: dict[str, Any] = {"found": len(found), "kept": kept_n, "refused": refused}
@@ -320,8 +323,19 @@ class SkillTuner:
         if not self._open_today(today):
             return []
         winners: list[_Winner] = []
+        try:
+            await self._search_each(today, go, guarded, counts, winners)
+        except BaseException:
+            self._give_back(winners)  # found but not yet made: looked for again rather than lost for 30 days
+            raise
+        return winners
+
+    async def _search_each(self, today: str, go, guarded, counts: dict[str, int], winners: list[_Winner]) -> None:
         for need in self.state.due_needs(today, self._searches_left(today)):
             go()
+            if self.state.spent(today) >= DAILY_REQUESTS:
+                raise _Stop("", pause=False)
+            self.state.add_search(today)  # counted as sent: giving the need back later does not lower it
             try:
                 found = await guarded(self.source.search(need.words))
             except SourceError as e:
@@ -345,14 +359,13 @@ class SkillTuner:
             if not fresh:
                 self.state.mark_searched(need.words, today, "none")
                 continue
-            outcome, slug, score = await self._fit(need.words, fresh, go)
-            # a refusal is not retried at once: the same words would be refused again, at the budget's cost
+            outcome, slug, score = await self._fit(need.words, fresh, go, guarded)
+            # `undecided` is due again from the next local date (`TunerState.due_needs`), not at once
             self.state.mark_searched(need.words, today, outcome)
             if slug and all(w.found.slug != slug for w in winners):
                 winners.append(_Winner(need.words, need.topic, fresh[slug], score))
-        return winners
 
-    async def _fit(self, words: str, fresh: dict[str, Found], go) -> tuple[str, str, float]:
+    async def _fit(self, words: str, fresh: dict[str, Found], go, guarded) -> tuple[str, str, float]:
         """(outcome, winner's slug, its score): `winner` for a single clear winner, `none` when there is none,
         `undecided` when the decider refused or answered something unusable."""
         scorer, bot = self._scorer(), self._bot()
@@ -365,7 +378,7 @@ class SkillTuner:
             purpose="skilltuner")
         go()
         try:
-            decision = await decide_and_log(scorer, request, self.ledger, bot.id, "")
+            decision = await guarded(decide_and_log(scorer, request, self.ledger, bot.id, ""))
             scores = {s: float(decision.noul(f"r:{s}").noul) for s in fresh}
         except ProviderError:
             raise _Stop("decider", pause=True) from None
@@ -386,7 +399,7 @@ class SkillTuner:
                 return
             try:
                 await self._one(today, w, go, guarded, counts)
-            except (Interrupted, _Stop):
+            except BaseException:
                 self._give_back(winners[i:])  # not made: looked for again rather than lost for 30 days
                 raise
 

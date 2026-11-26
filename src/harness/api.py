@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field, StrictFloat, StrictInt, StrictStr
 from src.decider.fit import FitConfig, FitEngine
 from src.decider.interface import BandConfig, ConfirmState, Scorer
 from src.decider.router import CatalogRouter, RouterConfig
-from src.memory.dream import DreamMarks, Dreamer
+from src.memory.dream import DreamMarks, Dreamer, Interrupted
 from src.skilltuner.casemark import CaseMark, new_client as casemark_client
 from src.skilltuner.settings import TunerState
 from src.skilltuner.suggestions import SuggestionStore
@@ -635,9 +635,11 @@ class Harness:
         return self._tuner_gen[1], choice.model
 
     def _tuner_clean(self, text: str) -> bool:
-        """The exclusion check dreaming uses (`Dreamer._read`): False for a text that may not leave the computer."""
+        """The exclusion check dreaming uses (`Dreamer._read`): False for a text that may not leave the computer.
+        With no profile the pass ends (`Interrupted`, as `Dreamer._read` does) rather than every message being
+        counted as refused and read past."""
         if self.profile is None:
-            return False
+            raise Interrupted()
         try:
             self.profile.graph.require_clean(text, SHARED)
         except ExclusionError:

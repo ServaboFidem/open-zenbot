@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from src.memory.ledger import Kind, ledger_path_for
@@ -82,9 +83,40 @@ def test_due_needs_thirty_days(tmp_path):
     st.add_need("t", "gamma")
     st.mark_searched("GAMMA", "2026-11-01", "none")
     assert st.due_needs("2026-11-30", 5) == []
-    assert st.searched("2026-11-01") == 1
+    assert st.searched("2026-11-01") == 0  # marking is not sending: searches are counted by add_search
     assert st.due_needs("2026-12-01", 5)[0].outcome == "none"
     assert TunerState(st.path).due_needs("2026-12-01", 5)
+
+
+def test_an_undecided_need_is_due_again_the_next_day(tmp_path):
+    _, st = _state(tmp_path)
+    st.add_need("t", "gamma")
+    st.mark_searched("gamma", "2026-11-01", "undecided")
+    assert st.due_needs("2026-11-01", 5) == []
+    assert [n.words for n in st.due_needs("2026-11-02", 5)] == ["gamma"]
+
+
+def test_searches_and_batches_are_counted_per_day_and_kept(tmp_path):
+    _, st = _state(tmp_path)
+    st.add_search("2026-11-25")
+    st.add_search("2026-11-25")
+    st.add_batch("2026-11-25")
+    st.add_need("t", "gamma")
+    st.mark_searched("gamma", "", "")  # a need given back
+    again = TunerState(st.path)
+    assert again.searched("2026-11-25") == 2 and again.batches_read("2026-11-25") == 1
+    assert again.searched("2026-11-26") == 0 and again.batches_read("2026-11-26") == 0
+
+
+def test_a_file_from_before_the_day_counts_loads(tmp_path):
+    _, st = _state(tmp_path)
+    st.add_need("t", "gamma")
+    d = json.loads(st.path.read_text(encoding="utf-8"))
+    del d["searches"], d["batches"]
+    st.path.write_text(json.dumps(d), encoding="utf-8")
+    again = TunerState(st.path)
+    assert again.due_needs("2026-11-25", 5) and again.searched("2026-11-25") == 0
+    assert not st.path.with_name(st.path.name + ".bad").exists()
 
 
 def test_converted_pause_known_and_last(tmp_path):

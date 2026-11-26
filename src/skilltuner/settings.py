@@ -88,6 +88,8 @@ class TunerState:
         self._needs: dict[str, Need] = {}
         self._spent: dict[str, int] = {}
         self._converted: dict[str, int] = {}
+        self._searches: dict[str, int] = {}  # searches sent, per local date
+        self._batches: dict[str, int] = {}  # batches of messages read, per local date
         self._known: dict[str, str] = {}
         self._paused_until = ""
         self._last_pass_at = ""
@@ -104,6 +106,7 @@ class TunerState:
             marks = _counts_of(d["marks"])
             needs = {k: _need_of(v) for k, v in d["needs"].items()}
             spent, conv = _counts_of(d["spent"]), _counts_of(d["converted"])
+            searches, read_batches = _counts_of(d.get("searches", {})), _counts_of(d.get("batches", {}))  # later fields
             known = d["known"]
             if not isinstance(known, dict) or not all(isinstance(k, str) and v in HOWS for k, v in known.items()):
                 raise TypeError("known is malformed")
@@ -117,12 +120,14 @@ class TunerState:
                 pass  # start empty all the same; the next save replaces it
             return
         self._marks, self._needs, self._spent, self._converted = marks, needs, spent, conv
+        self._searches, self._batches = searches, read_batches
         self._known, self._paused_until, self._last_pass_at, self._last_error = known, paused, at, err
 
     def _save(self) -> None:  # caller holds the lock
         _replace_file(self.path, {
             "marks": self._marks, "needs": {k: asdict(n) for k, n in self._needs.items()},
-            "spent": self._spent, "converted": self._converted, "known": self._known,
+            "spent": self._spent, "converted": self._converted, "searches": self._searches,
+            "batches": self._batches, "known": self._known,
             "paused_until": self._paused_until, "last_pass_at": self._last_pass_at,
             "last_error": self._last_error})
 
@@ -145,14 +150,17 @@ class TunerState:
             self._save()
 
     def due_needs(self, today: str, limit: int) -> list[Need]:
+        """Needs not searched in the last RESEARCH_AFTER_DAYS, most seen first; a need the decider could not judge
+        (`undecided`) is due again from the next local date."""
         now = date.fromisoformat(today)
         due: list[Need] = []
         with self._lock:
             for n in self._needs.values():
                 try:
-                    fresh = bool(n.searched_on) and (now - date.fromisoformat(n.searched_on)).days < RESEARCH_AFTER_DAYS
+                    age = (now - date.fromisoformat(n.searched_on)).days if n.searched_on else None
                 except ValueError:
-                    fresh = False
+                    age = None
+                fresh = age is not None and age < (1 if n.outcome == "undecided" else RESEARCH_AFTER_DAYS)
                 if not fresh:
                     due.append(Need(**asdict(n)))
         due.sort(key=lambda n: -n.seen)  # stable: ties keep the order they were added
@@ -166,8 +174,23 @@ class TunerState:
                 self._save()
 
     def searched(self, today: str) -> int:
+        """Searches sent on `today` (giving a need back does not lower it)."""
         with self._lock:
-            return sum(1 for n in self._needs.values() if n.searched_on == today)
+            return self._searches.get(today, 0)
+
+    def add_search(self, today: str) -> None:
+        with self._lock:
+            self._searches = {today: self._searches.get(today, 0) + 1}
+            self._save()
+
+    def batches_read(self, today: str) -> int:
+        with self._lock:
+            return self._batches.get(today, 0)
+
+    def add_batch(self, today: str) -> None:
+        with self._lock:
+            self._batches = {today: self._batches.get(today, 0) + 1}
+            self._save()
 
     def spend(self, today: str) -> bool:
         with self._lock:

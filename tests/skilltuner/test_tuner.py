@@ -301,7 +301,8 @@ async def test_the_owner_returning_during_a_search_cancels_it_and_leaves_the_mar
     got = await asyncio.wait_for(run, 1.0)
     assert cancelled and got["searches"] == 0 and got["suggested"] == 0
     assert t.state.read(c.id) == 1  # the batch read before the search keeps its mark
-    assert [n.words for n in t.state.due_needs(TODAY, 8)] == [WORDS] and t.state.searched(TODAY) == 0
+    assert [n.words for n in t.state.due_needs(TODAY, 8)] == [WORDS]
+    assert t.state.searched(TODAY) == 1  # the cancelled search was sent: it counts toward the day's eight
     assert t.events("pass_end")[0]["interrupted"] is True and not t.state.paused(TODAY)
 
 
@@ -417,3 +418,155 @@ async def test_a_decider_refusal_ends_that_needs_turn_without_a_pause(t):
     got = await t.tune()
     assert got["suggested"] == 0 and not t.state.paused(TODAY) and t.state.last_error == ""
     assert t.state.due_needs(TODAY, 8) == [] and t.events("fit")[0]["error"] == "refused"
+
+
+# -- fix round 1 ---------------------------------------------------------------------------------------------
+
+WORDS2 = "board pack template"
+SECOND = "second-skill"
+
+
+def route(t, *, hang_on=None, before=None):
+    """FakeCaseMark behind a handler: `WORDS2` finds `SECOND`; a request for which `hang_on(params)` is true hangs
+    until cancelled (recorded in the returned list); `before(params)` runs first."""
+    cancelled: list[bool] = []
+    entered = asyncio.Event()
+
+    async def handle(request):
+        params = json.loads(request.content)["params"]
+        if before:
+            before(params)
+        if hang_on and hang_on(params):
+            t.site.requests.append(request)
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+        if params["name"] == "resolve_skill" and params["arguments"]["query"] == WORDS2:
+            t.site.requests.append(request)
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"content": [
+                {"type": "text", "text": json.dumps(results((SECOND, "Second Skill")))}]}})
+        return t.site._handle(request)
+
+    t.site.client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    return cancelled, entered
+
+
+def two_needs(t):
+    t.state.add_need(TOPIC, WORDS)
+    t.state.add_need(TOPIC, WORDS)  # seen twice: searched first
+    t.state.add_need("board packs", WORDS2)
+    t.scorer.scores = {WIN: 0.9, "other-skill": 0.3, SECOND: 0.9}
+
+
+async def test_a_winner_found_before_an_interrupted_search_is_looked_for_again(t):
+    two_needs(t)
+    _, entered = route(t, hang_on=lambda p: p["name"] == "resolve_skill" and p["arguments"]["query"] == WORDS2)
+    run = asyncio.ensure_future(t.tune())
+    await asyncio.wait_for(entered.wait(), 1.0)
+    t.busy = True
+    got = await asyncio.wait_for(run, 1.0)
+    assert got["suggested"] == 0 and {n.words for n in t.state.due_needs(TODAY, 8)} == {WORDS, WORDS2}
+    t.busy = False
+    t.site.client = httpx.AsyncClient(transport=httpx.MockTransport(t.site._handle))
+    t.model.answers = [CONVERTED]
+    assert (await t.tune())["suggested"] == 1 and t.store.list()[0].source_slug == WIN
+
+
+async def test_a_scorer_that_hangs_is_cancelled_when_the_owner_returns(t):
+    gate, cancelled = asyncio.Event(), []
+    real = t.scorer.decide
+
+    async def hang(request):
+        try:
+            await gate.wait()
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+        return await real(request)
+
+    t.scorer.decide = hang
+    t.state.add_need(TOPIC, WORDS)
+    run = asyncio.ensure_future(t.tune())
+    while not t.site.requests:
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)
+    t.busy = True
+    await asyncio.wait_for(run, 1.0)
+    assert cancelled and t.events("pass_end")[0]["interrupted"] is True
+
+
+async def test_three_batches_a_day_across_passes(t, monkeypatch):
+    monkeypatch.setattr(tuner_mod, "BATCHES_PER_PASS", 2)
+    c = t.conv(*[chr(97 + i) * 4000 for i in range(15)])  # three messages (12,000 characters) a batch: five batches
+    await t.tune()
+    assert len(t.model.calls) == 2 and t.state.read(c.id) == 6
+    await t.tune()
+    assert len(t.model.calls) == 3 and t.state.read(c.id) == 9
+    assert t.tuner.waiting() == 0
+    await t.tune()
+    assert len(t.model.calls) == 3
+    t.today = "2027-01-16"
+    assert t.tuner.waiting() == 1
+    await t.tune()
+    assert len(t.model.calls) == 5 and t.state.read(c.id) == 15
+
+
+async def test_an_undecided_need_is_searched_again_the_next_day_not_at_once(t):
+    from src.decider.interface import DecisionRefused
+    t.scorer.raises = DecisionRefused("refused")
+    t.state.add_need(TOPIC, WORDS)
+    await t.tune()
+    assert t.tuner.waiting() == 0 and len(t.sent()) == 1
+    t.today = "2027-01-16"
+    assert [n.words for n in t.state.due_needs(t.today, 8)] == [WORDS] and t.tuner.waiting() == 1
+
+
+async def test_a_need_given_back_after_eight_searches_is_not_searched_a_ninth_time(t):
+    for _ in range(7):
+        t.state.add_search(TODAY)
+    t.state.add_need(TOPIC, WORDS)
+    _, entered = route(t, hang_on=lambda p: p["name"] == "read_skill")
+    run = asyncio.ensure_future(t.tune())
+    await asyncio.wait_for(entered.wait(), 1.0)
+    t.busy = True
+    await asyncio.wait_for(run, 1.0)
+    assert t.state.searched(TODAY) == 8 and [n.words for n in t.state.due_needs(TODAY, 8)] == [WORDS]
+    t.busy = False
+    assert t.tuner.waiting() == 0
+    await t.tune()
+    assert [p["name"] for p in t.sent()] == ["resolve_skill", "read_skill"]
+
+
+async def test_a_systemic_failure_after_midnight_pauses_until_the_day_after(t):
+    def midnight(params):
+        t.today = "2027-01-16"
+
+    route(t, before=midnight)
+    t.site.status = 429
+    t.state.add_need(TOPIC, WORDS)
+    await t.tune()
+    assert t.state.paused("2027-01-16") and not t.state.paused("2027-01-17")
+
+
+async def test_the_store_filling_mid_pass_gives_the_other_winner_back(t, monkeypatch):
+    monkeypatch.setattr(tuner_mod, "PENDING_MAX", 1)
+    two_needs(t)
+    route(t)
+    t.model.answers = [CONVERTED]
+    got = await t.tune()
+    assert got["suggested"] == 1 and t.store.count() == 1
+    assert [n.words for n in t.state.due_needs(TODAY, 8)] == [WORDS2]  # given back, not lost for 30 days
+    assert SECOND not in t.state.known and t.tuner.waiting() == 0
+
+
+async def test_a_winner_whose_read_is_interrupted_is_given_back(t):
+    t.state.add_need(TOPIC, WORDS)
+    cancelled, entered = route(t, hang_on=lambda p: p["name"] == "read_skill")
+    run = asyncio.ensure_future(t.tune())
+    await asyncio.wait_for(entered.wait(), 1.0)
+    t.busy = True
+    await asyncio.wait_for(run, 1.0)
+    assert cancelled and [n.words for n in t.state.due_needs(TODAY, 8)] == [WORDS]

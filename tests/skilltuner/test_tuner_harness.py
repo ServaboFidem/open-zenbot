@@ -99,3 +99,10 @@ async def test_the_connector_client_takes_nothing_from_the_environment(harness):
     assert harness._tuner_client() is client and client._trust_env is False and client.follow_redirects is False
     await harness.close_tuner()
     assert client.is_closed and harness._tuner_http is None
+
+
+def test_the_tuner_clean_without_a_profile_ends_the_pass(harness):
+    from src.memory.dream import Interrupted
+    harness.profile = None
+    with pytest.raises(Interrupted):
+        harness._tuner_clean("investment memo drafting")
