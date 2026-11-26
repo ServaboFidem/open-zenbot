@@ -82,6 +82,11 @@ def _score(value: object) -> float:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
 
 
+def new_client() -> httpx.AsyncClient:
+    """The connector's own client: no proxy or certificate setting from the environment, no redirect followed."""
+    return httpx.AsyncClient(trust_env=False, follow_redirects=False)
+
+
 class CaseMark:
     def __init__(self, http: Callable[[], httpx.AsyncClient],
                  sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,

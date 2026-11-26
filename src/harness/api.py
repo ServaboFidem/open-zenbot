@@ -21,7 +21,7 @@ import time
 from collections import Counter, OrderedDict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -38,6 +38,10 @@ from src.decider.fit import FitConfig, FitEngine
 from src.decider.interface import BandConfig, ConfirmState, Scorer
 from src.decider.router import CatalogRouter, RouterConfig
 from src.memory.dream import DreamMarks, Dreamer
+from src.skilltuner.casemark import CaseMark, new_client as casemark_client
+from src.skilltuner.settings import TunerState
+from src.skilltuner.suggestions import SuggestionStore
+from src.skilltuner.tuner import SkillTuner
 from src.memory.exclusion import ExclusionError, exclusion
 from src.memory.graph import SHARED, MemoryGraph, SessionCache, Tier, make_store
 from src.memory.import_dir import DirImporter, ScanStore, scan_dir, scan_file, unchanged_in
@@ -75,7 +79,7 @@ from . import (agent_clis, design_images, design_parts, design_studio, design_sy
 from .studio_helpers import PartTurn
 from .agent_clis import Agents
 from .delegation import Delegator, Runner as DelegateRunner
-from src.vault_settings import settings_dir
+from src.vault_settings import settings_dir, tuner_dir
 from src.providers import tracing as llm_tracing
 from .onboarding import ASSISTANT_ID, NEW_TOPICS, TOPICS, Interviewer
 from .config import HarnessConfig
@@ -123,7 +127,8 @@ from src.providers.openrouter import OpenRouterHttp
 from src.providers.secrets import Secret
 from src.providers.store import KINDS as PROVIDER_KINDS, OPENROUTER_BASE, PRESETS as PROVIDER_PRESETS, ProviderStore, ProviderStoreError
 from .model_roles import OPTIONAL_ROLES, ROLE_LABELS, ROLES, Choice, ModelRoles, load_bot_models, save_bot_models
-from .models_setup import build as build_models, check_choice, default_models, dream_provider, make_provider, roles_from_config
+from .models_setup import (DREAM_TIMEOUT_S, build as build_models, check_choice, default_models, dream_extras, dream_provider,
+                           make_provider, roles_from_config)
 from .stubs import InjectAllSelector
 from src.rooms.orchestrator import Orchestrator
 from src.rooms.room import Attachment, RoomConfig, RoomError, RoomService, workspace_file
@@ -226,6 +231,9 @@ class Harness:
     sonos_tools: SonosTools | None = field(default=None, repr=False)  # built once; a rebind keeps it (one lock)
     briefing: BriefingService | None = None  # the spoken morning briefing on the Sonos speakers (no bot tool)
     dreamer: Dreamer | None = None  # dreaming: learns facts from the user's own messages while idle; built once, a rebind keeps it
+    tuner_state: TunerState | None = None  # SkillTuner's marks, needs and budget, <vault>-ledger/skilltuner.json
+    suggestions: SuggestionStore | None = None  # skills SkillTuner found, waiting for the owner, in <vault>-skilltuner/
+    tuner: SkillTuner | None = None  # SkillTuner: finds skills while ZenBot dreams, run by the dreamer; built once
     summary_provider: Provider | None = None  # runs the summary model when it lives on another provider than chat; None: the chat provider
     provider_store: ProviderStore | None = None  # vault-settings/providers.json: providers, their keys, their enabled models
     model_lister: ModelLister = field(default_factory=ModelLister)
@@ -234,6 +242,8 @@ class Harness:
     bot_models: dict[str, Choice] | None = None  # bot id -> its own model (Edit bot), from vault-settings/bot-models.json
     _bot_providers: dict[str, tuple[tuple, Provider]] = field(default_factory=dict, init=False, repr=False)  # provider id -> (its settings, a client)
     _dream_gen: tuple[tuple, Generator] | None = field(default=None, init=False, repr=False)  # (the dream choice's settings, its generator)
+    _tuner_gen: tuple[tuple, Provider] | None = field(default=None, init=False, repr=False)  # (the dream choice's settings, SkillTuner's client)
+    _tuner_http: Any = field(default=None, init=False, repr=False)  # the CaseMark connector's own client, made on first use
     media: MediaProxy | None = None  # remote images, video and PDFs for the chat; trusted hosts at once, others on a click
     task_attachments: dict[str, list[Attachment]] = field(default_factory=dict)  # session id -> files attached in a one-to-one task
     # chat upload id -> how many task routes are sending it right now: not deletable or sweepable while above 0
@@ -414,11 +424,24 @@ class Harness:
             self.discover.tools, self.discover.catalog = self.tools, self.catalog
             self.discover.bot_lookup = lambda bot_id: self.bots.get(bot_id)
         self.discover.register()  # the scout's tools appear only while discovery is on with a place set
+        if self.tuner is None:  # once, like the dreamer that runs it; what it asks for is read at call time
+            self.tuner_state = self.tuner_state or TunerState(ledger_path_for(c.vault_root) / "skilltuner.json")
+            self.suggestions = self.suggestions or SuggestionStore(tuner_dir(c.vault_root))
+            state = self.tuner_state
+
+            def today() -> str:
+                return date.today().isoformat()
+
+            source = CaseMark(self._tuner_client, on_send=lambda: state.spend(today()))  # the budget on today's date
+            self.tuner = SkillTuner(vault_root=c.vault_root, state=state, store=self.suggestions, source=source,
+                                    ledger=self.ledger, conversations=self._dream_conversations, catalog=self.catalog,
+                                    model=self._tuner_model, scorer=lambda: self.scorer, bot=self._tuner_bot,
+                                    clean=self._tuner_clean, today=today, config=self.skill_config)
         if self.dreamer is None:  # once: a rebind keeps it, and what it asks for is read from the harness at call time
             self.dreamer = Dreamer(vault_root=c.vault_root, marks=DreamMarks(ledger_path_for(c.vault_root) / "dreams.json"),
                                    ledger=self.ledger, conversations=self._dream_conversations,
                                    generator=self._dream_generator, profile=lambda: self.profile,
-                                   queue=lambda: self.extract_queue, busy=self.busy)
+                                   queue=lambda: self.extract_queue, busy=self.busy, tuner=self.tuner)
         if self.scorer is not None:
             self.orchestrator = self.orchestrator or Orchestrator(
                 self.scorer, self.rooms, self.bots, self.ledger, Generator(summaries, model=c.summary_model).room_topic, ASSISTANT_ID)
@@ -565,6 +588,72 @@ class Harness:
             provider, model = dream_provider(self.provider_store, roles)
             self._dream_gen = (sig, Generator(provider, model=model))
         return self._dream_gen[1]
+
+    def _tuner_bot(self) -> Bot | None:
+        """The bot SkillTuner speaks as: `skill-tuner` when it tunes skills, else the first bot that does."""
+        bot = self.bots.get("skill-tuner")
+        if bot is not None and bot.tunes_skills:
+            return bot
+        return next((b for b in self.bots.values() if b.tunes_skills), None)
+
+    def _tuner_model(self) -> tuple[Provider, str | None] | None:
+        """SkillTuner's model: its own (Edit bot) when one is set, else the dreaming model; never the chat model.
+        None when neither can run. The dreaming model is reached through a client of its own, built like the
+        dreamer's (ten minutes a call, thinking off) but without the dream answer format, which would hold the
+        model to `{"facts": [...]}`."""
+        bot = self._tuner_bot()
+        if bot is None:
+            return None
+        own = (self.bot_models or {}).get(bot.id)
+        if own is not None:
+            try:  # checked here first: `_model_for` would log the failure on every look and run on the chat model
+                check_choice(self.provider_store, own, "text", f"{bot.name}'s model")
+            except ProviderStoreError:
+                return None
+            provider, model = self._model_for(bot)
+            return (provider, model) if model is not None else None  # no model: `_model_for` fell back to chat
+        roles = self.model_roles()
+        choice = roles.dream
+        if choice is None or self.provider_store is None:
+            self._tuner_gen = None
+            return None
+        try:
+            e = check_choice(self.provider_store, choice, "text", ROLE_LABELS["dream"])
+        except ProviderStoreError:
+            return None
+        key = hashlib.sha256(e.key.encode()).hexdigest() if e.key else ""
+        m = e.model(choice.model)
+        sig = (choice.provider, choice.model, e.kind, e.base_url, self.provider_store.key_ref(e.id), key, e.no_key,
+               m is not None and m.reasoning)
+        if self._tuner_gen is None or self._tuner_gen[0] != sig:
+            extras = {k: v for k, v in dream_extras(e.kind, m).items() if k != "response_format"}
+            try:
+                provider = make_provider(self.provider_store, e, choice.model, timeout=DREAM_TIMEOUT_S, extras=extras)
+            except ProviderStoreError:
+                return None
+            self._tuner_gen = (sig, provider)
+        return self._tuner_gen[1], choice.model
+
+    def _tuner_clean(self, text: str) -> bool:
+        """The exclusion check dreaming uses (`Dreamer._read`): False for a text that may not leave the computer."""
+        if self.profile is None:
+            return False
+        try:
+            self.profile.graph.require_clean(text, SHARED)
+        except ExclusionError:
+            return False
+        return True
+
+    def _tuner_client(self) -> Any:
+        """The CaseMark connector's client: no proxy from the environment, no redirect followed; closed at shutdown."""
+        if self._tuner_http is None:
+            self._tuner_http = casemark_client()
+        return self._tuner_http
+
+    async def close_tuner(self) -> None:
+        if self._tuner_http is not None:
+            await self._tuner_http.aclose()
+            self._tuner_http = None
 
     def _dream_conversations(self) -> list[Conversation]:
         """The one-to-one conversations dreaming may read."""
@@ -1800,6 +1889,7 @@ def create_app(h: Harness) -> FastAPI:
             await h.telnyx.close()
             await h.sonos.close()
             await h.speakers.close()
+            await h.close_tuner()  # after the dreamer: its pass may still be reading from CaseMark
             if h.speech is not None:
                 if h.speech.local is not None:
                     await h.speech.local.close()
