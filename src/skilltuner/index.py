@@ -65,17 +65,20 @@ def find_index(blobs: list[tuple[str, int]], folder: str, named: str) -> str | N
 def _resolve(raw: object, index_dir: str, folders: set[str]) -> str | None:
     if not isinstance(raw, str) or not raw or "\\" in raw or "://" in raw or raw.startswith("/"):
         return None
+    parts = raw.rstrip("/").split("/")
+    lead = 0
+    while lead < len(parts) and parts[lead] == "..":
+        lead += 1
+    rest = parts[lead:]
+    if not rest or any(x in ("", ".", "..") for x in rest):
+        return None
+    tail = "/".join(rest)
     for base in (index_dir, ""):
-        p = posixpath.normpath(posixpath.join(base, raw))
+        p = posixpath.normpath(posixpath.join(base, "/".join(parts)))
         if p in folders:
             return p
-    parts = raw.split("/")
-    while parts and parts[0] == "..":
-        parts.pop(0)
-    if len(parts) < len(raw.split("/")) and ".." not in parts:
-        p = "/".join(parts)
-        if p in folders:
-            return p
+    if lead and tail in folders:
+        return tail
     return None
 
 
@@ -98,33 +101,41 @@ def parse_index(raw: bytes, index_path: str, folders: set[str]) -> tuple[list[Li
     seen: set[str] = set()
     skipped = 0
     for entry in data:
-        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+        if not isinstance(entry, dict):
             skipped += 1
             continue
-        path = None
-        for key in ("path", "source"):
-            path = _resolve(entry.get(key), index_dir, folders)
-            if path:
-                break
-        name = _line(entry["name"], NAME_MAX).strip()
-        if not path or not name or path in seen:
+        named = entry.get("name") if isinstance(entry.get("name"), str) else entry.get("id")
+        where = entry.get("path") if isinstance(entry.get("path"), str) else entry.get("source")
+        path = _resolve(where, index_dir, folders)
+        name = _line(named, NAME_MAX).strip()
+        description = _line(entry.get("description"), DESCRIPTION_MAX).strip()
+        if not path or not name or not description or path in seen:
             skipped += 1
             continue
         seen.add(path)
-        listed.append(Listed(path, name, _line(entry.get("description"), DESCRIPTION_MAX).strip(),
-                             _line(entry.get("category"), CATEGORY_MAX).strip()))
+        listed.append(Listed(path, name, description, _line(entry.get("category"), CATEGORY_MAX).strip()))
     return listed, skipped
+
+
+class _NoAliases(yaml.SafeLoader):
+    """safe_load that refuses anchors and aliases, which a small text can use to expand without bound."""
+
+    def compose_node(self, parent, index):
+        if self.check_event(yaml.events.AliasEvent):
+            raise yaml.YAMLError("alias")
+        return super().compose_node(parent, index)
 
 
 def frontmatter(text: str) -> dict[str, str]:
     """`name`, `description` and `license` from a SKILL.md's frontmatter, when plain strings; else `{}`."""
-    if not text.startswith("---"):
+    lines = text.split("\n")
+    if lines[0].rstrip() != "---":
         return {}
-    parts = text.split("\n---", 1)
-    if len(parts) != 2:
+    end = next((i for i in range(1, len(lines)) if lines[i].rstrip() == "---"), None)
+    if end is None:
         return {}
     try:
-        meta = yaml.safe_load(parts[0][3:])
+        meta = yaml.load("\n".join(lines[1:end]), Loader=_NoAliases)  # noqa: S506 (a SafeLoader subclass)
     except (yaml.YAMLError, RecursionError):
         return {}
     if not isinstance(meta, dict):

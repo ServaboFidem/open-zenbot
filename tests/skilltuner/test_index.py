@@ -55,7 +55,7 @@ def test_parse_an_object_index_resolves_paths_against_its_folder():
 
 def test_index_paths_that_escape_are_skipped():
     bad = ["../../etc", "/abs", "https://x/y", "a\\b", "skills/nothing", "../nothing", "../../a/../skills/a", ""]
-    data = [{"name": f"n{i}", "path": p} for i, p in enumerate(bad)] + [{"name": "ok", "path": "skills/a"}]
+    data = [{"name": f"n{i}", "path": p, "description": "d"} for i, p in enumerate(bad)] + [{"name": "ok", "path": "skills/a", "description": "d"}]
     listed, skipped = ix.parse_index(json.dumps(data).encode(), "skills_index.json", {"skills/a"})
     assert [x.path for x in listed] == ["skills/a"]
     assert skipped == len(bad)
@@ -99,3 +99,33 @@ def test_an_index_path_climbing_above_the_root_is_tried_without_its_leading_dots
     listed, skipped = ix.parse_index(json.dumps({"skills": data}).encode(), ".codex/skills-index.json",
                                      set(ix.skill_folders(b, "")))
     assert [x.path for x in listed] == [d] and skipped == 0
+
+
+def test_name_falls_back_to_id_and_description_is_required():
+    data = [{"id": "x", "path": "skills/a", "description": "d"},
+            {"name": "b", "path": "skills/b"}, {"name": "c", "path": "skills/c", "description": " "},
+            {"path": "skills/d", "description": "d"}]
+    listed, skipped = ix.parse_index(json.dumps(data).encode(), "i.json", {f"skills/{c}" for c in "abcd"})
+    assert [(x.path, x.name) for x in listed] == [("skills/a", "x")] and skipped == 3
+
+
+def test_dots_in_the_middle_are_refused_and_source_only_when_path_is_absent():
+    folders = {"skills/a", "skills/b"}
+    data = [{"name": "a", "path": "x/../skills/a", "description": "d"},
+            {"name": "b", "path": "./skills/a", "description": "d"},
+            {"name": "c", "path": "nope", "source": "skills/b", "description": "d"},
+            {"name": "d", "source": "skills/b", "description": "d"}]
+    listed, skipped = ix.parse_index(json.dumps(data).encode(), "i.json", folders)
+    assert [x.path for x in listed] == ["skills/b"] and skipped == 3
+
+
+def test_frontmatter_refuses_aliases():
+    bomb = "---\na: &a [x, x]\nb: &b [*a, *a]\nname: *b\n---\n"
+    assert ix.frontmatter(bomb) == {}
+    assert ix.frontmatter("---\nname: ok\nb: &a [1]\nc: *a\n---\n") == {}
+
+
+def test_frontmatter_closes_only_on_a_line_of_three_dashes():
+    assert ix.frontmatter("---\nname: a\n---x\n") == {}
+    assert ix.frontmatter("---\nname: a\n----\n") == {}
+    assert ix.frontmatter("---\nname: a\n---\nbody: ---x\n") == {"name": "a"}
