@@ -172,8 +172,12 @@ def skilltuner_router(h) -> APIRouter:
                 h.skill_watcher.scan()
                 log.warning("skilltuner approve: the skill did not load")
                 raise HTTPException(500, NOT_INSTALLED)
-            h.suggestions.remove(id)
-            h.tuner_state.remember(s.source_slug, "approved")
+            # the skill is installed from here on: nothing below may turn this into a failure
+            try:
+                h.suggestions.remove(id)
+                h.tuner_state.remember(s.source_slug, "approved")
+            except Exception as e:  # noqa: BLE001
+                log.warning("skilltuner approve bookkeeping failed: %s", type(e).__name__)
             log_event("approved", id=id, slug=s.slug, name=s.name, files=len(files))
         fit = None
         offered = [b for b in h.bots.values() if not b.asked_directly and not b.closed and not b.studio]
@@ -212,8 +216,10 @@ def skilltuner_router(h) -> APIRouter:
             kind = _kind(target)
             if kind is None:
                 raise HTTPException(404, NO_SKILL)
-            if kind != stat.S_IFDIR or _is_reparse(target):
+            if kind == stat.S_IFLNK or _is_reparse(target):
                 raise HTTPException(409, LINKED)
+            if kind != stat.S_IFDIR:
+                raise HTTPException(404, NO_SKILL)  # a plain file is no skill
             try:
                 _rm_tree(target)
             except OSError as e:

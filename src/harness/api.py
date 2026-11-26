@@ -442,7 +442,7 @@ class Harness:
                                     clean=self._tuner_clean, today=today, config=self.skill_config)
         if self.skill_watcher is None:
             self.skill_watcher = SkillWatcher(discovered_skills_dir(c.vault_root), self.catalog, lambda: list(self.bots.values()),
-                                              self.ledger, self.skill_config, on_change=lambda: None)
+                                              self.ledger, self.skill_config, on_change=lambda: self.router.bump_scope() if self.router is not None else None)  # a same-size edit must not keep a stale score
         if self.dreamer is None:  # once: a rebind keeps it, and what it asks for is read from the harness at call time
             self.dreamer = Dreamer(vault_root=c.vault_root, marks=DreamMarks(ledger_path_for(c.vault_root) / "dreams.json"),
                                    ledger=self.ledger, conversations=self._dream_conversations,
@@ -1849,8 +1849,8 @@ def create_app(h: Harness) -> FastAPI:
         await h.speakers.start()  # a look for each speaker type that is on, and every 10 minutes after
         stop = asyncio.Event()
         extracting = asyncio.create_task(h.extract_queue.run(stop)) if h.extract_queue else None
-        dreaming = asyncio.create_task(h.dreamer.run(stop))
-        watching = asyncio.create_task(h.skill_watcher.run(stop))  # discovered/ -> catalog; sweeps stale .tmp- folders first  # a pass when the machine is idle and nothing is under way
+        dreaming = asyncio.create_task(h.dreamer.run(stop))  # a pass when the machine is idle and nothing is under way
+        watching = asyncio.create_task(h.skill_watcher.run(stop))  # discovered/ -> catalog; sweeps stale .tmp- folders first
         morning_mail = asyncio.create_task(morning.delivery.run())
         texting = asyncio.create_task(h.telnyx.run())  # reminders and the evening rundown, once a minute
         briefing = asyncio.create_task(h.briefing.run())  # the spoken briefing's slots, every 30 s
