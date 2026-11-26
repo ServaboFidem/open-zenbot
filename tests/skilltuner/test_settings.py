@@ -152,3 +152,32 @@ def test_converted_pause_known_and_last(tmp_path):
         pass
     else:
         raise AssertionError
+
+
+def test_settings_keep_repos(tmp_path):
+    from src.skilltuner.repos import RepoEntry
+    vault = tmp_path / "vault"
+    repos = [RepoEntry("0123456789abcdef", "o", "r", "main", "skills", "data/i.json", "MIT")]
+    TunerSettings(True, repos).save(vault)
+    assert TunerSettings.load(vault).repos == repos
+
+
+def test_settings_without_repos_load_with_none(tmp_path):
+    vault = tmp_path / "vault"
+    p = settings_dir(vault) / "skilltuner.json"
+    p.parent.mkdir(parents=True)
+    p.write_text('{"enabled": true}', encoding="utf-8")
+    s = TunerSettings.load(vault)
+    assert s.enabled is True and s.repos == []
+
+
+def test_a_bad_repo_entry_is_skipped_not_the_file(tmp_path):
+    vault = tmp_path / "vault"
+    good = {"id": "0123456789abcdef", "owner": "o", "repo": "r", "ref": "", "folder": "", "index": "", "licence": "MIT"}
+    p = settings_dir(vault) / "skilltuner.json"
+    p.parent.mkdir(parents=True)
+    p.write_text(json.dumps({"enabled": True, "repos": [
+        good, {**good, "id": "1123456789abcdef", "licence": "GPL-3.0"},
+        {k: v for k, v in good.items() if k != "owner"}, "nope"]}), encoding="utf-8")
+    s = TunerSettings.load(vault)
+    assert s.enabled is True and [r.id for r in s.repos] == ["0123456789abcdef"]

@@ -5,12 +5,15 @@ Dates are local `YYYY-MM-DD` strings passed in by the caller; nothing here reads
 from __future__ import annotations
 
 import json
+import re
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
 
+from src.skilltuner.convert import LICENCES
+from src.skilltuner.repos import RepoEntry, parse_address, parse_index_path
 from src.vault_settings import settings_dir
 
 DAILY_REQUESTS = 40
@@ -29,10 +32,27 @@ def _whole(v: Any) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+def _repo_of(v: Any) -> RepoEntry:
+    if not isinstance(v, dict):
+        raise TypeError("a repository is not an object")
+    r = RepoEntry(**v)
+    if not all(isinstance(x, str) for x in asdict(r).values()):
+        raise TypeError("a repository holds a value of the wrong type")
+    if re.fullmatch(r"[0-9a-f]{16}", r.id) is None:
+        raise ValueError("bad id")
+    if r.licence and r.licence.strip().casefold() not in LICENCES:
+        raise ValueError("licence not accepted")
+    if (r.owner, r.repo, r.ref, r.folder) != parse_address(r.address()):
+        raise ValueError("bad address")
+    parse_index_path(r.index)
+    return r
+
+
 @dataclass
 class TunerSettings:
-    """SkillTuner's switch; no secret."""
+    """SkillTuner's switch and the GitHub repositories it may read; no secret."""
     enabled: bool = False
+    repos: list[RepoEntry] = field(default_factory=list)
 
     @staticmethod
     def _path(vault_root: Path) -> Path:
@@ -44,7 +64,13 @@ class TunerSettings:
             d = json.loads(cls._path(vault_root).read_text(encoding="utf-8"))
             if not isinstance(d["enabled"], bool):
                 raise TypeError("enabled must be true or false")
-            return cls(d["enabled"])
+            repos: list[RepoEntry] = []
+            for v in d.get("repos", []) if isinstance(d.get("repos", []), list) else []:
+                try:
+                    repos.append(_repo_of(v))
+                except (TypeError, ValueError):
+                    pass  # one bad entry never costs the switch or the others
+            return cls(d["enabled"], repos)
         except (OSError, ValueError, KeyError, TypeError):
             return cls()
 
