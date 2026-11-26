@@ -62,7 +62,7 @@ from src.providers import registry as providers
 from src.decider import registry as scorers
 from src.providers.interface import Provider, ProviderAuthError, ProviderError, UnboundProvider
 from src.skills.catalog import Catalog
-from src.skills.loader import SkillConfig
+from src.skills.loader import SkillConfig, _slugify
 
 from .approvals import ApprovalStore
 from .bot import Bot
@@ -3649,9 +3649,16 @@ def create_app(h: Harness) -> FastAPI:
         rec = _rec()
         if rec.last is None:
             raise HTTPException(409, "nothing recorded yet")
-        # a draft never takes the slug of a shipped skill: the user folder loads first and would shadow it
+        # a draft never takes the slug of a shipped skill: the user folder loads first and would shadow it; nor a
+        # discovered skill's slug or name: replacing it would leave the bots holding the old one
         mine = h.config.skills_write_dir.resolve()
-        taken = {s.slug for s in h.catalog.skills() if not (s.path and Path(s.path).resolve().is_relative_to(mine))}
+        found = discovered_skills_dir(h.config.vault_root).resolve()
+
+        def _in(s, folder: Path) -> bool:
+            return bool(s.path) and Path(s.path).resolve().is_relative_to(folder)
+
+        taken = {s.slug for s in h.catalog.skills() if not _in(s, mine) or _in(s, found)}
+        taken |= {_slugify(s.name) for s in h.catalog.skills() if _in(s, found)}
         res = draft_skill(rec.last, name=body.name, use=body.use, skills_dir=h.config.skills_write_dir, catalog=h.catalog, config=h.skill_config, taken=taken)
         return {
             "state": str(res.state), "reason": str(res.reason) if res.reason else None, "detail": res.detail,

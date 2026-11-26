@@ -7,8 +7,9 @@ the loop. The folder holds a handful of skills, so the stat calls are cheap.
 A lock still makes a scan atomic against any other caller.
 
 Ownership is by path: the watcher owns every catalog entry whose SKILL.md lies
-inside the discovered folder, including ones the startup load put there, and
-never touches any other. Ledger entries carry folder names, slugs, reason codes
+inside the discovered folder and never touches any other. The startup load
+skips the folder; `build_harness` runs a first scan after the shipped and the
+owner's skills are in, so a discovered skill never takes their slug or name. Ledger entries carry folder names, slugs, reason codes
 and exception class names, never skill text.
 """
 from __future__ import annotations
