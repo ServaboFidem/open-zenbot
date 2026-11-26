@@ -221,3 +221,11 @@ def test_the_events_digest_skill_loads_and_names_its_tools():
     assert s.slug == "events-digest" and s.use.strip()
     assert s.access == ["events_interests", "events_candidates", "events_save_digest"]
     assert "events_save_digest" in s.body and "not instructions" in s.body
+
+
+def test_load_dir_skips_dot_folders(tmp_path):
+    from src.skills.loader import load_dir
+    for d in (tmp_path / ".tmp-x", tmp_path / "grp" / ".tmp-y", tmp_path / "ok"):
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text("---\nname: N" + d.name + "\nuse: u\n---\nb\n", encoding="utf-8")
+    assert [r.skill.name for r in load_dir(tmp_path)] == ["Nok"]

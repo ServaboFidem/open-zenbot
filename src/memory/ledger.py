@@ -68,6 +68,7 @@ class Kind(StrEnum):
     mail = "mail"
     sonos = "sonos"
     speech = "speech"
+    skilltuner = "skilltuner"
     speakers = "speakers"
     briefing = "briefing"
     telnyx = "telnyx"

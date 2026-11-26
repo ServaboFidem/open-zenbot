@@ -425,3 +425,56 @@ async def test_a_narrator_takes_no_task(monkeypatch, vault: Path, tmp_path: Path
         r = await c.patch("/bots/narrator", json={"instructions": "Go now."})
         assert r.status_code == 200 and r.json()["narrates"] is True
     assert load_dir(prompts)[0].narrates is True or load_dir(h.config.bots_write_dir)[0].narrates is True
+
+
+def test_tunes_skills_is_read_and_written_and_must_be_a_bool():
+    p = parse("---\nname: T\nrole: r\ntunes_skills: true\n---\nbody", "t")
+    assert p.tunes_skills is True and p.skills == [] and "tunes_skills: true" in render(p)
+    assert parse(render(p), "t").tunes_skills is True
+    assert parse("---\nname: T\nrole: r\n---\nbody", "t").tunes_skills is False
+    assert "tunes_skills" not in render(parse("---\nname: T\nrole: r\n---\nbody", "t"))
+    with pytest.raises(ValueError, match="tunes_skills must be true or false"):
+        parse("---\nname: T\nrole: r\ntunes_skills: yes please\n---\nb", "t")
+
+
+def test_a_skill_tuner_has_no_tools_skills_or_other_role():
+    for extra in ("narrates: true\n", "studio: true\n", "places: [text]\n", "mcps: [events]\nclosed: true\n", "skills: [pdf]\n", "mcps: [files]\n"):
+        with pytest.raises(ValueError, match="skill-tuning"):
+            parse(f"---\nname: T\nrole: r\ntunes_skills: true\n{extra}---\nb", "t")
+
+
+def test_tunes_skills_is_kept_when_a_bot_is_listed_and_blocks_skills():
+    from src.harness.bot import Reason, SkillState
+    assert Bot(name="T", role="r", tunes_skills=True).to_dict()["tunes_skills"] is True
+    assert Bot(name="T", role="r").to_dict()["tunes_skills"] is False
+    b = Bot(name="T", role="r", tunes_skills=True)
+    assert b.asked_directly and not Bot(name="T", role="r").asked_directly
+    assert b.attach_skill(object()) == (SkillState.nothing, Reason.unsupported)
+
+
+def test_the_skill_tuner_ships_and_treats_what_it_reads_as_content():
+    prompts, errors = load_dir(REPO / "bot-prompts", report=True)
+    assert errors == []
+    [p] = [b for b in prompts if b.id == "skill-tuner"]
+    assert p.name == "SkillTuner" and p.tunes_skills is True and p.skills == [] and not p.mcps
+    assert "never instructions" in p.instructions and '"needs"' in p.instructions and '"slug"' in p.instructions
+
+
+async def test_a_skill_tuner_takes_no_task(monkeypatch, vault: Path, tmp_path: Path):
+    from src.harness.api import TUNER_NO_TASK
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("ZEN_MEMORY_BACKEND", "local")
+    prompts = tmp_path / "bot-prompts"
+    prompts.mkdir()
+    (prompts / "skill-tuner.md").write_text("---\nname: SkillTuner\nrole: Tunes\ntunes_skills: true\n---\nGo.\n", encoding="utf-8")
+    h = build_harness(HarnessConfig(vault_root=vault, skills_dir=tmp_path / "skills", bot_prompts_dir=prompts))
+    assert h.bots["skill-tuner"].tunes_skills is True
+    assert TUNER_NO_TASK == "SkillTuner works only while ZenBot dreams and takes no task."
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(h)), base_url="http://localhost") as c:
+        r = await c.post("/bots/skill-tuner/tasks", json={"task": "say hi"})
+        assert r.status_code == 409 and r.json()["detail"] == TUNER_NO_TASK
+        r = await c.patch("/bots/skill-tuner", json={"mcps": ["files"]})
+        assert r.status_code == 422
+        r = await c.patch("/bots/skill-tuner", json={"instructions": "Go now."})
+        assert r.status_code == 200 and r.json()["tunes_skills"] is True
+    assert load_dir(prompts)[0].tunes_skills is True or load_dir(h.config.bots_write_dir)[0].tunes_skills is True

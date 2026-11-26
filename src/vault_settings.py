@@ -18,6 +18,7 @@ SUFFIX = "-settings"
 BOTS_SUFFIX = "-bots"
 SKILLS_SUFFIX = "-skills"
 MODELS_SUFFIX = "-models"
+TUNER_SUFFIX = "-skilltuner"
 OLD = "settings"  # where settings lived inside the vault before
 
 
@@ -36,6 +37,11 @@ def user_skills_dir(vault_root: Path) -> Path:
     """The user's own skills, beside the vault for the same reason."""
     vault_root = Path(vault_root)
     return vault_root.parent / f"{vault_root.name}{SKILLS_SUFFIX}"
+
+
+def discovered_skills_dir(vault_root: Path) -> Path:
+    """Skills the user approved from SkillTuner, inside the user's skills folder."""
+    return user_skills_dir(vault_root) / "discovered"
 
 
 def models_dir(vault_root: Path) -> Path:
@@ -71,3 +77,9 @@ def migrate(vault_root: Path) -> list[str]:
     except OSError:
         pass
     return notes
+
+
+def tuner_dir(vault_root: Path) -> Path:
+    """SkillTuner's suggestions waiting for approval, beside the vault: bots must not reach or replace them."""
+    vault_root = Path(vault_root)
+    return vault_root.parent / f"{vault_root.name}{TUNER_SUFFIX}"

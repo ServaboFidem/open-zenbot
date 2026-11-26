@@ -64,17 +64,20 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
         provider, scorer = None, None
     ledger = Ledger(config.vault_root)
     catalog = Catalog()
-    # the catalog keeps the first skill of a slug, so the user's folder goes first and wins
-    folders = [config.skills_dir]
-    if config.user_content:
-        from src.vault_settings import user_skills_dir
+    # the catalog keeps the first skill of a slug (or name), so the user's folder goes first and wins; its
+    # discovered/ (SkillTuner's) is left to the watcher, below, so a discovered skill never shadows another
+    from src.vault_settings import user_skills_dir
 
-        folders.insert(0, user_skills_dir(config.vault_root))
+    folders = [user_skills_dir(config.vault_root), config.skills_dir]
     for folder in folders:
-        for r in load_dir(folder, skill_config(config)):
+        for r in load_dir(folder, skill_config(config), skip={"discovered"} if folder == folders[0] else frozenset()):
             if r.ok:
                 catalog.add_skill(r.skill)
     h = Harness(config=config, provider=provider, ledger=ledger, catalog=catalog, scorer=scorer)
+    # discovered skills load last, under the watcher's rules (links refused, a taken slug or name dropped and
+    # logged), and before the bots are made, so a bot file naming one still has it at start
+    if h.skill_watcher is not None:
+        h.skill_watcher.scan()
     saved = ModelRoles.load(config.vault_root)  # Settings > Harness settings, once saved, wins over the environment
     if saved is not None:
         try:
@@ -97,7 +100,7 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
             by_id[p.id] = p
     prompts = list(by_id.values())
     for p in prompts:
-        bot = Bot(p.name, p.role, p.instructions, id=p.id, mcps=list(p.mcps or []), studio=p.studio, places=list(p.places), closed=p.closed, narrates=p.narrates)
+        bot = Bot(p.name, p.role, p.instructions, id=p.id, mcps=list(p.mcps or []), studio=p.studio, places=list(p.places), closed=p.closed, narrates=p.narrates, tunes_skills=p.tunes_skills)
         wanted = catalog.skills() if p.skills is None else [s for s in (catalog.skill(ref) for ref in p.skills) if s is not None]
         for s in wanted:
             bot.attach_skill(s, config.max_skills_per_bot)

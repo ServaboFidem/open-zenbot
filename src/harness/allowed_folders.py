@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from src.vault_settings import models_dir, settings_dir, user_bots_dir, user_skills_dir
+from src.vault_settings import models_dir, settings_dir, tuner_dir, user_bots_dir, user_skills_dir
 
 FILE = "allowed_folders.json"
 VAR = "ZEN_ALLOWED_FOLDERS"  # Full Access folders, one arg each
@@ -67,7 +67,7 @@ def private_folders(vault_root: Path) -> list[Path]:
     # grant itself a new identity or skill
     return [settings_dir(vault_root), ledger_path_for(vault_root), music_dir(vault_root),
             calendar_dir(vault_root), user_bots_dir(vault_root), user_skills_dir(vault_root),
-            models_dir(vault_root)]
+            models_dir(vault_root), tuner_dir(vault_root)]
 
 
 def refusal(path: Path, home: Path | None = None, system: list[Path] | None = None,

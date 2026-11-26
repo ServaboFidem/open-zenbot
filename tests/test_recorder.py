@@ -23,6 +23,7 @@ from src.skills.catalog import Catalog
 from src.skills.loader import Reason, SkillConfig, SkillState, load_skill
 from src.skills.recorder import Recorder, RecorderConfig, draft_skill, replay
 from src.skills.recording import Action, Recording, UnsupportedSource
+from src.vault_settings import user_skills_dir
 
 from .conftest import ScriptedProvider, completion
 
@@ -397,3 +398,57 @@ async def test_a_recorded_skill_never_replaces_a_shipped_skill_of_the_same_slug(
     body = await _draft_via_api(cfg, tmp_path, catalog)
     assert body["state"] == "added" and body["slug"] == "export-invoices-3"
     assert second.read_text(encoding="utf-8") == before
+
+
+async def test_draft_never_takes_a_shipped_slug_with_user_content_off(vault: Path, tmp_path: Path):
+    shipped = tmp_path / "skills" / "export-invoices"
+    shipped.mkdir(parents=True)
+    (shipped / "SKILL.md").write_text("---\nname: Shipped export\nuse: Export.\n---\nBody\n", encoding="utf-8")
+    catalog = Catalog()
+    # the shipped skill has the slug the draft's name would make
+    shipped_skill = load_skill(shipped).skill
+    shipped_skill.slug = "export-invoices"
+    catalog.add_skill(shipped_skill)
+    cfg = HarnessConfig(vault_root=vault, shell_cwd=tmp_path, skills_dir=tmp_path / "skills", user_content=False)
+    h = Harness(config=cfg, provider=ScriptedProvider(), ledger=Ledger(vault), catalog=catalog, recorder_driver=FakeDriver())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(h)), base_url="http://localhost") as c:
+        await c.post("/recorder/start", json={"name": "export invoices"})
+        await c.post("/recorder/actions", json={"kind": "navigate", "target": "https://app.example.com/invoices", "value": None, "intent": "open"})
+        await c.post("/recorder/stop")
+        r = await c.post("/recorder/draft", json={"name": "Export invoices", "use": "When asked to export invoices."})
+    body = r.json()
+    assert body["slug"] != "export-invoices"
+    assert not (user_skills_dir(vault) / "export-invoices").exists()
+
+
+async def test_a_recorded_skill_never_takes_a_discovered_skills_slug_or_name(vault: Path, tmp_path: Path):
+    from src.harness.bot import Bot
+    from src.skills.loader import load_dir
+    from src.vault_settings import discovered_skills_dir
+
+    disc = discovered_skills_dir(vault)
+    (disc / "export-invoices").mkdir(parents=True)
+    (disc / "export-invoices" / "SKILL.md").write_text(
+        "---\nname: Invoice export\nslug: export-invoices\nuse: discovered\n---\n# d\n", encoding="utf-8")
+    (disc / "ledgers").mkdir(parents=True)
+    (disc / "ledgers" / "SKILL.md").write_text("---\nname: Export invoices\nslug: ledgers\nuse: discovered too\n---\n# d\n",
+                                               encoding="utf-8")
+    catalog = Catalog()
+    for r in load_dir(disc):
+        catalog.add_skill(r.skill)
+    found = catalog.skill("export-invoices")
+    cfg = HarnessConfig(vault_root=vault, shell_cwd=tmp_path, skills_dir=tmp_path / "shipped", user_content=True)
+    driver = FakeDriver()
+    h = Harness(config=cfg, provider=ScriptedProvider(), ledger=Ledger(vault), catalog=catalog, recorder_driver=driver)
+    bot = Bot("B", "r", "", id="b")
+    bot.attach_skill(found)
+    h.add_bot(bot)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(h)), base_url="http://localhost") as c:
+        await c.post("/recorder/start", json={"name": "export invoices"})
+        await c.post("/recorder/actions", json={"kind": "navigate", "target": "https://app.example.com/invoices", "intent": "open"})
+        await c.post("/recorder/stop")
+        r = await c.post("/recorder/draft", json={"name": "Export invoices", "use": "When asked to export invoices."})
+    body = r.json()
+    assert body["state"] == "added" and body["slug"] == "export-invoices-2"
+    assert catalog.skill("export-invoices") is found and catalog.skill("ledgers") is not None
+    assert [s.slug for s in h.bots["b"].skills] == ["export-invoices"]

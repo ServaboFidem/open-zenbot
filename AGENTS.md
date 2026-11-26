@@ -11,6 +11,7 @@ name each top-level system and run the harness and the tests.
 | `src/context/` | Compaction, the protected (pinned) task, transcript rendering |
 | `src/generation/` | Generator boundary: compaction summaries and folds, vault summaries; the `image.generate` tool (`images.py`); reading replies aloud (`speech.py`: the Narrator, then the speech model) |
 | `src/memory/` | Exclusion filter (secrets and approvals), ledger (`ledger.py`), recall, ingest, directory import, learning from a crawl, profile memory and store routing, Hindsight store and processes, dreaming (`dream.py`: learning facts from the user's own messages while idle) |
+| `src/skilltuner/` | SkillTuner, a second job of dreaming: the switch and its state (`settings.py`: `TunerSettings`, `TunerState`), the CaseMark connector for agentskills.finance (`casemark.py`, the only code that reaches its endpoint), the conversion to a `SKILL.md` (`convert.py`), the suggestion store (`suggestions.py`), the watcher of `<vault>-skills/discovered/` (`watcher.py`), the pass (`tuner.py`: `SkillTuner`) and the `/skilltuner` routes (`routes.py`); `apache-2.0.txt` is the licence text written beside a converted skill; see `### SkillTuner` |
 | `src/rooms/` | Rooms, turns, handoff, orchestrator |
 | `src/music/` | Music discovery: Discogs scan, taste profile, the Soundlore atlas, MusicBrainz and YouTube Music lookups, candidates, the album gate, digests, `music_*` tools, `/music` routes |
 | `src/events/` | The built-in calendar: settings and Google keys (`settings.py`), the SQLite store (`store.py`), the Google client (`google.py`), conversion to and from Google's shape (`convert.py`), sign-in (`connect.py`), pull and push (`sync.py`), the service that runs them (`service.py`) and the `/calendar` routes (`routes.py`); discovery of local events: settings and the Eventbrite address check (`discover_settings.py`), the Eventbrite reader (`eventbrite.py`), the FindLocal reader (`findlocal.py`), the pool, digests, cards and events added from the pool (`discover_store.py`), the service that refreshes, checks, saves and fetches pool pictures (`discovery.py`), the scout's tools (`discover_tools.py`) and the `/discover` routes (`discover_routes.py`) |
@@ -22,13 +23,13 @@ name each top-level system and run the harness and the tests.
 | `src/briefing/` | The spoken morning briefing on the Sonos speakers: the three files (`settings.py`: `Briefing`, `BriefingStore`, `BriefingState`, `ToldJokes`), the words (`content.py`), the runner (`service.py`: `BriefingService`) and the `/briefings` routes (`routes.py`); the clip listener is `src/sonos/clip_server.py` and the announcement `SonosTools.announce`; see `### Spoken briefings` |
 | `src/kokoro/` | Speech made on this computer by Kokoro on onnxruntime, for Read aloud: the pinned model files, their download and removal (`model.py`: `KokoroModel`), and the engine with the 28 English voices (`engine.py`: `KokoroEngine`, the only importer of `kokoro_onnx` and `onnxruntime`); see `### Reading replies aloud`. The splitting into pieces and the reading itself are in `src/generation/speech.py`, the routes in `src/harness/speech_routes.py` |
 | `src/vault_settings.py` | `settings_dir` (the settings folder beside the vault) and `migrate` |
-| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, with the editor `DesignEditor.jsx`, `TweaksPanel.jsx`, `DesignPendingBar.jsx`, `DesignCompare.jsx` and `ExportMenu.jsx`, and its unsaved changes decided in `design-edits.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the chat composer's files `chat-files.js` (chips, limits, the blind-model note; wired in `app.jsx`, checked by `tests/gui/chat-files.test.mjs`), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, the approval dialog `ApprovalDialog.jsx` + `approval-dialog.js` (any pending approval opens it over whatever page is open, oldest first; `app.jsx` reads `GET /approvals` every 5 s while online and on a live `approval_request` event; closing it or Decide later decides nothing and puts that request off until a reload; it does not open on the Approvals page; never seen on screen with a real approval), program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; `export-design.cjs` renders a design as PDF or PNG in an offscreen window (`makeExportWindow` and `exportSession` in `main.cjs`); `open-vault.cjs` opens the vault's root in the OS file manager for the home page's Browse your vault button, shown in the desktop app only: the page sends no path, the folder is `ZEN_VAULT` as the main process reads it, checked by `tests/gui/open-vault.test.mjs`; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (AgentMail: the section at the top of Settings > Connected apps `MailSettings.jsx`, the AgentMail page `MailPage.jsx` (shown in the navigation below Conversations once a key is saved and an inbox chosen), their decisions in `mail.js` and styles in `mail.css`, through `mail-api.js`) (Telnyx: the section of Settings > Connected apps `TelnyxSettings.jsx`, its decisions in `telnyx.js`, through `telnyx-api.js`; the desktop app saves the owner's phone through `src/electron/telnyx-texts.cjs`) (Sonos: the section of Settings > Connected apps `SonosSettings.jsx`, its decisions in `sonos.js`, and the Music > Sonos page `SonosPage.jsx` with its decisions in `sonos-panel.js` and styles in `sonos.css`, both through `sonos-api.js`) (Wi-Fi speakers: the Settings > Wi-Fi speakers panel `WifiSpeakers.jsx`, its decisions in `wifi-speakers.js`, through `speakers-api.js`) (Read aloud: the card on Settings > Harness Tools, its voice on this computer in `ReadAloudLocal.jsx`, its decisions in `speech-settings.js`, and the player and reader in `speech.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) (Spoken briefings: the Briefings section at the top of the Routines page `BriefingsSection.jsx` and its form `BriefingDialog.jsx`, their decisions in `briefings.js`, through `briefings-api.js`; the Electron side keeps ZenBot ready for a briefing in `briefing-keeper.cjs`, `autostart.cjs` and `tray.cjs`) (the tray: closing the window hides it to the system tray and ZenBot keeps running, since the harness, reminders and briefings need it up (`tray.cjs`: `openTray`, `createTray`, `closeToTray`, `allClosed`, `startsHidden`); the tray's right-click menu is Open ZenBot and Quit ZenBot, a click on the icon opens the window, and the first hide shows one notice, once ever, remembered in `<userData>/tray.json`; only Quit ZenBot, or the operating system ending the session, stops the app; when no tray can be made (`openTray` logs the error's message only), the app starts without one, closing the window quits it and a `--hidden` start shows the window, so it never runs invisibly; developer mode takes the single-instance lock too, so a second launch hands over to the first and quits; tested in `tests/gui/tray.test.mjs`) |
-| `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`); a prompt can also set `closed: true` (only the tool groups in its `mcps`, no built-in tool, never in a room: `event-scout.md`), or `narrates: true` (the Narrator, `narrator.md`: asked directly to rewrite replies for speech, never given a task) |
+| `src/gui/` + `src/electron/` | OpenZenBot workspace GUI (built into `dist/`, assets in `src/assets/`; the design pane is `DesignPane.jsx` + `design.js`, with the editor `DesignEditor.jsx`, `TweaksPanel.jsx`, `DesignPendingBar.jsx`, `DesignCompare.jsx` and `ExportMenu.jsx`, and its unsaved changes decided in `design-edits.js`, the question forms `QuestionForm.jsx` + `question-form.js`, the design system picker `DesignSystemPicker.jsx`, the Design page (in `app.jsx`: a card per design from `GET /designs`, and New design, which opens the studio bot in a fresh conversation), the chat composer's files `chat-files.js` (chips, limits, the blind-model note; wired in `app.jsx`, checked by `tests/gui/chat-files.test.mjs`), the Settings home screen `SettingsHome.jsx` + `settings-index.js` (icon tiles and a search over a hand-kept index: a new settings section adds an entry to `SECTIONS` and puts `id={anchorId(panel, title)}` on its element; provider and tool cards carry `anchorId(panel, id)` and reach the search through `liveSections`; checked by `tests/gui/settings-index.test.mjs`), the coding agents page `AgentSettings.jsx` + `agents.js`, the approval dialog `ApprovalDialog.jsx` + `approval-dialog.js` (any pending approval opens it over whatever page is open, oldest first; `app.jsx` reads `GET /approvals` every 5 s while online and on a live `approval_request` event; closing it or Decide later decides nothing and puts that request off until a reload; it does not open on the Approvals page; never seen on screen with a real approval), program paths `program-paths.js`, the Events page `events/` (`EventsArea.jsx`, `CalendarView.jsx`, `CalendarGrid.jsx`, `EventDialog.jsx`, the date rules `dates.js`, the status line `page-state.js`) and the Calendar settings panel `CalendarSettings.jsx` + `calendar-settings.js`, both through `calendar-api.js`) and Electron shell (`frame-nav.cjs` limits where a framed page may go; `export-design.cjs` renders a design as PDF or PNG in an offscreen window (`makeExportWindow` and `exportSession` in `main.cjs`); `open-vault.cjs` opens the vault's root in the OS file manager for the home page's Browse your vault button, shown in the desktop app only: the page sends no path, the folder is `ZEN_VAULT` as the main process reads it, checked by `tests/gui/open-vault.test.mjs`; the installed app's side is in `## Installed app`: `main.cjs`, `managed*.cjs`, `setup.cjs`, `runtime-paths.cjs`, `harness-process.cjs`, `update-check.cjs`, `download.cjs`, `pins.json`, and the setup page `setup-view.js`) (the Your Recommendations tab (once Discover) `events/DiscoverView.jsx`, `EventCard.jsx`, `SignupDialog.jsx` with its decisions in `events/discover.js`, and the All Events tab `events/AllEventsView.jsx` with its event panel `EventPanel.jsx` and its decisions in `events/all-events.js`, both through `discover-api.js`; the Event discovery section of Settings > Calendar `DiscoverySettings.jsx` + `discovery-settings.js`) (AgentMail: the section at the top of Settings > Connected apps `MailSettings.jsx`, the AgentMail page `MailPage.jsx` (shown in the navigation below Conversations once a key is saved and an inbox chosen), their decisions in `mail.js` and styles in `mail.css`, through `mail-api.js`) (Telnyx: the section of Settings > Connected apps `TelnyxSettings.jsx`, its decisions in `telnyx.js`, through `telnyx-api.js`; the desktop app saves the owner's phone through `src/electron/telnyx-texts.cjs`) (Sonos: the section of Settings > Connected apps `SonosSettings.jsx`, its decisions in `sonos.js`, and the Music > Sonos page `SonosPage.jsx` with its decisions in `sonos-panel.js` and styles in `sonos.css`, both through `sonos-api.js`) (Wi-Fi speakers: the Settings > Wi-Fi speakers panel `WifiSpeakers.jsx`, its decisions in `wifi-speakers.js`, through `speakers-api.js`) (Read aloud: the card on Settings > Harness Tools, its voice on this computer in `ReadAloudLocal.jsx`, its decisions in `speech-settings.js`, and the player and reader in `speech.js`) (the Dreaming section of Settings > Harness settings `DreamSection.jsx` + `dream.js`; the Electron main process reports idle time through `idle-report.cjs`) (SkillTuner: its switch in the Dreaming section `SkillTunerSection.jsx`, the suggestion cards at the top of Settings > Skills `TunerSuggestions.jsx`, their decisions in `skilltuner.js`, through `api.tuner`; checked by `tests/gui/skilltuner.test.mjs`; never seen on screen) (Spoken briefings: the Briefings section at the top of the Routines page `BriefingsSection.jsx` and its form `BriefingDialog.jsx`, their decisions in `briefings.js`, through `briefings-api.js`; the Electron side keeps ZenBot ready for a briefing in `briefing-keeper.cjs`, `autostart.cjs` and `tray.cjs`) (the tray: closing the window hides it to the system tray and ZenBot keeps running, since the harness, reminders and briefings need it up (`tray.cjs`: `openTray`, `createTray`, `closeToTray`, `allClosed`, `startsHidden`); the tray's right-click menu is Open ZenBot and Quit ZenBot, a click on the icon opens the window, and the first hide shows one notice, once ever, remembered in `<userData>/tray.json`; only Quit ZenBot, or the operating system ending the session, stops the app; when no tray can be made (`openTray` logs the error's message only), the app starts without one, closing the window quits it and a `--hidden` start shows the window, so it never runs invisibly; developer mode takes the single-instance lock too, so a second launch hands over to the first and quits; tested in `tests/gui/tray.test.mjs`) |
+| `bot-prompts/` | One markdown file per bot identity; the file stem is the bot id (`designer.md` is the studio bot: `studio: true`); a prompt can also set `closed: true` (only the tool groups in its `mcps`, no built-in tool, never in a room: `event-scout.md`), or `narrates: true` (the Narrator, `narrator.md`: asked directly to rewrite replies for speech, never given a task), or `tunes_skills: true` (SkillTuner, `skill-tuner.md`: asked directly while ZenBot dreams, never given a task, skills or tools) |
 | `design-systems/` | Shipped design systems, one folder each (`DESIGN.md`, optional `tokens.css`); `ZEN_DESIGN_SYSTEMS` moves it. The user's own live in `<vault>/design-systems/` |
 | `scripts/` | Start scripts (`dev.sh`, `dev.ps1`), the GUI build, the host-dependency installers `install-deps.sh` / `install-deps.ps1`, `ubuntu-apparmor-profile.sh` (the AppArmor profile Electron needs on Ubuntu 23.10+), and `fetch-uv.mjs` (downloads the pinned uv into `build/bin/` for the installers). Packaging itself is `electron-builder.yml`, `build/` (icon, the .deb's AppArmor profile `apparmor-profile`, the NSIS include `installer.nsh`) and `packaging/harness/` (the CPU-only `pyproject.toml` and `uv.lock` the installed app uses) |
-| `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`); `skills/events-digest/` (the scout's weekly run); `skills/sonos-morning/` (ZenBot's morning music routine) |
+| `skills/` | Shipped skills, including vendored Anthropic skills under `skills/anthropic/`, `skills/design-studio/` and `skills/delegation/` (when a bot should use `delegate`); `skills/events-digest/` (the scout's weekly run); `skills/sonos-morning/` (ZenBot's morning music routine); read-only at run time: skills the owner records go to `<vault>-skills/`, skills SkillTuner finds to `<vault>-skills/discovered/` |
 | `mcp.json` | MCP servers to connect at start; each tool registers as `<server>.<tool>` |
-| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`; direct changes in `tests/test_studio_edits.py`, `tests/test_studio_edit_routes.py` and `tests/test_design_tweaks.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `design-edits.test.mjs`, `design-bridge.test.mjs`, `export-design.test.mjs`, `save-media.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); attached files in `tests/test_chat_files.py`, `tests/test_upload_routes.py`, `tests/test_chat_turn.py` and `tests/test_chat_send.py`, GUI `tests/gui/chat-files.test.mjs`; MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_findlocal.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` and the FindLocal stand-in `FakeFindLocal` are in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `all-events.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs`; dreaming in `tests/test_dream.py` and `tests/test_dream_routes.py`, GUI `tests/gui/dream.test.mjs` and `idle-report.test.mjs`; the approval dialog's rules in `tests/gui/approval-dialog.test.mjs`; AgentMail in `tests/mail/` (its stand-in `FakeAgentMail` is in `tests/mail/conftest.py`), GUI `tests/gui/mail.test.mjs` and `mail-api.test.mjs`; Telnyx in `tests/telnyx/` (its stand-in `FakeTelnyx` is in `tests/telnyx/conftest.py`), GUI `tests/gui/telnyx.test.mjs`, `telnyx-api.test.mjs` and `telnyx-texts.test.mjs`; Sonos in `tests/sonos/` (its stand-in `FakeSpeakers` is in `tests/sonos/conftest.py`), GUI `tests/gui/sonos.test.mjs`, `sonos-panel.test.mjs` and `sonos-api.test.mjs`; Wi-Fi speakers in `tests/speakers/` (finders get stand-ins and an `httpx.MockTransport`, the service a `FakeFinder`), GUI `tests/gui/wifi-speakers.test.mjs` and `speakers-api.test.mjs`; local speech in `tests/kokoro/` (`test_model.py`: the download through an `httpx.MockTransport`; `test_engine.py`: a fake library object, never `kokoro_onnx`) and `tests/test_speech.py`, GUI `tests/gui/speech.test.mjs` and `speech-settings.test.mjs`; spoken briefings in `tests/briefing/` (`test_settings.py`, `test_content.py`, `test_service.py`, `test_routes.py`), `tests/sonos/test_announce.py`, `test_clip_server.py` and the announcement cases in `test_devices.py` (the stand-in `FakeSpeakers` in `tests/sonos/conftest.py` gained snapshots and transport states), `say` in `tests/test_speech.py`, the forecast parts in `tests/events/test_morning_weather.py`, GUI `tests/gui/briefings.test.mjs`, `briefings-api.test.mjs`, `briefing-keeper.test.mjs`, `autostart.test.mjs`, `tray.test.mjs` and the hidden start in `managed.test.mjs` |
+| `tests/` | Offline suite (`uv run pytest`, music tests under `tests/music/`, design studio in `tests/test_design_studio.py` and `tests/test_design_systems.py`; studio helpers in `tests/test_design_html.py`, `tests/test_design_images.py`, `tests/test_design_parts.py`, `tests/test_studio_helpers.py` and `tests/test_studio_help.py`; direct changes in `tests/test_studio_edits.py`, `tests/test_studio_edit_routes.py` and `tests/test_design_tweaks.py`); GUI node tests under `tests/gui/` (`npm test`; the studio's are `design.test.mjs`, `design-edits.test.mjs`, `design-bridge.test.mjs`, `export-design.test.mjs`, `save-media.test.mjs`, `question-form.test.mjs`, `frame-nav.test.mjs`, `api.test.mjs`, `actions.test.mjs`); attached files in `tests/test_chat_files.py`, `tests/test_upload_routes.py`, `tests/test_chat_turn.py` and `tests/test_chat_send.py`, GUI `tests/gui/chat-files.test.mjs`; MCP echo fixture at `tests/fixtures/mcp_echo_server.py`; fake agent CLI at `tests/fixtures/fake_agent_cli.py`; agents in `tests/test_agent_clis.py`, `tests/test_agent_probe_guard.py`, `tests/test_delegation.py`, GUI `tests/gui/agents.test.mjs`; the calendar in `tests/events/` (its Google stand-in `FakeGoogle` is in `tests/events/conftest.py`), GUI `tests/gui/calendar-api.test.mjs`, `events-dates.test.mjs`, `events-page-state.test.mjs` and `calendar-settings.test.mjs`; event discovery in `tests/events/test_eventbrite.py`, `test_discover_settings.py`, `test_discover_store.py`, `test_discovery.py`, `test_discover_tools.py`, `test_findlocal.py` and `test_discover_routes.py` (the page fixture is `tests/events/fixtures/eventbrite_page.html`, the Eventbrite stand-in `fake_site` and the FindLocal stand-in `FakeFindLocal` are in `tests/events/conftest.py`), closed bots in `tests/test_bot_prompts.py`, `test_task_loop.py`, `test_rooms.py` and `test_orchestrator.py`, GUI `tests/gui/events-discover.test.mjs`, `all-events.test.mjs`, `discover-api.test.mjs` and `discovery-settings.test.mjs`; dreaming in `tests/test_dream.py` and `tests/test_dream_routes.py`, GUI `tests/gui/dream.test.mjs` and `idle-report.test.mjs`; SkillTuner in `tests/skilltuner/` (its CaseMark stand-in `FakeCaseMark` and the recorded answers in `tests/skilltuner/fixtures/` are in `tests/skilltuner/conftest.py`), the folder rules in `tests/test_skill_folders.py`, GUI `tests/gui/skilltuner.test.mjs`; the approval dialog's rules in `tests/gui/approval-dialog.test.mjs`; AgentMail in `tests/mail/` (its stand-in `FakeAgentMail` is in `tests/mail/conftest.py`), GUI `tests/gui/mail.test.mjs` and `mail-api.test.mjs`; Telnyx in `tests/telnyx/` (its stand-in `FakeTelnyx` is in `tests/telnyx/conftest.py`), GUI `tests/gui/telnyx.test.mjs`, `telnyx-api.test.mjs` and `telnyx-texts.test.mjs`; Sonos in `tests/sonos/` (its stand-in `FakeSpeakers` is in `tests/sonos/conftest.py`), GUI `tests/gui/sonos.test.mjs`, `sonos-panel.test.mjs` and `sonos-api.test.mjs`; Wi-Fi speakers in `tests/speakers/` (finders get stand-ins and an `httpx.MockTransport`, the service a `FakeFinder`), GUI `tests/gui/wifi-speakers.test.mjs` and `speakers-api.test.mjs`; local speech in `tests/kokoro/` (`test_model.py`: the download through an `httpx.MockTransport`; `test_engine.py`: a fake library object, never `kokoro_onnx`) and `tests/test_speech.py`, GUI `tests/gui/speech.test.mjs` and `speech-settings.test.mjs`; spoken briefings in `tests/briefing/` (`test_settings.py`, `test_content.py`, `test_service.py`, `test_routes.py`), `tests/sonos/test_announce.py`, `test_clip_server.py` and the announcement cases in `test_devices.py` (the stand-in `FakeSpeakers` in `tests/sonos/conftest.py` gained snapshots and transport states), `say` in `tests/test_speech.py`, the forecast parts in `tests/events/test_morning_weather.py`, GUI `tests/gui/briefings.test.mjs`, `briefings-api.test.mjs`, `briefing-keeper.test.mjs`, `autostart.test.mjs`, `tray.test.mjs` and the hidden start in `managed.test.mjs` |
 | `docs/` | Screenshots, OpenGraph images, and the GitHub wiki as a git submodule (`docs/open-zenbot.wiki`) |
 | `.github/` | Workflows: `stale.yml`, and `release.yml` (a `v*` tag builds the .deb and the Windows installer and opens a draft release; a manual run only builds them; see `## Installed app`) |
 | `.env.example` | Every environment variable with its default; copy to `.env` (git-ignored) |
@@ -144,11 +145,13 @@ gives `notes-ledger/`, `notes-music/`, `notes-calendar/`, `notes-models/` and `n
 | Folder (default under `~/.zen-agents/`) | Holds | Owned by |
 | --- | --- | --- |
 | `vault/` | Work docs (`docs/`), `delegated/` (job folders for `delegate`), `uploads/chat/<id>/` (files the user attaches in chat, kept until the message is sent and swept after a day if not; see `### Attaching files in chat`), uploads, browser output (`browser/`), anything bots save; `designs/` (studio designs; each folder also holds `images/` and `.versions/`, whose `before-<n>.<name>` files are the working file as it was before a helper's change) and `design-systems/` (the user's own); `workspace/` (the bots' working folder, unless `ZEN_SHELL_CWD` moves it); `memory/`, `sync.json`, learn logs (`learn_log.json`, `learn_holds.json`) | the vault; bots reach it |
-| `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations, `dreams.json` (dreaming progress) | `src/memory/ledger.py` `ledger_path_for` |
+| `vault-ledger/` | Ledger (`ledger.jsonl`), rooms, conversations, `dreams.json` (dreaming progress), `skilltuner.json` (SkillTuner's read marks, needs, day counts, pause and the source slugs suggested, approved or rejected) | `src/memory/ledger.py` `ledger_path_for` |
 | `vault-models/` | `kokoro/`: the Kokoro model (`kokoro-v1.0.onnx`) and voices (`voices-v1.0.bin`), fetched by `POST /speech/local/download`; a `.part` file only while a download runs | `src/vault_settings.py` `models_dir`; a private folder (`allowed_folders.private_folders`), so no bot tool reaches it |
+| `vault-skills/` | Skills the owner records in the app; `discovered/<slug>/` holds skills SkillTuner found and the owner approved (written only by `POST /skilltuner/suggestions/{id}/approve`, loaded live by the watcher) | `src/vault_settings.py` `user_skills_dir`, `discovered_skills_dir`; a private folder (`allowed_folders.private_folders`), so no bot tool reaches it. Always loaded at start, with `ZEN_USER_CONTENT` on or off |
+| `vault-skilltuner/` | SkillTuner's suggestions waiting for the owner: one folder per suggestion, the converted skill's files and `record.json` | `src/vault_settings.py` `tuner_dir`, `src/skilltuner/suggestions.py`; a private folder (`allowed_folders.private_folders`) |
 | `vault-music/` | Music database (`music.db`), the Soundlore atlas, cover images | `src/music/settings.py` `music_dir`; bots never reach it (`allowed_folders.private_folders`) |
 | `vault-calendar/` | Calendar database (`calendar.db`: events, calendars, sync state) | `src/events/settings.py` `calendar_dir`; a private folder (`allowed_folders.private_folders`), so no bot tool reaches the file. The `/calendar` routes are another matter: see "Bots and the calendar" under `### The calendar and Google`; also holds `discover.db` (the discovered events, digests, cards and the events added from the pool) and `discover-images/` (card pictures, and pool pictures in `discover-images/pool/`), private like `calendar.db` |
-| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths, image generation and Read aloud), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `events.json` (event discovery: place, ticked categories, interests, on or off, the FindLocal city and its time zone), `events_keys.json` (the FindLocal key, owner-only), `agentmail.json` (ZenBot's chosen AgentMail inbox: its id and address; no secret), `agentmail_keys.json` (the AgentMail API key, owner-only), `telnyx.json` (the Telnyx sending number; no secret), `telnyx_keys.json` (the Telnyx API key, owner-only), `telnyx_texts.json` (the owner's phone and when to text, written only by the desktop app), `telnyx_texts.sqlite3` (what was texted), `sonos.json` (Sonos: on or off, the volume ceiling, the speaker addresses last found; no secret), `wifi_speakers.json` (Wi-Fi speakers: the three switches, the default speaker's key, the speakers each type last found with their addresses; no secret), `dream.json` (dreaming: on or off and the idle minutes), `briefings.json` (the spoken briefings: days, times, speakers, volume; no secret), `briefing_state.json` (the slot last claimed, the last run and skip, the last settings save), `briefing_jokes.json` (the jokes already told), `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
+| `vault-settings/` | `providers.json` (providers and their keys), `mcp_keys.json`, `tracing.json`, `harness.json` (model roles), `bot-models.json`, `tools.json` (program paths, image generation and Read aloud), `agents.json` (coding agent switches), `allowed_folders.json`, `routines.json`, `music.json`, `music_keys.json`, `music_state.json`, `calendar.json`, `calendar_keys.json`, `events.json` (event discovery: place, ticked categories, interests, on or off, the FindLocal city and its time zone), `events_keys.json` (the FindLocal key, owner-only), `agentmail.json` (ZenBot's chosen AgentMail inbox: its id and address; no secret), `agentmail_keys.json` (the AgentMail API key, owner-only), `telnyx.json` (the Telnyx sending number; no secret), `telnyx_keys.json` (the Telnyx API key, owner-only), `telnyx_texts.json` (the owner's phone and when to text, written only by the desktop app), `telnyx_texts.sqlite3` (what was texted), `sonos.json` (Sonos: on or off, the volume ceiling, the speaker addresses last found; no secret), `wifi_speakers.json` (Wi-Fi speakers: the three switches, the default speaker's key, the speakers each type last found with their addresses; no secret), `dream.json` (dreaming: on or off and the idle minutes), `skilltuner.json` (SkillTuner: on or off; no secret), `briefings.json` (the spoken briefings: days, times, speakers, volume; no secret), `briefing_state.json` (the slot last claimed, the last run and skip, the last settings save), `briefing_jokes.json` (the jokes already told), `magick/policy.xml` | `src/vault_settings.py` `settings_dir` |
 
 A new setting goes in `settings_dir(vault_root) / "<name>.json"`, never under the vault. Secrets and
 `allowed_folders.json` (which decides what `files` may reach) must stay out of the vault: a bot that could
@@ -326,6 +329,240 @@ Tests: `tests/test_dream.py`, `tests/test_dream_routes.py`, `tests/test_dream_ha
 `Harness`), the dream-role reset and timeout in `tests/test_model_providers.py`, `failure_kind` in
 `tests/test_provider_registry.py`; GUI
 `tests/gui/dream.test.mjs`, `idle-report.test.mjs` and `settings-index.test.mjs`.
+
+### SkillTuner
+
+While ZenBot dreams, SkillTuner looks for skills the owner keeps needing. It reads the owner's own messages for recurring
+kinds of work no installed skill covers, searches one outside library (agentskills.finance, CaseMark's MCP endpoint) for
+each, lets the decider pick a clear winner, converts it to this harness's `SKILL.md` contract and stores a suggestion.
+The owner approves it in Settings > Skills; Approve installs it into `<vault>-skills/discovered/<slug>/`, a watcher loads
+it at once, and the owner picks which bots use it. Nothing reaches a bot's prompt before that. It is a pass the harness
+runs, not an agent: the bot (`bot-prompts/skill-tuner.md`, `tunes_skills: true`) is asked one question at a time, with no
+task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/specs/2026-11-25-skilltuner-design.md`
+(git-ignored, on the computer the work was done on).
+
+- **The bot flag.** `tunes_skills: true` is set only in the prompt file. `bot_prompts.parse` refuses it beside `studio`,
+  `places`, `closed`, `narrates`, skills or mcps. `Bot.asked_directly` (`narrates or tunes_skills`) is what the task
+  route, a routine start, `PATCH /bots/{id}` `mcps`, `Bot.attach_skill`, `RoomService.joinable` and the orchestrator
+  check, so SkillTuner takes no task (409 "SkillTuner works only while ZenBot dreams and takes no task."), joins no room
+  and is offered no skill. Its chat page shows a note instead of the composer. It is listed on the Bots page so the owner
+  can set its model.
+- **Where things live.**
+  - Switch: `vault-settings/skilltuner.json` (`TunerSettings`: `enabled`, default false; no secret).
+  - State: `<vault>-ledger/skilltuner.json` (`TunerState`, tmp-then-replace; a damaged file is moved to `.bad` and the
+    state starts empty). It holds SkillTuner's own read marks per conversation (never dreaming's, so the two do not
+    steal from each other), the needs with when each was last searched and its outcome (`suggested`, `none`,
+    `undecided`, `not_found`), the day's counts (requests sent, searches, batches read, skills converted), the pause
+    date, the last pass time and error kind, and `known`, the source slugs already `suggested`, `approved` or
+    `rejected`. A file written before the per-day search and batch counts loads with them empty.
+  - Suggestions: `<vault>-skilltuner/<id>/` (`SuggestionStore`, `vault_settings.tuner_dir`): the converted skill's files
+    and `record.json` (need topic, score, source page, licence, the original and converted `SKILL.md`, the date). A
+    private folder (`allowed_folders.private_folders`), so no bot tool reaches it and none can plant a suggestion or clear
+    a rejection. At most 30 pending (`PENDING_MAX`). A suggestion is staged in `.tmp-<id>/` and renamed into place;
+    the harness sweeps stale `.tmp-*` entries once, when it builds the store (`SuggestionStore.sweep_temp`, never
+    following a link; a rebind does not sweep, since a pass may be writing one).
+  - Approved skills: `<vault>-skills/discovered/<slug>/` (`vault_settings.discovered_skills_dir`), inside the private
+    `<vault>-skills/`.
+- **Skill folders** (the owner's decision, 2026-11-25). Shipped `skills/` is read-only at run time: no route, recorder
+  or SkillTuner path writes there, with `ZEN_USER_CONTENT` on or off. `HarnessConfig.skills_write_dir` always answers
+  `<vault>-skills/` (a recorded skill goes there; the recorder's draft never takes a shipped slug, nor a discovered
+  skill's slug or name), and `build_harness` always loads `<vault>-skills/` before the shipped folder, so the owner's
+  skill of a slug wins as before. That load skips `discovered/` (`load_dir(skip=...)`; it also skips folders whose name
+  starts with `.`, such as the `.tmp-*` staging folders): once the owner's and the shipped skills are in, `build_harness`
+  has the watcher scan once, so discovered skills load last, under the watcher's rules, and before the bots are made, so a
+  bot's saved file keeps its discovered slugs at start. A discovered skill never takes a shipped or owner's slug or name:
+  such a folder is not loaded and a `dropped` entry (reason `duplicate`) says why.
+- **When it runs** (`Dreamer.run`, `Dreamer._tune`). A second job of the dreaming loop, under dreaming's rules
+  (`_may_go`: ready, idle, `Harness.busy` false, checked before each model call, network call and write and every 2 s
+  while a call is in flight; a call in flight is cancelled, a write never). An automatic pass runs the fact pass first
+  and then SkillTuner, unless the fact pass was interrupted or ended systemic; an automatic pass with no facts waiting
+  skips the fact part (no `dream` entries) and goes to SkillTuner. The loop also starts a pass when only SkillTuner has
+  something waiting. "Dream now" never runs it. `_running` stays set through its turn, so the two never overlap. It runs
+  only when `TunerSettings.enabled`, `SkillTuner.ready()` (the bot, a model and a decider all exist) and dreaming's own
+  `ready()` hold. Its calls are guarded by `SkillTuner.ready()` as well as dreaming's rules, so switching SkillTuner off
+  cancels a call it has out and the pass ends interrupted. A SkillTuner bug is a `Kind.error` entry (`where: skilltuner`, the class name) and never changes the
+  fact pass's counts or error.
+- **The model.** `Harness._tuner_model`: the bot's own model when `bot_models` names one that checks, else the dreaming
+  model through a client of SkillTuner's own (the same 600 s timeout and thinking switch, but no `response_format`, since
+  the dreaming client's schema is the facts' and would break both calls). Never the chat model: a fall-back to chat counts
+  as no model. The messages go to that model, as dreaming's do. `Harness._tuner_clean` is the exclusion check.
+- **The pass** (`SkillTuner.tune`; limits in `tuner.py`).
+  1. *Needs.* Quiet (30 minutes, `QUIET_S`) one-to-one conversations, newest first, from SkillTuner's own marks,
+     `Exchange.user` only, with dreaming's skips and the exclusion filter, batched as dreaming's. At most
+     `BATCHES_PER_PASS` (3) model calls a pass and `BATCHES_PER_DAY` (3) a local date; the rest waits for the next
+     day. The call gets the numbered lines and the installed skills' names and `use` lines and answers
+     `{"needs": [{"topic", "words"}]}`: at most 8 needs a batch, `words` 2 to 6 words and 80 characters, `topic` 200
+     (`convert.clean_needs`). Each need's words go through the exclusion filter again before they are kept, and once
+     more just before each search: a need whose words no longer pass (a secret registered since) is dropped from the
+     state unsent (`search` entry with `error: excluded`).
+  2. *Search.* At most `NEEDS_PER_DAY` (8) needs searched a local date, up to `RESULTS_PER_SEARCH` (5) results each; a
+     searched need is due again after `RESEARCH_AFTER_DAYS` (30) days, an `undecided` one the next local date. A result
+     already in `state.known`, the catalog (slug or case-folded name), a pending suggestion or repeated is dropped
+     (`dropped`, reason `duplicate`) before scoring.
+  3. *Fit.* One `DecisionRequest` per need (`purpose="skilltuner"`, through `decide_and_log`): the state is the search words
+     only, never the topic; one question per result ("Would the skill <name> help with this need? ..."). A winner scores at
+     least `FIT_MIN` (0.7) with no other result within `FIT_BAND` (0.1) (`select_band`). A refusal or an unusable answer
+     marks the need `undecided`. Two needs that pick the same skill share one conversion, and both depend on it. A winner
+     not converted because the pass ended or a cap was reached is given back, with every need that picked it
+     (searched again, not lost for 30 days; the day's search count is not lowered).
+  4. *Convert.* At most `SKILLS_PER_DAY` (3) a local date and never past `PENDING_MAX`. Read the skill, check its licence,
+     read each bundled file, one model call (the skill fenced as content) answering `name`, `slug`, `use`, optional `inputs`
+     and `return`, then `convert.clean_conversion` (plain text; `name` at most 80, `use` 300, `slug`
+     `[a-z0-9][a-z0-9-]{0,63}` and not taken, at most 8 inputs of 200 (one string counts as one input), `return` 300)
+     and `convert.build_skill`. The prompt (`bot-prompts/skill-tuner.md`) states these caps, and its example answers
+     pass the parsers (`tests/skilltuner/test_convert.py`). The result
+     must pass `parse_skill` and `SkillConfig.max_bytes`. A failure drops that skill (`dropped`: `licence`, `invalid`,
+     `duplicate`, `too_large`, `not_found`).
+- **Budget and failures.** At most `DAILY_REQUESTS` (40) requests to CaseMark a local date, counted as each is sent
+  (`TunerState.spend`, through the connector's `on_send`); a spent budget ends the pass quietly. A systemic failure
+  (CaseMark `network`, `refused`, `provider`, `source_changed`; the model `unreachable`, or `model_provider` for the
+  model's `provider` failure, named apart from CaseMark's; the decider's
+  `ProviderError`, kind `decider`; a suggestion that cannot be written, kind `store`) ends the pass and pauses SkillTuner
+  until the next local date (`pause_until`, dated when it happens), counted against nothing. A `not_found`, a licence, a
+  conversion or a build failure only drops that need or skill. A bad needs answer moves the mark past that batch.
+- **The connector** (`casemark.CaseMark`; the only code that reaches the source). Requests go only to
+  `https://skills.case.dev/api/mcp` (`MCP_URL`), JSON-RPC `tools/call` of `resolve_skill` and `read_skill`, from its own
+  `httpx.AsyncClient(trust_env=False, follow_redirects=False)` (`casemark.new_client`, closed at shutdown by
+  `Harness.close_tuner`). One request at a time, `GAP_S` (1 s) apart, the whole request (send and body) bounded by
+  `TIMEOUT_S` (30 s), `Accept-Encoding: identity`, an answer over `ANSWER_LIMIT` (1,000,000 bytes, also when chunked)
+  refused, the content type must be `application/json`. No 3xx is followed and nothing read from an answer is ever
+  fetched: a slug must fullmatch `SLUG` and be the one asked for; a bundled file is asked through the same endpoint by a
+  slug built from the checked root and a path matching `FILE_PATH` (`references/<name>.md` or `.txt`). Error kinds
+  (`SourceError`, the Eventbrite class): `network`, `refused` (429), `source_changed`, `not_found` (an inner 404),
+  `provider`, `budget`. Texts from answers are cleaned (control, line and paragraph separators and surrogates dropped) and
+  cut (name 120, summary 1,000, body or file 200,000). It logs nothing.
+- **The recorded answer shapes** (2026-11-25, the real endpoint). A `tools/call` answer is `{"result": {"content":
+  [{"type": "text", "text": <JSON>}]}}`. `resolve_skill` gives `{"results": [{slug, name, summary, tags, score}], "query",
+  "methods_used"}`, ten results, of which at most five are kept. `read_skill` gives `{slug, name, summary, content (the
+  body, no frontmatter), tags, version, author_name, license, bundle}`, `bundle` being `{"role": "root", "files": [{slug,
+  path, name, content_type}]}`; a bundled file is read by its own slug (`<skill>--file--<path>`) and answers the same shape
+  with `bundle.role` `file`. An unknown slug answers 200 with `{"error": true, "statusCode": 404, ...}`. The fixtures are
+  trimmed copies in `tests/skilltuner/fixtures/`.
+- **What the converted file is** (`convert.build_skill`). Frontmatter: the model's `name`, `slug`, `use` (and `inputs`,
+  `return`) plus provenance the loader ignores (`source: agentskills.finance`, `source_slug`, `source_version`,
+  `source_url`, `license`); `source_url` is built from the slug (`SOURCE_URL`), never taken from an answer. `access`,
+  `approvals` and `steps` are never set from downloaded text. Body: the downloaded body as published, under a note saying
+  where it came from, that SkillTuner converted it on a date and that the frontmatter was changed, with each bundled
+  reference appended under `## Reference: <file name>` (only the body reaches a prompt). `LICENSE.txt` (the Apache 2.0
+  text in `src/skilltuner/apache-2.0.txt`, with the placeholder copyright line; for another licence one line naming its
+  SPDX id and URL) and a `NOTICE.txt`. Licences accepted (`LICENCES`, case-folded): Apache-2.0, MIT, BSD-2-Clause,
+  BSD-3-Clause and CC-BY-4.0; any other or none drops the skill. `src/skilltuner` is in `electron-builder.yml`
+  `extraResources`, which must keep shipping `apache-2.0.txt`.
+- **The watcher** (`watcher.SkillWatcher`, started in the `lifespan` beside dreaming, awaited after `stop.set()`). A
+  plain polling scan every `POLL_S` (3 s) of `<vault>-skills/discovered/`, run on the event loop under a lock, so every
+  catalog and bot change happens there. It owns every catalog entry whose `SKILL.md` lies inside `discovered/`; its
+  first scan runs in `build_harness` (see Skill folders). A folder name must match `FOLDER`
+  (`[a-z0-9][a-z0-9-]{0,63}`). A link, junction, non-regular file or `SKILL.md` with more than one hard link is refused.
+  A new folder is loaded, a changed one (by modification time and size) is loaded again with `replace_skill` and put in
+  place of the copy each bot holds (routing reads `bot.skills`; bot files hold slugs, so nothing is written), a removed
+  one leaves the catalog and every bot's skills in memory (a bot's saved file keeps the slug, so the skill returns if the
+  folder does). One that fails to load, or collides with another skill, is left out and its earlier copy removed, with a
+  `dropped` entry (reason `invalid`, `duplicate`, `refused` or `error`); one bad folder never stops the scan. A load
+  that raised (reason `error`, as an `OSError` on a read) is tried again on every scan until it works, unchanged file
+  or not, with one `dropped` entry per version of the file (by modification time and size), not one every 3 s. Removals run before loads. `sweep_temp` deletes stale `.tmp-*`
+  folders at start. A change calls `on_change` once per scan, which bumps the router's scope version
+  (`bump_scope`). The watcher never writes a skill.
+- **Routes** (`src/skilltuner/routes.py`, under `/skilltuner`; no answer carries a disk path; every POST takes a required
+  JSON body, `NothingIn` where it needs nothing; `tests/skilltuner/test_routes.py` walks them):
+  - `GET /status`: `enabled`, `ready`, `why_not` (`Switch on dreaming first.`, `SkillTuner's bot file is missing.` or
+    `Choose a decision model first.`, in that order, or empty), `last_pass_at`, `error`, `pending`, `spent_today`,
+    `budget` (40).
+  - `PUT /settings` (`{enabled}`, a strict boolean): 409 "Switch on dreaming first." when switching on with dreaming off,
+    500 "The setting could not be saved.".
+  - `GET /suggestions` (without `original` and `converted`), `GET /suggestions/{id}` (with both), 404 "No such
+    suggestion.".
+  - `POST /suggestions/{id}/approve`. 404 for an unknown id, also the loser of a double Approve (one at a time, under a
+    lock); 422 when the slug does not match the watcher's folder rule; 409 "A skill with that name is already
+    installed." when the slug or name is in the catalog or `discovered/<slug>` already exists; 500 "The skill could not
+    be installed." on a write or rename failure, or when the watcher refuses to load it (the new folder is removed and
+    the suggestion stays). It writes the files into a `.tmp-` staging folder inside `discovered/`, renames the folder
+    into place, then has the watcher scan once and waits, and only then removes the suggestion and remembers the source
+    slug as `approved`; a failure of that bookkeeping is logged by class name and never fails the request. It answers
+    `{skill, fit}`: `fit` is `FitEngine.suggest` over the offered bots (not `asked_directly`, closed or studio), null with
+    no scorer, no offered bot or a failed fit.
+  - `POST /suggestions/{id}/reject`: removes it and remembers the source slug as `rejected`, so it is never suggested
+    again.
+  - `POST /skills/{slug}/remove`: only a real folder directly inside `discovered/`; 404 "No such skill." otherwise (a plain
+    file included), 409 "That skill's folder is a link and was left alone." for a link or junction, 500 "The skill could
+    not be removed.". The folder is removed by a link-safe walk that never follows a link.
+  - `GET /discovered`: `{"slugs": [...]}`, the catalog slugs the watcher owns, which is what the GUI's Remove button is
+    shown for.
+  - Attaching uses `POST /fits/{id}/confirm` and `PATCH /bots/{id}`; **the confirm route now saves the bot**
+    (`_persist`), so a confirmed fit survives a restart (this fixed the route for every skill). A shipped bot saved this
+    way is written to `bots_write_dir` and replaces the shipped one, as an edit on the Bots page does.
+- **The GUI** (`src/gui/skilltuner.js`, `SkillTunerSection.jsx`, `TunerSuggestions.jsx`, `api.js` `api.tuner`; entries in
+  `settings-index.js` `SECTIONS`). The switch, a status line and the privacy sentence (`PRIVACY`) sit in the Dreaming
+  section of Settings > Harness settings, under dreaming's own switch (polled every 15 s). "Suggested by SkillTuner" is the
+  top of Settings > Skills (polled every 15 s): each card shows the name, the `use` line, the need, the source, the
+  licence and a before and after of the original and converted text, as plain text, never HTML or Markdown. Approve opens a
+  "Which bots should use it?" step: every offered bot, those the fit proposed ticked with their scores. A fit can be
+  confirmed only once, so Done confirms the first ticked proposed bot and attaches the other ticked bots through
+  `PATCH /bots/{id}` with their full skills list (`nextSteps`); with no proposed bot ticked the fit is denied. That route
+  replaces the list, so Done reads the bots' stored skills from `GET /bots` first (`attachChosen`), never the page's
+  copy, and Approve, Reject and Done run one at a time (`createQueue`), each button off from its click until its own
+  action ends; two Done actions on one bot cannot then drop each other's skill. A Done that
+  partly failed keeps its card and a retry skips the steps that worked. A skill left with no bot keeps a "Choose bots"
+  card until one has it (kept in component memory, lost on a reload). Reads older than the newest read or action are
+  dropped (`createLatest`). The status line names a pass error by kind (`statusLine`): CaseMark's kinds "agentskills.finance
+  could not be reached.", `unreachable` and `model_provider` "SkillTuner's model could not be reached.", `decider` "The
+  decision model could not be reached.", `store` "A suggestion could not be saved.", each followed by "Trying again
+  tomorrow."; otherwise it ends "<spent> of 40 requests used today." (every request to CaseMark counts). Remove (with a `window.confirm`) is offered on skills whose slug `GET /skilltuner/discovered`
+  lists.
+- **Ledger.** Kind `skilltuner`, events `pass_start`, `need` (counts; `error: model` and the class name when the answer
+  could not be used), `search` (results, error kind, or `excluded` for a need dropped unsent), `fit` (scores by source slug, the winner; `error: refused`, empty
+  scores, when the decider refused or answered something unusable), `dropped` (reason `duplicate`, `licence`, `invalid`,
+  `too_large` or `not_found`, source slug), `suggested` (source slug, new slug), `pass_end` (counts, error kind,
+  interrupted), `settings`, `approved`, `rejected`, `removed`, the watcher's `loaded`, `reloaded`, `removed`, `dropped`
+  (folder, slug, reason `invalid`, `duplicate`, `refused` or `error`, with the class name for `error`) and `error` (a
+  scan or a sweep, by class name), and the store's `error` (reason `sweep`, class name). Source slugs and skill names are
+  public catalog data and may be logged; never a need's topic or words, a message, or skill text. The decider's own
+  `decider_score` entry carries the question keys `r:<slug>`. Errors log the exception's class name only.
+- **Bots and SkillTuner (a known residual risk).** The harness API has no authentication, so a bot with `shell` (curl) or
+  the `browser` server can call the `/skilltuner` routes: switch it on, read the suggestions, and approve one, which puts
+  a downloaded skill in the catalog without the owner, and attach it through `/fits` and `/bots`. It cannot write a
+  suggestion (the folder is private), so it can only approve what SkillTuner itself fetched from the fixed source. A bot
+  can also post a task whose text SkillTuner would read as the owner's (the limit dreaming has). Anything that writes
+  `<vault>-skills/` as the owner's account (a `shell` command the owner approves, another program) can put a skill in
+  `discovered/`, and the watcher loads it with no review; a `shell` command that names the folder already opens an
+  approval. Do not describe skill suggestions as out of bots' reach.
+- **Known limits.**
+  - A bot saved while one of its discovered skills is absent (the folder removed or refused) loses that slug from its
+    file.
+  - `resolve_skill`'s description says "Search legal skills", so the endpoint may also return CaseMark's legal skills; the
+    answers had no field to tell them apart, so nothing filters on it and the decider's fit is the only filter.
+  - A need's search words reach CaseMark and the decider's trace; the topic goes only to SkillTuner's model (its own
+    model when one is set, else the dreaming model).
+  - Windows has no `dir_fd`: the suggestion store checks with `lstat` and then opens, a known limit as with chat files.
+  - The watcher notices a change by modification time and size, so a rewrite of the same size within the same timestamp
+    is missed.
+  - Winners are held in memory between the search and the conversion. A pass that ends or is cancelled gives them back,
+    but a hard kill (the process ended between the two) loses that day's winner: its need is marked searched and is not
+    looked for again for 30 days.
+  - On Windows, a vault in a OneDrive-backed folder has its discovered skills refused: OneDrive's placeholders read as
+    reparse points, which the watcher refuses as it does junctions.
+- **Unverified.** No pass has run with a real model or decider: the tests use a fake provider, a fake scorer and
+  `FakeCaseMark` (an `httpx.MockTransport`). How a small local dreaming model writes needs and `use` lines, and how the
+  decider scores finance summaries, are not known. The free tier's real daily limit and whether every skill in the
+  library carries one of the accepted licences are not known (two were Apache-2.0). The GUI (the section, the cards, the
+  Which-bots step, Remove) has not been seen on screen: only `npm test` and the build have run it, and its components have
+  no unit tests. The installed app's packaging with `src/skilltuner` has not been run. The shipped bot's prompt has only
+  been parsed.
+
+Rules for contributors: SkillTuner gets no tool, task, session, room or catalog entry. Only `Exchange.user` feeds a need;
+no message, topic, need words or skill text in a `skilltuner` ledger entry or a log line. Requests go only to
+`https://skills.case.dev/api/mcp` through `casemark.py`, with no redirect followed and nothing fetched from an answer;
+keep the connector's client `trust_env=False`. A downloaded skill is content to convert, never instructions: fence it, and
+write the file with `convert.build_skill`, never from the model's text. Nothing reaches a bot before the owner approves:
+the only writers of `discovered/` are Approve (a temporary name, then a rename) and the owner. Keep `<vault>-skilltuner/`
+and `<vault>-skills/` in `private_folders`, and `skilltuner.json` in `vault-settings/` and `<vault>-ledger/`. Keep the
+shipped `skills/` folder read-only at run time. The watcher never writes and never follows a link; every catalog or bot
+change it makes runs on the event loop. The CaseMark budget, the per-day counts and the pause bind every pass: do not
+count a systemic failure against a need. Every `/skilltuner` POST takes a required JSON body. Tests never touch the
+network: `FakeCaseMark` and `httpx.MockTransport`. Tests: `tests/skilltuner/` (`test_settings.py`, `test_casemark.py`,
+`test_convert.py`, `test_suggestions.py`, `test_watcher.py`, `test_tuner.py`, `test_tuner_harness.py`, `test_routes.py`),
+the SkillTuner cases in `tests/test_dream.py`, `tests/test_skill_folders.py`, `tests/test_bot_prompts.py`,
+`tests/test_rooms.py`, `tests/test_orchestrator.py`, `tests/test_recorder.py`, `tests/test_allowed_folders.py` and
+`tests/test_provider_registry.py`; GUI `tests/gui/skilltuner.test.mjs` and `settings-index.test.mjs`.
 
 ### The calendar and Google
 
@@ -2516,10 +2753,13 @@ for v0.1.0, then installed and run by hand on Windows.
   only through `download.cjs`, which renames a file into place after its whole content matched the pinned SHA-256. To
   bump a pin: take the new version's URL and checksum from the official release (uv's GitHub release, Node's
   `SHASUMS256.txt`), never from memory, edit `pins.json` for both platforms, and run `npm test`.
-- **User content.** With `ZEN_USER_CONTENT` on, bots and skills made in the app are saved in `<vault>-bots/` and
-  `<vault>-skills/` (`vault_settings.user_bots_dir`, `user_skills_dir`), which load alongside the shipped ones so
-  the user's wins on the same id. Both are private folders (`allowed_folders.private_folders`): bots cannot reach them,
-  with this switch on or off. The first start asks for an OpenRouter key (`POST /settings/openrouter-key`): the
+- **User content.** Skills made in the app always go to `<vault>-skills/` (`HarnessConfig.skills_write_dir`,
+  `vault_settings.user_skills_dir`), which always loads before the shipped `skills/`, so the user's wins on the same
+  slug, whether or not `ZEN_USER_CONTENT` is set; the shipped folder is never written at run time. Skills SkillTuner
+  finds live in `<vault>-skills/discovered/` (see `### SkillTuner`). With `ZEN_USER_CONTENT` on, bots made in the app
+  are saved in `<vault>-bots/` (`user_bots_dir`) and load alongside the shipped ones, the user's winning on the same id;
+  the switch still decides that, and the new-bot id rule in `_persist`. Both folders are private folders
+  (`allowed_folders.private_folders`): bots cannot reach them, with this switch on or off. The first start asks for an OpenRouter key (`POST /settings/openrouter-key`): the
   harness checks it, saves it in `providers.json` and registers it with the exclusion filter.
 - **The tray and a hidden start.** Closing the window hides it in the system tray and ZenBot keeps running (the
   harness, reminders, briefings and dreaming's idle reports need it); only Quit ZenBot in the tray's menu, or the

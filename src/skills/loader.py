@@ -184,19 +184,23 @@ def load_skill(path: Path, config: SkillConfig | None = None) -> LoadResult:
     return LoadResult(SkillState.added, skill=skill, path=path)
 
 
-def load_dir(root: Path, config: SkillConfig | None = None) -> list[LoadResult]:
+def load_dir(root: Path, config: SkillConfig | None = None, *, skip: frozenset[str] | set[str] = frozenset()) -> list[LoadResult]:
     """Load every `<root>/*/SKILL.md`, sorted by directory name. A folder
     with no SKILL.md of its own groups skills (`skills/anthropic/docx`, with
-    one license file for the group) and is searched one level down."""
+    one license file for the group) and is searched one level down. A
+    top-level folder named in `skip` is not read (`discovered/`, which the
+    SkillTuner watcher loads under its own rules)."""
     root = Path(root)
     if not root.exists():
         return []
     results = []
-    for child in sorted(p for p in root.iterdir() if p.is_dir()):
+    # Folders whose name starts with "." (staging folders like discovered/.tmp-*) are never skills.
+    for child in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".") and p.name not in skip):
         if (child / SKILL_FILENAME).exists():
             results.append(load_skill(child, config))
         else:
-            results.extend(load_skill(sub, config) for sub in sorted(p for p in child.iterdir() if p.is_dir())
+            results.extend(load_skill(sub, config)
+                           for sub in sorted(p for p in child.iterdir() if p.is_dir() and not p.name.startswith("."))
                            if (sub / SKILL_FILENAME).exists())
     return results
 

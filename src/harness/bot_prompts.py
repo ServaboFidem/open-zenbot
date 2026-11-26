@@ -37,6 +37,7 @@ class BotPrompt:
     places: list[str] = field(default_factory=list)  # what this bot can place in another bot's design: "text", "images"; set only in the file
     closed: bool = False  # the bot gets only the tools of its own `mcps` (no built-ins, no routed servers); set only in the file
     narrates: bool = False  # the Narrator: asked directly to rewrite a reply for reading aloud, never given a task; set only in the file
+    tunes_skills: bool = False  # SkillTuner: asked directly while ZenBot dreams, never given a task; set only in the file
 
 
 def slugify(name: str) -> str:
@@ -81,8 +82,17 @@ def parse(text: str, bot_id: str) -> BotPrompt:
         if skills or mcps:
             raise ValueError("a narrating bot has no skills and no mcps")
         skills = []
+    tunes_skills = meta.get("tunes_skills", False)
+    if not isinstance(tunes_skills, bool):
+        raise ValueError("tunes_skills must be true or false")
+    if tunes_skills:
+        if studio or places or closed or narrates:
+            raise ValueError("a skill-tuning bot cannot be a studio bot, have places, be closed or narrate")
+        if skills or mcps:
+            raise ValueError("a skill-tuning bot has no skills and no mcps")
+        skills = []
     return BotPrompt(id=bot_id, name=name.strip(), role=role.strip(), instructions=body.strip(), skills=skills, mcps=mcps,
-                     studio=studio, places=list(places), closed=closed, narrates=narrates)
+                     studio=studio, places=list(places), closed=closed, narrates=narrates, tunes_skills=tunes_skills)
 
 
 def render(p: BotPrompt) -> str:
@@ -99,6 +109,8 @@ def render(p: BotPrompt) -> str:
         meta["closed"] = True
     if p.narrates:
         meta["narrates"] = True
+    if p.tunes_skills:
+        meta["tunes_skills"] = True
     head = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, default_flow_style=None).strip()
     return f"---\n{head}\n---\n{p.instructions.strip()}\n"
 

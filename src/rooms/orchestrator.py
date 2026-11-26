@@ -90,7 +90,7 @@ class Orchestrator:
         candidates = self._candidates(new_topic)
         specialists = [b for bid, b in self.bots.items()
                        if bid != self.lead_id and not getattr(b, "closed", False)  # a closed bot never joins a room
-                       and not getattr(b, "narrates", False)]  # nor does the Narrator: it takes no task
+                       and not getattr(b, "asked_directly", False)]  # nor does the Narrator or SkillTuner: they take no task
         if self.scorer is None:
             return self._done(RouteOutcome("task", fallback="no scorer"))
         if not candidates and not specialists:

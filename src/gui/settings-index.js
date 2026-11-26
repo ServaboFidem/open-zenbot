@@ -5,6 +5,7 @@
 
 import { APP_STEPS } from './calendar-settings.js';
 import { PRIVACY } from './dream.js';
+import { PRIVACY as TUNER_PRIVACY } from './skilltuner.js';
 import { FACEBOOK_LOGIN_LOSS } from './discovery-settings.js';
 import { MAIL_LINE } from './mail.js';
 import { HELP_LINE as SONOS_LINE } from './sonos.js';
@@ -50,6 +51,11 @@ export const SECTIONS = [
     PRIVACY,
     'Dreaming model', 'Start after', 'minutes idle', 'Dream now', 'What was learned', 'Forget', 'learn', 'memory', 'idle', 'conversations', 'local model',
   ]),
+  section('harness', 'SkillTuner', [
+    'Find finance skills that match what I ask for while the computer dreams',
+    TUNER_PRIVACY,
+    'suggestions', 'agentskills.finance', 'searches', 'skills', 'learn',
+  ]),
   section('providers', 'Model providers', ["Each provider's key lives in the harness's providers.json, readable by you only. Enable the models the harness may use; the Harness settings and Harness Tools pages pick from them.", 'Test a provider', 'Refresh the model list', 'OpenRouter', 'OpenAI-compatible']),
   section('providers', 'Add a provider', [
     'Preconfigured provider', 'Hosted', 'Runs on your machine', 'Name', 'Kind', 'Provider kind',
@@ -71,6 +77,10 @@ export const SECTIONS = [
   whole('skills', [
     'Skills live in the harness catalog. Teach one by recording a task, then let the decider suggest which bot should carry it.',
     'Fit suggestions', 'Suggest a fit', 'Bots with this skill', 'Frontmatter',
+  ]),
+  section('skills', 'Suggested by SkillTuner', [
+    'Skills SkillTuner found for what you ask. See what changed, approve one and pick the bots that use it, or reject it.',
+    'See what changed', 'Approve', 'Reject', 'Remove', 'Which bots should use it?',
   ]),
   section('agents', 'Coding agents', [
     'Let bots hand a coding job to a program on this computer. The program works in one folder you allow, and you see what it changed.',

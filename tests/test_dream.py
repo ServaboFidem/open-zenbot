@@ -857,3 +857,147 @@ async def test_reset_attempts_ends_the_old_models_call_so_it_cannot_pause_dreami
     got = await asyncio.wait_for(run, 1.0)
     assert d.provider.cancelled == 1 and got["conversations"] == 0
     assert d.marks.get(c.id) == Mark() and not d.dreamer._paused() and d.dreamer.status()["error"] == ""
+
+
+# -- SkillTuner's turn in the loop -------------------------------------------------------------------------
+
+class StubTuner:
+    """Stands in for SkillTuner: says it is ready with `waiting` things, records each pass and its guard."""
+
+    def __init__(self, waiting=1, raises=None):
+        self._waiting, self.raises = waiting, raises
+        self.passes = 0
+        self.went: list[bool] = []
+
+    def ready(self):
+        return True
+
+    def waiting(self):
+        return self._waiting
+
+    async def tune(self, *, may_go, guarded):
+        self.passes += 1
+        self.went.append(may_go())
+        if self.raises:
+            raise self.raises
+        await guarded(asyncio.sleep(0))
+        return {}
+
+
+async def test_dream_now_never_runs_the_tuner(d):
+    d.dreamer.tuner = stub = StubTuner()
+    d.conv("I live in Columbus")
+    await d.dreamer.dream(manual=True)
+    assert stub.passes == 0 and len(d.provider.calls) == 1
+
+
+async def test_an_automatic_pass_runs_the_tuner_after_the_facts(d):
+    d.dreamer.tuner = stub = StubTuner()
+    d.conv("I live in Columbus")
+    d.dreamer.report_idle(600)
+    got = await d.dreamer.dream()
+    assert got["conversations"] == 1 and stub.passes == 1 and stub.went == [True]
+
+
+async def test_the_tuner_runs_when_dreaming_has_nothing_waiting(d):
+    d.dreamer.tuner = stub = StubTuner()
+    d.dreamer.report_idle(600)
+    await d.dreamer.dream()
+    assert stub.passes == 1 and d.entries() == []  # no empty fact pass logged
+
+
+async def test_a_systemic_fact_pass_skips_the_tuner(d):
+    d.dreamer.tuner = stub = StubTuner()
+    d.conv("I live in Columbus")
+    d.provider.answers = [ProviderUnavailable("down")]
+    d.dreamer.report_idle(600)
+    await d.dreamer.dream()
+    assert stub.passes == 0 and d.dreamer.status()["error"] == "unreachable"
+
+
+async def test_a_tuner_failure_leaves_the_fact_pass_alone(d):
+    d.dreamer.tuner = StubTuner(raises=RuntimeError("tuner bug"))
+    d.conv("I live in Columbus")
+    d.provider.answers = [answer(("Gordon lives in Columbus.", "personal"))]
+    d.dreamer.report_idle(600)
+    got = await d.dreamer.dream()
+    assert got == {"conversations": 1, "facts": 1, "dropped": 0, "refused": 0} and d.dreamer.status()["error"] == ""
+    errors = [e.data for e in d.ledger.iter() if e.kind == "error"]
+    assert errors == [{"where": "skilltuner", "error": "RuntimeError"}]
+
+
+async def test_the_loop_starts_a_tuner_pass_when_dreaming_has_nothing_waiting(d, monkeypatch):
+    monkeypatch.setattr(dream_mod, "TICK_S", 0.02)
+    d.dreamer.tuner = stub = StubTuner()
+    stop = asyncio.Event()
+    loop = asyncio.ensure_future(d.dreamer.run(stop))
+    await asyncio.sleep(0.1)
+    assert stub.passes == 0  # not idle
+    d.dreamer.report_idle(600)
+
+    async def started():
+        while not stub.passes:
+            await asyncio.sleep(0.01)
+
+    try:
+        await asyncio.wait_for(started(), 1.0)
+    finally:
+        stop.set()
+    await asyncio.wait_for(loop, 1.0)
+    await d.dreamer.close()
+    assert d.provider.calls == []
+
+
+async def test_the_loop_starts_nothing_when_neither_is_waiting(d, monkeypatch):
+    monkeypatch.setattr(dream_mod, "TICK_S", 0.02)
+    d.dreamer.tuner = stub = StubTuner(waiting=0)
+    d.dreamer.report_idle(600)
+    stop = asyncio.Event()
+    loop = asyncio.ensure_future(d.dreamer.run(stop))
+    await asyncio.sleep(0.1)
+    stop.set()
+    await asyncio.wait_for(loop, 1.0)
+    assert stub.passes == 0
+
+
+class SwitchedTuner(StubTuner):
+    """A tuner whose model call hangs until it is cancelled; `on` is its switch."""
+
+    def __init__(self):
+        super().__init__()
+        self.on = True
+        self.calling = asyncio.Event()
+        self.cancelled = False
+        self.ended = ""
+
+    def ready(self):
+        return self.on
+
+    async def tune(self, *, may_go, guarded):
+        self.passes += 1
+
+        async def hang():
+            self.calling.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+
+        try:
+            await guarded(hang())
+            self.ended = "done"
+        except dream_mod.Interrupted:
+            self.ended = "interrupted"
+        return {}
+
+
+async def test_switching_skilltuner_off_cancels_its_call_in_flight(d, monkeypatch):
+    monkeypatch.setattr(dream_mod, "GUARD_S", 0.02)
+    d.dreamer.tuner = stub = SwitchedTuner()
+    d.dreamer.report_idle(600)
+    run = asyncio.ensure_future(d.dreamer.dream())
+    await asyncio.wait_for(stub.calling.wait(), 1.0)
+    stub.on = False  # the owner switches SkillTuner off; dreaming's own rules still hold
+    await asyncio.wait_for(run, 1.0)
+    assert stub.cancelled and stub.ended == "interrupted"
