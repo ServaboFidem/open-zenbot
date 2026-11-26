@@ -132,7 +132,7 @@ def skilltuner_router(h) -> APIRouter:
         return {"id": e.id, "address": e.address(), "label": e.label(), "folder": e.folder, "index": stored.index,
                 "one_by_one": stored.one_by_one, "skills": len(stored.skills), "skipped": stored.skipped,
                 "last_read_at": stored.read_at, "commit": stored.commit[:12], "reading": e.id in h.github.reading,
-                "error": h.repo_errors.get(e.id) or stored.error, "licence": e.licence}
+                "error": h.github.errors.get(e.id) or stored.error, "licence": e.licence}
 
     def save_repos(repos: list[RepoEntry]) -> None:
         try:
@@ -170,10 +170,11 @@ def skilltuner_router(h) -> APIRouter:
     async def put_settings(body: TunerSettingsIn) -> dict[str, Any]:
         if body.enabled and not h.dreamer.settings.enabled:
             raise HTTPException(409, NEED_DREAMING)
-        try:
-            h.tuner.set_settings(replace(h.tuner.settings, enabled=body.enabled))
-        except OSError:
-            raise HTTPException(500, NOT_SAVED) from None
+        async with lock:  # the repository routes change the same file
+            try:
+                h.tuner.set_settings(replace(h.tuner.settings, enabled=body.enabled))
+            except OSError:
+                raise HTTPException(500, NOT_SAVED) from None
         log_event("settings", enabled=body.enabled)
         return status()
 
@@ -256,7 +257,7 @@ def skilltuner_router(h) -> APIRouter:
                 h.github.store.remove(id)
             except (OSError, ValueError) as e:
                 log.warning("skilltuner repo list not removed: %s", type(e).__name__)
-            h.repo_errors.pop(id, None)
+            h.github.errors.pop(id, None)
             log_event("repo_removed", id=id)
         return {"ok": True}
 

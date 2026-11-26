@@ -73,6 +73,7 @@ class GitHubSkills:
         self.entries = entries
         self.clock = clock
         self.reading: set[str] = set()
+        self.errors: dict[str, str] = {}  # id -> kind of the last read's GitHub-wide failure (memory only)
         self.changed = False
         self._matcher: tuple[frozenset, Matcher] | None = None
         self._files: dict[str, set[str]] = {}
@@ -185,22 +186,30 @@ class GitHubSkills:
                 oldest = (at, entry)
         return never or (oldest[1] if oldest else None)
 
-    def _listed(self, id: str) -> bool:
+    def listed(self, id: str) -> bool:
         return any(e.id == id for e in self.entries())
 
-    def _put(self, id: str, stored: RepoList) -> None:
+    def _put(self, id: str, stored: RepoList) -> bool:
         """Keep a read's list only while the owner still lists the repository: one removed during the read stays
         removed (no stored list is left behind)."""
-        if self._listed(id):
+        if self.listed(id):
             self.store.put(id, stored)
+            return True
+        return False
 
     async def read_repo(self, entry: RepoEntry, go: Callable[[], None] = lambda: None) -> RepoList:
         self.reading.add(entry.id)
         try:
-            return await self._read(entry, go)
+            got = await self._read(entry, go)
+            self.errors.pop(entry.id, None)  # any completed read, the pass's or the owner's, clears it
+            return got
         except SourceError as e:
-            if not github_wide(e) and self._listed(entry.id):
-                self.store.set_error(entry.id, e.kind)
+            if self.listed(entry.id):
+                if github_wide(e):
+                    self.errors[entry.id] = e.kind
+                else:
+                    self.errors.pop(entry.id, None)  # the stored list carries this error
+                    self.store.set_error(entry.id, e.kind)
             raise
         finally:
             self.reading.discard(entry.id)
@@ -231,8 +240,7 @@ class GitHubSkills:
                 raise _fail("no_index")
             skills, skipped = await self._one_by_one(entry, sha, folders, blobs, go)
         stored = RepoList(sha, info.licence, at, "", used, skipped, skills, one_by_one)
-        self._put(entry.id, stored)
-        if old is None or old.skills != skills:
+        if self._put(entry.id, stored) and (old is None or old.skills != skills):
             self.changed = True
         return stored
 

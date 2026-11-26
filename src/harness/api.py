@@ -254,7 +254,6 @@ class Harness:
     _github_http: Any = field(default=None, init=False, repr=False)  # the GitHub connector's own client, made on first use
     github: GitHubSkills | None = None  # the owner's GitHub repositories as a skill source; built once with the tuner
     repo_tasks: set = field(default_factory=set, init=False, repr=False)  # owner-started repository reads under way
-    repo_errors: dict = field(default_factory=dict, init=False, repr=False)  # id -> kind of an owner read that failed
     media: MediaProxy | None = None  # remote images, video and PDFs for the chat; trusted hosts at once, others on a click
     task_attachments: dict[str, list[Attachment]] = field(default_factory=dict)  # session id -> files attached in a one-to-one task
     # chat upload id -> how many task routes are sending it right now: not deletable or sweepable while above 0
@@ -695,7 +694,6 @@ class Harness:
         event: dict[str, Any] = {"id": entry.id}
         try:
             got = await gh.read_repo(entry)
-            self.repo_errors.pop(entry.id, None)
             event |= {"skills": len(got.skills), "skipped": got.skipped,
                       "from": "index" if got.index and not got.one_by_one else "one_by_one",
                       "error": "", "commit": got.commit[:12]}
@@ -705,14 +703,11 @@ class Harness:
         except asyncio.CancelledError:
             raise
         except SourceError as e:
-            if github_wide(e) or e.kind == "budget":
-                self.repo_errors[entry.id] = e.kind
-            else:
-                self.repo_errors.pop(entry.id, None)  # the stored list carries this error
             event["error"] = e.kind
         except Exception as e:  # noqa: BLE001
             logging.getLogger(__name__).warning("repository read failed: %s", type(e).__name__)
-            self.repo_errors[entry.id] = "provider"
+            if gh.listed(entry.id):
+                gh.errors[entry.id] = "provider"
             event["error"] = "provider"
         finally:
             gh.reading.discard(entry.id)

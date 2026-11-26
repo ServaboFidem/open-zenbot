@@ -520,3 +520,57 @@ async def test_no_repository_answer_holds_a_disk_path(client, harness, gh):
     root = str(harness.config.vault_root.parent)
     for t in texts:
         assert root not in t and root.replace("\\", "\\\\") not in t
+
+
+async def test_a_later_good_read_clears_a_github_wide_error(client, harness, gh):
+    gh.raises = httpx.ConnectError("x")
+    repo = (await add(client)).json()
+    await settle(harness)
+    assert (await client.get("/skilltuner/sources")).json()["repos"][0]["error"] == "network"
+    gh.raises = None
+    entry = harness.tuner.settings.repos[0]
+    await harness.github.read_repo(entry)  # the pass reads it directly
+    assert (await client.get("/skilltuner/sources")).json()["repos"][0]["error"] == ""
+    assert harness.github.errors == {} and repo["id"] == entry.id
+
+
+async def test_a_newer_stored_error_replaces_the_memory_one(client, harness, gh):
+    gh.raises = httpx.ConnectError("x")
+    await add(client)
+    await settle(harness)
+    gh.raises = None
+    gh.status = 404
+    with pytest.raises(Exception):
+        await harness.github.read_repo(harness.tuner.settings.repos[0])
+    assert (await client.get("/skilltuner/sources")).json()["repos"][0]["error"] == "not_found"
+
+
+async def test_a_removed_repository_gets_no_error_or_reset(client, harness, gh):
+    gh.hold = asyncio.Event()
+    gh.raises = None
+    repo = (await add(client)).json()
+    for _ in range(300):
+        if any("/git/trees/" in r.url.path for r in gh.requests):
+            break
+        await asyncio.sleep(0.01)
+    await client.delete(f"/skilltuner/repos/{repo['id']}")
+    gh.hold.set()
+    await settle(harness)
+    assert harness.github.errors == {} and harness.github.changed is False
+
+
+async def test_check_maps_budget_and_source_changed(client, harness, gh):
+    gh.repos["o/r"] = {"private": False, "default_branch": "bad branch"}
+    r = await client.post("/skilltuner/repos/check", json={"address": ADDR})
+    assert (r.status_code, r.json()["detail"]) == (502, "GitHub answered in a way SkillTuner does not understand.")
+    for _ in range(30):
+        harness.tuner_state.spend_github(harness.tuner._today(), "api")
+    r = await client.post("/skilltuner/repos/check", json={"address": ADDR})
+    assert (r.status_code, r.json()["detail"]) == (
+        429, "SkillTuner's GitHub requests for today are used up. Try again tomorrow.")
+
+
+async def test_get_one_suggestion_carries_source_and_left_out(client, harness):
+    s = suggest(harness)
+    full = (await client.get(f"/skilltuner/suggestions/{s.id}")).json()
+    assert full["source"] == "agentskills.finance" and full["left_out"] is False
