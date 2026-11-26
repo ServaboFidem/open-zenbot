@@ -52,13 +52,23 @@ def test_clean_conversion_minimal_and_full():
 def test_clean_conversion_refusals():
     for bad in [
         dict(CONV, name="bad\nname"), dict(CONV, use="x\x07"), dict(CONV, slug="Bad Slug"), dict(CONV, slug="a/b"),
-        dict(CONV, use=""), dict(CONV, name=""), dict(CONV, use="u" * 301), dict(CONV, name="n" * 121),
+        dict(CONV, use=""), dict(CONV, name=""), dict(CONV, use="u" * 301), dict(CONV, name="n" * 81), dict(CONV, slug="s" * 65),
         dict(CONV, inputs=["x"] * 9), dict(CONV, inputs=["x" * 201]), dict(CONV, inputs="x"),
         dict(CONV, inputs=["a\u2029b"]), dict(CONV, **{"return": "r" * 301}), dict(CONV, **{"return": "a\nb"}),
         dict(CONV, name=3), "x", None,
     ]:
         with pytest.raises(ValueError):
             clean_conversion(bad, set())
+
+
+def test_clean_conversion_boundaries():
+    assert clean_conversion(dict(CONV, name="n" * 80, slug="s" * 64), set())["name"] == "n" * 80
+
+
+def test_apache_licence_text_has_no_false_copyright():
+    b = build_skill(downloaded(), CONV, [], "2026-11-25", SkillConfig())
+    t = b.files["LICENSE.txt"]
+    assert "Apache License" in t and "Version 2.0" in t and "Anthropic" not in t
 
 
 def test_clean_conversion_taken():

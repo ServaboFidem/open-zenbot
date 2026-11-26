@@ -22,11 +22,12 @@ MAX_NEEDS = 8
 TOPIC_MAX = 200
 WORDS_MAX_WORDS = 6
 WORDS_MAX = 80
-NAME_MAX = 120
+NAME_MAX = 80
 USE_MAX = 300
 INPUTS_MAX = 8
 INPUT_MAX = 200
 RETURN_MAX = 300
+OWN_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 LICENCES = frozenset({"apache-2.0", "mit", "bsd-2-clause", "bsd-3-clause", "cc-by-4.0"})
 SOURCE = "agentskills.finance"
@@ -77,7 +78,7 @@ def clean_conversion(raw: Any, taken: set[str]) -> dict[str, Any]:
     name = _plain(raw.get("name"), NAME_MAX)
     use = _plain(raw.get("use"), USE_MAX)
     slug = raw.get("slug")
-    if name is None or use is None or not isinstance(slug, str) or not SLUG.fullmatch(slug):
+    if name is None or use is None or not isinstance(slug, str) or not OWN_SLUG.fullmatch(slug):
         raise ValueError("conversion fields are not usable")
     if slug in taken or name.casefold() in taken:
         raise ValueError("name or slug is taken")
