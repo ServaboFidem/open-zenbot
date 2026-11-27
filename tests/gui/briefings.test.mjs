@@ -189,5 +189,5 @@ test('the no-voice fix opens the Read aloud card on Settings > Models > Jobs', a
   assert.equal(fix.panel, 'models');
   assert.equal(anchorId(fix.panel, fix.title), toolAnchor('speech'));
   assert.equal(tabOf(fix.panel, anchorId(fix.panel, fix.title)), 'jobs');
-  assert.deepEqual(readinessFix('sonos_off'), { panel: 'apps', title: 'Sonos' });
+  for (const r of ['sonos_off', 'no_speakers', 'ceiling_zero']) assert.deepEqual(readinessFix(r), { panel: 'speakers', title: 'Sonos' });
 });

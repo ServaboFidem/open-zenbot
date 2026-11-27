@@ -22,8 +22,8 @@ export const PANELS = [
   { id: 'tracing', name: 'Tracing', description: 'Where errors and traces go: Sentry, GlitchTip and Langfuse.' },
   { id: 'ledger', name: 'Ledger', description: 'Everything on the record: model calls, tool calls, decider scores, approvals, memory and settings changes.' },
   { id: 'memory', name: 'Memory', description: 'Your name in memory, dreaming (learning from your conversations while the computer is idle), and rebuilding what the bots have learned.' },
-  { id: 'apps', name: 'Connected apps', description: "AgentMail, ZenBot's own email address, Telnyx text reminders, and Sonos speakers; other app connections are a mockup for now." },
-  { id: 'speakers', name: 'Wi-Fi speakers', description: 'AirPlay, Chromecast and DLNA speakers on your network, and the default speaker ZenBot will use.' },
+  { id: 'apps', name: 'Connected apps', description: "Outside services ZenBot works through: AgentMail, its own email address, and Telnyx text reminders." },
+  { id: 'speakers', name: 'Speakers', description: 'Sonos speakers, and the AirPlay, Chromecast and DLNA speakers on your network with the default speaker ZenBot will use.' },
   { id: 'about', name: 'About', description: 'The harness and its status, the version, what this app does, and its license.' },
 ];
 
@@ -139,9 +139,8 @@ export const SECTIONS = [
   ]),
   section('apps', 'AgentMail', ['AgentMail', 'email', 'inbox', 'address', 'API key', 'newsletter', MAIL_LINE]),
   section('apps', 'Telnyx', ['Telnyx', 'text messages', 'SMS', 'reminders', 'phone number', 'evening rundown', 'API key', TELNYX_LINE]),
-  section('apps', 'Sonos', ['Sonos', 'speakers', 'play music', 'Favorites', 'playlists', 'volume', 'Highest volume ZenBot may set', 'Look again', SONOS_LINE]),
+  section('speakers', 'Sonos', ['Sonos', 'speakers', 'play music', 'Favorites', 'playlists', 'volume', 'volume limit', 'Highest volume ZenBot may set', 'Look again', SONOS_LINE]),
   section('speakers', 'Wi-Fi speakers', ['AirPlay', 'Chromecast', 'DLNA', 'speakers', 'default speaker', 'No default', 'Look again', SPEAKERS_LINE]),
-  whole('apps', ["Mockup: connected apps don't work yet. Connect only marks an app as connected in this window.", 'Connect app', 'Disconnect']),
   section('about', 'Harness', ['Harness address and status: online or offline', 'Scorer', 'Memory']),
   section('about', 'Version and updates', ['Version', 'Check for updates', 'Check for updates automatically', 'Update to the newest release, or skip a version.']),
   section('about', 'What this app does', ['Bots, skills, approvals, rooms, memory, and the ledger come from the zen-agents harness on localhost.']),

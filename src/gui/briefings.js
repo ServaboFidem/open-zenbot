@@ -36,7 +36,7 @@ export const readinessLine = reason => (!reason ? '' : READINESS[reason] || 'The
 /** Where a missing piece is fixed: the Settings panel and, where there is one, the section's anchor title. */
 export function readinessFix(reason) {
   if (reason === 'no_voice') return { panel: 'models', title: 'tool-speech' };  // the Read aloud card (toolAnchor('speech'))
-  if (reason === 'sonos_off' || reason === 'no_speakers' || reason === 'ceiling_zero') return { panel: 'apps', title: 'Sonos' };
+  if (reason === 'sonos_off' || reason === 'no_speakers' || reason === 'ceiling_zero') return { panel: 'speakers', title: 'Sonos' };
   return null;
 }
 
