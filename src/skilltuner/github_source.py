@@ -14,7 +14,7 @@ from src.events.eventbrite import SourceError
 
 from .casemark import FILE_PATH, Downloaded, Found, _clean
 from .github import GitHub, Tree
-from .index import (SKILL_FILE, Listed, extras_by_folder, find_index, frontmatter, parse_index, skill_folders,
+from .index import (Listed, extras_by_folder, find_index, frontmatter, parse_index, skill_folders,
                     split_frontmatter)
 from .licences import canonical, licence_of_text
 from .match import Matcher, top
@@ -23,7 +23,7 @@ from .repos import OWNER, REPO, SEGMENT, RepoEntry, RepoList, RepoStore
 INDEX_LIMIT = 10_000_000
 SKILL_LIMIT = 1_000_000
 ONE_BY_ONE_MAX = 300
-SKILL_FILES_MAX = 5_000
+SKILLS_MAX = 5_000  # the most skills one stored list holds (a read one by one stops at ONE_BY_ONE_MAX)
 REFRESH_DAYS = 7
 GITHUB_WIDE = ("network", "refused", "budget")
 PER_FILE = ("not_found", "too_large")
@@ -270,9 +270,7 @@ class GitHubSkills:
             old = replace(old, licence_label=info.licence, read_at=at, error="")  # the stored copy is shared
             self._put(entry.id, old)
             return old
-        blobs = await self._blobs(entry, sha, go)
-        if sum(1 for p, _ in blobs if p == SKILL_FILE or p.endswith("/" + SKILL_FILE)) > SKILL_FILES_MAX:
-            raise _fail("too_large")
+        blobs = await self._blobs(entry, sha, go)  # bounded by the tree's own size limit
         folders = skill_folders(blobs, entry.folder)
         extra = extras_by_folder(blobs, set(folders))
         index = find_index(blobs, entry.folder, entry.index)
@@ -280,6 +278,8 @@ class GitHubSkills:
         skipped, used = 0, ""
         if index:
             skills, skipped = await self._from_index(entry, sha, index, extra, folders, go)
+            if len(skills) > SKILLS_MAX:  # what is stored and searched; SKILL.md files the index leaves out don't count
+                raise _fail("too_large")
             used = index if skills else ""
         one_by_one = not skills
         if one_by_one:

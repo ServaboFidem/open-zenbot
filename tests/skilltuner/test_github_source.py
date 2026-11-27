@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import pytest
 
 from src.events.eventbrite import SourceError
-from src.skilltuner.github_source import ONE_BY_ONE_MAX, REFRESH_DAYS, GitHubSkills
+from src.skilltuner.github_source import ONE_BY_ONE_MAX, REFRESH_DAYS, SKILLS_MAX, GitHubSkills
 from src.skilltuner.repos import RepoEntry, RepoList, RepoStore
 
 from .conftest import FIXTURES, GH_SHA
@@ -246,12 +246,27 @@ def test_stale_passes_over_the_ids_asked_to_skip_and_has_skills_says_if_anything
     assert gs.has_skills() is True
 
 
-async def test_over_five_thousand_skill_files_is_too_large_before_any_work(fake_github, tmp_path):
-    fake_github.trees[f"o/r/{GH_SHA}"] = tree_of([f"s/{i}/SKILL.md" for i in range(5001)])
+async def test_skill_files_the_index_does_not_list_do_not_stop_a_read(fake_github, tmp_path):
+    # sickn33/agentic-awesome-skills: an index of 3,151 skills under skills/, and 6,927 more SKILL.md files bundled
+    # under plugins/ that it does not list; the read stopped as too_large on the count of all 10,078
+    with_index(fake_github)
+    rows = fake_github.trees[f"o/r/{GH_SHA}"]["tree"]
+    rows += tree_of([f"plugins/p{i}/skills/s/SKILL.md" for i in range(SKILLS_MAX + 1)])["tree"]
+    gs, store = source(fake_github, tmp_path)
+    got = await gs.read_repo(entry())
+    assert got.error == "" and got.index == "skills_index.json" and len(got.skills) == 4
+    assert file_count(fake_github) == 1  # the index alone
+
+
+async def test_an_index_listing_more_than_the_limit_is_too_large(fake_github, tmp_path):
+    names = [f"s{i}" for i in range(SKILLS_MAX + 1)]
+    fake_github.trees[f"o/r/{GH_SHA}"] = tree_of(["skills_index.json"] + [f"skills/{n}/SKILL.md" for n in names])
+    fake_github.files[f"o/r/{GH_SHA}/skills_index.json"] = json.dumps(
+        [{"name": n, "path": f"skills/{n}", "description": "Does a thing."} for n in names]).encode()
     gs, store = source(fake_github, tmp_path)
     with pytest.raises(SourceError) as e:
         await gs.read_repo(entry())
-    assert e.value.kind == "too_large" and file_count(fake_github) == 0
+    assert e.value.kind == "too_large" and file_count(fake_github) == 1
     assert store.get("0123456789abcdef").error == "too_large"
 
 

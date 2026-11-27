@@ -462,7 +462,7 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   - *Reading.* The commit is resolved first; an unchanged commit fetches nothing more. The tree gives the skill folders
     (`<dir>/SKILL.md`, the folder itself included when it is one skill); an index file (the owner's path, else the
     shortest `skills_index.json` style name in, below or above the folder) lists them with
-    descriptions, else each `SKILL.md`'s frontmatter is read, at most 300 folders (`no_index` above that; a tree with more than 5,000 `SKILL.md` files is `too_large`). A repository
+    descriptions, else each `SKILL.md`'s frontmatter is read, at most 300 folders (`no_index` above that). An index that lists more than 5,000 skills (`SKILLS_MAX`) is `too_large`; `SKILL.md` files it does not list do not count (`sickn33/agentic-awesome-skills` lists 3,151 under `skills/` and bundles 6,927 more under `plugins/`). A repository
     is read again when its last good read is 7 days old, one per pass, under dreaming's rules; a read the owner starts
     (`Harness.start_repo_read`: a task the harness keeps and cancels at shutdown, one at a time per repository, run at
     once and whether or not SkillTuner is on) goes through the same client and budget. **A read writes its list only
