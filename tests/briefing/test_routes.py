@@ -133,7 +133,7 @@ async def test_play_without_briefing_404(client):
 
 def test_readiness_sentences_are_verbatim():
     assert NOT_READY == {
-        "sonos_off": "Sonos is off. Switch it on in Settings > Connected apps.",
+        "sonos_off": "Sonos is off. Switch it on in Settings > Speakers.",
         "no_speakers": "No Sonos speaker was found.",
         "no_voice": "Set up a voice in Settings > Models > Jobs > Read aloud first.",
         "ceiling_zero": "Your Sonos volume limit is 0."}

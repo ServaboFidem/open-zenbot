@@ -297,7 +297,7 @@ If you have Sonos speakers on your home network, you can ask ZenBot to play musi
 the kitchen", "pause the living room", "turn the patio down". It plays your Sonos Favorites and Sonos playlists, so
 add what you want to hear to Favorites in the Sonos app first.
 
-The harness looks for speakers when it starts and every 10 minutes after. Settings > Connected apps > **Sonos** shows
+The harness looks for speakers when it starts and every 10 minutes after. Settings > Speakers > **Sonos** shows
 the rooms it found, a **Look again** button (which also searches the whole network, more slowly), a switch to turn
 it off, and **Highest volume ZenBot may set** (60 to start). When a speaker is louder than that, ZenBot turns it down
 before it plays, and it will not turn one up past it. The Sonos app itself is not limited.
@@ -368,7 +368,7 @@ Good to know:
 
 ## Wi-Fi speakers
 
-New in 0.2.0, and only a first step: Settings > **Wi-Fi speakers** finds the AirPlay, Chromecast and DLNA speakers
+New in 0.2.0, and only a first step: Settings > Speakers > **Wi-Fi speakers** finds the AirPlay, Chromecast and DLNA speakers
 on your home network and lets you pick one as the default. Nothing is played on them yet; reading replies and digests
 aloud through the default speaker comes later. Each speaker type has its own switch and all are off to start. Turning
 one on makes the harness listen on your home network, and Windows may ask whether to allow it. It has not been tried

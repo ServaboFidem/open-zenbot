@@ -9,7 +9,7 @@ export const ROUTINE_SKILL = 'sonos-morning';      // skills/sonos-morning: read
 export const MORNING_TITLE = 'Wake up to music';
 export const MORNING_LINE = 'ZenBot can play a Favorite on your speakers every morning. Pick one and the speakers below, then make it a morning routine: you choose the days and the time.';
 export const MORNING_NO_SKILL = 'Your ZenBot does not carry the Morning music skill. Add it to ZenBot on the Bots page to make morning routines here.';
-export const NO_SPEAKERS = 'No Sonos speakers answer right now. Check Settings > Connected apps > Sonos, or press Look again there.';
+export const NO_SPEAKERS = 'No Sonos speakers answer right now. Check Settings > Speakers > Sonos, or press Look again there.';
 export const NO_FAVORITES = 'There are no Sonos Favorites or playlists yet. Add some in the Sonos app, then refresh.';
 
 /** The left bar's Sonos entry shows while Sonos is switched on (GET /sonos/status). */
