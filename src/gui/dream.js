@@ -1,4 +1,4 @@
-// Settings > Harness settings > Dreaming: the requests and the decisions, no React, so they are tested without the
+// Settings > Memory > Dreaming: the requests and the decisions, no React, so they are tested without the
 // page (tests/gui/dream.test.mjs). The harness checks everything again on save.
 
 export const MIN_MINUTES = 1;

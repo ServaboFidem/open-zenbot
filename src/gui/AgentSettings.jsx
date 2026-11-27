@@ -4,7 +4,7 @@ import { ProgramPathSection } from './ProgramPathSettings';
 import { anchorId } from './settings-index';
 import { agentStatus } from './agents';
 
-// Settings > Coding agents: which of Claude Code and Codex bots may hand work to, kept in
+// Settings > Programs > Coding agents: which of Claude Code and Codex bots may hand work to, kept in
 // vault-settings/agents.json. Each program's path is the ProgramPathSection under its card. ctx: { api, online, guard, notify }
 function AgentCard({ ctx, a, onChange, reload }) {
   const { api, online, guard, notify } = ctx;
@@ -50,7 +50,15 @@ export function CodingAgentsSection({ ctx }) {
   if (!agents) return <div className="resource-row"><Spinner size="tiny" label="Checking coding agents…"/></div>;
   const put = next => setAgents(list => list.map(x => x.id === next.id ? next : x));
   return <>
-    <div className="resource-row intro-row" id={anchorId('agents', 'Coding agents')}><div className="od-field"><p>Let bots hand a coding job to a program on this computer. The program works in one folder you allow, and you see what it changed.</p></div></div>
+    <div className="resource-row intro-row" id={anchorId('programs', 'Coding agents')}><div className="od-field"><h3>Coding agents</h3><p>Let bots hand a coding job to a program on this computer. The program works in one folder you allow, and you see what it changed.</p></div></div>
     {agents.map(a => <AgentCard key={a.id} ctx={ctx} a={a} onChange={put} reload={load}/>)}
+  </>;
+}
+
+// Settings > Programs: the programs on this computer the harness runs. The coding agents, then ImageMagick's path.
+export function ProgramsPage({ ctx }) {
+  return <>
+    <CodingAgentsSection ctx={ctx}/>
+    <ProgramPathSection ctx={ctx} programKey="imagemagick"/>
   </>;
 }

@@ -100,7 +100,7 @@ export function probeReducer(st, e) {
 }
 
 
-// The Harness settings form after the saved roles changed (`prev` and `next` are the form each would give): a field
+// The Models > Jobs form after the saved roles changed (`prev` and `next` are the form each would give): a field
 // whose saved value moved takes the new one, every other field keeps what is in the form, saved or not. So a save
 // from another section (the Dreaming model) does not throw away picks the user has not saved yet.
 export const keepEdits = (form, prev, next) => Object.fromEntries(Object.keys(next).map(k => [k, next[k] !== prev?.[k] || !(k in form) ? next[k] : form[k]]));
