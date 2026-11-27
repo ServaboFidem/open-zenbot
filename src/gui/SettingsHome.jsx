@@ -10,8 +10,9 @@ export const PANEL_ICONS = {
 
 // The Settings home screen: a tile per panel, and a search that lists the panels and sections holding the words typed.
 // query, setQuery: what is typed, kept by the page so it is still there after a look at one result;
-// extra: live sections for the search (settings-index.js); onOpen(panelId, anchor) opens a panel, at a section when anchor is set.
-export function SettingsHome({ query, setQuery, extra, onOpen }) {
+// extra: live sections for the search (settings-index.js); onOpen(panelId, anchor) opens a panel, at a section when anchor is set;
+// badges: a count per panel id (SkillTuner's waiting suggestions on Skills), shown on its tile when above 0.
+export function SettingsHome({ query, setQuery, extra, onOpen, badges = {} }) {
   const searching = !!query.trim();
   const results = searching ? searchSettings(query, extra) : [];
   return <>
@@ -20,7 +21,7 @@ export function SettingsHome({ query, setQuery, extra, onOpen }) {
         onChange={(e, d) => setQuery(d.value)} onKeyDown={e => { if (e.key === 'Escape') setQuery(''); }}/>
     </Field></div>
     {!searching && <div className="settings-grid">{PANELS.map(p => <button key={p.id} type="button" className="settings-tile" onClick={() => onOpen(p.id, '')}>
-      <span className="settings-tile-icon">{PANEL_ICONS[p.id]}</span><strong>{p.name}</strong><span className="settings-tile-text">{p.description}</span>
+      <span className="settings-tile-icon">{PANEL_ICONS[p.id]}</span><strong>{p.name}{badges[p.id] > 0 && <> <span className="nav-count settings-tile-count" aria-label={`${badges[p.id]} waiting`}>{badges[p.id]}</span></>}</strong><span className="settings-tile-text">{p.description}</span>
     </button>)}</div>}
     {/* always on the page, so a screen reader hears the first count too */}
     <p className="field-hint settings-count" aria-live="polite">{!searching ? '' : !results.length ? `No settings match “${query.trim()}”.` : results.length === 1 ? '1 match' : `${results.length} matches`}</p>
