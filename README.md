@@ -120,7 +120,7 @@ Memory learns from the web through the `learn_page` tool and the `learn-company`
 
 ## Models and providers
 
-open-zenbot isn't tied to one model host. Add providers on Settings > Model providers. The add form has presets that fill in the address and whether a key is needed:
+open-zenbot isn't tied to one model host. Add providers on Settings > Models > Providers. The add form has presets that fill in the address and whether a key is needed:
 
 | Provider | Default address | Key |
 | --- | --- | --- |
@@ -134,7 +134,7 @@ Any other server that speaks the OpenAI API (OpenAI, Groq, Together, DeepSeek, M
 
 The adapter handles the ways these servers differ from the OpenAI API. It reads the reasoning that vLLM and NIM return in `reasoning_content`, and it rewrites MCP tool names such as `files.read_file` into the strict form NIM requires (`files__read_file`), then maps them back when the model calls one.
 
-Once a provider is added, choose a model for each job on Settings > Harness settings: **chat** for bots' work, **summary** for compaction and document summaries, and **decision** for the decider. Each bot can also run on its own model. For example, a coding bot can use a large hosted model while a note-taking bot uses a small one running in LM Studio. The decision model runs on OpenRouter's Decisions API by default, so the decider needs an OpenRouter key. Without one, the harness still runs, but it falls back to safe defaults: every attached skill loads, and every shell command that writes waits for your approval.
+Once a provider is added, choose a model for each job on Settings > Models > Jobs: **chat** for bots' work, **summary** for compaction and document summaries, and **decision** for the decider. Each bot can also run on its own model. For example, a coding bot can use a large hosted model while a note-taking bot uses a small one running in LM Studio. The decision model runs on OpenRouter's Decisions API by default, so the decider needs an OpenRouter key. Without one, the harness still runs, but it falls back to safe defaults: every attached skill loads, and every shell command that writes waits for your approval.
 
 New in 0.1.3, and experimental: the decider can run on a local decision model instead. Enable the model on an OpenAI-compatible provider such as LM Studio; the capability test marks it when it can answer decisions (through chat, or through a server's own decision route), and it then appears in the Decision model picker. It has been tried by hand with a few small models on LM Studio only. With a local decision model every shell command still waits for your approval.
 
@@ -353,7 +353,7 @@ New in 0.2.0. Turn on **Read aloud** in the chat header and each new reply in th
 computer's speakers. The Narrator bot first rewrites the reply for listening (no tables or code read out), then a voice
 speaks it. Starting a new message, switching chats or turning the button off stops it.
 
-Choose the voice on Settings > Harness Tools > **Read aloud**:
+Choose the voice on Settings > Models > Jobs > **Read aloud**:
 
 - **Kokoro (free, no key)** makes the voice on this computer. Pick it under Speech model and choose **Download** (about
   354 MB, once). Then pick one of 28 English voices, American or British, and try it with **Play a sample**.
@@ -378,13 +378,13 @@ with real speakers yet.
 
 New in 0.1.2. While your computer sits idle, OpenZenBot can read back over your one-to-one conversations and keep short facts from them in shared memory, where every bot's recall finds them. It is off until you turn it on.
 
-Open Settings > Harness settings > Dreaming, pick a Dreaming model and switch it on. Set how many minutes the computer must be idle before a pass starts (5 by default). A conversation is read once it has been quiet for 30 minutes, and a pass stops as soon as you come back. "Dream now" runs a pass at once. The same section lists what was learned, each with a Forget button.
+Open Settings > Memory > Dreaming, pick a Dreaming model and switch it on. Set how many minutes the computer must be idle before a pass starts (5 by default). A conversation is read once it has been quiet for 30 minutes, and a pass stops as soon as you come back. "Dream now" runs a pass at once. The same section lists what was learned, each with a Forget button.
 
 Only the messages you typed are read, never a bot's reply. They are sent to the dreaming model you choose: a hosted model's provider receives them, a local model reads them on this computer. The facts it writes are then stored by the memory engine, which uses its own model. Dreaming starts on its own only in the desktop app, which reports idle time; in a browser, use Dream now.
 
 ## Coding agents
 
-A bot can hand a coding job to [Claude Code](https://claude.com/claude-code) on your own subscription with the `delegate` tool. It is off until you switch it on at Settings > Coding agents, which shows whether the program was found, its version and whether it is signed in.
+A bot can hand a coding job to [Claude Code](https://claude.com/claude-code) on your own subscription with the `delegate` tool. It is off until you switch it on at Settings > Programs, which shows whether the program was found, its version and whether it is signed in.
 
 - **One folder.** The job runs in a new folder under `~/.zen-agents/vault/delegated/`, or in a folder you allow. The agent gets only the file tools (read, write, edit, search): no commands, no web, none of your own MCP servers, hooks or plugins.
 - **You are asked first.** By default each run waits in Approvals with the agent, the folder and the whole task. A run in a folder the bot named always asks.

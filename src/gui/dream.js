@@ -66,3 +66,7 @@ export function errorLine(status) {
 
 // The desktop app reports idle time; with no fresh report and dreaming on, it will not start by itself.
 export const needsDesktopNote = status => !!status?.enabled && status?.idle_reported === false;
+
+/** Whether the providers (GET /settings/providers) and the roles (GET /settings/models) have both loaded: until they
+ * have, the Dreaming model field cannot tell an enabled model from one that is not, so it shows that it is loading. */
+export const modelsKnown = (providers, roles) => Array.isArray(providers) && !!roles && typeof roles === 'object';

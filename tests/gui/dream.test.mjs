@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PRIVACY, canEnable, canRunNow, dreamApi, errorLine, factsChanged, needsDesktopNote, statusLine, validMinutes } from '../../src/gui/dream.js';
+import { PRIVACY, canEnable, canRunNow, dreamApi, errorLine, factsChanged, modelsKnown, needsDesktopNote, statusLine, validMinutes } from '../../src/gui/dream.js';
 import { SECTIONS } from '../../src/gui/settings-index.js';
 
 test('the privacy sentence says where the messages and the facts go', () => {
@@ -70,4 +70,12 @@ test('the learned facts are read again when a pass ends or the totals move', () 
   assert.equal(factsChanged(s, { ...s, dreaming: true }), false);
   assert.equal(factsChanged(s, { ...s, learned: 4 }), true);  // a pass that began and ended between two looks
   assert.equal(factsChanged(s, { ...s, last_dream_at: '2026-11-19T04:00:00Z' }), true);
+});
+
+test('the Dreaming model field waits for the providers and the roles before it judges a model', () => {
+  assert.equal(modelsKnown(null, null), false);
+  assert.equal(modelsKnown([], null), false);
+  assert.equal(modelsKnown(null, { roles: {} }), false);
+  assert.equal(modelsKnown([], { roles: {} }), true);
+  assert.equal(modelsKnown([{ id: 'p', models: [] }], { roles: { dream: 'text' } }), true);
 });
