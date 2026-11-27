@@ -191,8 +191,11 @@ export function searchSettings(query, extra = []) {
     .sort((a, b) => a.rank - b.rank).slice(0, MAX_RESULTS).map(f => f.match);
 }
 
-// Which tab of the Skills page holds a section: 'tuner' for a SkillTuner-tab section, else 'main' (the catalog, and
-// every other panel, which has no tabs).
-export function tabOf(panel, anchor) {
-  return panel === 'skills' && !!anchor && SECTIONS.some(s => s.panel === 'skills' && s.anchor === anchor && s.tab === 'tuner') ? 'tuner' : 'main';
+// Which tab of the Skills page to open: 'tuner' for a SkillTuner-tab section, or for the page itself (no section)
+// while `waiting` suggestions wait, so a badged Skills tile opens where they are; else 'main' (the catalog, and every
+// other panel, which has no tabs).
+export function tabOf(panel, anchor, waiting = 0) {
+  if (panel !== 'skills') return 'main';
+  if (!anchor) return waiting > 0 ? 'tuner' : 'main';
+  return SECTIONS.some(s => s.panel === 'skills' && s.anchor === anchor && s.tab === 'tuner') ? 'tuner' : 'main';
 }

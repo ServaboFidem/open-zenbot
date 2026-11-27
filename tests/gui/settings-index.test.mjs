@@ -155,3 +155,11 @@ test('SkillTuner and its sources are found on the Skills page, on the SkillTuner
   assert.equal(tabOf('skills', anchorId('skills', 'some-skill-ref')), 'main');
   assert.equal(tabOf('harness', anchorId('skills', 'SkillTuner')), 'main');
 });
+
+test('the Skills page opens on the SkillTuner tab while suggestions wait, unless a section says otherwise', () => {
+  assert.equal(tabOf('skills', '', 2), 'tuner');
+  assert.equal(tabOf('skills', '', 0), 'main');
+  assert.equal(tabOf('skills', anchorId('skills', 'some-skill-ref'), 2), 'main');
+  assert.equal(tabOf('skills', anchorId('skills', 'Suggested by SkillTuner'), 0), 'tuner');
+  assert.equal(tabOf('harness', '', 2), 'main');
+});

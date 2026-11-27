@@ -42,7 +42,7 @@ import EventsArea from './events/EventsArea';
 import RoutineDialog from './RoutineSchedule';
 import BriefingsSection from './BriefingsSection.jsx';
 import { SkillsPage } from './SkillsPage.jsx';
-import { waitingCount, waitingLine } from './skilltuner.js';
+import { createLatest, waitingCount, waitingLine } from './skilltuner.js';
 import ApprovalDialog from './ApprovalDialog';
 import { applyDecided, botLabel, countLine, keepDeferred, nextApproval, readOrder } from './approval-dialog.js';
 import { importLegacyRoutines, persistWorkspace, dropLegacyRoutines, importNotice } from './routines-import.js';
@@ -194,7 +194,8 @@ function App() {
   const [settingsQuery, setSettingsQuery] = useState('');      // the settings search; kept while a result's panel is open
   const [skillsTab, setSkillsTab] = useState('main');            // Settings > Skills: 'main' or 'tuner'
   const [tunerPending, setTunerPending] = useState(0);            // SkillTuner suggestions waiting for the owner
-  const openSettings = (panel, anchor = '') => { if (panel === 'skills') setSkillsTab(tabOf(panel, anchor)); setSettingsTab(panel); setSettingsAnchor(anchor); };
+  const tunerReads = useRef(createLatest()).current;              // the newest count read wins
+  const openSettings = (panel, anchor = '') => { if (panel === 'skills') setSkillsTab(tabOf(panel, anchor, tunerPending)); setSettingsTab(panel); setSettingsAnchor(anchor); };
   const [providers, setProviders] = useState(null);       // GET /settings/providers: providers and their enabled models; null until loaded
   const [providerKinds, setProviderKinds] = useState([]);
   const [providerPresets, setProviderPresets] = useState([]);
@@ -348,11 +349,15 @@ function App() {
   }
   // SkillTuner's waiting suggestions: one count for the Settings badge, the Skills tile, the SkillTuner tab and the
   // Overview line, read every 15 s while online and after each Approve or Reject. 0 when offline or unreadable.
+  // Only the newest read counts, so a read sent before an Approve, a Reject or going offline cannot put an old count back.
   async function refreshTuner() {
-    try { setTunerPending(waitingCount(await api.tuner.status())); } catch { setTunerPending(0); }
+    const t = tunerReads.start();
+    let n = 0;
+    try { n = waitingCount(await api.tuner.status()); } catch { n = 0; }
+    if (tunerReads.fresh(t)) setTunerPending(n);
   }
   useEffect(() => {
-    if (!online) { setTunerPending(0); return undefined; }
+    if (!online) { tunerReads.bump(); setTunerPending(0); return undefined; }
     refreshTuner();
     const t = setInterval(refreshTuner, TUNER_POLL_MS);
     return () => clearInterval(t);
@@ -1035,7 +1040,7 @@ function App() {
           {page === 'Overview' && <>
             <section className="page-heading od-row-top"><div className="od-fill"><div className="eyebrow">A LITTLE LESS BUSYWORK</div><h1>Make room for your best work.</h1><p>Your bots, skills, and routines. One workspace, built around you.</p></div><div className="od-stack"><Button appearance="primary" icon={<Chat24Regular/>} disabled={!assistant} title={assistant ? 'Open a new conversation with ZenBot' : 'ZenBot appears once the harness is running'} onClick={startConversation}>Start a conversation</Button>{canBrowseVault && <Button appearance="outline" icon={<Folder24Regular/>} title="Open your vault folder in your file manager" onClick={browseVault}>Browse your vault</Button>}</div></section>
             <section className="summary-strip od-grid" aria-label="Workspace summary"><div className="od-row"><span className="summary-icon"><Bot24Regular/></span><div className="od-stat"><strong>{bots.length}<span> bots in your workspace</span></strong><span>{online ? 'Ready when you are' : 'Waiting for the harness'}</span></div></div><div className="od-row"><span className="summary-icon"><Clock24Regular/></span><div className="od-stat"><strong>{routines.filter(r => r.enabled).length}<span> active routines</span></strong><span>Scheduled by the harness</span></div></div><div className="od-row"><span className="summary-icon"><ShieldCheckmark24Regular/></span><div className="od-stat"><strong>{pending.length}<span> awaiting approval</span></strong><button className="text-link" onClick={() => navigate('Approvals')}>You're in control <span aria-hidden="true">→</span></button></div></div></section>
-            {!!waitingLine(tunerPending) && <p className="tuner-waiting"><button type="button" className="text-link" onClick={() => { navigate('Settings'); openSettings('skills', anchorId('skills', 'SkillTuner')); }}>{waitingLine(tunerPending)} <span aria-hidden="true">→</span></button></p>}
+            {!!waitingLine(tunerPending) && <p className="tuner-waiting"><button type="button" className="text-link" onClick={() => { navigate('Settings'); openSettings('skills', anchorId('skills', 'Suggested by SkillTuner')); }}>{waitingLine(tunerPending)} <span aria-hidden="true">→</span></button></p>}
             {onboarding && <section className="onboarding-card od-row"><span className="getting-started-icon"><Sparkle24Regular/></span><div className="od-field od-fill"><h3>Let's get you set up</h3><p>Your assistant will ask a few questions, remember the answers for every bot, and can learn more from a folder of your files.</p></div><Button appearance="primary" onClick={() => startOnboarding()}>Start</Button><Button appearance="subtle" onClick={dismissOnboarding}>Not now</Button></section>}{newTopics && <section className="onboarding-card od-row"><span className="getting-started-icon"><Sparkle24Regular/></span><div className="od-field od-fill"><h3>Tell your assistant about your people</h3><p>New questions cover your family and the organizations in your life. Your earlier answers stay as they are.</p></div><Button appearance="primary" onClick={() => startOnboarding('new')}>Start</Button><Button appearance="subtle" onClick={dismissNewTopics}>Not now</Button></section>}
             <section><div className="section-heading od-row"><h2>Your bots</h2><span className="section-count">{bots.length}</span><div className="od-fill"/><Button appearance="subtle" onClick={() => navigate('Bots')}>View all <ArrowRight24Regular/></Button></div><div className="bot-grid">{bots.slice(0, 3).map(b => <BotCard key={b.id} item={b}/>)}</div></section>
             <div className="overview-lower"><section className="activity-panel"><div className="section-heading od-row"><h2>Workspace activity</h2><div className="od-fill"/><button className="text-link" onClick={() => { navigate('Settings'); openSettings('ledger'); }}>FULL LEDGER <span aria-hidden="true">→</span></button></div><div className="activity-list">{data.activity.slice(0, 4).map(a => <div className="activity-row od-row-top" key={a.id}><span className={`activity-symbol ${a.type}`}><Checkmark24Regular/></span><div className="od-field od-fill"><strong>{a.title}</strong><span>{a.detail}</span></div><span className="activity-time">{a.time}</span></div>)}</div><div className="activity-foot"><ShieldCheckmark24Regular/><span>Every model call, tool call, and decision is in the harness ledger.</span></div></section>
