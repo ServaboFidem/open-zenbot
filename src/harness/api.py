@@ -1838,7 +1838,7 @@ def create_app(h: Harness) -> FastAPI:
         return allowed_folders.reachable(h.config.vault_root)
 
     def known_bins() -> dict[str, str]:
-        """bin -> the full path saved in Settings > Harness Tools, for the MCP servers' `requires` probes."""
+        """bin -> the full path saved in Settings > Programs, for the MCP servers' `requires` probes."""
         vault = h.config.vault_root
         return {p.bin: s for k, p in tool_paths.PROGRAMS.items() if (s := tool_paths.saved(vault, k))}
 
@@ -1882,7 +1882,7 @@ def create_app(h: Harness) -> FastAPI:
             servers = []
             h.ledger.append(Kind.error, "", "", error=f"mcp config: {e}")
         vault = h.config.vault_root
-        # magick runs from the path in Settings > Harness Tools (install-deps fills it in), else PATH
+        # magick runs from the path in Settings > Programs (install-deps fills it in), else PATH
         runner = MagickRunner(settings_dir(vault) / "magick",
                               binary=lambda: [p] if (p := tool_paths.path_for(vault, "imagemagick")) else None)
         h.mcps = McpRegistry(servers, guards={"magick": MagickGuard(guard_folders, runner)}, known_bins=known_bins)
@@ -2040,7 +2040,7 @@ def create_app(h: Harness) -> FastAPI:
             m = h.provider_store.entries[provider].model(model)
             if m is None or "image" not in m.kinds:
                 raise HTTPException(422, f"{model} is not an enabled image model on {h.provider_store.entries[provider].name}; "
-                                         "enable it on the Model providers page")
+                                         "enable it under Settings > Models > Providers")
         new = ImageConfig(provider=provider, model=model, enabled=cur.enabled if body.enabled is None else body.enabled)
         new.save(h.config.vault_root)
         h.images.reconfigure(new)
@@ -2048,7 +2048,7 @@ def create_app(h: Harness) -> FastAPI:
         h.ledger.append(Kind.settings, "", "", event="tool", tool="image", enabled=new.enabled, provider=new.provider, model=new.model)
         return h.images.status(image_providers())
 
-    # host programs the harness runs by full path (Settings > Harness Tools): today ImageMagick
+    # host programs the harness runs by full path (Settings > Programs): today ImageMagick
 
     def program(key: str) -> tool_paths.Program:
         prog = tool_paths.PROGRAMS.get(key)
@@ -2096,7 +2096,7 @@ def create_app(h: Harness) -> FastAPI:
         h.ledger.append(Kind.settings, "", "", event="tool", tool=key, path=None)
         return await program_changed(key)
 
-    # delegating to Claude Code and Codex (Settings > Coding agents): detection and switches; running
+    # delegating to Claude Code and Codex (Settings > Programs): detection and switches; running
     # is elsewhere
     @app.get("/agents")
     async def get_agents() -> dict[str, Any]:
@@ -2232,7 +2232,7 @@ def create_app(h: Harness) -> FastAPI:
         if provider_id not in h.provider_store.entries:
             raise HTTPException(404, f"no provider {provider_id!r}")
         if used := in_use(provider_id):
-            raise HTTPException(409, f"in use by {', '.join(used)}; pick other models on the Harness settings page first")
+            raise HTTPException(409, f"in use by {', '.join(used)}; pick other models under Settings > Models > Jobs first")
         h.provider_store.remove(provider_id)
         h.model_lister.forget(provider_id)
         h.ledger.append(Kind.settings, "", "", event="provider_removed", provider=provider_id)
@@ -2268,7 +2268,7 @@ def create_app(h: Harness) -> FastAPI:
                                      f"enable one at a time ({', '.join(new)})")
         dropped = [m.id for m in e.models if m.id not in wanted]
         if blocked := [f"{mid} ({', '.join(u)})" for mid in dropped if (u := in_use(provider_id, mid))]:
-            raise HTTPException(409, f"in use: {'; '.join(blocked)}; pick other models on the Harness settings page first")
+            raise HTTPException(409, f"in use: {'; '.join(blocked)}; pick other models under Settings > Models > Jobs first")
         before = {m.id for m in e.models}
         try:
             listed = {m.id: m for m in await h.model_lister.list(e.id, e.kind, e.base_url, h.provider_store.secret(e.id))}
@@ -2409,11 +2409,11 @@ def create_app(h: Harness) -> FastAPI:
         if scorer_kind and not scorers.is_registered(scorer_kind):
             raise HTTPException(422, f"unknown scorer kind {scorer_kind!r}; known: {scorers.kinds()}")
         # a scorer on another provider needs that provider's address, which this route does not have: the one
-        # already bound stays as it is, and a new one is chosen on Harness settings
+        # already bound stays as it is, and a new one is chosen on Settings > Models > Jobs
         local = bool(scorer_kind) and "openrouter" not in scorers.provider_kinds(scorer_kind)
         kept = h.scorer if local else None
         if local and body.scorer is not None:
-            raise HTTPException(422, f"the {scorer_kind} scorer is chosen on Settings > Harness settings: it needs its provider")
+            raise HTTPException(422, f"the {scorer_kind} scorer is chosen on Settings > Models > Jobs: it needs its provider")
         c = h.config
         exclusion.register_secret_value(key)  # before anything can log it
         os.environ[c.gui_key_env] = key

@@ -1,4 +1,4 @@
-"""Host programs the harness runs itself, by full path: Settings > Harness Tools. Today, ImageMagick.
+"""Host programs the harness runs itself, by full path: Settings > Programs. Today, ImageMagick.
 
 The path is saved in `vault-settings/tools.json` under the program's key (`{"imagemagick": {"path": ...}}`),
 beside image generation's section and out of the bots' reach (a bot that could rewrite it could make the

@@ -1,12 +1,12 @@
-"""Which provider and model the harness uses for each job, chosen in Settings > Harness settings from the
-models enabled on the Model providers page. Kept in `vault-settings/harness.json`.
+"""Which provider and model the harness uses for each job, chosen in Settings > Models > Jobs from the
+models enabled under Settings > Models > Providers. Kept in `vault-settings/harness.json`.
 
 - chat: bots' tasks (a text model)
 - summary: compaction, conversation folds, vault-doc summaries (a text model)
 - decision: the decider's scorer (a decision model on an OpenRouter provider; the decisions API is OpenRouter's)
 - dream: the background dreamer (a text model); optional, never filled from another role
 
-Image generation has its own entry in `vault-settings/tools.json` (Harness Tools)."""
+Image generation has its own entry in `vault-settings/tools.json` (Settings > Models > Jobs)."""
 
 from __future__ import annotations
 

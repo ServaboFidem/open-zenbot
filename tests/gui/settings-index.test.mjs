@@ -190,3 +190,13 @@ test('the Models page opens on Jobs unless a section on Providers was asked for'
 test('the harness status line is on About', () => {
   assert.ok(searchSettings('harness address').some(m => m.panel === 'about' && m.anchor === anchorId('about', 'Harness')));
 });
+
+test('no message or comment names a Settings page that is gone', () => {
+  const root = new URL('../../src/', import.meta.url);
+  const gone = [/Harness Tools/, /Harness settings/, /Model providers page/, /Settings > Coding agents/];
+  const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(new URL(`${e.name}/`, dir)) : /\.(py|js|jsx|cjs)$/.test(e.name) ? [new URL(e.name, dir)] : []);
+  for (const f of walk(root)) {
+    const text = readFileSync(f, 'utf8');
+    for (const g of gone) assert.ok(!g.test(text), `${f.pathname.split('/src/')[1]} names ${g.source}`);
+  }
+});

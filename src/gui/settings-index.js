@@ -191,7 +191,7 @@ export function searchSettings(query, extra = []) {
     const text = named ? s.title : words.find(w => terms.some(t => w.toLowerCase().includes(t))) || s.title;
     found.push({ rank, whole: !!s.whole, match: { panel: panel.id, panelName: panel.name, section: s.title, anchor: typeof s.anchor === 'string' ? s.anchor : '', tab: tabOf(panel.id, typeof s.anchor === 'string' ? s.anchor : ''), text } });
   }
-  // A panel and its section of the same name (Tracing, Coding agents) are one place: keep the section, which has the anchor.
+  // A panel and its section of the same name (Tracing) are one place: keep the section, which has the anchor.
   const sectionNamed = new Set(found.filter(f => !f.whole).map(f => `${f.match.panel}\n${f.match.section}`));
   return found.filter(f => !f.whole || !sectionNamed.has(`${f.match.panel}\n${f.match.section}`))
     .sort((a, b) => a.rank - b.rank).slice(0, MAX_RESULTS).map(f => f.match);

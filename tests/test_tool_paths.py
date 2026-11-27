@@ -1,4 +1,4 @@
-"""Settings > Harness Tools > ImageMagick: the full path the harness runs magick from, saved in
+"""Settings > Programs > ImageMagick: the full path the harness runs magick from, saved in
 vault-settings/tools.json, filled in by install-deps, and used before PATH by the magick runner and by the
 MCP servers' `requires` probes."""
 

@@ -55,7 +55,7 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
     # a scorer on another provider needs that provider's address: it is chosen in Settings (harness.json)
     from_env = "openrouter" in scorers.provider_kinds(config.scorer_kind)
     if not from_env:  # said whether or not a key is in the environment: a saved key binds chat without it too
-        print(f"ZEN_SCORER={config.scorer_kind} is not set up from the environment: choose it on Settings > Harness settings",
+        print(f"ZEN_SCORER={config.scorer_kind} is not set up from the environment: choose it on Settings > Models > Jobs",
               file=sys.stderr)
     try:
         provider = registry.get(config.provider_kind, key_ref=config.key_ref, model=config.model)
@@ -78,7 +78,7 @@ def build_harness(config: HarnessConfig | None = None) -> Harness:
     # logged), and before the bots are made, so a bot file naming one still has it at start
     if h.skill_watcher is not None:
         h.skill_watcher.scan()
-    saved = ModelRoles.load(config.vault_root)  # Settings > Harness settings, once saved, wins over the environment
+    saved = ModelRoles.load(config.vault_root)  # Settings > Models > Jobs, once saved, wins over the environment
     if saved is not None:
         try:
             h.apply_models(saved)

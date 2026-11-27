@@ -267,7 +267,7 @@ async def test_the_runner_starts_magick_under_the_policy_with_a_bare_environment
         await runner(["fail"], work)
     with pytest.raises(RuntimeError, match="stopped"):
         await MagickRunner(conf, binary=lambda: [sys.executable, str(script)], timeout=0.5)(["slow"], work)
-    with pytest.raises(RuntimeError, match="Settings > Harness Tools"):
+    with pytest.raises(RuntimeError, match="Settings > Programs"):
         await MagickRunner(conf, binary=lambda: None)(["x"], work)
 
 

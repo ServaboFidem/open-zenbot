@@ -293,7 +293,7 @@ async def test_the_one_key_route_keeps_a_bound_local_scorer_and_cannot_choose_on
     monkeypatch.setenv(unbound.config.gui_key_env, "")  # so the key the route exports is undone after the test
     monkeypatch.delenv(unbound.config.gui_key_env)
     r = await client.post("/settings/provider", json={"kind": TestProvider.kind, "key": GUI_KEY, "scorer": KIND})
-    assert r.status_code == 422 and "Harness settings" in r.json()["detail"]
+    assert r.status_code == 422 and "Settings > Models" in r.json()["detail"]
     assert unbound.config.gui_key_env not in os.environ and not unbound.bound  # refused before the key went anywhere
     local = LetterModelScorer(OpenRouterHttp(None, base_url="http://localhost:1234/v1", transport=httpx.MockTransport(lambda q: httpx.Response(500))),
                               model="local-decider")
