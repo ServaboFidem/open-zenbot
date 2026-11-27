@@ -170,7 +170,7 @@ def speech_router(h) -> APIRouter:
                 m = entry.model(model)
                 if m is None or "tts" not in m.kinds:
                     raise HTTPException(422, f"{model} is not an enabled speech model on {entry.name}; "
-                                             "enable it on the Model providers page")
+                                             "enable it under Settings > Models > Providers")
         new = SpeechConfig(provider=provider, model=model, voice=voice,
                            enabled=cur.enabled if body.enabled is None else body.enabled)
         new.save(h.config.vault_root)

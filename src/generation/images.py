@@ -4,7 +4,7 @@ It registers as its own tool group, `image`, and joins the catalog as an `mcp` e
 scores it per task the way it scores an MCP server: a bot is offered the tool only when the task
 needs a picture. The provider and model come from the environment (the repo's .env):
 `ZEN_IMAGE_PROVIDER` (default `openrouter`, the only one today) and `ZEN_IMAGE_MODEL` (default
-`tencent/hy-image-v3.5-preview`), and `ZEN_IMAGE_ENABLED` (default on). Settings' Harness Tools page
+`tencent/hy-image-v3.5-preview`), and `ZEN_IMAGE_ENABLED` (default on). Settings > Models > Jobs
 changes any of the three; its choice is kept in `vault-settings/tools.json` and wins over the
 environment from then on. The key is the harness's own provider key, resolved per call, so
 binding a key in Settings reaches this tool too. The HTTP call lives in `src/providers/images.py`.

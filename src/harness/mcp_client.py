@@ -198,7 +198,7 @@ class McpRegistry:
         self._tools: ToolRunner | None = None
         self._catalog: Catalog | None = None
         self.guards: dict[str, Guard] = dict(guards or {})  # mcp.json "guard": name -> the gate its calls go through
-        self.known_bins = known_bins  # bin -> full path saved in Settings > Harness Tools; `requires` probes try it first
+        self.known_bins = known_bins  # bin -> full path saved in Settings > Programs; `requires` probes try it first
 
     # -- lifecycle --------------------------------------------------------
 

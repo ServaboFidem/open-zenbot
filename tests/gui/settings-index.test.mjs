@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PANELS, SECTIONS, anchorId, liveSections, searchSettings, tabOf } from '../../src/gui/settings-index.js';
+import { PANELS, SECTIONS, anchorId, liveSections, providerAnchor, searchSettings, tabOf, toolAnchor } from '../../src/gui/settings-index.js';
 
-test('panels are the fourteen, in order', () => {
-  assert.deepEqual(PANELS.map(p => p.id), ['harness', 'providers', 'tools', 'mcps', 'skills', 'agents', 'folders', 'calendar', 'tracing', 'ledger', 'memory', 'apps', 'speakers', 'about']);
+test('panels are the twelve, in order', () => {
+  assert.deepEqual(PANELS.map(p => p.id), ['models', 'mcps', 'skills', 'programs', 'folders', 'calendar', 'tracing', 'ledger', 'memory', 'apps', 'speakers', 'about']);
   for (const p of PANELS) assert.ok(p.name && p.description);
 });
 test('every section belongs to a panel and its anchor is anchorId', () => {
@@ -29,13 +29,19 @@ test('a panel or section name ranks above body text', () => {
   assert.ok(body === -1 || body > 0);
 });
 test('desktop app finds the calendar panel', () => assert.ok(searchSettings('desktop app').some(m => m.panel === 'calendar')));
-test('claude finds the coding agents panel', () => assert.ok(searchSettings('claude').some(m => m.panel === 'agents')));
+test('claude and magick find the Programs panel', () => {
+  assert.ok(searchSettings('claude').some(m => m.panel === 'programs'));
+  assert.ok(searchSettings('imagemagick').some(m => m.panel === 'programs'));
+});
+test('no section is left on a removed panel', () => {
+  for (const s of SECTIONS) assert.ok(!['harness', 'providers', 'tools', 'agents'].includes(s.panel), s.title);
+});
 test('empty and blank queries give nothing', () => { assert.deepEqual(searchSettings(''), []); assert.deepEqual(searchSettings('   '), []); });
 test('regex characters are plain text', () => { for (const q of ['c++', '(', '.*', '[', '\\']) assert.ok(Array.isArray(searchSettings(q))); assert.deepEqual(searchSettings('.*'), []); });
 test('live names are searched and bad entries skipped', () => {
-  const extra = [{ panel: 'providers', anchor: '', title: 'Acme Router', words: ['acme-large'] }, { panel: 'providers', anchor: '', title: undefined, words: null }, null];
+  const extra = [{ panel: 'models', anchor: '', title: 'Acme Router', words: ['acme-large'] }, { panel: 'models', anchor: '', title: undefined, words: null }, null];
   const r = searchSettings('acme', extra);
-  assert.equal(r.length, 1); assert.equal(r[0].section, 'Acme Router'); assert.equal(r[0].panel, 'providers');
+  assert.equal(r.length, 1); assert.equal(r[0].section, 'Acme Router'); assert.equal(r[0].panel, 'models');
 });
 test('a section matching on several words is listed once', () => {
   const r = searchSettings('langfuse');
@@ -57,13 +63,12 @@ test('a section is not matched by words that belong to its panel or to a sibling
 });
 test('the section that holds the word comes first', () => assert.equal(searchSettings('license')[0].section, 'Open source'));
 test('a live entry is matched by its own words only', () => {
-  const extra = [{ panel: 'providers', anchor: '', title: 'Acme Router', words: ['acme-large'] }];
+  const extra = [{ panel: 'models', anchor: '', title: 'Acme Router', words: ['acme-large'] }];
   assert.ok(!searchSettings('key', extra).some(m => m.section === 'Acme Router'));
   assert.ok(!searchSettings('model', extra).some(m => m.section === 'Acme Router'));
 });
 test('a panel and its section of the same name are one result', () => {
-  assert.equal(searchSettings('claude').filter(m => m.panel === 'agents').length, 1);
-  assert.equal(searchSettings('claude')[0].anchor, 'settings-agents-coding-agents');
+  assert.equal(searchSettings('claude')[0].anchor, anchorId('programs', 'Coding agents'));
   assert.equal(searchSettings('tracing').filter(m => m.section === 'Tracing').length, 1);
 });
 test('the ledger is a settings panel, found by name and by its kinds filter', () => {
@@ -76,24 +81,28 @@ test('the matched text holds a word that was typed', () => { for (const m of sea
 test('a title hit in a later panel comes before a body hit in an earlier one', () => {
   const r = searchSettings('memory');
   assert.equal(r[0].panel, 'memory');
-  const title = r.findIndex(m => m.section === 'Rebuild memory'), body = r.findIndex(m => m.panel === 'harness');
+  const title = r.findIndex(m => m.section === 'Rebuild memory'), body = r.findIndex(m => m.panel === 'about');
   assert.ok(title >= 0 && body >= 0 && title < body);
 });
 test("the page's own sentences are searchable", () => {
   assert.ok(searchSettings('through the files tool').some(m => m.panel === 'folders'));
-  assert.ok(searchSettings('models the harness may use').some(m => m.panel === 'providers'));
+  assert.ok(searchSettings('models the harness may use').some(m => m.panel === 'models' && m.tab === 'providers'));
 });
 test('live sections carry the id of their card', () => {
   const live = liveSections([{ id: 'acme', name: 'Acme Router', models: [{ id: 'acme-large', name: 'Acme Large' }] }], [{ id: 'image', name: 'Image generation', summary: 'Makes pictures.' }]);
   assert.deepEqual(live, [
-    { panel: 'providers', anchor: 'settings-providers-acme', title: 'Acme Router', words: ['acme-large', 'Acme Large'] },
-    { panel: 'tools', anchor: 'settings-tools-image', title: 'Image generation', words: ['Makes pictures.'] },
+    { panel: 'models', anchor: providerAnchor('acme'), title: 'Acme Router', words: ['acme-large', 'Acme Large'], tab: 'providers' },
+    { panel: 'models', anchor: toolAnchor('image'), title: 'Image generation', words: ['Makes pictures.'], tab: 'jobs' },
   ]);
-  assert.equal(searchSettings('acme', live)[0].anchor, 'settings-providers-acme');
+  assert.equal(providerAnchor('acme'), 'settings-models-provider-acme');
+  assert.equal(toolAnchor('image'), 'settings-models-tool-image');
+  assert.equal(searchSettings('acme', live)[0].anchor, providerAnchor('acme'));
+  assert.equal(searchSettings('acme', live)[0].tab, 'providers');
+  assert.equal(searchSettings('makes pictures', live)[0].tab, 'jobs');
 });
 test('live sections survive nothing loaded and odd entries', () => {
   assert.deepEqual(liveSections(null, null), []);
-  assert.deepEqual(liveSections([null, { id: 'x' }, { id: 'y', name: 'Y' }], undefined), [{ panel: 'providers', anchor: 'settings-providers-y', title: 'Y', words: [] }]);
+  assert.deepEqual(liveSections([null, { id: 'x' }, { id: 'y', name: 'Y' }], undefined), [{ panel: 'models', anchor: providerAnchor('y'), title: 'Y', words: [], tab: 'providers' }]);
 });
 
 test('MCP servers and skills are settings panels, found by name and by their cards', () => {
@@ -125,15 +134,16 @@ test('Event discovery is found by Discover, Your Recommendations and All Events'
   for (const q of ['your recommendations', 'all events']) assert.ok(searchSettings(q).some(m => m.section === 'Event discovery'), q);
 });
 
-test('Dreaming is found under Harness settings by its words', () => {
-  for (const q of ['dreaming', 'idle', 'local model', 'learn']) assert.ok(searchSettings(q).some(m => m.panel === 'harness' && m.section === 'Dreaming'), q);
-  assert.equal(searchSettings('dreaming')[0].anchor, 'settings-harness-dreaming');
+test('Dreaming is found under Memory by its words', () => {
+  for (const q of ['dreaming', 'idle', 'local model', 'learn']) assert.ok(searchSettings(q).some(m => m.panel === 'memory' && m.section === 'Dreaming'), q);
+  assert.equal(searchSettings('dreaming')[0].anchor, anchorId('memory', 'Dreaming'));
 });
 test('the Read aloud card is found by its local voice words', () => {
   const summary = 'Reads bot replies aloud when the speaker button in a chat is on. The Narrator bot rewrites each reply for the ear first, then a voice speaks it: a speech model on a provider, or Kokoro on this computer.';
   const live = liveSections(null, [{ id: 'speech', name: 'Read aloud', summary }]);
-  assert.equal(searchSettings('kokoro', live)[0].anchor, 'settings-tools-speech');
-  assert.ok(searchSettings('on this computer', live).some(m => m.anchor === 'settings-tools-speech'));
+  assert.equal(searchSettings('kokoro', live)[0].anchor, toolAnchor('speech'));
+  assert.equal(searchSettings('kokoro', live)[0].tab, 'jobs');
+  assert.ok(searchSettings('on this computer', live).some(m => m.anchor === toolAnchor('speech')));
 });
 
 test('the Settings search finds Skill discovery on the Skills page, SkillTuner tab', () => {
@@ -141,7 +151,7 @@ test('the Settings search finds Skill discovery on the Skills page, SkillTuner t
 });
 test('SkillTuner and its sources are found on the Skills page, on the SkillTuner tab', () => {
   assert.equal(PANELS.some(p => p.id === 'discovery'), false);
-  assert.equal(SECTIONS.some(s => s.panel === 'harness' && s.title === 'SkillTuner'), false);
+  assert.equal(SECTIONS.some(s => s.panel !== 'skills' && s.title === 'SkillTuner'), false);
   for (const q of ['SkillTuner', 'GitHub repository', 'agentskills.finance', 'Suggested by SkillTuner']) {
     const hit = searchSettings(q)[0];
     assert.equal(hit.panel, 'skills', q);
@@ -153,7 +163,7 @@ test('SkillTuner and its sources are found on the Skills page, on the SkillTuner
   assert.equal(tabOf('skills', anchorId('skills', 'Suggested by SkillTuner')), 'tuner');
   assert.equal(tabOf('skills', ''), 'main');
   assert.equal(tabOf('skills', anchorId('skills', 'some-skill-ref')), 'main');
-  assert.equal(tabOf('harness', anchorId('skills', 'SkillTuner')), 'main');
+  assert.equal(tabOf('memory', anchorId('skills', 'SkillTuner')), 'main');
 });
 
 test('the Skills page opens on the SkillTuner tab while suggestions wait, unless a section says otherwise', () => {
@@ -161,5 +171,36 @@ test('the Skills page opens on the SkillTuner tab while suggestions wait, unless
   assert.equal(tabOf('skills', '', 0), 'main');
   assert.equal(tabOf('skills', anchorId('skills', 'some-skill-ref'), 2), 'main');
   assert.equal(tabOf('skills', anchorId('skills', 'Suggested by SkillTuner'), 0), 'tuner');
-  assert.equal(tabOf('harness', '', 2), 'main');
+  assert.equal(tabOf('memory', '', 2), 'main');
+});
+
+test('the Models page opens on Jobs unless a section on Providers was asked for', () => {
+  assert.equal(tabOf('models', ''), 'jobs');
+  assert.equal(tabOf('models', '', 3), 'jobs');
+  assert.equal(tabOf('models', anchorId('models', 'Models the harness runs on')), 'jobs');
+  assert.equal(tabOf('models', toolAnchor('speech')), 'jobs');
+  assert.equal(tabOf('models', anchorId('models', 'Model providers')), 'providers');
+  assert.equal(tabOf('models', anchorId('models', 'Add a provider')), 'providers');
+  assert.equal(tabOf('models', providerAnchor('openrouter')), 'providers');
+  assert.equal(tabOf('programs', ''), 'main');
+  assert.equal(searchSettings('add a provider')[0].tab, 'providers');
+  assert.equal(searchSettings('decider scorer')[0].tab, 'jobs');
+  for (const m of searchSettings('e')) assert.ok(typeof m.tab === 'string' && m.tab, m.section);
+});
+test('the harness status line is on About', () => {
+  assert.ok(searchSettings('harness address').some(m => m.panel === 'about' && m.anchor === anchorId('about', 'Harness')));
+});
+
+test('no message, comment, prompt or setup doc names a Settings page that is gone', () => {
+  const repo = new URL('../../', import.meta.url);
+  const gone = [/Harness Tools/, /Harness settings/, /Model providers page/, /Settings (>|&gt;) Model providers/, /Settings (>|&gt;) Coding agents/];
+  const walk = (dir, ext) => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(new URL(`${e.name}/`, dir), ext) : ext.test(e.name) ? [new URL(e.name, dir)] : []);
+  const files = [
+    ...walk(new URL('src/', repo), /\.(py|js|jsx|cjs)$/), ...walk(new URL('bot-prompts/', repo), /\.md$/), ...walk(new URL('skills/', repo), /\.md$/),
+    new URL('README.md', repo), new URL('.env.example', repo), new URL('AGENTS.md', repo),
+  ];
+  for (const f of files) {
+    const text = readFileSync(f, 'utf8');
+    for (const g of gone) assert.ok(!g.test(text), `${f.href.slice(repo.href.length)} names ${g.source}`);
+  }
 });

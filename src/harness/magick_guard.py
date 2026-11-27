@@ -513,7 +513,7 @@ class MagickRunner:
     async def __call__(self, args: list[str], cwd: Path | None) -> str:
         exe = self.binary()
         if not exe:
-            raise RuntimeError("ImageMagick is not set up: the owner sets its path in Settings > Harness Tools,"
+            raise RuntimeError("ImageMagick is not set up: the owner sets its path in Settings > Programs,"
                                " or runs scripts/install-deps")
         self.write_policy()
         env = {k: v for k in _KEEP_ENV if (v := os.environ.get(k))}

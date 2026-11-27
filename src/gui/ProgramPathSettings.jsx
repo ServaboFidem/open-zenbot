@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Badge, Button, Field, Input, Spinner } from '@fluentui/react-components';
 import { EXAMPLE } from './program-paths';
 
-// Settings > Harness Tools > ImageMagick (and any other host program the harness runs by full path): the path
+// Settings > Programs > ImageMagick (and any other host program the harness runs by full path): the path
 // is kept in vault-settings/tools.json, out of the bots' reach, and the harness runs that file rather than
 // whatever PATH holds. scripts/install-deps fills it in; saving here checks the file is the right program and
 // new enough, and reconnects the MCP servers that need it. ctx: { api, online, guard, notify }

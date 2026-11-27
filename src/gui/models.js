@@ -100,9 +100,10 @@ export function probeReducer(st, e) {
 }
 
 
-// The Harness settings form after the saved roles changed (`prev` and `next` are the form each would give): a field
-// whose saved value moved takes the new one, every other field keeps what is in the form, saved or not. So a save
-// from another section (the Dreaming model) does not throw away picks the user has not saved yet.
+// The Models > Jobs form after the saved roles changed (`prev` and `next` are the form each would give): a field
+// whose saved value moved takes the new one, every other field keeps what is in the form, saved or not. So roles that
+// arrive while the form is open (a reload after another save) do not throw away picks the user has not saved yet.
+// Picks not yet saved are dropped when the user leaves Models (the form is not kept across pages).
 export const keepEdits = (form, prev, next) => Object.fromEntries(Object.keys(next).map(k => [k, next[k] !== prev?.[k] || !(k in form) ? next[k] : form[k]]));
 
 // The providers a scorer's decision model may be on (GET /settings/models `scorer_providers`: scorer kind -> provider

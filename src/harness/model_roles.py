@@ -1,12 +1,12 @@
-"""Which provider and model the harness uses for each job, chosen in Settings > Harness settings from the
-models enabled on the Model providers page. Kept in `vault-settings/harness.json`.
+"""Which provider and model the harness uses for each job, chosen in Settings > Models > Jobs from the
+models enabled under Settings > Models > Providers. Kept in `vault-settings/harness.json`.
 
 - chat: bots' tasks (a text model)
 - summary: compaction, conversation folds, vault-doc summaries (a text model)
 - decision: the decider's scorer (a decision model on an OpenRouter provider; the decisions API is OpenRouter's)
 - dream: the background dreamer (a text model); optional, never filled from another role
 
-Image generation has its own entry in `vault-settings/tools.json` (Harness Tools)."""
+Image generation has its own entry in `vault-settings/tools.json` (Settings > Models > Jobs)."""
 
 from __future__ import annotations
 
@@ -22,6 +22,20 @@ BOT_FILE = "bot-models.json"  # bot id -> {provider, model}; the bot-prompts fil
 ROLES = {"chat": "text", "summary": "text", "decision": "decision", "dream": "text"}
 ROLE_LABELS = {"chat": "Chat model", "summary": "Summary model", "decision": "Decision model", "dream": "Dreaming model"}
 OPTIONAL_ROLES = {"dream"}  # may stay unset; the harness runs without them
+
+
+def pick_other_models(used: list[str]) -> str:
+    """The end of a refusal to drop a provider or model that is in use: where each use in `used` (the labels the
+    providers routes list: role labels, "Image generation", "Read aloud", "bot <name>") is changed. Dreaming's model is
+    chosen on Settings > Memory > Dreaming, a bot's own model on the Bots page, every other use on Settings > Models > Jobs."""
+    dream = ROLE_LABELS["dream"]
+    places = [where for where, hit in (
+        ("Settings > Models > Jobs", any(u != dream and not u.startswith("bot ") for u in used)),
+        ("Settings > Memory > Dreaming", dream in used),
+        ("the Bots page", any(u.startswith("bot ") for u in used)),
+    ) if hit]
+    listed = places[0] if len(places) == 1 else f"{', '.join(places[:-1])} and {places[-1]}"
+    return f"pick other models first, on {listed}"
 
 
 @dataclass

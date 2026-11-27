@@ -48,15 +48,15 @@ PIECE_PAUSE_S = 0.25  # silence before every Kokoro piece but the first; to tune
 _PAUSE = b"\x00\x00" * int(PIECE_PAUSE_S * KOKORO_RATE)
 SAMPLE_TEXT = "Good morning. Here is how this voice sounds when it reads a reply aloud."
 
-OFF = "Reading aloud is off. Switch it on in Settings > Harness Tools."
+OFF = "Reading aloud is off. Switch it on in Settings > Models > Jobs."
 NO_NARRATOR = "No Narrator bot is loaded, so replies cannot be read aloud."
 NO_KEY = "Reading aloud needs a provider key: bind one in Settings."
 EMPTY = "The Narrator returned nothing to read."
 NARRATE_FAILED = "The Narrator could not rewrite this reply. Try again in a moment."
 SPEAK_FAILED = "The speech model could not read this reply. Check its key and limits in Settings."
-NOT_DOWNLOADED = "The voice for this computer is not downloaded. Download it in Settings > Harness Tools."
+NOT_DOWNLOADED = "The voice for this computer is not downloaded. Download it in Settings > Models > Jobs."
 LOCAL_FAILED = ("The voice on this computer could not be started. Remove it and download it again in "
-                "Settings > Harness Tools.")
+                "Settings > Models > Jobs.")
 PICK_A_VOICE = "Pick a voice from the list."
 
 

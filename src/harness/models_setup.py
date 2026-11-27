@@ -1,6 +1,6 @@
 """From Settings' choices (which provider and model for chat, summaries, decisions) to the providers and
 scorer the harness runs on. Used at start (main.py, from `vault-settings/harness.json`) and when the
-Harness settings page saves. Every refusal is a `ProviderStoreError` whose message is safe to show."""
+Settings > Models > Jobs form saves. Every refusal is a `ProviderStoreError` whose message is safe to show."""
 
 from __future__ import annotations
 
@@ -100,11 +100,11 @@ def check_choice(store: ProviderStore, choice: Choice | None, kind: str, label: 
     e = store.entries[choice.provider]
     m = e.model(choice.model)
     if m is None:
-        raise ProviderStoreError(f"{label}: {choice.model} is not enabled on {e.name}; enable it on the Model providers page")
+        raise ProviderStoreError(f"{label}: {choice.model} is not enabled on {e.name}; enable it under Settings > Models > Providers")
     if kind not in m.kinds:
         raise ProviderStoreError(f"{label}: {choice.model} is not a {kind} model")
     if not e.usable():
-        raise ProviderStoreError(f"{label}: {e.name} has no key; add one on the Model providers page")
+        raise ProviderStoreError(f"{label}: {e.name} has no key; add one under Settings > Models > Providers")
     return e
 
 

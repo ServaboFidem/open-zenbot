@@ -1,13 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, ProgressBar, Spinner } from '@fluentui/react-components';
-import { anchorId } from './settings-index';
-import { DreamSection } from './DreamSection.jsx';
+import { anchorId, providerAnchor } from './settings-index';
 import { KIND_LABELS, capabilityTags, choiceKey, probeReducer, probeStart, enabledByKind, filterModels, keepEdits, decisionHint, scorerNeeds, scorerProviderIds, summaryModels, fromPreset, keyLabel, modelLabel, parseChoice, presetOf } from './models.js';
 
 const SHOWN = 150;  // rows a model list renders at once; a search narrows the rest
 const BLANK = { preset: '', name: '', kind: 'openai-compatible', base_url: '', keyMode: 'paste', key: '', key_ref: '', no_key: false };
 
-// Settings > Model providers: add providers (OpenRouter, or any OpenAI-compatible API), keep their keys,
+// Settings > Models > Providers: add providers (OpenRouter, or any OpenAI-compatible API), keep their keys,
 // and choose which of each provider's models the harness may use.
 // ctx: { api, online, guard, notify, log }; providers: GET /settings/providers; reload(): fetch it again
 export function ModelProvidersTab({ ctx, providers, kinds, presets = [], reload }) {
@@ -44,8 +43,8 @@ export function ModelProvidersTab({ ctx, providers, kinds, presets = [], reload 
   }
 
   return <>
-    <div className="resource-row intro-row" id={anchorId('providers', 'Model providers')}><p>Each provider's key lives in the harness's providers.json, in your vault, readable by you only. Enable the models the harness may use; the Harness settings and Harness Tools pages pick from them.</p></div>
-    {providers.map(p => <div className="resource-row od-stack provider-row" key={p.id} id={anchorId('providers', p.id)}>
+    <div className="resource-row intro-row" id={anchorId('models', 'Model providers')}><p>Each provider's key lives in the harness's providers.json, in your vault, readable by you only. Enable the models the harness may use; the Jobs tab picks from them.</p></div>
+    {providers.map(p => <div className="resource-row od-stack provider-row" key={p.id} id={providerAnchor(p.id)}>
       <div className="od-row-top provider-heading">
         <div className="od-field od-fill">
           <h3>{p.name} <Badge appearance="outline" size="small">{p.kind}</Badge></h3>
@@ -63,7 +62,7 @@ export function ModelProvidersTab({ ctx, providers, kinds, presets = [], reload 
       {open === p.id && <ModelBrowser ctx={ctx} provider={p} reload={reload}/>}
     </div>)}
     {adding ? <form className="resource-row editor-form" onSubmit={add}>
-      <h3 id={anchorId('providers', 'Add a provider')}>Add a provider</h3>
+      <h3 id={anchorId('models', 'Add a provider')}>Add a provider</h3>
       <Field label="Preconfigured" hint={presetOf(presets, adding.preset)?.note || 'Pick one to fill in its name and address, or set up any OpenAI-compatible API yourself.'}>
         <select aria-label="Preconfigured provider" value={adding.preset} onChange={e => setAdding(f => fromPreset(f, presetOf(presets, e.target.value)))}>
           <option value="">Custom</option>
@@ -201,9 +200,9 @@ function ModelBrowser({ ctx, provider, reload }) {
   </div>;
 }
 
-// Settings > Harness settings: which enabled model the harness runs on for each job.
-// roles: GET /settings/models
-export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, openProviders }) {
+// Settings > Models > Jobs: which enabled model the harness runs on for chat, summaries and the decider.
+// roles: GET /settings/models; openProviders opens the Providers tab.
+export function JobModels({ ctx, providers, roles, onSaved, openProviders }) {
   const { api, online, guard, notify, log } = ctx;
   const initial = r => ({ chat: choiceKey(r?.chat?.provider, r?.chat?.model), summary: choiceKey(r?.summary?.provider, r?.summary?.model),
     decision: choiceKey(r?.decision?.provider, r?.decision?.model), scorer: r?.scorer || '',
@@ -211,7 +210,7 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
   const [form, setForm] = useState(initial(roles));
   const shown = useRef(roles);  // the roles the form was last brought up to date with
   useEffect(() => { const prev = initial(shown.current); shown.current = roles; setForm(f => keepEdits(f, prev, initial(roles))); }, [roles]);
-  if (!roles || !providers) return <>{status}<div className="resource-row"><p>{online ? 'Loading…' : 'The harness is offline.'}</p></div></>;
+  if (!roles || !providers) return <div className="resource-row"><p>{online ? 'Loading…' : 'The harness is offline.'}</p></div>;
   const dirty = JSON.stringify(form) !== JSON.stringify(initial(roles));
 
   async function save(e) {
@@ -219,7 +218,7 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
     const r = await guard(() => api.setModelRoles({ chat: parseChoice(form.chat), summary: parseChoice(form.summary),
       decision: form.scorer ? parseChoice(form.decision) : null, scorer: form.scorer,
       ...Object.fromEntries((roles.optional || []).map(o => form[o] ? [o, parseChoice(form[o])] : [`clear_${o}`, true])) }));
-    if (r) { setForm(initial(r)); onSaved(r); notify('Harness settings saved'); log('Harness settings saved', `chat ${r.chat?.model} · summary ${r.summary?.model}${r.scorer ? ` · decision ${r.decision?.model}` : ''}`); }
+    if (r) { setForm(initial(r)); onSaved(r); notify('Models saved'); log('Model roles saved', `chat ${r.chat?.model} · summary ${r.summary?.model}${r.scorer ? ` · decision ${r.decision?.model}` : ''}`); }
   }
   const picker = (role, hint, disabled = false) => {
     const kind = roles.roles[role];
@@ -233,14 +232,13 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
         {optional && <option value="">None</option>}
         {(missing || (!optional && !form[role])) && <option value={form[role]}>{missing ? `${current.model} (not enabled)` : 'Pick a model'}</option>}
         {groups.map(g => <optgroup key={g.provider} label={g.name}>{g.models.map(m => <option key={m.id} value={choiceKey(g.provider, m.id)}>{modelLabel(m)}</option>)}</optgroup>)}
-      </select> : <p className="field-hint">No {KIND_LABELS[kind]?.toLowerCase() || kind} models enabled{role === 'decision' ? decisionHint(roles, form.scorer).where : ''}. <button type="button" className="text-link" onClick={openProviders}>Enable one on the Model providers page</button>.</p>}
+      </select> : <p className="field-hint">No {KIND_LABELS[kind]?.toLowerCase() || kind} models enabled{role === 'decision' ? decisionHint(roles, form.scorer).where : ''}. <button type="button" className="text-link" onClick={openProviders}>Enable one on the Providers tab</button>.</p>}
     </Field>;
   };
   return <>
-    {status}
     <form className="resource-row editor-form" onSubmit={save}>
-      <h3 id={anchorId('harness', 'Models the harness runs on')}>Models the harness runs on</h3>
-      <p className="field-hint">Choose from the models enabled on the Model providers page. Saving switches the harness over at once; running tasks finish on the model they started with.</p>
+      <h3 id={anchorId('models', 'Models the harness runs on')}>Models the harness runs on</h3>
+      <p className="field-hint">Choose from the models enabled on the Providers tab. Saving switches the harness over at once; running tasks finish on the model they started with.</p>
       {picker('chat', "Runs your bots' tasks.")}
       {picker('summary', 'Compacts long tasks, folds old conversation turns, and summarizes imported documents.')}
       <Field label="Decider scorer" hint="Chooses skills and MCP servers per task, and watches long tasks. Without one, every skill and tool is offered.">
@@ -249,7 +247,6 @@ export function HarnessSettingsTab({ ctx, providers, roles, onSaved, status, ope
       {form.scorer && picker('decision', decisionHint(roles, form.scorer).hint)}
       <div className="od-row"><div className="od-fill"/>{dirty && <Button appearance="subtle" onClick={() => setForm(initial(roles))}>Discard</Button>}<Button appearance="primary" type="submit" disabled={!online || !dirty || !form.chat || !form.summary || (form.scorer && !form.decision)}>Save</Button></div>
     </form>
-    <DreamSection ctx={ctx} providers={providers} roles={roles} onSaved={onSaved} openProviders={openProviders}/>
   </>;
 }
 

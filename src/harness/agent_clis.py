@@ -158,7 +158,7 @@ def probe(vault_root: Path, key: str, timeout: float = 10.0) -> dict[str, Any]:
     why_not_run = RUNNABLE.get(key, "")
     sw = load_settings(vault_root)[key]
     if not path:
-        reason = f"{name} was not found. Install it, or save its path in Settings > Harness Tools."
+        reason = f"{name} was not found. Install it, or save its path in Settings > Programs."
     elif not st["ok"]:
         reason = st["problem"] or f"{name} did not answer its version check."
     elif not confinable:

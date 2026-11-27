@@ -379,7 +379,7 @@ def _resume(pid: int) -> bool:
 _SHIM_SCRIPT = re.compile(r'"%~?dp0%?\\(node_modules\\[^"%]+?\.[cm]?js)"', re.IGNORECASE)
 SHIM_REFUSED = ("{name} is installed as a command script ({path}), which would run through the command prompt in the "
                 "job folder, and the harness could not find the program and script it starts. Install the native "
-                "{name}, or set the path to it in Settings > Coding agents.")
+                "{name}, or set the path to it in Settings > Programs.")
 
 
 def _node_on_path() -> Path | None:
@@ -595,7 +595,7 @@ class Runner:
         name = AGENTS[agent].program.name
         st = self.agents.statuses.get(agent) or {}
         if not st.get("path"):
-            raise DelegationError(f"{name} was not found. Check Settings > Harness Tools.")
+            raise DelegationError(f"{name} was not found. Check Settings > Programs.")
         if session_id in self.live or (conversation and any(x.conversation == conversation for x in self.live.values())):
             raise DelegationError("This conversation already has a run going. Wait for it to end.")
         if len(self.live) >= self.max_runs:
@@ -846,7 +846,7 @@ class Delegator:
         if not self.agents.settings(agent).enabled:
             return f"{name} is switched off in Settings."
         return ((self.agents.statuses.get(agent) or {}).get("reason")
-                or f"{name} cannot run now. Check Settings > Coding agents.")
+                or f"{name} cannot run now. Check Settings > Programs.")
 
     async def delegate(self, agent: str, task: str, folder: str | None = None) -> str:
         bot_id, session_id = current_call.get()

@@ -39,7 +39,7 @@ class Requirement:
     install: dict[str, str] = field(default_factory=dict)
     manual: dict[str, str] = field(default_factory=dict)
     old_bins: list[str] = field(default_factory=list)
-    setting: str | None = None  # a Harness Tools path setting (tool_paths.PROGRAMS) that install fills in
+    setting: str | None = None  # a Programs path setting (tool_paths.PROGRAMS) that install fills in
 
 
 @dataclass(frozen=True)
@@ -392,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def record(setting: str, path: str) -> None:
         prog = tool_paths.PROGRAMS[setting]
-        where = f"Settings > Harness Tools > {prog.name}"
+        where = f"Settings > Programs > {prog.name}"
         path = tool_paths.canonical(path)
         if tool_paths.saved(vault, setting) == path:
             print(f"{prog.name}: {path} ({where})")

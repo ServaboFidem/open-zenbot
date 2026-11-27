@@ -11,7 +11,7 @@ environment as `ZEN_PROVIDER_<ID>_API_KEY` (a name the shell tool's scrubbed env
 registered with the exclusion filter, so the ledger redacts it if it ever appears in text.
 
 Each enabled model keeps a snapshot of what the provider said about it (kinds, reasoning, cost), so the
-Harness settings pickers work without fetching the provider's whole list.
+Models page's pickers work without fetching the provider's whole list.
 """
 
 from __future__ import annotations

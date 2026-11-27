@@ -13,58 +13,57 @@ import { TELNYX_LINE } from './telnyx.js';
 import { NETWORK_LINE as SPEAKERS_LINE } from './wifi-speakers.js';
 
 export const PANELS = [
-  { id: 'harness', name: 'Harness settings', description: 'The models your bots, summaries and the decider run on.' },
-  { id: 'providers', name: 'Model providers', description: 'Where models come from: providers, their API keys and which models are enabled.' },
-  { id: 'tools', name: 'Harness Tools', description: 'Toolkits built into the harness: image generation, reading aloud and ImageMagick.' },
+  { id: 'models', name: 'Models', description: 'Which model each job runs on (chat, summaries, the decider, images, reading aloud), and the providers and keys they come from.' },
   { id: 'mcps', name: 'MCP servers', description: 'Tools your bots can reach: the servers in mcp.json, their API keys and what they need installed.' },
   { id: 'skills', name: 'Skills', description: "Good work, worth repeating: the skills in the catalog, which bots carry them, and SkillTuner's suggestions." },
-  { id: 'agents', name: 'Coding agents', description: 'Claude Code and Codex on this computer: found, signed in, and whether bots may hand work to them.' },
+  { id: 'programs', name: 'Programs', description: 'Programs on this computer the harness runs: Claude Code and Codex for coding jobs, and ImageMagick.' },
   { id: 'folders', name: 'Allowed Folders', description: 'The folders outside the vault that bots may read or write.' },
   { id: 'calendar', name: 'Calendar', description: 'Google Calendar: your own Google app, which calendars to bring in, and sending events made here to Google.' },
   { id: 'tracing', name: 'Tracing', description: 'Where errors and traces go: Sentry, GlitchTip and Langfuse.' },
   { id: 'ledger', name: 'Ledger', description: 'Everything on the record: model calls, tool calls, decider scores, approvals, memory and settings changes.' },
-  { id: 'memory', name: 'Memory', description: 'Your name in memory, and rebuilding what the bots have learned.' },
+  { id: 'memory', name: 'Memory', description: 'Your name in memory, dreaming (learning from your conversations while the computer is idle), and rebuilding what the bots have learned.' },
   { id: 'apps', name: 'Connected apps', description: "AgentMail, ZenBot's own email address, Telnyx text reminders, and Sonos speakers; other app connections are a mockup for now." },
   { id: 'speakers', name: 'Wi-Fi speakers', description: 'AirPlay, Chromecast and DLNA speakers on your network, and the default speaker ZenBot will use.' },
-  { id: 'about', name: 'About', description: 'What this app does, and its license.' },
+  { id: 'about', name: 'About', description: 'The harness and its status, the version, what this app does, and its license.' },
 ];
 
 export function anchorId(panel, title) {
   return `settings-${panel}-${String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`;
 }
 
+// A provider's and a harness tool's card on the Models page: apart, so a provider id can never be a tool's.
+export const providerAnchor = id => anchorId('models', `provider-${id}`);
+export const toolAnchor = id => anchorId('models', `tool-${id}`);
+
 const section = (panel, title, words) => ({ panel, anchor: anchorId(panel, title), title, words });
+// A section on the Models page's Providers tab: a search hit for it opens that tab (`tabOf`).
+const onProviders = (title, words) => ({ ...section('models', title, words), tab: 'providers' });
 // A panel whose sections are all headed by data: found by its words, opened at the top.
 // A section on the Skills page's SkillTuner tab: a search hit for it opens that tab (`tabOf`).
 const tuner = (title, words) => ({ ...section('skills', title, words), tab: 'tuner' });
 const whole = (panel, words) => ({ panel, anchor: '', title: PANELS.find(p => p.id === panel).name, words });
 
 export const SECTIONS = [
-  section('harness', 'Harness', ['Harness address and status: online or offline', 'Scorer', 'Memory']),
-  section('harness', 'Models the harness runs on', [
-    'Choose from the models enabled on the Model providers page. Saving switches the harness over at once; running tasks finish on the model they started with.',
+  section('models', 'Models the harness runs on', [
+    'Choose from the models enabled on the Providers tab. Saving switches the harness over at once; running tasks finish on the model they started with.',
     "Chat model: runs your bots' tasks.",
     'Summary model: compacts long tasks, folds old conversation turns, and summarizes imported documents.',
     'Decider scorer: chooses skills and MCP servers per task, and watches long tasks. Without one, every skill and tool is offered.',
     "Decision model: the scorer's model. Decision models come from OpenRouter.",
+    'Jobs', 'roles', 'A bot can run on its own model: set it on the Bots page.',
   ]),
-  section('harness', 'Dreaming', [
-    'Learn from my conversations while the computer is idle',
-    PRIVACY,
-    'Dreaming model', 'Start after', 'minutes idle', 'Dream now', 'What was learned', 'Forget', 'learn', 'memory', 'idle', 'conversations', 'local model',
-  ]),
-  section('providers', 'Model providers', ["Each provider's key lives in the harness's providers.json, readable by you only. Enable the models the harness may use; the Harness settings and Harness Tools pages pick from them.", 'Test a provider', 'Refresh the model list', 'OpenRouter', 'OpenAI-compatible']),
-  section('providers', 'Add a provider', [
+  onProviders('Model providers', ["Each provider's key lives in the harness's providers.json, readable by you only. Enable the models the harness may use; the Jobs tab picks from them.", 'Providers', 'Test a provider', 'Refresh the model list', 'OpenRouter', 'OpenAI-compatible', 'enable models']),
+  onProviders('Add a provider', [
     'Preconfigured provider', 'Hosted', 'Runs on your machine', 'Name', 'Kind', 'Provider kind',
     "Base URL: where the API's /chat/completions and /models live. Plain http works for this machine, your local network or a Tailscale peer.",
     'API key: saved in providers.json (owner-only). Never sent back to this app.',
     'Key reference: a reference like env:GROQ_API_KEY: the value stays in .env or your shell.',
     'Where the key comes from',
   ]),
-  whole('tools', [
+  whole('models', [
     'Image generation: image model. Image generation runs through OpenRouter providers.',
     "Images are saved in the workspace's generated-images folder and attached to the bot's reply.",
-    'ImageMagick: the full path of the magick program the harness runs.', 'Program path',
+    'Read aloud: speech model and voice.', 'Dreaming picks its model under Memory > Dreaming.',
   ]),
   whole('mcps', [
     'MCP servers listed in mcp.json connect when the harness starts. Each line is what the decider reads when it chooses which servers a task gets.',
@@ -85,12 +84,13 @@ export const SECTIONS = [
     'Skills SkillTuner found for what you ask. See what changed, approve one and pick the bots that use it, or reject it.',
     'See what changed', 'Approve', 'Reject', 'Remove', 'Which bots should use it?',
   ]),
-  section('agents', 'Coding agents', [
+  section('programs', 'Coding agents', [
     'Let bots hand a coding job to a program on this computer. The program works in one folder you allow, and you see what it changed.',
     'Claude Code', 'Codex', 'Detected command-line programs (CLIs): where each is, its version and whether it is signed in.',
     'Bots may hand work to it', 'Ask me before each run', "Model: leave empty to use the program's own default.",
     'Program path', 'Runs use your sign-in and send the job folder\'s contents to the vendor.', 'delegate',
   ]),
+  whole('programs', ['ImageMagick: the full path of the magick program the harness runs.', 'ImageMagick', 'magick', 'Program path', 'install-deps']),
   section('folders', 'Allowed Folders', ['Folders your bots can reach through the files tool, besides the vault. With Full Access a bot can read, change, or delete anything inside the folder; with Read-Only it can only read, list, and search.', 'A Read-Only folder can sit inside a Full Access one to protect that corner of it. Changes reconnect the files tool right away.', 'Remove a folder']),
   section('folders', 'Add a folder', ['Access for the new folder', 'Folder path: the full path, like D:\\Projects\\site or /home/you/notes.']),
   section('calendar', 'Your Google app', [
@@ -132,11 +132,17 @@ export const SECTIONS = [
   ]),
   section('memory', 'About you', ['Your name', 'Also called: nicknames, separated by commas', 'Owner']),
   section('memory', 'Rebuild memory', ["Re-learn everything shared under the current knowledge model: people, organizations, and how they relate. Your facts and each bot's private memory stay."]),
+  section('memory', 'Dreaming', [
+    'Learn from my conversations while the computer is idle',
+    PRIVACY,
+    'Dreaming model', 'Start after', 'minutes idle', 'Dream now', 'What was learned', 'Forget', 'learn', 'idle', 'conversations', 'local model',
+  ]),
   section('apps', 'AgentMail', ['AgentMail', 'email', 'inbox', 'address', 'API key', 'newsletter', MAIL_LINE]),
   section('apps', 'Telnyx', ['Telnyx', 'text messages', 'SMS', 'reminders', 'phone number', 'evening rundown', 'API key', TELNYX_LINE]),
   section('apps', 'Sonos', ['Sonos', 'speakers', 'play music', 'Favorites', 'playlists', 'volume', 'Highest volume ZenBot may set', 'Look again', SONOS_LINE]),
   section('speakers', 'Wi-Fi speakers', ['AirPlay', 'Chromecast', 'DLNA', 'speakers', 'default speaker', 'No default', 'Look again', SPEAKERS_LINE]),
   whole('apps', ["Mockup: connected apps don't work yet. Connect only marks an app as connected in this window.", 'Connect app', 'Disconnect']),
+  section('about', 'Harness', ['Harness address and status: online or offline', 'Scorer', 'Memory']),
   section('about', 'Version and updates', ['Version', 'Check for updates', 'Check for updates automatically', 'Update to the newest release, or skip a version.']),
   section('about', 'What this app does', ['Bots, skills, approvals, rooms, memory, and the ledger come from the zen-agents harness on localhost.']),
   section('about', 'Open source', ['Authored source is MIT licensed. See README.md for setup, source locations, and dependency licenses.', 'License']),
@@ -147,9 +153,9 @@ export const SECTIONS = [
 export function liveSections(providers, tools, mcps, skills) {
   const named = x => !!x && typeof x.name === 'string' && !!x.name && x.id != null;
   return [
-    ...(providers || []).filter(named).map(p => ({ panel: 'providers', anchor: anchorId('providers', p.id), title: p.name,
-      words: (p.models || []).flatMap(m => [m?.id, m?.name]).filter(w => typeof w === 'string') })),
-    ...(tools || []).filter(named).map(t => ({ panel: 'tools', anchor: anchorId('tools', t.id), title: t.name, words: [t.summary].filter(w => typeof w === 'string') })),
+    ...(providers || []).filter(named).map(p => ({ panel: 'models', anchor: providerAnchor(p.id), title: p.name,
+      words: (p.models || []).flatMap(m => [m?.id, m?.name]).filter(w => typeof w === 'string'), tab: 'providers' })),
+    ...(tools || []).filter(named).map(t => ({ panel: 'models', anchor: toolAnchor(t.id), title: t.name, words: [t.summary].filter(w => typeof w === 'string'), tab: 'jobs' })),
     ...Object.entries(mcps && typeof mcps === 'object' && !Array.isArray(mcps) ? mcps : {}).filter(([name, m]) => !!name && !!m && typeof m === 'object')
       .map(([name, m]) => ({ panel: 'mcps', anchor: anchorId('mcps', name), title: name, words: [m.use, ...(Array.isArray(m.tools) ? m.tools : [])].filter(w => typeof w === 'string') })),
     ...(Array.isArray(skills) ? skills : []).filter(s => !!s && s.kind !== 'mcp' && typeof s.name === 'string' && !!s.name && typeof s.ref === 'string' && !!s.ref)
@@ -183,19 +189,21 @@ export function searchSettings(query, extra = []) {
     const named = terms.every(t => title.includes(t));
     const rank = named ? (s.whole ? 0 : 1) : s.whole ? 3 : 2;   // a section that holds the words comes before a panel that only mentions them
     const text = named ? s.title : words.find(w => terms.some(t => w.toLowerCase().includes(t))) || s.title;
-    found.push({ rank, whole: !!s.whole, match: { panel: panel.id, panelName: panel.name, section: s.title, anchor: typeof s.anchor === 'string' ? s.anchor : '', tab: s.tab === 'tuner' ? 'tuner' : 'main', text } });
+    found.push({ rank, whole: !!s.whole, match: { panel: panel.id, panelName: panel.name, section: s.title, anchor: typeof s.anchor === 'string' ? s.anchor : '', tab: tabOf(panel.id, typeof s.anchor === 'string' ? s.anchor : ''), text } });
   }
-  // A panel and its section of the same name (Tracing, Coding agents) are one place: keep the section, which has the anchor.
+  // A panel and its section of the same name (Tracing) are one place: keep the section, which has the anchor.
   const sectionNamed = new Set(found.filter(f => !f.whole).map(f => `${f.match.panel}\n${f.match.section}`));
   return found.filter(f => !f.whole || !sectionNamed.has(`${f.match.panel}\n${f.match.section}`))
     .sort((a, b) => a.rank - b.rank).slice(0, MAX_RESULTS).map(f => f.match);
 }
 
-// Which tab of the Skills page to open: 'tuner' for a SkillTuner-tab section, or for the page itself (no section)
-// while `waiting` suggestions wait, so a badged Skills tile opens where they are; else 'main' (the catalog, and every
-// other panel, which has no tabs).
+// Which tab of a panel to open for a section (`anchor`, '' for the panel itself). Skills: 'tuner' for a SkillTuner-tab
+// section, or for the page itself while `waiting` suggestions wait, so a badged Skills tile opens where they are; else
+// 'main'. Models: 'providers' for a Providers-tab section or a provider's card; else 'jobs'. Every other panel has no
+// tabs: 'main'.
 export function tabOf(panel, anchor, waiting = 0) {
-  if (panel !== 'skills') return 'main';
-  if (!anchor) return waiting > 0 ? 'tuner' : 'main';
-  return SECTIONS.some(s => s.panel === 'skills' && s.anchor === anchor && s.tab === 'tuner') ? 'tuner' : 'main';
+  const marked = SECTIONS.find(s => s.panel === panel && s.anchor && s.anchor === anchor)?.tab;
+  if (panel === 'skills') return marked === 'tuner' || (!anchor && waiting > 0) ? 'tuner' : 'main';
+  if (panel === 'models') return marked === 'providers' || String(anchor ?? '').startsWith(providerAnchor('')) ? 'providers' : 'jobs';
+  return 'main';
 }

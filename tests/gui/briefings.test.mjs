@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  scheduleLabel, overlap, validate, lastRunLine, readinessLine, hostedNote, defaultForm, canPlay, skippedLate, formBlocker, saveBlocked, ceilingLow, speakerChoices, loginTook, LOGIN_FAILED, KEEPER_LINUX, KEEPER_WAKE, keeperOf, offersSignIn, signInStart, keeperSentence, wakeWarning, toggleBody,
+  scheduleLabel, overlap, validate, lastRunLine, readinessLine, hostedNote, defaultForm, canPlay, skippedLate, formBlocker, saveBlocked, ceilingLow, speakerChoices, loginTook, LOGIN_FAILED, KEEPER_LINUX, KEEPER_WAKE, keeperOf, offersSignIn, signInStart, keeperSentence, wakeWarning, toggleBody, readinessFix,
 } from '../../src/gui/briefings.js';
 
 const wk = { days: [0, 1, 2, 3, 4], time: '06:45' };
@@ -69,7 +69,7 @@ test('readinessLine gives the route sentences', () => {
   assert.equal(readinessLine(null), '');
   assert.equal(readinessLine('sonos_off'), 'Sonos is off. Switch it on in Settings > Connected apps.');
   assert.equal(readinessLine('no_speakers'), 'No Sonos speaker was found.');
-  assert.equal(readinessLine('no_voice'), 'Set up a voice in Settings > Harness Tools > Read aloud first.');
+  assert.equal(readinessLine('no_voice'), 'Set up a voice in Settings > Models > Jobs > Read aloud first.');
   assert.equal(readinessLine('ceiling_zero'), 'Your Sonos volume limit is 0.');
   assert.equal(readinessLine('new_code'), 'The briefing is not ready.');
 });
@@ -98,7 +98,7 @@ test('the Linux sentence is verbatim', () => {
 
 test('formBlocker: the top-level reason, and a ceiling below 1 is a blocker of its own', () => {
   assert.equal(formBlocker({ ready: true, reason: null, ceiling: 60 }), null);
-  assert.equal(formBlocker({ ready: false, reason: 'no_voice', ceiling: 60 }), 'Set up a voice in Settings > Harness Tools > Read aloud first.');
+  assert.equal(formBlocker({ ready: false, reason: 'no_voice', ceiling: 60 }), 'Set up a voice in Settings > Models > Jobs > Read aloud first.');
   assert.equal(formBlocker({ ready: false, reason: 'ceiling_zero', ceiling: 0 }), 'Your Sonos volume limit is 0.');
   assert.equal(formBlocker({ ready: true, reason: null, ceiling: 0 }), 'Your Sonos volume limit is 0.');
   assert.equal(formBlocker(null), null);
@@ -181,4 +181,13 @@ test('loginTook: the keeper must answer the state asked for', () => {
   assert.equal(loginTook(false, { managed: true, login: false }), true);
   assert.equal(loginTook(true, undefined), true);  // an older desktop app answered nothing
   assert.match(LOGIN_FAILED, /^The briefing is saved, but /);
+});
+
+test('the no-voice fix opens the Read aloud card on Settings > Models > Jobs', async () => {
+  const { anchorId, tabOf, toolAnchor } = await import('../../src/gui/settings-index.js');
+  const fix = readinessFix('no_voice');
+  assert.equal(fix.panel, 'models');
+  assert.equal(anchorId(fix.panel, fix.title), toolAnchor('speech'));
+  assert.equal(tabOf(fix.panel, anchorId(fix.panel, fix.title)), 'jobs');
+  assert.deepEqual(readinessFix('sonos_off'), { panel: 'apps', title: 'Sonos' });
 });

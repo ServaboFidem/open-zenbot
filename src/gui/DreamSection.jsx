@@ -2,12 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Button, Field, Input } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
 import { KIND_LABELS, choiceKey, enabledByKind, modelLabel, parseChoice } from './models.js';
-import { MAX_MINUTES, MIN_MINUTES, PRIVACY, canEnable, canRunNow, errorLine, factsChanged, needsDesktopNote, statusLine, validMinutes } from './dream.js';
+import { MAX_MINUTES, MIN_MINUTES, PRIVACY, canEnable, canRunNow, errorLine, factsChanged, modelsKnown, needsDesktopNote, statusLine, validMinutes } from './dream.js';
 
 const POLL_MS = 5000;
 
-// Settings > Harness settings > Dreaming: the switch, the Dreaming model, the idle time, Dream now and what was
-// learned. ctx: { api, online, guard, notify }; providers and roles as the Harness tab has them; onSaved(roles).
+// Settings > Memory > Dreaming: the switch, the Dreaming model, the idle time, Dream now and what was learned.
+// ctx: { api, online, guard, notify }; providers and roles as the Models page has them; onSaved(roles);
+// openProviders opens Settings > Models > Providers.
 export function DreamSection({ ctx, providers, roles, onSaved, openProviders }) {
   const { api, online, guard, notify } = ctx;
   const [status, setStatus] = useState(null);
@@ -56,20 +57,21 @@ export function DreamSection({ ctx, providers, roles, onSaved, openProviders }) 
   const problem = status ? errorLine(status) : '';
 
   return <div className="resource-row editor-form od-stack">
-    <h3 id={anchorId('harness', 'Dreaming')}>Dreaming</h3>
+    <h3 id={anchorId('memory', 'Dreaming')}>Dreaming</h3>
     {!status
       ? <p className="field-hint">{online ? 'Loading…' : 'The harness is offline.'}</p>
       : <>
         <label className="od-row"><input type="checkbox" checked={status.enabled} disabled={!online || (!status.enabled && !canEnable(status))} onChange={e => save(e.target.checked, validMinutes(minutes) ? Number(minutes) : status.idle_minutes)}/> Learn from my conversations while the computer is idle</label>
         <p className="field-hint">{PRIVACY}</p>
         <Field label="Dreaming model">
-          {groups.length || status.model
+          {!modelsKnown(providers, roles) ? <p className="field-hint">{online ? 'Loading…' : 'The harness is offline.'}</p>
+            : groups.length || status.model
             ? <select aria-label="Dreaming model" value={current} disabled={!online} onChange={e => choose(e.target.value)}>
               <option value="">None</option>
               {missing && <option value={current}>{status.model.model} (not enabled)</option>}
               {groups.map(g => <optgroup key={g.provider} label={g.name}>{g.models.map(m => <option key={m.id} value={choiceKey(g.provider, m.id)}>{modelLabel(m)}</option>)}</optgroup>)}
             </select>
-            : <p className="field-hint">No {KIND_LABELS[kind]?.toLowerCase() || kind} models enabled. <button type="button" className="text-link" onClick={openProviders}>Enable one on the Model providers page</button>.</p>}
+            : <p className="field-hint">No {KIND_LABELS[kind]?.toLowerCase() || kind} models enabled. <button type="button" className="text-link" onClick={openProviders}>Enable one under Settings &gt; Models &gt; Providers</button>.</p>}
         </Field>
         <div className="od-row">
           <label className="od-row">Start after <Input id="dream-minutes" type="number" min={MIN_MINUTES} max={MAX_MINUTES} aria-label="Start after, in minutes idle" value={minutes} disabled={!online}
