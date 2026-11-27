@@ -214,7 +214,7 @@ test('onOpenMusic subscribes to the one open-music channel and hands the page no
 });
 
 test('the setup page\'s channels answer setup.html only and take no argument', () => {
-  const src = readFileSync(new URL('../../src/electron/managed-app.cjs', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../../src/electron/managed-app.cjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');  // a CRLF checkout
   assert.equal((src.match(/ipcMain\.handle\(/g) || []).length, 1);
   assert.match(src, /ipcMain\.handle\(channel, event => \{\n    if \(!fromApp\(event, 'setup\.html'\)\) throw/);
   assert.deepEqual(src.match(/handle\('setup:[a-z-]+'/g), ["handle('setup:state'", "handle('setup:proceed'", "handle('setup:retry'", "handle('setup:restart-harness'", "handle('setup:open-logs'"]);

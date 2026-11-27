@@ -99,6 +99,22 @@ from src.providers.interface import Completion, Message, ProviderError, ToolCall
 REPO = Path(__file__).resolve().parent.parent
 
 
+def fake_program(dir: Path, name: str, sh: str = "echo 1.0", cmd: str = "@echo 1.0") -> Path:
+    """A program named `name` in `dir` that the host can find and run: a `#!/bin/sh` script running `sh`, or on Windows
+    `<name>.cmd` running `cmd`. Answers the path as `shutil.which` finds it."""
+    import shutil
+    dir.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        (dir / f"{name}.cmd").write_text(cmd + "\r\n", encoding="utf-8")
+    else:
+        p = dir / name
+        p.write_text(f"#!/bin/sh\n{sh}\n", encoding="utf-8")
+        p.chmod(0o755)
+    found = shutil.which(name, path=str(dir))
+    assert found, f"{name} was written to {dir} but cannot be found there"
+    return Path(found)
+
+
 def completion(text: str = "", calls: list[tuple[str, str, dict]] | None = None, finish: str | None = None) -> Completion:
     tool_calls = [ToolCall(id=i, name=n, arguments=a) for i, n, a in (calls or [])]
     return Completion(

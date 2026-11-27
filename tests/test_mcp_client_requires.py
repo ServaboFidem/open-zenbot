@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 import sys
 from pathlib import Path
 
@@ -19,6 +18,7 @@ from src.harness.tools import ToolRunner
 from src.harness.host_deps import Requirement
 from src.memory.ledger import Ledger
 from src.skills.catalog import Catalog
+from tests.conftest import fake_program
 
 FIXTURE = Path(__file__).parent / "fixtures" / "mcp_echo_server.py"
 
@@ -46,9 +46,7 @@ async def test_unmet_requirement_holds_the_server_back_and_others_connect(tmp_pa
 async def test_met_requirement_connects_and_reports_deps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    stub = bindir / "zen-dep"
-    stub.write_text("#!/bin/sh\necho 1.0\n")
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    fake_program(bindir, "zen-dep")
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ.get("PATH", ""))
     reg = McpRegistry([_echo("ok", [Requirement(bin="zen-dep")])])
     try:
@@ -84,9 +82,7 @@ async def test_recheck_connects_once_the_binary_appears(tmp_path: Path, monkeypa
             assert st["state"] == "needs_install" and st["deps"][0]["bin"] == "zen-dep"
             assert "mcp echo: needs install \u2014 zen-dep: missing" in capsys.readouterr().out
 
-            stub = bindir / "zen-dep"
-            stub.write_text("#!/bin/sh\necho 1.0\n")
-            stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+            fake_program(bindir, "zen-dep")
             r = await c.post("/mcps/echo/recheck")
             assert r.status_code == 200, r.text
             st = r.json()["echo"]
@@ -99,9 +95,7 @@ async def test_recheck_connects_once_the_binary_appears(tmp_path: Path, monkeypa
 async def test_probe_uses_the_path_the_child_will_get(tmp_path: Path):
     bindir = tmp_path / "only-child"
     bindir.mkdir()
-    stub = bindir / "zen-child-dep"
-    stub.write_text("#!/bin/sh\necho 1.0\n")
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    fake_program(bindir, "zen-child-dep")
     cfg = ServerConfig(name="p", command=sys.executable, args=[str(FIXTURE)], env={"PATH": str(bindir)},
                        requires=[Requirement(bin="zen-child-dep")])
     reg = McpRegistry([cfg])

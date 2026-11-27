@@ -5,9 +5,11 @@ from __future__ import annotations
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
+from src.harness import scheduler
 from src.harness.loop import Session, SessionState
 from src.harness.scheduler import (
     Routine, RoutineError, RoutineStore, Schedule, Scheduler, due, next_run, parse_schedule,
@@ -15,17 +17,27 @@ from src.harness.scheduler import (
 from src.memory.ledger import Ledger
 
 
+NY = ZoneInfo("America/New_York")
+
+
 @pytest.fixture
 def ny(monkeypatch):
+    """Routines in New York time. Where the process's zone can be set (`time.tzset`), the scheduler's own path is used,
+    the computer's zone; Windows has no `tzset`, so there the scheduler is given the zone."""
+    tzset = getattr(time, "tzset", None)
+    if tzset is None:
+        monkeypatch.setattr(scheduler, "LOCAL", NY)
+        yield
+        return
     monkeypatch.setenv("TZ", "America/New_York")
-    time.tzset()
+    tzset()
     yield
     monkeypatch.undo()
-    time.tzset()
+    tzset()
 
 
 def at(y, mo, d, h=0, mi=0) -> datetime:
-    return datetime(y, mo, d, h, mi).astimezone()
+    return datetime(y, mo, d, h, mi, tzinfo=NY)
 
 
 def test_next_weekly(ny):
