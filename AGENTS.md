@@ -286,8 +286,9 @@ done on).
 - **The settings section** (`DreamSection.jsx`, decisions in `dream.js`, an entry in `settings-index.js` `SECTIONS`):
   the switch, the model, minutes idle, a status line, Dream now, and the list of what was learned with Forget. While
   the harness is online it reads the status every 5 s, between passes too, and reads the facts again when a pass ends
-  or the totals move (`factsChanged`). Saving the Dreaming model keeps the picks not yet saved in the Models > Jobs
-  form (`models.js` `keepEdits`). Under
+  or the totals move (`factsChanged`). The Dreaming model is saved through the same roles as Models > Jobs, whose form
+  is on another page: picks not saved there are dropped when that page is left, and `models.js` `keepEdits` keeps them
+  only against roles that arrive while the Jobs form is open. Under
   the switch (`dream.js` `PRIVACY`, also in the search index): "Only the messages you typed are read, never a bot's
   reply. They are sent to the dreaming model you choose: a hosted model's provider receives them, a local model reads
   them on this computer. The facts it writes are then stored by the memory engine, which uses its own model." Each

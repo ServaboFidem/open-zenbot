@@ -132,7 +132,7 @@ from src.providers.probe import ProbeFailed, ProbeJobs
 from src.providers.openrouter import OpenRouterHttp
 from src.providers.secrets import Secret
 from src.providers.store import KINDS as PROVIDER_KINDS, OPENROUTER_BASE, PRESETS as PROVIDER_PRESETS, ProviderStore, ProviderStoreError
-from .model_roles import OPTIONAL_ROLES, ROLE_LABELS, ROLES, Choice, ModelRoles, load_bot_models, save_bot_models
+from .model_roles import OPTIONAL_ROLES, ROLE_LABELS, ROLES, Choice, ModelRoles, load_bot_models, pick_other_models, save_bot_models
 from .models_setup import (DREAM_TIMEOUT_S, build as build_models, check_choice, default_models, dream_extras, dream_provider,
                            make_provider, roles_from_config)
 from .stubs import InjectAllSelector
@@ -2232,7 +2232,7 @@ def create_app(h: Harness) -> FastAPI:
         if provider_id not in h.provider_store.entries:
             raise HTTPException(404, f"no provider {provider_id!r}")
         if used := in_use(provider_id):
-            raise HTTPException(409, f"in use by {', '.join(used)}; pick other models under Settings > Models > Jobs first")
+            raise HTTPException(409, f"in use by {', '.join(used)}; {pick_other_models(used)}")
         h.provider_store.remove(provider_id)
         h.model_lister.forget(provider_id)
         h.ledger.append(Kind.settings, "", "", event="provider_removed", provider=provider_id)
@@ -2267,8 +2267,9 @@ def create_app(h: Harness) -> FastAPI:
             raise HTTPException(422, f"{e.name} lists model ids only, so each model is tested as it is enabled: "
                                      f"enable one at a time ({', '.join(new)})")
         dropped = [m.id for m in e.models if m.id not in wanted]
-        if blocked := [f"{mid} ({', '.join(u)})" for mid in dropped if (u := in_use(provider_id, mid))]:
-            raise HTTPException(409, f"in use: {'; '.join(blocked)}; pick other models under Settings > Models > Jobs first")
+        uses = {mid: u for mid in dropped if (u := in_use(provider_id, mid))}
+        if blocked := [f"{mid} ({', '.join(u)})" for mid, u in uses.items()]:
+            raise HTTPException(409, f"in use: {'; '.join(blocked)}; {pick_other_models([x for u in uses.values() for x in u])}")
         before = {m.id for m in e.models}
         try:
             listed = {m.id: m for m in await h.model_lister.list(e.id, e.kind, e.base_url, h.provider_store.secret(e.id))}

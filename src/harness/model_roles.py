@@ -24,6 +24,20 @@ ROLE_LABELS = {"chat": "Chat model", "summary": "Summary model", "decision": "De
 OPTIONAL_ROLES = {"dream"}  # may stay unset; the harness runs without them
 
 
+def pick_other_models(used: list[str]) -> str:
+    """The end of a refusal to drop a provider or model that is in use: where each use in `used` (the labels the
+    providers routes list: role labels, "Image generation", "Read aloud", "bot <name>") is changed. Dreaming's model is
+    chosen on Settings > Memory > Dreaming, a bot's own model on the Bots page, every other use on Settings > Models > Jobs."""
+    dream = ROLE_LABELS["dream"]
+    places = [where for where, hit in (
+        ("Settings > Models > Jobs", any(u != dream and not u.startswith("bot ") for u in used)),
+        ("Settings > Memory > Dreaming", dream in used),
+        ("the Bots page", any(u.startswith("bot ") for u in used)),
+    ) if hit]
+    listed = places[0] if len(places) == 1 else f"{', '.join(places[:-1])} and {places[-1]}"
+    return f"pick other models first, on {listed}"
+
+
 @dataclass
 class Choice:
     provider: str

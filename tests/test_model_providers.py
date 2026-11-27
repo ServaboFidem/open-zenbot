@@ -233,6 +233,7 @@ async def test_listing_marks_enabled_models_and_refreshes_their_snapshots(client
 async def test_enable_models_and_refuse_dropping_one_in_use(client):
     r = await client.put("/settings/providers/openrouter/models", json={"enabled": ["meta/muse-spark-1.3-contributor"]})
     assert r.status_code == 409 and "scaledown/summarize (Summary model)" in r.json()["detail"]
+    assert r.json()["detail"].endswith("pick other models first, on Settings > Models > Jobs")
     keep = ["meta/muse-spark-1.3-contributor", "scaledown/summarize", "microsoft/microsoft-decision-1", "tencent/hy-image-v3.5-preview"]
     r = await client.put("/settings/providers/openrouter/models", json={"enabled": keep + ["free/model", "unknown/embed-x"]})
     assert r.status_code == 200
@@ -372,6 +373,7 @@ async def test_a_bot_gets_its_own_model_and_keeps_it(client, harness: Harness, v
     assert "bot Writer" in (await client.get("/settings/providers")).json()["providers"][0]["in_use"]
     r = await client.put("/settings/providers/openrouter/models", json={"enabled": keep})
     assert r.status_code == 409 and "bot Writer" in r.json()["detail"]
+    assert r.json()["detail"].endswith("pick other models first, on the Bots page")
     r = await client.patch("/bots/writer", json={"model": None})
     assert r.json()["model"] is None and "writer" not in load_bot_models(vault)
     assert harness._model_for(harness.bots["writer"]) == (harness.provider, None)
@@ -713,3 +715,13 @@ async def test_a_provider_and_model_that_read_aloud_are_in_use(client, harness: 
     harness.speech.config.enabled = False
     [p] = (await client.get("/settings/providers")).json()["providers"]
     assert "Read aloud" not in p["in_use"] and model
+
+
+def test_the_in_use_refusal_names_where_each_use_is_changed():
+    from src.harness.model_roles import pick_other_models
+
+    assert pick_other_models(["Chat model", "Image generation"]) == "pick other models first, on Settings > Models > Jobs"
+    assert pick_other_models(["Dreaming model"]) == "pick other models first, on Settings > Memory > Dreaming"
+    assert pick_other_models(["bot Writer", "bot Editor"]) == "pick other models first, on the Bots page"
+    assert pick_other_models(["Read aloud", "Dreaming model", "bot Writer"]) == (
+        "pick other models first, on Settings > Models > Jobs, Settings > Memory > Dreaming and the Bots page")

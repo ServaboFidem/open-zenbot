@@ -192,6 +192,7 @@ function App() {
   const [ownerForm, setOwnerForm] = useState({ name: '', also: '' });
   const [settingsTab, setSettingsTab] = useState('');          // the open Settings panel; '' is the home screen
   const [settingsAnchor, setSettingsAnchor] = useState('');    // the section id a search result opened the panel at
+  const [settingsNav, setSettingsNav] = useState(0);            // counts openSettings calls: the same link clicked again scrolls again
   const [settingsQuery, setSettingsQuery] = useState('');      // the settings search; kept while a result's panel is open
   const [skillsTab, setSkillsTab] = useState('main');            // Settings > Skills: 'main' or 'tuner'
   const [modelsTab, setModelsTab] = useState('jobs');            // Settings > Models: 'jobs' or 'providers'
@@ -201,7 +202,7 @@ function App() {
     const tab = tabOf(panel, anchor, tunerPending);
     if (panel === 'skills') setSkillsTab(tab);
     if (panel === 'models') setModelsTab(tab);
-    setSettingsTab(panel); setSettingsAnchor(anchor);
+    setSettingsTab(panel); setSettingsAnchor(anchor); setSettingsNav(n => n + 1);
   };
   const openProviders = () => openSettings('models', anchorId('models', 'Model providers'));
   const [providers, setProviders] = useState(null);       // GET /settings/providers: providers and their enabled models; null until loaded
@@ -802,7 +803,7 @@ function App() {
     }, 100);
     moves.forEach(m => window.addEventListener(m, stop, { passive: true }));
     return stop;
-  }, [page, settingsTab, settingsAnchor]);
+  }, [page, settingsTab, settingsAnchor, settingsNav]);
   const settingsExtra = useMemo(() => liveSections(providers, toolSettings, mcps, skills), [providers, toolSettings, mcps, skills]);
   async function refreshTools() {
     const r = await guard(() => api.toolSettings(), { quiet: true });
