@@ -22,14 +22,11 @@ from src.harness.host_deps import (
     probe,
     refresh_windows_path,
 )
+from tests.conftest import fake_program
 
 
-def stub(dir: Path, name: str, body: str = "echo 1.0") -> Path:
-    dir.mkdir(parents=True, exist_ok=True)
-    p = dir / name
-    p.write_text(f"#!/bin/sh\n{body}\n")
-    p.chmod(0o755)
-    return p
+def stub(dir: Path, name: str, body: str = "echo 1.0", win: str = "@echo 1.0") -> Path:
+    return fake_program(dir, name, sh=body, cmd=win)
 
 
 def host(tmp_path, os="linux", managers=(), extra_dirs=()):
@@ -54,22 +51,22 @@ def test_parse_version_takes_the_first_dotted_number():
 
 
 def test_found_without_min_version_is_ok_even_if_version_run_fails(tmp_path):
-    stub(tmp_path / "bin", "tool", "exit 3")
+    stub(tmp_path / "bin", "tool", "exit 3", "@exit /b 3")
     r = probe(Requirement(bin="tool"), host(tmp_path))
     assert r["ok"] is True and r["problem"] is None and r["version"] is None
 
 
 def test_min_version_too_old_and_ok(tmp_path):
     b = tmp_path / "bin"
-    stub(b, "magick", "echo 'Version: ImageMagick 6.9.12-98'")
+    stub(b, "magick", "echo 'Version: ImageMagick 6.9.12-98'", "@echo Version: ImageMagick 6.9.12-98")
     r = probe(Requirement(bin="magick", min_version="7"), host(tmp_path))
     assert r["problem"] == "too_old" and r["version"] == "6.9.12" and not r["ok"]
-    stub(b, "magick", "echo 'Version: ImageMagick 7.1.2-18'")
+    stub(b, "magick", "echo 'Version: ImageMagick 7.1.2-18'", "@echo Version: ImageMagick 7.1.2-18")
     assert probe(Requirement(bin="magick", min_version="7"), host(tmp_path))["ok"] is True
 
 
 def test_hanging_probe_is_probe_failed(tmp_path):
-    stub(tmp_path / "bin", "slow", "sleep 30")
+    stub(tmp_path / "bin", "slow", "sleep 30", "@echo off\r\n:wait\r\ngoto wait")  # loops in cmd itself: no child holds the pipe
     t = time.monotonic()
     r = probe(Requirement(bin="slow", min_version="1"), host(tmp_path), timeout=0.5)
     assert r["problem"] == "probe_failed"
@@ -91,7 +88,7 @@ def test_old_bins_mean_too_old_and_manual_leads(tmp_path):
     )
     r = probe(req, host(tmp_path, managers={"apt"}))
     assert r["problem"] == "too_old" and r["fix"] == "" and r["manual"] == "AppImage"
-    assert r["found_path"].endswith("convert")
+    assert Path(r["found_path"]).stem == "convert"  # convert.CMD on Windows
 
 
 ORDER = {"brew": "imagemagick", "apt": "imagemagick", "winget": "ImageMagick.ImageMagick", "choco": "imagemagick"}
@@ -182,7 +179,7 @@ def test_install_dry_run_executes_nothing(tmp_path):
 
 def test_install_survives_a_failing_or_prompting_installer(tmp_path, monkeypatch):
     bindir = tmp_path / "bin"
-    stub(bindir, "brew", "read x || exit 1")
+    stub(bindir, "brew", "read x || exit 1", "@set /p x= || exit /b 1")
     monkeypatch.setenv("PATH", str(bindir))
     lines = []
     h = host(tmp_path, managers={"brew"})

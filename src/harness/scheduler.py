@@ -23,7 +23,7 @@ import re
 import shutil
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any, Literal
 
@@ -64,16 +64,28 @@ class Routine:
     last_skip: dict[str, Any] | None = None  # {"at", "outcome": skipped_missed|skipped_overlap|failed, "reason"?}
 
 
+# The zone routines run in. None is the computer's own, which is what the harness uses; a test sets a zone here when it
+# cannot set the process's zone (Windows has no `time.tzset`).
+LOCAL: tzinfo | None = None
+
+
 def _now() -> datetime:
-    return datetime.now().astimezone()
+    return datetime.now(LOCAL).astimezone(LOCAL)
+
+
+def _aware(naive: datetime) -> datetime:
+    """`naive` read as a wall-clock time in LOCAL. A time that does not exist there comes back as another wall time."""
+    if LOCAL is None:
+        return naive.astimezone()
+    return naive.replace(tzinfo=LOCAL).astimezone(timezone.utc).astimezone(LOCAL)
 
 
 def _local(naive: datetime) -> datetime:
     """A wall-clock time in the local zone. One that does not exist (spring forward) moves on to the first valid minute."""
-    aware = naive.astimezone()
+    aware = _aware(naive)
     while aware.replace(tzinfo=None) != naive:
         naive += timedelta(minutes=1)
-        aware = naive.astimezone()
+        aware = _aware(naive)
     return aware
 
 
@@ -93,7 +105,7 @@ def check(s: Schedule) -> None:
 def next_run(s: Schedule, after: datetime) -> datetime:
     """The first slot strictly after `after`, as an aware local datetime."""
     check(s)
-    after = after.astimezone()
+    after = after.astimezone(LOCAL)
     if s.kind == "interval":
         return after + timedelta(hours=s.hours)
     h, m = _hm(s)

@@ -71,7 +71,7 @@ def atlas():
 
 
 def test_neighbours_and_detail(atlas):
-    first = json.loads((FIX / "temperature_viewer.json").read_text())["british blues"][0]
+    first = json.loads((FIX / "temperature_viewer.json").read_text(encoding="utf-8"))["british blues"][0]
     name, temp, shared = atlas.neighbours("british blues")[0]
     assert (name, temp) == (first[0], first[1]) and shared == first[4]
     d = atlas.detail("british blues")

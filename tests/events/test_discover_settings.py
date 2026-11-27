@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 
 import pytest
@@ -125,7 +126,8 @@ def test_check_key():
 def test_keys_file_is_owner_only_and_beside_the_vault(tmp_path):
     DiscoverKeys(findlocal="fl_live_abcdefgh").save(tmp_path / "vault")
     path = settings_dir(tmp_path / "vault") / "events_keys.json"
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name != "nt":  # Windows cannot express the mode through chmod
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert DiscoverKeys.load(tmp_path / "vault").findlocal == "fl_live_abcdefgh"
 
 

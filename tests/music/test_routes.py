@@ -213,7 +213,8 @@ def test_token_file_is_private(harness):
     import os, stat
     from src.vault_settings import settings_dir
     p = settings_dir(harness.config.vault_root) / "music_keys.json"
-    assert stat.S_IMODE(os.stat(p).st_mode) == 0o600
+    if os.name != "nt":  # Windows cannot express the mode through chmod
+        assert stat.S_IMODE(os.stat(p).st_mode) == 0o600
     assert MusicKeys.load(harness.config.vault_root).token == GOOD
 
 

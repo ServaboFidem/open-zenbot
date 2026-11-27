@@ -1,4 +1,5 @@
 import json
+import os
 
 from src.harness.allowed_folders import private_folders
 from src.music.settings import MusicKeys, MusicSettings, music_dir
@@ -29,7 +30,8 @@ def test_token_file_is_owner_only_and_never_public(tmp_path):
     v = tmp_path / "vault"
     MusicKeys(token="abcdEFGH1234").save(v)
     p = settings_dir(v) / "music_keys.json"
-    assert oct(p.stat().st_mode & 0o777) == "0o600"
+    if os.name != "nt":  # Windows cannot express the mode through chmod
+        assert oct(p.stat().st_mode & 0o777) == "0o600"
     assert MusicKeys.load(v).hint() == "1234"
     assert "abcdEFGH1234" not in json.dumps(MusicSettings.load(v).public())
 

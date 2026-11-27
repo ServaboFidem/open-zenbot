@@ -57,6 +57,7 @@ def harness(cfg, service):
         calendar=service,
     )
     h.discover.today = lambda: "2026-11-18"
+    h.discover.now = lambda: "2026-11-18T12:00:00Z"  # the same day as `today`, so the report's events are still ahead
     return h
 
 

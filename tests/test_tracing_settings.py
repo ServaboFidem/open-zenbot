@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from pathlib import Path
 
@@ -38,7 +39,8 @@ def test_a_blank_secret_keeps_the_saved_one_and_the_file_is_owner_only(tmp_path:
     s.save(tmp_path)
     s2 = TracingSettings.load(tmp_path).with_langfuse({"public_key": "pk-2", "secret_key": "", "base_url": "https://b"})
     assert s2.langfuse == {"public_key": "pk-2", "secret_key": "sk-lf-saved-9999", "base_url": "https://b", "environment": ""}
-    assert stat.S_IMODE((settings_dir(tmp_path) / ts.FILE).stat().st_mode) == 0o600
+    if os.name != "nt":  # Windows cannot express the mode through chmod
+        assert stat.S_IMODE((settings_dir(tmp_path) / ts.FILE).stat().st_mode) == 0o600
 
 
 def test_the_page_never_gets_the_secret(tmp_path: Path):

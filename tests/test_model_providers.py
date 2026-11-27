@@ -157,8 +157,8 @@ def test_store_keeps_keys_out_of_public_views_and_off_other_eyes(vault: Path):
     e = store.add("Groq", "openai-compatible", "https://api.groq.com/openai/v1/", key=KEY)
     assert e.id == "groq" and e.base_url == "https://api.groq.com/openai/v1"
     assert KEY not in json.dumps(e.public()) and e.public()["key_set"] and e.public()["key_source"] == "stored"
-    mode = stat.S_IMODE(os.stat(store.path).st_mode)
-    assert mode == 0o600
+    if os.name != "nt":  # Windows cannot express the mode through chmod
+        assert stat.S_IMODE(os.stat(store.path).st_mode) == 0o600
     assert store.key_ref("groq") == "env:ZEN_PROVIDER_GROQ_API_KEY" and store.secret("groq").reveal() == KEY
     assert "registered-secret" in exclusion.find(f"leaked {KEY}")
     again = ProviderStore(vault).load()  # a restart reads the key back

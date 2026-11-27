@@ -74,7 +74,7 @@ test('start spawns the venv python in the harness folder with the managed enviro
   assert.equal(opts.env.UV_TOOL_DIR, paths.uvTools);
   // the venv's python leads PATH as under `uv run`, but VIRTUAL_ENV stays unset so `--active` cannot reach it
   assert.equal('VIRTUAL_ENV' in opts.env, false);
-  assert.equal(opts.env.PATH, `${path.dirname(paths.python)}:${path.join(resources, 'bin')}:${paths.nodeBin}:/usr/bin`);
+  assert.equal(opts.env.PATH, `${path.posix.dirname(paths.python)}:${path.posix.join(resources, 'bin')}:${paths.nodeBin}:/usr/bin`);  // the rig is linux
   assert.equal(h.url, 'http://127.0.0.1:8765');
 });
 
