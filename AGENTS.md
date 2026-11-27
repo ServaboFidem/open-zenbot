@@ -595,7 +595,7 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   decision model could not be reached.", `store` "A suggestion could not be saved.", each followed by "Trying again
   tomorrow."; otherwise it ends "<spent> of 40 requests used today." (every request to CaseMark counts). Remove (with a `window.confirm`) is offered on skills whose slug `GET /skilltuner/discovered`
   lists.
-  *The waiting count.* `app.jsx` reads `GET /skilltuner/status` every 15 s while online and after each Approve or Reject, and keeps
+  *The waiting count.* `app.jsx` reads `GET /skilltuner/status` every 15 s while online and after each Approve or Reject (`TunerSuggestions` `onDecided`), and keeps
   `pending` (`waitingCount`: a whole number, else 0; 0 while offline or when the read fails). It shows as a `nav-count` on Settings in the
   left bar, on the Skills tile of the Settings home (`SettingsHome` `badges`), in the tab's label ("SkillTuner (2)", `tunerTabLabel`) and as
   a line on the Overview under the summary ("SkillTuner found 2 skills waiting for your approval →", `waitingLine`) that opens the
@@ -607,7 +607,7 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   path and Add (`canAdd`). It reads `GET /skilltuner/sources` every 15 s and every 3 s while a repository is reading (`createLatest`; actions one at a
   time with `createQueue`). Addresses, labels and errors are plain text. A suggestion card says `cardSource` ("From github.com/o/r · MIT",
   agentskills.finance when there is no `source`) and `LEFT_OUT` when `left_out` is set; `statusLine` names GitHub or agentskills.finance by
-  `error_source`. Tests: `tests/gui/skilltuner.test.mjs`, `settings-index.test.mjs`.
+  `error_source`. Seen once in Playwright Chromium against a throwaway harness with two seeded suggestions (2026-11-27): the four counts, the tab order, the dreaming-off link, a search hit opening the tab, Main without the cards, and Reject lowering the count at once; not seen in the Electron app, in the dark theme or with a real SkillTuner pass. Tests: `tests/gui/skilltuner.test.mjs`, `settings-index.test.mjs`.
 - **Ledger.** Kind `skilltuner`, events `pass_start`, `need` (counts; `error: model` and the class name when the answer
   could not be used), `search` (the `source`, results, error kind, or `excluded` for a need dropped unsent), `repo_added`
   (id, owner and repo, which are public), `repo_removed` (id) and `repo_read` (id, skills, skipped, `from` `index` or
