@@ -94,11 +94,39 @@ def _standard_apache() -> str:
     return _norm(resources.files("src.skilltuner").joinpath("apache-2.0.txt").read_text("utf-8"))
 
 
-# One copyright statement as `_norm` leaves it: "copyright", an optional "(c)", the years, a holder of at most twelve
-# words, an optional "all rights reserved"; one or more in a row. Words that read as terms are refused after the match.
-_NORM_STATEMENT = r"copyright(?: c)?(?: \d{4})+(?: [a-z0-9]+){1,12}?(?: all rights reserved)?"
-_NORM_COPYRIGHTS = re.compile(rf"{_NORM_STATEMENT}(?: {_NORM_STATEMENT}){{0,7}}")
 _APPENDIX_FIELDS = "copyright yyyy name of copyright owner"
+_YEAR = re.compile(r"\d{4}")
+_RESERVED = ["all", "rights", "reserved"]
+
+
+def _copyright_statements(t: str) -> bool:
+    """True when `t` (as `_norm` leaves it) is one to eight copyright statements in a row: "copyright", an optional
+    "(c)", the years, then a holder of one to twelve words, with an optional "all rights reserved".
+
+    Read word by word, each word one way: every four-digit word straight after "copyright" is a year, and the holder
+    runs to the next "copyright". A regular expression for this backtracks for seconds on a crafted value, since a
+    four-digit word could be a year or a holder's word. Words that read as terms are refused by the caller."""
+    words, i, n = t.split(), 0, 0
+    while i < len(words):
+        if words[i] != "copyright" or n == 8:
+            return False
+        i, n = i + 1, n + 1
+        if i < len(words) and words[i] == "c":
+            i += 1
+        start = i
+        while i < len(words) and _YEAR.fullmatch(words[i]):
+            i += 1
+        if i == start:
+            return False
+        holder = []
+        while i < len(words) and words[i] != "copyright":
+            holder.append(words[i])
+            i += 1
+        if holder[-3:] == _RESERVED:
+            holder = holder[:-3]
+        if not 1 <= len(holder) <= 12:
+            return False
+    return n > 0
 
 
 def _apache(t: str) -> bool:
@@ -116,7 +144,7 @@ def _apache(t: str) -> bool:
     if not (rest.startswith(head) and rest.endswith(tail) and len(rest) >= len(head) + len(tail)):
         return False
     filled = rest[len(head):len(rest) - len(tail)].strip()
-    return (len(filled) <= 600 and _NORM_COPYRIGHTS.fullmatch(filled) is not None
+    return (len(filled) <= 600 and _copyright_statements(filled)
             and not _NOT_A_NAME & set(filled.split()))
 
 

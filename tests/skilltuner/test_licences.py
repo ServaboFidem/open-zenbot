@@ -177,3 +177,25 @@ def test_the_apache_appendix_is_compared_whole():
     assert licence_of_text(inside) == ""
     restricted = APACHE.replace("Copyright [yyyy] [name of copyright owner]", "Copyright 2024 Jane Doe no commercial use")
     assert licence_of_text(restricted) == ""
+
+
+def test_copyright_statements_are_read_one_way():
+    from src.skilltuner.licences import _copyright_statements as ok
+    assert ok("copyright 2024 jane doe")
+    assert ok("copyright c 2019 2024 acme inc copyright 2025 jane doe all rights reserved")
+    assert ok(" ".join(["copyright 2024 x"] * 8)) and not ok(" ".join(["copyright 2024 x"] * 9))
+    assert ok("copyright 2024 " + " ".join(["w"] * 12)) and not ok("copyright 2024 " + " ".join(["w"] * 13))
+    for bad in ("", "copyright", "copyright 2024", "copyright jane doe", "jane doe copyright 2024 x",
+                "copyright 2024 all rights reserved", "copyright 2024 x copyright"):
+        assert not ok(bad), bad
+
+
+def test_a_crafted_appendix_field_is_refused_quickly():
+    # A regular expression took 3 to 34 s on these: a four-digit word could be read as a year or as a holder's word.
+    import time
+    for unit in ("Copyright 2020 2021 x ", "Copyright 2020 Copyright 2021 ", "Copyright (c) 2020 2020 2020 "):
+        field = (unit * 40)[:590].strip() + " !!"
+        text = APACHE.replace("Copyright [yyyy] [name of copyright owner]", field)
+        start = time.perf_counter()
+        assert licence_of_text(text) == ""
+        assert time.perf_counter() - start < 0.5, unit
