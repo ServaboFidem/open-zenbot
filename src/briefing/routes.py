@@ -21,7 +21,7 @@ from src.memory.ledger import Kind
 log = logging.getLogger(__name__)
 
 NOT_READY = {
-    "sonos_off": "Sonos is off. Switch it on in Settings > Connected apps.",
+    "sonos_off": "Sonos is off. Switch it on in Settings > Speakers.",
     "no_speakers": "No Sonos speaker was found.",
     "no_voice": "Set up a voice in Settings > Models > Jobs > Read aloud first.",
     "ceiling_zero": CEILING_ZERO,

@@ -5,7 +5,7 @@ import { errorLine } from './mail.js';
 import { freshRead } from './sonos.js';
 import { HELP_LINE, NETWORK_LINE, PROTOCOLS, PROTOCOL_NAMES, canLookAgain, createPickQueue, defaultLine, lastLook, nextRead, protocolLine, radiosDisabled, speakerDetail } from './wifi-speakers.js';
 
-// Settings > Wi-Fi speakers: a switch per speaker type (AirPlay, Chromecast, DLNA; each off until turned on, since
+// Settings > Speakers > Wi-Fi speakers: a switch per speaker type (AirPlay, Chromecast, DLNA; each off until turned on, since
 // it listens on the home network), the speakers each found, and the one default speaker, picked with a radio and
 // saved at once. Names come from the devices and are shown as plain text.
 // Props: { api, online, notify }

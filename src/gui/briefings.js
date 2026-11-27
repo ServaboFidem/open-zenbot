@@ -24,7 +24,7 @@ export const LOGIN_FAILED = 'The briefing is saved, but starting ZenBot when you
 export const loginTook = (asked, state) => !state || typeof state !== 'object' || typeof state.login !== 'boolean' || state.login === asked;
 
 const READINESS = {
-  sonos_off: 'Sonos is off. Switch it on in Settings > Connected apps.',
+  sonos_off: 'Sonos is off. Switch it on in Settings > Speakers.',
   no_speakers: 'No Sonos speaker was found.',
   no_voice: 'Set up a voice in Settings > Models > Jobs > Read aloud first.',
   ceiling_zero: 'Your Sonos volume limit is 0.',
@@ -36,7 +36,7 @@ export const readinessLine = reason => (!reason ? '' : READINESS[reason] || 'The
 /** Where a missing piece is fixed: the Settings panel and, where there is one, the section's anchor title. */
 export function readinessFix(reason) {
   if (reason === 'no_voice') return { panel: 'models', title: 'tool-speech' };  // the Read aloud card (toolAnchor('speech'))
-  if (reason === 'sonos_off' || reason === 'no_speakers' || reason === 'ceiling_zero') return { panel: 'apps', title: 'Sonos' };
+  if (reason === 'sonos_off' || reason === 'no_speakers' || reason === 'ceiling_zero') return { panel: 'speakers', title: 'Sonos' };
   return null;
 }
 

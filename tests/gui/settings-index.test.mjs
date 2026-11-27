@@ -75,7 +75,17 @@ test('the ledger is a settings panel, found by name and by its kinds filter', ()
   assert.equal(searchSettings('ledger')[0].panel, 'ledger');
   assert.ok(searchSettings('decider scores').some(m => m.panel === 'ledger'));
 });
-test('a panel is found by its description', () => assert.equal(searchSettings('mockup')[0].panel, 'apps'));
+test('a panel is found by its description', () => assert.equal(searchSettings('outside services')[0].panel, 'apps'));
+test('Sonos is on the Speakers page, above Wi-Fi speakers, and the connected-apps mockup is gone', () => {
+  assert.equal(PANELS.find(p => p.id === 'speakers').name, 'Speakers');
+  const sonos = searchSettings('Sonos')[0];
+  assert.equal(sonos.panel, 'speakers'); assert.equal(sonos.anchor, anchorId('speakers', 'Sonos'));
+  assert.equal(searchSettings('volume limit')[0]?.panel, 'speakers');
+  const onSpeakers = SECTIONS.filter(s => s.panel === 'speakers').map(s => s.title);
+  assert.deepEqual(onSpeakers.slice(0, 2), ['Sonos', 'Wi-Fi speakers']);
+  assert.deepEqual(SECTIONS.filter(s => s.panel === 'apps').map(s => s.title), ['AgentMail', 'Telnyx']);
+  assert.deepEqual(searchSettings('mockup'), []);
+});
 test('the matched text holds a word that was typed', () => { for (const m of searchSettings('secret langfuse')) assert.match(m.text, /secret|langfuse/i); });
 
 test('a title hit in a later panel comes before a body hit in an earlier one', () => {
@@ -193,7 +203,7 @@ test('the harness status line is on About', () => {
 
 test('no message, comment, prompt or setup doc names a Settings page that is gone', () => {
   const repo = new URL('../../', import.meta.url);
-  const gone = [/Harness Tools/, /Harness settings/, /Model providers page/, /Settings (>|&gt;) Model providers/, /Settings (>|&gt;) Coding agents/];
+  const gone = [/Harness Tools/, /Harness settings/, /Model providers page/, /Settings (>|&gt;) Model providers/, /Settings (>|&gt;) Coding agents/, /Connected apps (>|&gt;) Sonos/, /Settings (>|&gt;) Wi-Fi speakers/, /Switch it on in Settings (>|&gt;) Connected apps/];
   const walk = (dir, ext) => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(new URL(`${e.name}/`, dir), ext) : ext.test(e.name) ? [new URL(e.name, dir)] : []);
   const files = [
     ...walk(new URL('src/', repo), /\.(py|js|jsx|cjs)$/), ...walk(new URL('bot-prompts/', repo), /\.md$/), ...walk(new URL('skills/', repo), /\.md$/),

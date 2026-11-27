@@ -32,7 +32,7 @@ FAVORITES_CAP = 200
 PANEL_FAVORITES_CAP = 1000  # the Sonos page lists more than a bot's tool answer can hold
 CLOSEST_CAP = 10
 IN_ROOM = "Sonos tools are not used in a bot room."
-OFF = "Sonos is off. Switch it on in Settings > Connected apps."
+OFF = "Sonos is off. Switch it on in Settings > Speakers."
 PLAY_TIMEOUT_S = 45  # clearing the queue, adding a long playlist (30 s at most) and starting it
 
 # Announcements (the spoken briefing): the clip's listener lives for its length plus CLIP_LIFE_SLACK_S, and the wait

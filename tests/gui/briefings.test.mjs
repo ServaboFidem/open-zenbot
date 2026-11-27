@@ -67,7 +67,7 @@ test('skippedLate is true only for a skipped_late last run', () => {
 
 test('readinessLine gives the route sentences', () => {
   assert.equal(readinessLine(null), '');
-  assert.equal(readinessLine('sonos_off'), 'Sonos is off. Switch it on in Settings > Connected apps.');
+  assert.equal(readinessLine('sonos_off'), 'Sonos is off. Switch it on in Settings > Speakers.');
   assert.equal(readinessLine('no_speakers'), 'No Sonos speaker was found.');
   assert.equal(readinessLine('no_voice'), 'Set up a voice in Settings > Models > Jobs > Read aloud first.');
   assert.equal(readinessLine('ceiling_zero'), 'Your Sonos volume limit is 0.');
@@ -189,5 +189,5 @@ test('the no-voice fix opens the Read aloud card on Settings > Models > Jobs', a
   assert.equal(fix.panel, 'models');
   assert.equal(anchorId(fix.panel, fix.title), toolAnchor('speech'));
   assert.equal(tabOf(fix.panel, anchorId(fix.panel, fix.title)), 'jobs');
-  assert.deepEqual(readinessFix('sonos_off'), { panel: 'apps', title: 'Sonos' });
+  for (const r of ['sonos_off', 'no_speakers', 'ceiling_zero']) assert.deepEqual(readinessFix(r), { panel: 'speakers', title: 'Sonos' });
 });

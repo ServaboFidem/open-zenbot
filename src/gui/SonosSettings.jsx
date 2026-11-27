@@ -4,7 +4,7 @@ import { anchorId } from './settings-index';
 import { errorLine } from './mail.js';
 import { HELP_LINE, canLookAgain, freshRead, nextRead, statusLine, volumeError } from './sonos.js';
 
-// Settings > Connected apps > Sonos: whether ZenBot looks for Sonos speakers on this network, what it found, Look
+// Settings > Speakers > Sonos: whether ZenBot looks for Sonos speakers on this network, what it found, Look
 // again (which also scans the network, slower), and the highest volume ZenBot may set. Room names come from the
 // speakers and are shown as plain text.
 // Props: { api, online, notify, onChange } (onChange: after a save, so the left bar's Sonos entry follows the switch)
@@ -59,7 +59,7 @@ export function SonosSettings({ api, online, notify, onChange }) {
   const volError = volume.trim() ? volumeError(volume) : '';
   const lastLook = status?.last_look_at ? new Date(status.last_look_at) : null;
 
-  return <section className="resource-row editor-form" id={anchorId('apps', 'Sonos')}>
+  return <section className="resource-row editor-form" id={anchorId('speakers', 'Sonos')}>
     <h2>Sonos</h2>
     <p className="field-hint">{HELP_LINE}</p>
     {off && <p className="field-hint">Start the harness to find your Sonos speakers.</p>}
