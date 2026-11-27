@@ -62,3 +62,5 @@
 .file-chip-error{color:#b10e1c;font-size:var(--tiny);overflow-wrap:anywhere}
 .composer-note{margin-top:var(--s2);color:var(--warning)}
 .sent-files .media-grid{margin:var(--s2) 0 0}
+/* Settings > Skill discovery: a licence select sits in a flex row beside the source, so it does not take the global select width. */
+.licence-select{width:auto;flex:0 0 auto;min-width:160px}.repo-source{overflow-wrap:anywhere}

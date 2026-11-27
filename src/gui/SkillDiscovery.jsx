@@ -85,12 +85,12 @@ export function SkillDiscovery({ ctx }) {
       <div className="od-row"><span className="model-name od-fill">{sources.casemark?.label || 'agentskills.finance'}</span><span className="field-hint">{casemarkLine(sources.casemark)}</span></div>
       {repos.map(r => <div className="od-stack" key={r.id}>
         <div className="od-row-top">
-          <div className="od-field od-fill">
+          <div className="od-field od-fill repo-source">
             <span className="model-name">{r.label || r.address}{r.folder ? ` /${r.folder}` : ''}</span>
             <span className="field-hint">{repoLine(r)}</span>
             {r.error && !r.reading && <span className="form-error" role="status">{repoErrorLine(r.error)}</span>}
           </div>
-          <select aria-label={`Licence for skills without their own, ${r.label || r.address}`} value={r.licence || ''} disabled={!online || busy.has(r.id)} onChange={e => setLicence(r, e.target.value)}>
+          <select className="licence-select" aria-label={`Licence for skills without their own, ${r.label || r.address}`} value={r.licence || ''} disabled={!online || busy.has(r.id)} onChange={e => setLicence(r, e.target.value)}>
             {LICENCE_CHOICES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
           </select>
           <Button appearance="outline" disabled={!online || r.reading || busy.has(r.id)} onClick={() => readAgain(r)}>Read again</Button>
@@ -107,7 +107,7 @@ export function SkillDiscovery({ ctx }) {
         <Button appearance="outline" disabled={!online || !address || working !== ''} onClick={check}>{working === 'check' ? 'Checking…' : 'Check'}</Button>
       </div>
       {form.licence !== null && form.checked === address && <label className="od-row">Licence for skills without their own
-        <select aria-label="Licence for skills without their own" value={form.licence} onChange={e => setForm(f => ({ ...f, licence: e.target.value }))}>
+        <select className="licence-select" aria-label="Licence for skills without their own" value={form.licence} onChange={e => setForm(f => ({ ...f, licence: e.target.value }))}>
           {LICENCE_CHOICES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
         </select>
         <span className="field-hint">{form.github ? `(GitHub says: ${form.github})` : '(GitHub names no licence)'}</span></label>}
