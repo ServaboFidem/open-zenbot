@@ -71,7 +71,9 @@ export function doneLine(names) {
 }
 
 // Under the switch (also in the search index).
-export const PRIVACY = "SkillTuner reads what you asked for while the computer dreams, and looks for a skill that fits in agentskills.finance and in the GitHub repositories you add. Repositories are searched on this computer: only agentskills.finance and the decision model you chose receive the words of a need. Nothing is installed until you approve it.";
+// Who receives a need's words; said the same way in the Dreaming section and on the Skill discovery panel.
+export const SEARCH_PRIVACY = "Repositories are searched on this computer: only agentskills.finance and the decision model you chose receive the words of a need.";
+export const PRIVACY = `SkillTuner reads what you asked for while the computer dreams, and looks for a skill that fits in agentskills.finance and in the GitHub repositories you add. ${SEARCH_PRIVACY} Nothing is installed until you approve it.`;
 
 // A suggestion that came with files other than instructions and references.
 export const LEFT_OUT = 'This skill came with scripts or other files that were not brought over.';

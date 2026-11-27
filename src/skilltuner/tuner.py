@@ -435,6 +435,7 @@ class SkillTuner:
                 continue
             self.state.add_search(today)  # counted as sent: giving the need back later does not lower it
             answers: dict[str, list[Found]] = {}
+            version = self.state.github_version  # a list change after this voids this need's GitHub mark
             if "casemark" in due:
                 found = await self._search_casemark(need.words, today, guarded)
                 if found is not None:
@@ -460,12 +461,12 @@ class SkillTuner:
             fresh = self._fresh(need.words, answers, counts)
             if not fresh:
                 for source in answers:
-                    self.state.mark_searched(need.words, today, "none", source)
+                    self.state.mark_searched(need.words, today, "none", source, version)
                 continue
             outcome, slug, score = await self._fit(need.words, fresh, go, guarded)
             # `undecided` is due again from the next local date (`TunerState.due_needs`), not at once
             for source in answers:
-                self.state.mark_searched(need.words, today, outcome, source)
+                self.state.mark_searched(need.words, today, outcome, source, version)
             if slug:
                 same = next((w for w in winners if w.found.slug == slug), None)
                 if same is None:
@@ -590,7 +591,10 @@ class SkillTuner:
             references = []
             for path, _file_slug in d.files:
                 go()
-                references.append((path, await guarded(reader.read_file(d.slug, path))))
+                # GitHub's at the commit the body came from, never the one a refresh may have stored since
+                read = (reader.read_file(d.slug, path, d.commit) if isinstance(reader, GitHubSkills)
+                        else reader.read_file(d.slug, path))
+                references.append((path, await guarded(read)))
         except SourceError as e:
             if w.github:
                 if github_wide(e):  # about GitHub or this computer: GitHub waits until tomorrow, the pass goes on

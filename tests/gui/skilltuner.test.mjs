@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LEFT_OUT, LICENCE_CHOICES, PRIVACY, attachPlan, canAdd, cardSource, casemarkLine, doneLine, initialPicks, offeredBots, repoErrorLine, repoLine, statusLine, tunerApi } from '../../src/gui/skilltuner.js';
+import { LEFT_OUT, LICENCE_CHOICES, PRIVACY, SEARCH_PRIVACY, attachPlan, canAdd, cardSource, casemarkLine, doneLine, initialPicks, offeredBots, repoErrorLine, repoLine, statusLine, tunerApi } from '../../src/gui/skilltuner.js';
 import { SECTIONS, searchSettings } from '../../src/gui/settings-index.js';
 
 test('tunerApi paths and bodies; every POST sends {}', async () => {
@@ -207,6 +207,11 @@ test('statusLine names the service that failed', () => {
   assert.equal(statusLine({ ...on, error: 'budget', error_source: 'github' }), "Today's GitHub reads are used up. Trying again tomorrow.");
   assert.equal(statusLine({ ...on, error: 'network', error_source: 'casemark' }), 'agentskills.finance could not be reached. Trying again tomorrow.');
   assert.equal(statusLine({ ...on, error: 'network' }), 'agentskills.finance could not be reached. Trying again tomorrow.');
+});
+
+test('both privacy lines name the decision model as a recipient', () => {
+  assert.match(SEARCH_PRIVACY, /agentskills\.finance and the decision model you chose/);
+  assert.ok(PRIVACY.includes(SEARCH_PRIVACY));
 });
 
 test('PRIVACY says repositories are searched on this computer', () => {

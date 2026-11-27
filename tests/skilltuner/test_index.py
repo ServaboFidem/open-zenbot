@@ -19,6 +19,23 @@ def test_skill_folders_inside_the_folder_only():
     assert ix.skill_folders(b, "") == ["other/b", "skills/a"]
 
 
+def test_a_folder_that_is_itself_a_skill_is_found():
+    b = blobs("skills/a/SKILL.md", "skills/ab/SKILL.md", "skills/a/inner/SKILL.md")
+    assert ix.skill_folders(b, "skills/a") == ["skills/a"]
+
+
+def test_find_index_looks_above_the_folder():
+    b = blobs("skills/skills_index.json", "other/skills_index.json", "skills/teamx/skills_index.json")
+    assert ix.find_index(b, "skills/team", "") == "skills/skills_index.json"
+    assert ix.find_index(blobs("skills/teamx/skills_index.json"), "skills/team", "") is None
+
+
+def test_licence_is_not_cut_before_it_is_checked():
+    padded = "MIT" + " " * 100 + "AND GPL-3.0"
+    assert ix.frontmatter(f"---\nname: x\nlicense: '{padded}'\n---\n")["license"] != "MIT"
+    assert ix.frontmatter("---\nname: x\nlicense: '  MIT  '\n---\n")["license"] == "MIT"
+
+
 def test_a_skill_inside_a_skill_is_ignored():
     b = blobs("skills/a/SKILL.md", "skills/a/inner/SKILL.md", "skills/b/SKILL.md")
     assert ix.skill_folders(b, "skills") == ["skills/a", "skills/b"]

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Input, Spinner } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
-import { LICENCE_CHOICES, canAdd, casemarkLine, createLatest, createQueue, repoErrorLine, repoLine } from './skilltuner.js';
+import { LICENCE_CHOICES, SEARCH_PRIVACY, canAdd, casemarkLine, createLatest, createQueue, repoErrorLine, repoLine } from './skilltuner.js';
 
 const POLL_MS = 15000;
 const READING_MS = 3000;
@@ -78,7 +78,7 @@ export function SkillDiscovery({ ctx }) {
   const repos = sources?.repos || [];
   return <section className="resource-row editor-form" id={anchorId('discovery', 'Skill discovery')}>
     <h2>Skill discovery</h2>
-    <p className="field-hint">SkillTuner looks in these places for skills that fit what you keep asking for. Repositories are searched on this computer; only agentskills.finance receives a need's words.</p>
+    <p className="field-hint">SkillTuner looks in these places for skills that fit what you keep asking for. {SEARCH_PRIVACY}</p>
     {!online && <p className="field-hint">Start the harness to see the sources.</p>}
     {online && !sources && !error && <Spinner size="tiny" label="Loading sources…"/>}
     {sources && <div className="od-stack">

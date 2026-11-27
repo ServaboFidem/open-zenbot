@@ -218,9 +218,9 @@ def skilltuner_router(h) -> APIRouter:
             raise HTTPException(422, str(e)) from None
         async with lock:
             repos = list(h.tuner.settings.repos)
-            same = (owner.casefold(), repo.casefold(), ref.casefold(), folder.casefold())
-            if any((e.owner.casefold(), e.repo.casefold(), e.ref.casefold(), e.folder.casefold()) == same
-                   for e in repos):
+            # GitHub ignores case in owner and repository names, never in a ref or a path
+            same = (owner.casefold(), repo.casefold(), ref, folder)
+            if any((e.owner.casefold(), e.repo.casefold(), e.ref, e.folder) == same for e in repos):
                 raise HTTPException(409, DUPLICATE)
             if len(repos) >= MAX_REPOS:
                 raise HTTPException(409, TOO_MANY)

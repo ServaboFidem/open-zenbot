@@ -44,8 +44,6 @@ _BSD_TAIL = ("this software is provided by the copyright holders and contributor
              "possibility of such damage")
 _BSD2 = _BSD_HEAD + _BSD_TAIL
 _BSD3 = _BSD_HEAD + _BSD_THIRD + _BSD_TAIL
-_CC_OPEN = ("attribution 4 0 international creative commons corporation creative commons is not a law firm and "
-            "does not provide legal services or legal advice")
 
 _YEARS = r"\d{4}(?:\s*[-\u2013,]\s*\d{4})*"
 _NAME = r"(?:(?:inc|llc|ltd|co|corp|jr|sr|[A-Za-z])\.|[^\W\d_][\w'\u2019-]*|&)"
@@ -96,49 +94,74 @@ def _standard_apache() -> str:
     return _norm(resources.files("src.skilltuner").joinpath("apache-2.0.txt").read_text("utf-8"))
 
 
+_APPENDIX_FIELDS = "copyright yyyy name of copyright owner"
+_YEAR = re.compile(r"\d{4}")
+_RESERVED = ["all", "rights", "reserved"]
+
+
+def _copyright_statements(t: str) -> bool:
+    """True when `t` (as `_norm` leaves it) is one to eight copyright statements in a row: "copyright", an optional
+    "(c)", the years, then a holder of one to twelve words, with an optional "all rights reserved".
+
+    Read word by word, each word one way: every four-digit word straight after "copyright" is a year, and the holder
+    runs to the next "copyright". A regular expression for this backtracks for seconds on a crafted value, since a
+    four-digit word could be a year or a holder's word. Words that read as terms are refused by the caller."""
+    words, i, n = t.split(), 0, 0
+    while i < len(words):
+        if words[i] != "copyright" or n == 8:
+            return False
+        i, n = i + 1, n + 1
+        if i < len(words) and words[i] == "c":
+            i += 1
+        start = i
+        while i < len(words) and _YEAR.fullmatch(words[i]):
+            i += 1
+        if i == start:
+            return False
+        holder = []
+        while i < len(words) and words[i] != "copyright":
+            holder.append(words[i])
+            i += 1
+        if holder[-3:] == _RESERVED:
+            holder = holder[:-3]
+        if not 1 <= len(holder) <= 12:
+            return False
+    return n > 0
+
+
 def _apache(t: str) -> bool:
+    """The standard terms, then nothing or the standard appendix whole, with only its bracketed copyright line
+    filled in (by copyright statements and nothing else)."""
     standard = _standard_apache()
     end = standard.index("end of terms and conditions") + len("end of terms and conditions")
     if not t.startswith(standard[:end]):
         return False
     rest = t[end:].strip()
-    return rest == "" or (rest.startswith("appendix how to apply the apache license to your work")
-                          and rest.endswith("limitations under the license"))
+    appendix = standard[end:].strip()
+    if rest in ("", appendix):
+        return True
+    head, _, tail = appendix.partition(_APPENDIX_FIELDS)
+    if not (rest.startswith(head) and rest.endswith(tail) and len(rest) >= len(head) + len(tail)):
+        return False
+    filled = rest[len(head):len(rest) - len(tail)].strip()
+    return (len(filled) <= 600 and _copyright_statements(filled)
+            and not _NOT_A_NAME & set(filled.split()))
 
 
-_CC_S8 = _norm(
-    "a. For the avoidance of doubt, this Public License does not, and shall not be interpreted to, reduce, limit, "
-    "restrict, or impose conditions on any use of the Licensed Material that could lawfully be made without "
-    "permission under this Public License. b. To the extent possible, if any provision of this Public License is "
-    "deemed unenforceable, it shall be automatically reformed to the minimum extent necessary to make it "
-    "enforceable. If the provision cannot be reformed, it shall be severed from this Public License without "
-    "affecting the enforceability of the remaining terms and conditions. c. No term or condition of this Public "
-    "License will be waived and no failure to comply consented to unless expressly agreed to by the Licensor. "
-    "d. Nothing in this Public License constitutes or may be interpreted as a limitation upon, or waiver of, any "
-    "privileges and immunities that apply to the Licensor or You, including from the legal processes of any "
-    "jurisdiction or authority.")
-_CC_NOTICE = _norm(
-    "Creative Commons is not a party to its public licenses. Notwithstanding, Creative Commons may elect to apply "
-    "one of its public licenses to material it publishes and in those instances will be considered the Licensor. "
-    "The text of the Creative Commons public licenses is dedicated to the public domain under the CC0 Public "
-    "Domain Dedication. Except for the limited purpose of indicating that material is shared under a Creative "
-    "Commons public license or as otherwise permitted by the Creative Commons policies published at "
-    "creativecommons.org/policies, Creative Commons does not authorize the use of the trademark Creative Commons "
-    "or any other trademark or logo of Creative Commons without its prior written consent including, without "
-    "limitation, in connection with any unauthorized modifications to any of its public licenses or any other "
-    "arrangements, understandings, or agreements concerning use of licensed material. For the avoidance of doubt, "
-    "this paragraph does not form part of the public licenses. Creative Commons may be contacted at "
-    "creativecommons.org.")
+@cache
+def _cc_by_forms() -> frozenset[str]:
+    """The standard text (`cc-by-4.0.txt`, Creative Commons' own legalcode.txt) as `_norm` leaves it, with and without
+    the preamble before the licence's heading and the notice after its last section; nothing else is accepted."""
+    standard = _norm(resources.files("src.skilltuner").joinpath("cc-by-4.0.txt").read_text("utf-8"))
+    start = standard.index("creative commons attribution 4 0 international public license")
+    end = standard.index("creative commons is not a party to its public licenses")
+    preamble, legal, notice = standard[:start].strip(), standard[start:end].strip(), standard[end:].strip()
+    return frozenset(" ".join(p for p in (head, legal, tail) if p)
+                     for head in (preamble, "") for tail in (notice, ""))
 
 
 def _cc_by(t: str) -> bool:
-    legal = "creative commons attribution 4 0 international public license"
-    heading = "section 8 interpretation"
-    if not (t.startswith(_CC_OPEN) and legal in t and "section 1 definitions" in t and heading in t
-            and t.index(legal) < t.index("section 1 definitions")):
-        return False
-    tail = t[t.rindex(heading) + len(heading):].strip()
-    return tail in (_CC_S8, _CC_S8 + " " + _CC_NOTICE)
+    return t in _cc_by_forms()
 
 
 def licence_of_text(text: str) -> str:
