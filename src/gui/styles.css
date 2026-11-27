@@ -64,3 +64,4 @@
 .sent-files .media-grid{margin:var(--s2) 0 0}
 /* Settings > Skill discovery: a licence select sits in a flex row beside the source, so it does not take the global select width. */
 .licence-select{width:auto;flex:0 0 auto;min-width:160px}.repo-source{overflow-wrap:anywhere}
+.skills-tabs{margin-bottom:var(--s5);border-bottom:1px solid var(--border)}

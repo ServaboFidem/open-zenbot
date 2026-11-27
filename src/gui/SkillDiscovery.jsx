@@ -7,7 +7,7 @@ const POLL_MS = 15000;
 const READING_MS = 3000;
 const EMPTY = { address: '', checked: '', licence: null, github: '', index: '' };
 
-// Settings > Skill discovery: where SkillTuner looks for skills. agentskills.finance is built in; the owner adds
+// Settings > Skills > SkillTuner > Skill discovery: where SkillTuner looks for skills. agentskills.finance is built in; the owner adds
 // public GitHub repositories. Addresses, labels and errors come from the harness (and GitHub) and are shown as plain
 // text children, never as HTML or Markdown. ctx: { api, online, notify }.
 export function SkillDiscovery({ ctx }) {
@@ -118,7 +118,6 @@ export function SkillDiscovery({ ctx }) {
       </div>
       {formError && <p className="form-error" role="alert">{formError}</p>}
     </div>
-    {status && !status.enabled && <p className="field-hint">SkillTuner is off. Switch it on under Dreaming.</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
   </section>;
 }
