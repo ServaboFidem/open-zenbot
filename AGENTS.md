@@ -443,7 +443,8 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   `docs/superpowers/specs/2026-11-26-skilltuner-github-sources-design.md`, git-ignored). The owner adds a repository on
   Settings > Skill discovery (routes below): `https://github.com/<owner>/<repo>`, optionally
   `/tree/<ref>/<folder>`, and a licence for skills with none of their own. At most 10; the same owner, repo, ref and
-  folder (case-folded) twice is refused.
+  folder twice is refused (owner and repo compared case-folded, as GitHub does; the ref and the folder exactly, since
+  GitHub tells `Skills` from `skills`).
   - *The address* (`repos.parse_address`) is a security boundary: `https`, host exactly `github.com`, owner and repo
     matching GitHub's names, a ref of one plain segment, a folder of plain segments; only the parts it returns are used,
     and every request address is rebuilt from them.
@@ -459,7 +460,8 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
     GitHub-wide failure (`network`, `refused`, `budget`, a 5xx) pauses GitHub until the next local date and the pass
     goes on with CaseMark; any other failure belongs to that repository (stored with its old list, which stays in use).
   - *Reading.* The commit is resolved first; an unchanged commit fetches nothing more. The tree gives the skill folders
-    (`<dir>/SKILL.md`); an index file (the owner's path, else the first `skills_index.json` style name) lists them with
+    (`<dir>/SKILL.md`, the folder itself included when it is one skill); an index file (the owner's path, else the
+    shortest `skills_index.json` style name in, below or above the folder) lists them with
     descriptions, else each `SKILL.md`'s frontmatter is read, at most 300 folders (`no_index` above that; a tree with more than 5,000 `SKILL.md` files is `too_large`). A repository
     is read again when its last good read is 7 days old, one per pass, under dreaming's rules; a read the owner starts
     (`Harness.start_repo_read`: a task the harness keeps and cancels at shutdown, one at a time per repository, run at
@@ -469,20 +471,30 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
     and their GitHub-wide failure does not pause the pass.
   - *Searching* is local: words matched against each stored skill's name, description and category with IDF weights
     (name matches count double). CaseMark's and GitHub's results are ranked together by one score and the best five go
-    to the decider. A need's search mark is per source; a read that changed a list makes every need due for GitHub again.
+    to the decider. A need's search mark is per source; a read that changed a list makes every need due for GitHub again
+    (`reset_github`, which also moves `TunerState.github_version`: a GitHub mark from a search taken before the change,
+    its fit still out, is not written, so the need stays due; CaseMark's mark from the same search is).
     Rejecting or approving a suggestion remembers its source skill's name (`rejected_names`, `approved_names`), and a result
     with either name is dropped; known, rejected, approved and catalogued skills are dropped from GitHub's ranking before it
     is cut to five, so they never take a place. The decider's questions are keyed by position (`r:0` to `r:4`), never by a
     source's text; the `fit` entry still names source ids.
-  - *Fetching and licence.* A GitHub winner's `SKILL.md` and `references/` files are fetched at the stored commit. The
+  - *Fetching and licence.* A GitHub winner's `SKILL.md` is fetched at the stored commit, and its `references/` files at
+    that same commit (`GitHubSkills.read_file` takes `Downloaded.commit` and never looks the stored list up again, so a
+    refresh during the conversion cannot mix two commits). The
     licence rules run in order and stop at the first that applies: (1) the frontmatter's `license` when one of the five
     accepted, and any other `license` (`GPL-3.0`, `Proprietary`, "Complete terms in LICENSE.txt") drops the skill as
-    `licence`; (2) a `LICENSE`, `LICENSE.md`, `LICENSE.txt` or `COPYING` (any case) directly in the skill's folder, which
-    must be wholly one of the five standard texts, and one that is not drops the skill (a file that is not found or too
+    `licence`; the whole value is checked, never a cut of it (one over 100 characters is refused); (2) a `LICENSE`,
+    `LICENSE.md`, `LICENSE.txt` or `COPYING` (any case) directly in the skill's folder, which
+    must be wholly one of the five standard texts (`licences.py`: MIT and BSD word for word under copyright lines;
+    Apache-2.0 the terms of `apache-2.0.txt`, then nothing or its appendix whole, only the bracketed copyright line filled
+    in with copyright statements; CC-BY-4.0 the whole of `cc-by-4.0.txt`, Creative Commons' own `legalcode.txt` of
+    2026-11-26, with or without its preamble and closing notice), and one that is not drops the skill (a file that is not found or too
     large to read is passed over); (3) only when the folder has no licence file and the frontmatter names no `license`,
     the licence the owner chose for the repository (empty, "Don't use", means such skills are dropped as `licence`). A skill that came with scripts or other files not
     brought over is suggested with `left_out`. A suggestion's `source` is `github.com/<owner>/<repo>`, its source id
-    `gh:<owner>/<repo>:<path>`, its `source_url` `https://github.com/<owner>/<repo>/tree/<sha>/<path>`.
+    `gh:<owner>/<repo>:<path>` (`gh:<owner>/<repo>@<ref>:<path>` for an entry with a ref, so two refs of one repository
+    never share an id; two entries on one ref with nested folders list a skill under one id, taken by the first entry in
+    the list, the one a read resolves it to), its `source_url` `https://github.com/<owner>/<repo>/tree/<sha>/<path>`.
 - **The recorded answer shapes** (2026-11-25, the real endpoint). A `tools/call` answer is `{"result": {"content":
   [{"type": "text", "text": <JSON>}]}}`. `resolve_skill` gives `{"results": [{slug, name, summary, tags, score}], "query",
   "methods_used"}`, ten results, of which at most five are kept. `read_skill` gives `{slug, name, summary, content (the
@@ -499,7 +511,7 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
   text in `src/skilltuner/apache-2.0.txt`, with the placeholder copyright line; for another licence one line naming its
   SPDX id and URL) and a `NOTICE.txt`. Licences accepted (`LICENCES`, case-folded): Apache-2.0, MIT, BSD-2-Clause,
   BSD-3-Clause and CC-BY-4.0; any other or none drops the skill. `src/skilltuner` is in `electron-builder.yml`
-  `extraResources`, which must keep shipping `apache-2.0.txt`.
+  `extraResources`, which must keep shipping `apache-2.0.txt` and `cc-by-4.0.txt` (the standard texts a licence file is compared with).
 - **The watcher** (`watcher.SkillWatcher`, started in the `lifespan` beside dreaming, awaited after `stop.set()`). A
   plain polling scan every `POLL_S` (3 s) of `<vault>-skills/discovered/`, run on the event loop under a lock, so every
   catalog and bot change happens there. It owns every catalog entry whose `SKILL.md` lies inside `discovered/`; its
@@ -600,14 +612,16 @@ task, session, tools, conversation, skills or MCPs. Design: `docs/superpowers/sp
 - **Bots and SkillTuner (a known residual risk).** The harness API has no authentication, so a bot with `shell` (curl) or
   the `browser` server can call the `/skilltuner` routes: switch it on, read the suggestions, and approve one, which puts
   a downloaded skill in the catalog without the owner, and attach it through `/fits` and `/bots`. It cannot write a
-  suggestion (the folder is private), so it can only approve what SkillTuner itself fetched from the fixed source. A bot
+  suggestion (the folder is private), so it can only approve what SkillTuner itself fetched: from agentskills.finance,
+  or from a GitHub repository, which the same bot can add (below). A bot
   can also post a task whose text SkillTuner would read as the owner's (the limit dreaming has). Anything that writes
   `<vault>-skills/` as the owner's account (a `shell` command the owner approves, another program) can put a skill in
   `discovered/`, and the watcher loads it with no review; a `shell` command that names the folder already opens an
   approval. Do not describe skill suggestions as out of bots' reach. The same bot can add a GitHub repository of its
-  choosing (`POST /skilltuner/repos`), making SkillTuner read, search and suggest an attacker's skills; every suggestion
-  still needs the owner's Approve, and its card names the repository. It cannot write a stored list (the ledger folder is
-  private).
+  choosing (`POST /skilltuner/repos`), making SkillTuner read, search and suggest an attacker's skills, and then approve
+  one itself: a suggestion still has to be approved before anything is installed, but the API does not establish who
+  approved it. A suggestion's card names the repository it came from. Separately, the bot cannot write a stored list or
+  a suggestion (the ledger and suggestion folders are private).
 - **Known limits.**
   - A repository entry in `skilltuner.json` that cannot be read is dropped on load and so from the file at the next save.
   - Repository ids are random, so removing and adding the same repository reads it again from scratch.

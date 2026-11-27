@@ -57,7 +57,9 @@ BSD3 = BSD2.replace("BSD 2-Clause", "BSD 3-Clause").replace(
     "3. Neither the name of the copyright holder nor the names of its\n   contributors may be used to endorse or promote products derived from\n"
     "   this software without specific prior written permission.\n\nTHIS SOFTWARE IS PROVIDED")
 
-CCBY = """Attribution 4.0 International
+CCBY = resources.files("src.skilltuner").joinpath("cc-by-4.0.txt").read_text("utf-8")
+# The first version of the check passed this: only the headings and Section 8 of the licence.
+CCBY_SHORT = """Attribution 4.0 International
 
 =======================================================================
 
@@ -148,3 +150,30 @@ def test_holder_shapes_and_trailing_cc_restrictions():
                  "Copyright (c) 2024 Jane Doe Commercial use prohibited", "Copyright (c) 2024 Jane: all yours!"):
         assert licence_of_text(line + chr(10) * 2 + body) == "", line
     assert licence_of_text(CCBY + chr(10) + "You may not use this commercially." + chr(10)) == ""
+
+
+def test_cc_by_is_compared_whole():
+    legal = CCBY[CCBY.index("Creative Commons Attribution 4.0 International Public License"):]
+    notice = CCBY.rindex("=" * 71)
+    assert licence_of_text(CCBY[:notice]) == "CC-BY-4.0"  # without Creative Commons' closing notice
+    assert licence_of_text(legal) == "CC-BY-4.0"  # the licence alone, without the preamble
+    assert licence_of_text(CCBY_SHORT) == ""
+    inserted = CCBY.replace("Section 8 -- Interpretation.", "Commercial use is prohibited.\n\nSection 8 -- Interpretation.")
+    assert inserted != CCBY and licence_of_text(inserted) == ""
+    assert licence_of_text(CCBY.replace("Section 4 -- Sui Generis Database Rights.", "")) == ""
+
+
+def test_the_apache_appendix_is_compared_whole():
+    filled = APACHE.replace("Copyright [yyyy] [name of copyright owner]", "Copyright 2024 Jane Doe")
+    assert filled != APACHE and licence_of_text(filled) == "Apache-2.0"
+    two = APACHE.replace("Copyright [yyyy] [name of copyright owner]",
+                         "Copyright (c) 2019-2024 Acme, Inc.\n   Copyright 2025 Jane Doe. All rights reserved.")
+    assert licence_of_text(two) == "Apache-2.0"
+    added = APACHE.replace("limitations under the License.",
+                           "limitations under the License.\n\n   Commercial use is prohibited.\n\n   limitations under the License.")
+    assert licence_of_text(added) == ""
+    inside = APACHE.replace("identification within third-party archives.",
+                            "identification within third-party archives. No use by any government is permitted.")
+    assert licence_of_text(inside) == ""
+    restricted = APACHE.replace("Copyright [yyyy] [name of copyright owner]", "Copyright 2024 Jane Doe no commercial use")
+    assert licence_of_text(restricted) == ""

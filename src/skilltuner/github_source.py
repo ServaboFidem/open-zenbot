@@ -27,7 +27,7 @@ SKILL_FILES_MAX = 5_000
 REFRESH_DAYS = 7
 GITHUB_WIDE = ("network", "refused", "budget")
 PER_FILE = ("not_found", "too_large")
-GH_ID = re.compile(rf"gh:({OWNER})/({REPO}):({SEGMENT}(?:/{SEGMENT})*)")
+GH_ID = re.compile(rf"gh:({OWNER})/({REPO})(?:@({SEGMENT}))?:({SEGMENT}(?:/{SEGMENT})*)")
 ID_MAX = 512
 RESULTS = 5
 REFERENCES_MAX = 20
@@ -37,16 +37,19 @@ SUMMARY_MAX = 1_000
 LICENCE_FILES = ("license", "license.md", "license.txt", "copying")
 
 
-def gh_id(owner: str, repo: str, path: str) -> str:
-    return f"gh:{owner}/{repo}:{path}"
+def gh_id(owner: str, repo: str, path: str, ref: str = "") -> str:
+    """The skill's source id; the ref is in it (`@ref`, none for the default branch), so two entries of one
+    repository on different refs never share an id."""
+    return f"gh:{owner}/{repo}{'@' + ref if ref else ''}:{path}"
 
 
-def parse_gh_id(text: str) -> tuple[str, str, str]:
-    """(owner, repo, path) of a source id this module made, else ValueError."""
+def parse_gh_id(text: str) -> tuple[str, str, str, str]:
+    """(owner, repo, path, ref) of a source id this module made (ref "" for the default branch), else ValueError."""
     m = GH_ID.fullmatch(text) if isinstance(text, str) and len(text) <= ID_MAX else None
-    if m is None or {".", ".."} & set(m.group(3).split("/")) or m.group(2) in (".", ".."):
+    if (m is None or {".", ".."} & set(m.group(4).split("/")) or m.group(2) in (".", "..")
+            or m.group(3) in (".", "..")):
         raise ValueError("Not a GitHub skill id.")
-    return m.group(1), m.group(2), m.group(3)
+    return m.group(1), m.group(2), m.group(4), m.group(3) or ""
 
 
 def _fail(kind: str) -> SourceError:
@@ -78,7 +81,8 @@ class GitHubSkills:
         self.errors: dict[str, str] = {}  # id -> kind of the last read's GitHub-wide failure (memory only)
         self.changed = False
         self._matcher: tuple[frozenset, Matcher] | None = None
-        self._files: dict[str, set[str]] = {}
+        # id -> (commit, owner, repo, skill folder, its reference paths), as the last `read` of that id found them
+        self._files: dict[str, tuple[str, str, str, str, set[str]]] = {}
 
     def _stored(self) -> list[tuple[RepoEntry, RepoList]]:
         out = []
@@ -107,8 +111,19 @@ class GitHubSkills:
         ranked = top(words, items, key=lambda it: (it[1].name, it[1].description, it[1].category),
                      n=len(items), matcher=matcher)
         out: list[Found] = []
+        # Two entries on one ref with nested folders list the same skill under one id: the first entry in list order
+        # takes it, the one `_find` resolves the id to.
+        owner_of = {}
+        for e, s in stored:
+            for k in s.skills:
+                owner_of.setdefault(gh_id(e.owner, e.repo, k.path, e.ref), e.id)
+        seen = set()
         for e, k in ranked:
-            found = Found(gh_id(e.owner, e.repo, k.path), k.name, k.description, [k.category] if k.category else [],
+            id = gh_id(e.owner, e.repo, k.path, e.ref)
+            if owner_of[id] != e.id or id in seen:
+                continue
+            seen.add(id)
+            found = Found(id, k.name, k.description, [k.category] if k.category else [],
                           matcher.score(words, k.name, k.description, k.category))
             if keep is None or keep(found):
                 out.append(found)
@@ -117,9 +132,9 @@ class GitHubSkills:
         return out
 
     def _find(self, id: str) -> tuple[RepoEntry, RepoList, Listed]:
-        owner, repo, path = parse_gh_id(id)
+        owner, repo, path, ref = parse_gh_id(id)
         for entry, stored in self._stored():
-            if entry.owner == owner and entry.repo == repo:
+            if entry.owner == owner and entry.repo == repo and entry.ref == ref:
                 for k in stored.skills:
                     if k.path == path:
                         return entry, stored, k
@@ -140,7 +155,7 @@ class GitHubSkills:
         parts = split_frontmatter(text)
         body = _clean(parts[1] if parts else text, 200_000)
         files = sorted(p for p in inside if FILE_PATH.fullmatch(p))[:REFERENCES_MAX]
-        self._files[id] = set(files)
+        self._files[id] = (sha, entry.owner, entry.repo, path, set(files))
         refs = [p for p in inside if p.startswith("references/")]
         left_out = (listed.has_extra or any(p.startswith("scripts/") for p in inside)
                     or len(refs) > len(files) or any(FILE_PATH.fullmatch(p) is None for p in refs))
@@ -169,11 +184,14 @@ class GitHubSkills:
                 return licence_of_text(raw.decode("utf-8", errors="replace"))
         return canonical(entry.licence)
 
-    async def read_file(self, id: str, path: str) -> str:
-        if path not in self._files.get(id, set()) or FILE_PATH.fullmatch(path) is None:
+    async def read_file(self, id: str, path: str, commit: str) -> str:
+        """A bundled file of the skill `read` read, at the commit its body came from (`Downloaded.commit`): the
+        stored list is not looked up again, so a refresh meanwhile cannot mix two commits."""
+        read = self._files.get(id)
+        if read is None or read[0] != commit or path not in read[4] or FILE_PATH.fullmatch(path) is None:
             raise ValueError("Not a file of this skill.")
-        entry, stored, listed = self._find(id)
-        raw = await self.client.raw(entry.owner, entry.repo, stored.commit, f"{listed.path}/{path}", FILE_LIMIT)
+        sha, owner, repo, folder, _ = read
+        raw = await self.client.raw(owner, repo, sha, f"{folder}/{path}", FILE_LIMIT)
         return _clean(raw.decode("utf-8", errors="replace"), FILE_LIMIT)
 
     def has_skills(self) -> bool:

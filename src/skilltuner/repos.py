@@ -149,12 +149,12 @@ class RepoStore:
             cached = self._cache.get(id)
             if cached is not None and cached[:2] == key:
                 return cached[2]
-            text = path.read_text(encoding="utf-8")
+            raw = path.read_bytes()
         except OSError:
             self._cache.pop(id, None)
             return None
         try:
-            got = _list_of(json.loads(text))
+            got = _list_of(json.loads(raw.decode("utf-8")))  # a UnicodeDecodeError is a ValueError: kept aside too
         except (ValueError, TypeError, KeyError, RecursionError):
             self._cache.pop(id, None)
             try:

@@ -410,6 +410,15 @@ async def test_add_refuses_what_it_should(client, harness, gh):
     await harness.close_tuner()
 
 
+async def test_refs_and_folders_differing_in_case_are_different_entries(client, harness, gh):
+    assert (await add(client, address="https://github.com/o/r/tree/main/Skills")).status_code == 200
+    assert (await add(client, address="https://github.com/o/r/tree/main/skills")).status_code == 200
+    assert (await add(client, address="https://github.com/o/r/tree/Main/skills")).status_code == 200
+    r = await add(client, address="https://github.com/O/R/tree/main/skills")
+    assert (r.status_code, r.json()["detail"]) == (409, "That repository is already listed.")
+    await harness.close_tuner()
+
+
 async def test_two_adds_at_once_cannot_pass_the_ten_check(client, harness, gh):
     for i in range(9):
         assert (await add(client, address=f"https://github.com/o/a{i}")).status_code == 200

@@ -211,6 +211,15 @@ async def test_a_damaged_stored_list_is_kept_aside(tmp_path):
     assert store.get("abc") is None
 
 
+async def test_a_stored_list_that_is_not_utf8_is_kept_aside(tmp_path):
+    store = RepoStore(tmp_path / "repos")
+    path = tmp_path / "repos" / "abc.json"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'{"commit": "\xff\xfe"}')
+    assert store.get("abc") is None
+    assert not path.exists() and (tmp_path / "repos" / "abc.json.bad").exists()
+
+
 def test_the_store_round_trips_and_refuses_odd_ids(tmp_path):
     from src.skilltuner.index import Listed
     store = RepoStore(tmp_path / "repos")

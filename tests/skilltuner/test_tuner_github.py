@@ -91,6 +91,23 @@ async def test_a_need_is_searched_in_both_sources_and_one_fit_decides(t):
     assert t.state.due_for(the_need(t), "2027-01-16") == []
 
 
+async def test_a_list_change_during_the_fit_leaves_the_need_due_for_github(t):
+    store(t, entry(), [listed()])
+    files(t)
+    t.site.search_answer = results((WIN, "Drafting Investment Memos"))
+    add_need(t)
+    decide = t.scorer.decide
+
+    async def owner_rereads_meanwhile(request):
+        t.state.reset_github()  # what `Harness._read_repo` does when a read changed the stored list
+        return await decide(request)
+    t.scorer.decide = owner_rereads_meanwhile
+    await t.tune()
+    n = the_need(t)
+    assert n.github_on == "" and n.searched_on == TODAY  # CaseMark's mark stands
+    assert "github" in t.state.due_for(n, TODAY)
+
+
 async def test_the_same_skill_in_two_repositories_reaches_the_decider_once(t):
     store(t, entry(), [listed("Memo Writer")])
     store(t, entry(id="fedcba9876543210", owner="p", repo="q"), [listed("memo writer")])

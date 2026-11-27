@@ -53,7 +53,7 @@ def skill_folders(blobs: list[tuple[str, int]], folder: str) -> list[str]:
     dirs = set()
     for path, _size in blobs:
         d, _, base = path.rpartition("/")
-        if base == SKILL_FILE and d and _inside(d, folder) and _plain(d):
+        if base == SKILL_FILE and d and (d == folder or _inside(d, folder)) and _plain(d):
             dirs.add(d)
     return sorted(d for d in dirs if not any(a in dirs for a in _parents(d)))
 
@@ -67,7 +67,7 @@ def find_index(blobs: list[tuple[str, int]], folder: str, named: str) -> str | N
     found = []
     for p in paths:
         d, _, base = p.rpartition("/")
-        if base in INDEX_NAMES and (d == "" or d == folder or _inside(d, folder)):
+        if base in INDEX_NAMES and (d == "" or d == folder or _inside(d, folder) or _inside(folder, d)):
             found.append(p)
     return min(found, key=lambda p: (len(p), p)) if found else None
 
@@ -162,7 +162,12 @@ def frontmatter(text: str) -> dict[str, str]:
     for key, limit in (("name", NAME_MAX), ("description", DESCRIPTION_MAX), ("license", LICENCE_MAX)):
         value = meta.get(key)
         if isinstance(value, str):
-            value = _line(value, limit).strip()
+            if key == "license":  # checked whole: a cut could leave only an accepted id ("MIT", then the rest)
+                value = _line(value, len(value))
+                if len(value) > limit:
+                    value = value[:limit - 1] + "…"  # no accepted id ends so: an overlong licence is refused
+            else:
+                value = _line(value, limit).strip()
             if value:
                 out[key] = value
     return out

@@ -128,6 +128,7 @@ class TunerState:
         self._source_pauses: dict[str, str] = {}
         self._github_spent: dict[str, dict[str, int]] = {}  # per local date: api and file counts
         self._names: list[str] = []  # rejected skill names, case-folded, oldest first
+        self._github_version = 0  # in memory: moved by every `reset_github`, so a search older than it marks nothing
         self._approved: list[str] = []  # approved skill names, the same
         self._last_pass_at = ""
         self._last_error = ""
@@ -249,11 +250,20 @@ class TunerState:
         due.sort(key=lambda n: -n.seen)  # stable: ties keep the order they were added
         return due[:max(limit, 0)]
 
-    def mark_searched(self, words: str, today: str, outcome: str, source: str = "casemark") -> None:
+    @property
+    def github_version(self) -> int:
+        """Taken before a GitHub search and handed to `mark_searched`: a list change since then voids the mark."""
+        with self._lock:
+            return self._github_version
+
+    def mark_searched(self, words: str, today: str, outcome: str, source: str = "casemark",
+                      list_version: int | None = None) -> None:
         with self._lock:
             n = self._needs.get(words.casefold())
             if n is not None:
                 if source == "github":
+                    if list_version is not None and list_version != self._github_version:
+                        return  # searched the lists as they were before a change: still due for GitHub
                     n.github_on, n.github_outcome = today, outcome
                 else:
                     n.searched_on, n.outcome = today, outcome
@@ -262,6 +272,7 @@ class TunerState:
     def reset_github(self) -> None:
         """Make every need due for GitHub again; CaseMark's marks stay."""
         with self._lock:
+            self._github_version += 1
             for n in self._needs.values():
                 n.github_on = n.github_outcome = ""
             self._save()

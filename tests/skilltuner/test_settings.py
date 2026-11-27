@@ -230,6 +230,19 @@ def test_mark_searched_per_source_and_reset_github(tmp_path):
     assert st2.due_needs("2027-01-10", 8, sources=("github",))[0].searched_on == "2027-01-10"
 
 
+def test_a_github_mark_from_before_a_list_change_is_not_kept(tmp_path):
+    _, st = _state(tmp_path)
+    st.add_need("t", "a b")
+    version = st.github_version
+    st.reset_github()  # the owner read a repository again while the search's fit was out
+    st.mark_searched("a b", "2027-01-10", "none", source="github", list_version=version)
+    st.mark_searched("a b", "2027-01-10", "none", source="casemark", list_version=version)
+    n = st.due_needs("2027-01-10", 8, sources=("github",))[0]
+    assert n.github_on == "" and n.searched_on == "2027-01-10"
+    st.mark_searched("a b", "2027-01-10", "none", source="github", list_version=st.github_version)
+    assert st.due_needs("2027-01-10", 8, sources=("github",)) == []
+
+
 def test_github_budgets_run_separately_and_reset_by_date(tmp_path):
     import pytest
     _, st = _state(tmp_path)
