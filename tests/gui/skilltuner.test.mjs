@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LEFT_OUT, LICENCE_CHOICES, PRIVACY, SEARCH_PRIVACY, attachPlan, canAdd, cardSource, casemarkLine, doneLine, initialPicks, offeredBots, repoErrorLine, repoLine, statusLine, tunerApi } from '../../src/gui/skilltuner.js';
+import { LEFT_OUT, LICENCE_CHOICES, PRIVACY, SEARCH_PRIVACY, attachPlan, canAdd, cardSource, casemarkLine, doneLine, initialPicks, offeredBots, repoErrorLine, repoLine, statusLine, tunerApi, tunerTabLabel, waitingCount, waitingLine } from '../../src/gui/skilltuner.js';
 import { SECTIONS, searchSettings } from '../../src/gui/settings-index.js';
 
 test('tunerApi paths and bodies; every POST sends {}', async () => {
@@ -55,7 +55,7 @@ test('doneLine', () => {
   assert.equal(doneLine(['A', 'B', 'C']), 'Added to A, B and C.');
 });
 test('the search finds SkillTuner and the suggestions section', () => {
-  assert.ok(SECTIONS.some(s => s.panel === 'harness' && s.title === 'SkillTuner'));
+  assert.ok(SECTIONS.some(s => s.panel === 'skills' && s.title === 'SkillTuner' && s.tab === 'tuner'));
   assert.ok(SECTIONS.some(s => s.panel === 'skills' && s.title === 'Suggested by SkillTuner'));
   assert.ok(searchSettings('SkillTuner').length > 0);
   assert.ok(searchSettings('Suggested by SkillTuner').some(m => m.panel === 'skills'));
@@ -217,4 +217,17 @@ test('both privacy lines name the decision model as a recipient', () => {
 test('PRIVACY says repositories are searched on this computer', () => {
   assert.match(PRIVACY, /GitHub repositories/);
   assert.match(PRIVACY, /on this computer/);
+});
+
+test('the waiting count is the harness pending, and nothing else', () => {
+  assert.equal(waitingCount({ pending: 2 }), 2);
+  assert.equal(waitingCount({ pending: 0 }), 0);
+  for (const s of [null, undefined, {}, { pending: '2' }, { pending: -1 }, { pending: 1.5 }, { pending: NaN }, { pending: Infinity }]) assert.equal(waitingCount(s), 0);
+});
+test('the tab label and the Overview line follow the count', () => {
+  assert.equal(tunerTabLabel(0), 'SkillTuner');
+  assert.equal(tunerTabLabel(3), 'SkillTuner (3)');
+  assert.equal(waitingLine(0), '');
+  assert.equal(waitingLine(1), 'SkillTuner found 1 skill waiting for your approval');
+  assert.equal(waitingLine(4), 'SkillTuner found 4 skills waiting for your approval');
 });

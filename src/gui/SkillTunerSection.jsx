@@ -25,7 +25,7 @@ export function SkillTunerSection({ ctx, dreamingOn }) {
     catch (e) { setError(e?.message || 'Something went wrong.'); }
   }
   return <div className="od-stack">
-    <h4 id={anchorId('harness', 'SkillTuner')}>SkillTuner</h4>
+    <h4 id={anchorId('skills', 'SkillTuner')}>SkillTuner</h4>
     {!status ? <p className="field-hint">{online ? 'Loading…' : 'The harness is offline.'}</p> : <>
       <label className="od-row"><input type="checkbox" checked={!!status.enabled} disabled={!online || (!status.enabled && !dreamingOn)} onChange={e => toggle(e.target.checked)}/> Find skills that match what I ask for while the computer dreams</label>
       <p className="field-hint">{PRIVACY}</p>

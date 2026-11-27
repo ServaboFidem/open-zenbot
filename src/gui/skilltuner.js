@@ -168,3 +168,9 @@ export function nextSteps(fit, picks, bots, slug, done = {}) {
     update: plan.update.filter(u => !updated.includes(u.id) && !confirmed.includes(u.id)),
   };
 }
+
+// How many suggestions wait for the owner: GET /skilltuner/status `pending` when it is a whole number, else 0, so a
+// badge never shows a broken count. It falls only when a suggestion is approved or rejected.
+export const waitingCount = status => (Number.isInteger(status?.pending) && status.pending > 0 ? status.pending : 0);
+export const tunerTabLabel = n => (n > 0 ? `SkillTuner (${n})` : 'SkillTuner');
+export const waitingLine = n => (n > 0 ? `SkillTuner found ${n} ${n === 1 ? 'skill' : 'skills'} waiting for your approval` : '');

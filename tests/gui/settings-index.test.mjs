@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PANELS, SECTIONS, anchorId, liveSections, searchSettings } from '../../src/gui/settings-index.js';
+import { PANELS, SECTIONS, anchorId, liveSections, searchSettings, tabOf } from '../../src/gui/settings-index.js';
 
-test('panels are the fifteen, in order', () => {
-  assert.deepEqual(PANELS.map(p => p.id), ['harness', 'providers', 'tools', 'mcps', 'skills', 'discovery', 'agents', 'folders', 'calendar', 'tracing', 'ledger', 'memory', 'apps', 'speakers', 'about']);
+test('panels are the fourteen, in order', () => {
+  assert.deepEqual(PANELS.map(p => p.id), ['harness', 'providers', 'tools', 'mcps', 'skills', 'agents', 'folders', 'calendar', 'tracing', 'ledger', 'memory', 'apps', 'speakers', 'about']);
   for (const p of PANELS) assert.ok(p.name && p.description);
 });
 test('every section belongs to a panel and its anchor is anchorId', () => {
@@ -136,6 +136,22 @@ test('the Read aloud card is found by its local voice words', () => {
   assert.ok(searchSettings('on this computer', live).some(m => m.anchor === 'settings-tools-speech'));
 });
 
-test('the Settings search finds Skill discovery', () => {
-  for (const q of ['Skill discovery', 'GitHub', 'repository']) assert.ok(searchSettings(q).some(m => m.panel === 'discovery'), q);
+test('the Settings search finds Skill discovery on the Skills page, SkillTuner tab', () => {
+  for (const q of ['Skill discovery', 'GitHub', 'repository']) assert.ok(searchSettings(q).some(m => m.panel === 'skills' && m.anchor === anchorId('skills', 'Skill discovery') && m.tab === 'tuner'), q);
+});
+test('SkillTuner and its sources are found on the Skills page, on the SkillTuner tab', () => {
+  assert.equal(PANELS.some(p => p.id === 'discovery'), false);
+  assert.equal(SECTIONS.some(s => s.panel === 'harness' && s.title === 'SkillTuner'), false);
+  for (const q of ['SkillTuner', 'GitHub repository', 'agentskills.finance', 'Suggested by SkillTuner']) {
+    const hit = searchSettings(q)[0];
+    assert.equal(hit.panel, 'skills', q);
+    assert.equal(hit.tab, 'tuner', q);
+  }
+  assert.equal(searchSettings('Bots with this skill')[0].tab, 'main');
+  assert.equal(tabOf('skills', anchorId('skills', 'SkillTuner')), 'tuner');
+  assert.equal(tabOf('skills', anchorId('skills', 'Skill discovery')), 'tuner');
+  assert.equal(tabOf('skills', anchorId('skills', 'Suggested by SkillTuner')), 'tuner');
+  assert.equal(tabOf('skills', ''), 'main');
+  assert.equal(tabOf('skills', anchorId('skills', 'some-skill-ref')), 'main');
+  assert.equal(tabOf('harness', anchorId('skills', 'SkillTuner')), 'main');
 });

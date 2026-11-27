@@ -17,8 +17,7 @@ export const PANELS = [
   { id: 'providers', name: 'Model providers', description: 'Where models come from: providers, their API keys and which models are enabled.' },
   { id: 'tools', name: 'Harness Tools', description: 'Toolkits built into the harness: image generation, reading aloud and ImageMagick.' },
   { id: 'mcps', name: 'MCP servers', description: 'Tools your bots can reach: the servers in mcp.json, their API keys and what they need installed.' },
-  { id: 'skills', name: 'Skills', description: 'Good work, worth repeating: the skills in the catalog and which bots carry them.' },
-  { id: 'discovery', name: 'Skill discovery', description: 'Where SkillTuner looks for skills: agentskills.finance and the GitHub repositories you add.' },
+  { id: 'skills', name: 'Skills', description: "Good work, worth repeating: the skills in the catalog, which bots carry them, and SkillTuner's suggestions." },
   { id: 'agents', name: 'Coding agents', description: 'Claude Code and Codex on this computer: found, signed in, and whether bots may hand work to them.' },
   { id: 'folders', name: 'Allowed Folders', description: 'The folders outside the vault that bots may read or write.' },
   { id: 'calendar', name: 'Calendar', description: 'Google Calendar: your own Google app, which calendars to bring in, and sending events made here to Google.' },
@@ -36,6 +35,8 @@ export function anchorId(panel, title) {
 
 const section = (panel, title, words) => ({ panel, anchor: anchorId(panel, title), title, words });
 // A panel whose sections are all headed by data: found by its words, opened at the top.
+// A section on the Skills page's SkillTuner tab: a search hit for it opens that tab (`tabOf`).
+const tuner = (title, words) => ({ ...section('skills', title, words), tab: 'tuner' });
 const whole = (panel, words) => ({ panel, anchor: '', title: PANELS.find(p => p.id === panel).name, words });
 
 export const SECTIONS = [
@@ -51,11 +52,6 @@ export const SECTIONS = [
     'Learn from my conversations while the computer is idle',
     PRIVACY,
     'Dreaming model', 'Start after', 'minutes idle', 'Dream now', 'What was learned', 'Forget', 'learn', 'memory', 'idle', 'conversations', 'local model',
-  ]),
-  section('harness', 'SkillTuner', [
-    'Find finance skills that match what I ask for while the computer dreams',
-    TUNER_PRIVACY,
-    'suggestions', 'agentskills.finance', 'searches', 'skills', 'learn',
   ]),
   section('providers', 'Model providers', ["Each provider's key lives in the harness's providers.json, readable by you only. Enable the models the harness may use; the Harness settings and Harness Tools pages pick from them.", 'Test a provider', 'Refresh the model list', 'OpenRouter', 'OpenAI-compatible']),
   section('providers', 'Add a provider', [
@@ -79,7 +75,13 @@ export const SECTIONS = [
     'Skills live in the harness catalog. Teach one by recording a task, then let the decider suggest which bot should carry it.',
     'Fit suggestions', 'Suggest a fit', 'Bots with this skill', 'Frontmatter',
   ]),
-  section('skills', 'Suggested by SkillTuner', [
+  tuner('SkillTuner', [
+    'Find skills that match what I ask for while the computer dreams',
+    TUNER_PRIVACY,
+    'suggestions', 'agentskills.finance', 'searches', 'skills', 'learn', 'dreaming',
+  ]),
+  tuner('Skill discovery', ['SkillTuner', 'GitHub', 'repository', 'repositories', 'agentskills.finance', 'Add a repository', 'Check', 'Read again', 'Remove', 'skill index', 'licence', TUNER_PRIVACY]),
+  tuner('Suggested by SkillTuner', [
     'Skills SkillTuner found for what you ask. See what changed, approve one and pick the bots that use it, or reject it.',
     'See what changed', 'Approve', 'Reject', 'Remove', 'Which bots should use it?',
   ]),
@@ -133,7 +135,6 @@ export const SECTIONS = [
   section('apps', 'AgentMail', ['AgentMail', 'email', 'inbox', 'address', 'API key', 'newsletter', MAIL_LINE]),
   section('apps', 'Telnyx', ['Telnyx', 'text messages', 'SMS', 'reminders', 'phone number', 'evening rundown', 'API key', TELNYX_LINE]),
   section('apps', 'Sonos', ['Sonos', 'speakers', 'play music', 'Favorites', 'playlists', 'volume', 'Highest volume ZenBot may set', 'Look again', SONOS_LINE]),
-  section('discovery', 'Skill discovery', ['SkillTuner', 'GitHub', 'repository', 'repositories', 'agentskills.finance', 'Add a repository', 'Check', 'Read again', 'Remove', 'skill index', 'licence', TUNER_PRIVACY]),
   section('speakers', 'Wi-Fi speakers', ['AirPlay', 'Chromecast', 'DLNA', 'speakers', 'default speaker', 'No default', 'Look again', SPEAKERS_LINE]),
   whole('apps', ["Mockup: connected apps don't work yet. Connect only marks an app as connected in this window.", 'Connect app', 'Disconnect']),
   section('about', 'Version and updates', ['Version', 'Check for updates', 'Check for updates automatically', 'Update to the newest release, or skip a version.']),
@@ -182,10 +183,16 @@ export function searchSettings(query, extra = []) {
     const named = terms.every(t => title.includes(t));
     const rank = named ? (s.whole ? 0 : 1) : s.whole ? 3 : 2;   // a section that holds the words comes before a panel that only mentions them
     const text = named ? s.title : words.find(w => terms.some(t => w.toLowerCase().includes(t))) || s.title;
-    found.push({ rank, whole: !!s.whole, match: { panel: panel.id, panelName: panel.name, section: s.title, anchor: typeof s.anchor === 'string' ? s.anchor : '', text } });
+    found.push({ rank, whole: !!s.whole, match: { panel: panel.id, panelName: panel.name, section: s.title, anchor: typeof s.anchor === 'string' ? s.anchor : '', tab: s.tab === 'tuner' ? 'tuner' : 'main', text } });
   }
   // A panel and its section of the same name (Tracing, Coding agents) are one place: keep the section, which has the anchor.
   const sectionNamed = new Set(found.filter(f => !f.whole).map(f => `${f.match.panel}\n${f.match.section}`));
   return found.filter(f => !f.whole || !sectionNamed.has(`${f.match.panel}\n${f.match.section}`))
     .sort((a, b) => a.rank - b.rank).slice(0, MAX_RESULTS).map(f => f.match);
+}
+
+// Which tab of the Skills page holds a section: 'tuner' for a SkillTuner-tab section, else 'main' (the catalog, and
+// every other panel, which has no tabs).
+export function tabOf(panel, anchor) {
+  return panel === 'skills' && !!anchor && SECTIONS.some(s => s.panel === 'skills' && s.anchor === anchor && s.tab === 'tuner') ? 'tuner' : 'main';
 }

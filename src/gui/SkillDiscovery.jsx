@@ -76,7 +76,7 @@ export function SkillDiscovery({ ctx }) {
   }
 
   const repos = sources?.repos || [];
-  return <section className="resource-row editor-form" id={anchorId('discovery', 'Skill discovery')}>
+  return <section className="resource-row editor-form" id={anchorId('skills', 'Skill discovery')}>
     <h2>Skill discovery</h2>
     <p className="field-hint">SkillTuner looks in these places for skills that fit what you keep asking for. {SEARCH_PRIVACY}</p>
     {!online && <p className="field-hint">Start the harness to see the sources.</p>}
