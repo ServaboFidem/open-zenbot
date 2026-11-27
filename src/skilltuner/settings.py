@@ -5,17 +5,24 @@ Dates are local `YYYY-MM-DD` strings passed in by the caller; nothing here reads
 from __future__ import annotations
 
 import json
+import re
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
 
+from src.skilltuner.convert import LICENCES
+from src.skilltuner.repos import RepoEntry, parse_address, parse_index_path
 from src.vault_settings import settings_dir
 
 DAILY_REQUESTS = 40
 RESEARCH_AFTER_DAYS = 30
 HOWS = ("suggested", "approved", "rejected")
+GH_API_PER_DAY = 30
+GH_FILES_PER_DAY = 400
+GH_LIMITS = {"api": GH_API_PER_DAY, "file": GH_FILES_PER_DAY}
+NAMES_CAP = 1000
 
 
 def _replace_file(path: Path, data: dict[str, Any]) -> None:
@@ -29,10 +36,27 @@ def _whole(v: Any) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+def _repo_of(v: Any) -> RepoEntry:
+    if not isinstance(v, dict):
+        raise TypeError("a repository is not an object")
+    r = RepoEntry(**v)
+    if not all(isinstance(x, str) for x in asdict(r).values()):
+        raise TypeError("a repository holds a value of the wrong type")
+    if re.fullmatch(r"[0-9a-f]{16}", r.id) is None:
+        raise ValueError("bad id")
+    if r.licence and r.licence.strip().casefold() not in LICENCES:
+        raise ValueError("licence not accepted")
+    if (r.owner, r.repo, r.ref, r.folder) != parse_address(r.address()):
+        raise ValueError("bad address")
+    parse_index_path(r.index)
+    return r
+
+
 @dataclass
 class TunerSettings:
-    """SkillTuner's switch; no secret."""
+    """SkillTuner's switch and the GitHub repositories it may read; no secret."""
     enabled: bool = False
+    repos: list[RepoEntry] = field(default_factory=list)
 
     @staticmethod
     def _path(vault_root: Path) -> Path:
@@ -44,7 +68,13 @@ class TunerSettings:
             d = json.loads(cls._path(vault_root).read_text(encoding="utf-8"))
             if not isinstance(d["enabled"], bool):
                 raise TypeError("enabled must be true or false")
-            return cls(d["enabled"])
+            repos: list[RepoEntry] = []
+            for v in d.get("repos", []) if isinstance(d.get("repos", []), list) else []:
+                try:
+                    repos.append(_repo_of(v))
+                except (TypeError, ValueError):
+                    pass  # one bad entry never costs the switch or the others
+            return cls(d["enabled"], repos)
         except (OSError, ValueError, KeyError, TypeError):
             return cls()
 
@@ -60,6 +90,8 @@ class Need:
     seen: int = 1
     searched_on: str = ""
     outcome: str = ""
+    github_on: str = ""
+    github_outcome: str = ""
 
 
 def _need_of(v: Any) -> Need:
@@ -67,7 +99,8 @@ def _need_of(v: Any) -> Need:
         raise TypeError("a need is not an object")
     n = Need(**v)
     if not (isinstance(n.words, str) and isinstance(n.topic, str) and _whole(n.seen)
-            and isinstance(n.searched_on, str) and isinstance(n.outcome, str)):
+            and isinstance(n.searched_on, str) and isinstance(n.outcome, str)
+            and isinstance(n.github_on, str) and isinstance(n.github_outcome, str)):
         raise TypeError("a need holds a value of the wrong type")
     return n
 
@@ -92,8 +125,13 @@ class TunerState:
         self._batches: dict[str, int] = {}  # batches of messages read, per local date
         self._known: dict[str, str] = {}
         self._paused_until = ""
+        self._source_pauses: dict[str, str] = {}
+        self._github_spent: dict[str, dict[str, int]] = {}  # per local date: api and file counts
+        self._names: list[str] = []  # rejected skill names, case-folded, oldest first
+        self._approved: list[str] = []  # approved skill names, the same
         self._last_pass_at = ""
         self._last_error = ""
+        self._error_source = ""
         self._load()
 
     def _load(self) -> None:
@@ -107,11 +145,29 @@ class TunerState:
             needs = {k: _need_of(v) for k, v in d["needs"].items()}
             spent, conv = _counts_of(d["spent"]), _counts_of(d["converted"])
             searches, read_batches = _counts_of(d.get("searches", {})), _counts_of(d.get("batches", {}))  # later fields
+            pauses = d.get("source_pauses", {})
+            if not isinstance(pauses, dict) or not all(isinstance(k, str) and isinstance(v, str)
+                                                       for k, v in pauses.items()):
+                raise TypeError("source pauses are malformed")
+            gspent = d.get("github_spent", {})
+            if not isinstance(gspent, dict) or not all(
+                    isinstance(k, str) and isinstance(v, dict) and set(v) <= set(GH_LIMITS)
+                    and all(_whole(c) for c in v.values()) for k, v in gspent.items()):
+                raise TypeError("github counts are malformed")
+            names = d.get("rejected_names", [])
+            if not isinstance(names, list) or not all(isinstance(x, str) for x in names):
+                raise TypeError("rejected names are malformed")
+            approved = d.get("approved_names", [])
+            if not isinstance(approved, list) or not all(isinstance(x, str) for x in approved):
+                raise TypeError("approved names are malformed")
             known = d["known"]
             if not isinstance(known, dict) or not all(isinstance(k, str) and v in HOWS for k, v in known.items()):
                 raise TypeError("known is malformed")
             paused, at, err = d["paused_until"], d["last_pass_at"], d["last_error"]
             if not all(isinstance(x, str) for x in (paused, at, err)):
+                raise TypeError("a text value has the wrong type")
+            err_source = d.get("last_error_source", "")
+            if not isinstance(err_source, str):
                 raise TypeError("a text value has the wrong type")
         except (ValueError, KeyError, TypeError, AttributeError):
             try:
@@ -121,15 +177,21 @@ class TunerState:
             return
         self._marks, self._needs, self._spent, self._converted = marks, needs, spent, conv
         self._searches, self._batches = searches, read_batches
+        self._source_pauses, self._github_spent = dict(pauses), {k: dict(v) for k, v in gspent.items()}
+        self._names = list(names)[-NAMES_CAP:]
+        self._approved = list(approved)[-NAMES_CAP:]
         self._known, self._paused_until, self._last_pass_at, self._last_error = known, paused, at, err
+        self._error_source = err_source
 
     def _save(self) -> None:  # caller holds the lock
         _replace_file(self.path, {
             "marks": self._marks, "needs": {k: asdict(n) for k, n in self._needs.items()},
             "spent": self._spent, "converted": self._converted, "searches": self._searches,
             "batches": self._batches, "known": self._known,
+            "source_pauses": self._source_pauses, "github_spent": self._github_spent,
+            "rejected_names": self._names, "approved_names": self._approved,
             "paused_until": self._paused_until, "last_pass_at": self._last_pass_at,
-            "last_error": self._last_error})
+            "last_error": self._last_error, "last_error_source": self._error_source})
 
     def read(self, conv_id: str) -> int:
         with self._lock:
@@ -154,29 +216,55 @@ class TunerState:
             if self._needs.pop(words.casefold(), None) is not None:
                 self._save()
 
-    def due_needs(self, today: str, limit: int) -> list[Need]:
-        """Needs not searched in the last RESEARCH_AFTER_DAYS, most seen first; a need the decider could not judge
-        (`undecided`) is due again from the next local date."""
+    @staticmethod
+    def _stale(on: str, outcome: str, now: date) -> bool:
+        """Due again: never searched, or searched RESEARCH_AFTER_DAYS ago (an `undecided` one the next date)."""
+        try:
+            age = (now - date.fromisoformat(on)).days if on else None
+        except ValueError:
+            age = None
+        return age is None or age >= (1 if outcome == "undecided" else RESEARCH_AFTER_DAYS)
+
+    def _due_for(self, n: Need, now: date) -> list[str]:
+        out = []
+        if self._stale(n.searched_on, n.outcome, now):
+            out.append("casemark")
+        if self._stale(n.github_on, n.github_outcome, now):
+            out.append("github")
+        return out
+
+    def due_for(self, need: Need, today: str) -> list[str]:
+        """Which of "casemark" and "github" this need is due for."""
+        return self._due_for(need, date.fromisoformat(today))
+
+    def due_needs(self, today: str, limit: int, sources: tuple[str, ...] = ("casemark",)) -> list[Need]:
+        """Needs due for any of `sources` (not searched there in the last RESEARCH_AFTER_DAYS), most seen first; a
+        need the decider could not judge (`undecided`) is due again from the next local date."""
         now = date.fromisoformat(today)
         due: list[Need] = []
         with self._lock:
             for n in self._needs.values():
-                try:
-                    age = (now - date.fromisoformat(n.searched_on)).days if n.searched_on else None
-                except ValueError:
-                    age = None
-                fresh = age is not None and age < (1 if n.outcome == "undecided" else RESEARCH_AFTER_DAYS)
-                if not fresh:
+                if set(self._due_for(n, now)) & set(sources):
                     due.append(Need(**asdict(n)))
         due.sort(key=lambda n: -n.seen)  # stable: ties keep the order they were added
         return due[:max(limit, 0)]
 
-    def mark_searched(self, words: str, today: str, outcome: str) -> None:
+    def mark_searched(self, words: str, today: str, outcome: str, source: str = "casemark") -> None:
         with self._lock:
             n = self._needs.get(words.casefold())
             if n is not None:
-                n.searched_on, n.outcome = today, outcome
+                if source == "github":
+                    n.github_on, n.github_outcome = today, outcome
+                else:
+                    n.searched_on, n.outcome = today, outcome
                 self._save()
+
+    def reset_github(self) -> None:
+        """Make every need due for GitHub again; CaseMark's marks stay."""
+        with self._lock:
+            for n in self._needs.values():
+                n.github_on = n.github_outcome = ""
+            self._save()
 
     def searched(self, today: str) -> int:
         """Searches sent on `today` (giving a need back does not lower it)."""
@@ -227,6 +315,55 @@ class TunerState:
         with self._lock:
             return bool(self._paused_until) and today < self._paused_until
 
+    def pause_source(self, source: str, day: str) -> None:
+        with self._lock:
+            self._source_pauses[source] = day
+            self._save()
+
+    def source_paused(self, source: str, today: str) -> bool:
+        with self._lock:
+            until = self._source_pauses.get(source, "")
+            return bool(until) and today < until
+
+    def spend_github(self, today: str, kind: str) -> bool:
+        if kind not in GH_LIMITS:
+            raise ValueError(f"kind must be one of {', '.join(GH_LIMITS)}")
+        with self._lock:
+            now = {k: 0 for k in GH_LIMITS} | self._github_spent.get(today, {})
+            if now[kind] >= GH_LIMITS[kind]:
+                return False
+            now[kind] += 1
+            self._github_spent = {today: now}  # older days are not needed
+            self._save()
+            return True
+
+    def github_spent(self, today: str) -> dict[str, int]:
+        with self._lock:
+            return {k: 0 for k in GH_LIMITS} | self._github_spent.get(today, {})
+
+    @property
+    def rejected_names(self) -> set[str]:
+        with self._lock:
+            return set(self._names)
+
+    @property
+    def approved_names(self) -> set[str]:
+        with self._lock:
+            return set(self._approved)
+
+    def remember_name(self, name: str, how: str = "rejected") -> None:
+        """Keep a skill's name (case-folded) so a copy of it in another repository is not suggested again."""
+        key = name.strip().casefold()
+        if not key:
+            return
+        with self._lock:
+            names = self._approved if how == "approved" else self._names
+            if key in names:
+                names.remove(key)
+            names.append(key)
+            del names[:-NAMES_CAP]
+            self._save()
+
     @property
     def known(self) -> set[str]:
         with self._lock:
@@ -257,4 +394,14 @@ class TunerState:
     def last_error(self, v: str) -> None:
         with self._lock:
             self._last_error = v
+            self._save()
+
+    @property
+    def error_source(self) -> str:
+        """Which source the last error belongs to: `casemark`, `github`, or empty (decider, model, store)."""
+        return self._error_source
+
+    def set_error(self, kind: str, source: str = "") -> None:
+        with self._lock:
+            self._last_error, self._error_source = kind, source if kind else ""
             self._save()

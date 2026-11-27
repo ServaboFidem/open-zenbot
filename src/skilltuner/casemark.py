@@ -63,6 +63,10 @@ class Downloaded:
     author: str
     license: str
     files: list[tuple[str, str]]  # (path, file slug) of each bundled text file under references/
+    source: str = "agentskills.finance"
+    url: str = ""
+    left_out: bool = False  # the skill came with scripts or other files that were not brought over
+    commit: str = ""  # a GitHub skill's whole commit (`version` holds its first 12 characters)
 
 
 def _clean(value: object, limit: int) -> str:

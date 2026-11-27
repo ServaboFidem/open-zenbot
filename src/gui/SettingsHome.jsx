@@ -4,7 +4,7 @@ import { Apps24Regular, CalendarLtr24Regular, BrainCircuit24Regular, Cloud24Regu
 import { PANELS, searchSettings } from './settings-index';
 
 export const PANEL_ICONS = {
-  harness: <BrainCircuit24Regular/>, providers: <Cloud24Regular/>, tools: <Wrench24Regular/>, mcps: <PlugConnected24Regular/>, skills: <Sparkle24Regular/>, agents: <Code24Regular/>, folders: <Folder24Regular/>, calendar: <CalendarLtr24Regular/>,
+  harness: <BrainCircuit24Regular/>, providers: <Cloud24Regular/>, tools: <Wrench24Regular/>, mcps: <PlugConnected24Regular/>, skills: <Sparkle24Regular/>, discovery: <Search24Regular/>, agents: <Code24Regular/>, folders: <Folder24Regular/>, calendar: <CalendarLtr24Regular/>,
   tracing: <Pulse24Regular/>, ledger: <Document24Regular/>, memory: <Database24Regular/>, apps: <Apps24Regular/>, speakers: <Speaker224Regular/>, about: <Info24Regular/>,
 };
 

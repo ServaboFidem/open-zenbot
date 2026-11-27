@@ -77,7 +77,7 @@ class FakeModel:
 
 
 class FakeScorer:
-    """Answers each `r:<slug>` question with the score set for that slug."""
+    """Answers each `r:<n>` question with the score set for the source id the tuner put at position n."""
 
     kind = "fake"
 
@@ -85,12 +85,13 @@ class FakeScorer:
         self.scores: dict[str, float] = {}
         self.requests: list = []
         self.raises: BaseException | None = None
+        self.order = lambda: []  # the tuner's source ids by question position
 
     async def decide(self, request):
         self.requests.append(request)
         if self.raises:
             raise self.raises
-        return DecisionResult(answers={k: NoulAnswer(self.scores.get(k.removeprefix("r:"), 0.0)) for k in request.questions},
+        return DecisionResult(answers={k: NoulAnswer(self.scores.get(self.order()[int(k.removeprefix("r:"))], 0.0)) for k in request.questions},
                               model="fake", kind="fake")
 
     async def probe(self):
@@ -121,6 +122,7 @@ class Rig:
                                 model=lambda: (self.model, "fake-model"), scorer=lambda: self.scorer,
                                 bot=lambda: self.bot, clean=lambda t: bool(exclusion.check_text(t)),
                                 today=lambda: self.today, clock=lambda: self.now)
+        self.scorer.order = lambda: self.tuner._fit_order
         self.tuner.set_settings(TunerSettings(True))
 
     def conv(self, *users, age=3600.0):
@@ -181,7 +183,7 @@ async def test_a_full_pass_makes_one_suggestion_from_two_messages(t):
     assert TOPIC in convert and "```\n" in convert and fixture("read")["content"][:40] in convert
     assert t.model.calls[0][0].content.startswith("You are SkillTuner. Your role: Finds skills.")
     req = t.scorer.requests[0]
-    assert req.state == {"words": WORDS} and set(req.questions) == {f"r:{WIN}", "r:other-skill"}
+    assert req.state == {"words": WORDS} and set(req.questions) == {"r:0", "r:1"}
     assert req.purpose == "skilltuner"
     assert t.state.read(t.convs[0].id) == 2 and t.tuner.waiting() == 0
     assert t.state.last_pass_at and t.state.last_error == ""
@@ -211,7 +213,7 @@ async def test_a_result_already_rejected_is_never_scored(t):
     t.conv("Draft an investment memo for the Acme deal")
     t.model.answers = [needs((TOPIC, WORDS))]
     await t.tune()
-    assert set(t.scorer.requests[0].questions) == {"r:other-skill"}
+    assert set(t.scorer.requests[0].questions) == {"r:0"}
     assert [p["name"] for p in t.sent()] == ["resolve_skill"] and t.store.count() == 0
     assert {"source_slug": WIN, "reason": "duplicate"}.items() <= t.events("dropped")[0].items()
 
@@ -221,7 +223,7 @@ async def test_a_result_already_in_the_catalog_is_never_scored(t):
     t.conv("Draft an investment memo for the Acme deal")
     t.model.answers = [needs((TOPIC, WORDS))]
     await t.tune()
-    assert set(t.scorer.requests[0].questions) == {"r:other-skill"}
+    assert set(t.scorer.requests[0].questions) == {"r:0"}
 
 
 async def test_two_results_within_the_band_give_no_winner(t):
@@ -323,7 +325,8 @@ async def test_a_429_pauses_until_tomorrow_and_counts_nothing(t):
     t.model.answers = [needs((TOPIC, WORDS))]
     got = await t.tune()
     assert got["searches"] == 0 and got["suggested"] == 0
-    assert t.state.paused(TODAY) and not t.state.paused("2027-01-16") and t.state.last_error == "refused"
+    assert t.state.source_paused("casemark", TODAY) and not t.state.source_paused("casemark", "2027-01-16")
+    assert not t.state.paused(TODAY) and t.state.last_error == "refused"
     assert [n.words for n in t.state.due_needs("2027-01-16", 8)] == [WORDS]  # not counted as searched
     assert t.tuner.waiting() == 0 and t.tuner.status()["error"] == "refused"
     assert await t.tune() == {"messages": 0, "needs": 0, "searches": 0, "suggested": 0, "dropped": 0}
@@ -405,7 +408,7 @@ async def test_no_ledger_entry_holds_a_needs_words_topic_or_message(t):
 
 async def test_status_says_what_the_routes_need(t):
     s = t.tuner.status()
-    assert s == {"enabled": True, "ready": True, "tuning": False, "waiting": 0, "last_pass_at": "", "error": "",
+    assert s == {"enabled": True, "ready": True, "tuning": False, "waiting": 0, "last_pass_at": "", "error": "", "error_source": "",
                  "paused": False, "pending": 0, "spent_today": 0, "budget": 40, "searched_today": 0,
                  "suggested_today": 0}
 
@@ -548,7 +551,7 @@ async def test_a_systemic_failure_after_midnight_pauses_until_the_day_after(t):
     t.site.status = 429
     t.state.add_need(TOPIC, WORDS)
     await t.tune()
-    assert t.state.paused("2027-01-16") and not t.state.paused("2027-01-17")
+    assert t.state.source_paused("casemark", "2027-01-16") and not t.state.source_paused("casemark", "2027-01-17")
 
 
 async def test_the_store_filling_mid_pass_gives_the_other_winner_back(t, monkeypatch):

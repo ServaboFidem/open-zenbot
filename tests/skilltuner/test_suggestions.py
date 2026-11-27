@@ -179,3 +179,28 @@ def test_the_harness_sweeps_the_store_when_it_builds_it(tmp_path):
     (tuner_dir(vault) / ".tmp-in-flight").mkdir()
     h.__post_init__()  # a rebind rebuilds the services but never sweeps: a pass may be writing one
     assert (tuner_dir(vault) / ".tmp-in-flight").exists()
+
+
+def test_an_old_record_without_the_new_fields_loads_with_their_defaults(tmp_path):
+    st = SuggestionStore(tmp_path / "t")
+    s = make()
+    st.add(s, built())
+    path = tmp_path / "t" / s.id / "record.json"
+    old = json.loads(path.read_text("utf-8"))
+    for k in ("source", "source_name", "left_out"):
+        del old[k]
+    path.write_text(json.dumps(old), encoding="utf-8")
+    got = st.get(s.id)
+    assert (got.source, got.source_name, got.left_out) == ("agentskills.finance", "", False)
+
+
+def test_the_new_fields_round_trip_and_must_have_their_types(tmp_path):
+    st = SuggestionStore(tmp_path / "t")
+    s = make(source="github.com/o/r", source_name="Memo", left_out=True)
+    st.add(s, built())
+    assert st.get(s.id) == s
+    path = tmp_path / "t" / s.id / "record.json"
+    for bad in ({"left_out": "yes"}, {"source": 3}):
+        path.write_text(json.dumps({**json.loads(path.read_text("utf-8")), **bad}), encoding="utf-8")
+        assert st.get(s.id) is None
+        path.write_text(json.dumps(s.__dict__), encoding="utf-8")

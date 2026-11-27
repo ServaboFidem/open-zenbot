@@ -11,7 +11,7 @@ import re
 import shutil
 import stat
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, fields
+from dataclasses import MISSING, asdict, dataclass, fields
 from pathlib import Path
 
 from src.skilltuner.convert import BuiltSkill
@@ -36,9 +36,13 @@ class Suggestion:
     original: str
     converted: str
     at: str
+    source: str = "agentskills.finance"  # the library the skill came from, as the file's `source` says
+    source_name: str = ""  # the downloaded skill's own name (the reject route remembers it)
+    left_out: bool = False  # the skill came with scripts or other files that were not brought over
 
 
-_STR = {f.name for f in fields(Suggestion) if f.name != "score"}
+_STR = {f.name for f in fields(Suggestion) if f.name not in ("score", "left_out")}
+_REQUIRED = {f.name for f in fields(Suggestion) if f.default is MISSING}
 
 
 def _kind(p: Path) -> int | None:
@@ -83,9 +87,9 @@ def _load(raw: str, folder_id: str) -> Suggestion | None:
         d = json.loads(raw)
     except ValueError:
         return None
-    if not isinstance(d, dict) or set(d) != {f.name for f in fields(Suggestion)}:
-        return None
-    if any(not isinstance(d[k], str) for k in _STR):
+    if not isinstance(d, dict) or not _REQUIRED <= set(d) <= {f.name for f in fields(Suggestion)}:
+        return None  # an older record may lack the fields that have defaults
+    if any(not isinstance(d[k], str) for k in _STR if k in d) or not isinstance(d.get("left_out", False), bool):
         return None
     if isinstance(d["score"], bool) or not isinstance(d["score"], (int, float)):
         return None

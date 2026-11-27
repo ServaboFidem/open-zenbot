@@ -1,0 +1,7 @@
+{"sha": "9fb037999f264ba9a7fc6274d15fa3ae2ab98312", "truncated": false, "tree": [
+ {"path": "README.md", "mode": "100644", "type": "blob", "sha": "44b4fc6d56897b048c772eb4087f854f46256132", "size": 132},
+ {"path": "skills", "mode": "040000", "type": "tree", "sha": "f484d249c660418515fb01c2b9662073663c242e"},
+ {"path": "skills/a", "mode": "040000", "type": "tree", "sha": "a4b8e0e0c9d54a8a8d0a0d0a8f0c0d0e0f0a0b0c"},
+ {"path": "skills/a/SKILL.md", "mode": "100644", "type": "blob", "sha": "3d21ec53a331a6f037a91c368710b99387d012c1", "size": 1024},
+ {"path": "vendor", "mode": "160000", "type": "commit", "sha": "e5fd6f4b1a3d8c7e9f0a1b2c3d4e5f6a7b8c9d0e"}
+]}

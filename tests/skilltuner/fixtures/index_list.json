@@ -1,0 +1,6 @@
+[
+  {"id": "007", "path": "skills/007", "category": "security", "name": "007", "description": "Security audit, hardening, threat modeling.", "risk": "safe", "source": "personal"},
+  {"id": "pdf", "path": "skills/pdf", "category": "documents", "name": "pdf", "description": "Read and fill PDF files.", "risk": "safe", "source": "community"},
+  {"id": "sql", "path": "skills/sql-helper", "category": "data", "name": "sql-helper", "description": "Write and review SQL.", "risk": "safe", "source": "community"},
+  {"id": "web", "path": "skills/web-audit", "category": "web", "name": "web-audit", "description": "Audit a web page.", "risk": "safe", "source": "community"}
+]

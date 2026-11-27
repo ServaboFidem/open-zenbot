@@ -27,7 +27,7 @@ export function SkillTunerSection({ ctx, dreamingOn }) {
   return <div className="od-stack">
     <h4 id={anchorId('harness', 'SkillTuner')}>SkillTuner</h4>
     {!status ? <p className="field-hint">{online ? 'Loading…' : 'The harness is offline.'}</p> : <>
-      <label className="od-row"><input type="checkbox" checked={!!status.enabled} disabled={!online || (!status.enabled && !dreamingOn)} onChange={e => toggle(e.target.checked)}/> Find finance skills that match what I ask for while the computer dreams</label>
+      <label className="od-row"><input type="checkbox" checked={!!status.enabled} disabled={!online || (!status.enabled && !dreamingOn)} onChange={e => toggle(e.target.checked)}/> Find skills that match what I ask for while the computer dreams</label>
       <p className="field-hint">{PRIVACY}</p>
       <p className="quiet-line" aria-live="polite">{statusLine(status)}</p>
       {error && <p className="form-error" role="alert">{error}</p>}
