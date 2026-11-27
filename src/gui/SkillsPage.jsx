@@ -11,7 +11,7 @@ import { tunerTabLabel } from './skilltuner.js';
 // main is the Main tab's content; openHarness opens Settings > Harness settings, where dreaming is switched on.
 // The suggestion cards stay mounted (hidden) on Main: they also read which skills SkillTuner installed, which the
 // catalog's Remove buttons need (onDiscovered).
-export function SkillsPage({ tab, onTab, pending, main, ctx, bots, onDiscovered, onChanged, openHarness }) {
+export function SkillsPage({ tab, onTab, pending, main, ctx, bots, onDiscovered, onChanged, onDecided, openHarness }) {
   const tuner = tab === 'tuner';
   return <>
     <TabList selectedValue={tab} className="skills-tabs" aria-label="Skills sections" onTabSelect={(_, d) => onTab(d.value)}>
@@ -19,7 +19,7 @@ export function SkillsPage({ tab, onTab, pending, main, ctx, bots, onDiscovered,
       <Tab value="tuner">{tunerTabLabel(pending)}</Tab>
     </TabList>
     {tuner && <><SkillTunerSection ctx={ctx} openHarness={openHarness}/><SkillDiscovery ctx={ctx}/></>}
-    <div hidden={!tuner}><TunerSuggestions ctx={ctx} bots={bots} onDiscovered={onDiscovered} onChanged={onChanged}/></div>
+    <div hidden={!tuner}><TunerSuggestions ctx={ctx} bots={bots} onDiscovered={onDiscovered} onChanged={onChanged} onDecided={onDecided}/></div>
     {!tuner && main}
   </>;
 }

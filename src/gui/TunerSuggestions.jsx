@@ -6,9 +6,9 @@ import { LEFT_OUT, attachChosen, cardSource, createLatest, createQueue, doneLine
 const POLL_MS = 15000;
 
 // The cards at the top of Settings > Skills. Everything a suggestion carries is untrusted and shown as plain text
-// children, never as HTML or Markdown. ctx: { api, online, notify }; onChanged() reads bots, skills and fits again;
+// children, never as HTML or Markdown. ctx: { api, online, notify }; onChanged() reads bots, skills and fits again; onDecided() runs after each Approve or Reject (the app reads the waiting count again);
 // onDiscovered(slugs) tells the list which skills Remove may act on.
-export function TunerSuggestions({ ctx, bots, onChanged, onDiscovered }) {
+export function TunerSuggestions({ ctx, bots, onChanged, onDiscovered, onDecided }) {
   const { api, online, notify } = ctx;
   const [list, setList] = useState([]);
   const [open, setOpen] = useState({});      // id -> full suggestion (See what changed)
@@ -52,7 +52,7 @@ export function TunerSuggestions({ ctx, bots, onChanged, onDiscovered }) {
         setList(l => l.filter(x => x.id !== s.id));
         setChosen(c => [...c, { skill: r.skill, fit: r.fit || null, picks: initialPicks(botsRef.current, r.fit), dialog: true, done: { confirmed: [], updated: [] } }]);
         notify(`${s.name} was added to the skills`);
-        onChanged?.(); load();
+        onChanged?.(); onDecided?.(); load();
       } catch (e) { fail(s.id, e); }
     });
   }
@@ -60,7 +60,7 @@ export function TunerSuggestions({ ctx, bots, onChanged, onDiscovered }) {
     clear(s.id);
     return queued(s.id, async () => {
       latest.bump();
-      try { await api.tuner.reject(s.id); latest.bump(); setList(l => l.filter(x => x.id !== s.id)); load(); } catch (e) { fail(s.id, e); }
+      try { await api.tuner.reject(s.id); latest.bump(); setList(l => l.filter(x => x.id !== s.id)); onDecided?.(); load(); } catch (e) { fail(s.id, e); }
     });
   }
   const patch = (ref, fn) => setChosen(c => c.map(x => (x.skill.ref === ref ? fn(x) : x)));
