@@ -68,15 +68,16 @@ def parse_overrun(text: str) -> Overrun | None:
     )
 
 
-def piece_chars(context: int | None, overhead_chars: int) -> int:
+def piece_chars(context: int | None, overhead_chars: int, rate: float = CHARS_PER_TOKEN) -> int:
     """How many characters one piece may carry for a window of `context`
     tokens, after the prompt's own `overhead_chars` and a reserve for the
-    answer. Raises ContextTooSmall when that leaves under MIN_PIECE."""
+    answer, at `rate` characters a token. Raises ContextTooSmall when that
+    leaves under MIN_PIECE."""
     if context is None:
         return MAX_PIECE
-    overhead_tokens = math.ceil(overhead_chars / CHARS_PER_TOKEN)
+    overhead_tokens = math.ceil(overhead_chars / rate)
     reserve = max(MIN_RESERVE, context // 4)
-    chars = (context - overhead_tokens - reserve) * CHARS_PER_TOKEN
+    chars = int((context - overhead_tokens - reserve) * rate)
     if chars < MIN_PIECE:
         raise ContextTooSmall(f"a window of {context} tokens leaves no room for a summary piece")
     return min(MAX_PIECE, chars)

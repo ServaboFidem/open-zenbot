@@ -526,3 +526,74 @@ async def test_compact_and_fold_with_nothing_new_makes_no_call():
     provider = RefusingProvider(max_user=10**9)
     out = await Generator(provider, context=FakeContext(4096)).compact_and_fold("", "earlier", goal=None)
     assert out.summary == "earlier" and out.folded is False and out.pieces == 0 and provider.calls == []
+
+
+# -- review round 1 ---------------------------------------------------------
+
+
+class CountingProvider(RefusingProvider):
+    """A RefusingProvider whose refusal reports the prompt at `rate` characters a token (or no
+    prompt size at all), and that records what it refused, what it answered and how many
+    requests were in flight at once."""
+
+    def __init__(self, *args, rate: float | None = 3.0, delay: float = 0.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rate, self.delay = rate, delay
+        self.refused: list[int] = []
+        self.answered: list[int] = []
+        self.in_flight = self.most_in_flight = 0
+
+    async def complete(self, messages, *, tools=None, model=None, session_id=None):
+        self.calls.append(list(messages))
+        self.in_flight += 1
+        self.most_in_flight = max(self.most_in_flight, self.in_flight)
+        try:
+            await asyncio.sleep(self.delay)
+            user = messages[-1].content
+            if len(user) > self.max_user:
+                self.refused.append(len(user))
+                if self.rate is None:
+                    body = ('{"error":{"code":400,"message":"the request exceeds the available context size, try '
+                            f'increasing it","type":"exceed_context_size_error","n_ctx":{self.n_ctx}}}}}')
+                    raise ProviderError("openai-compatible HTTP 400: " + body, status=400)
+                raise refusal(self.n_ctx, math.ceil(sum(len(m.content) for m in messages) / self.rate))
+            self.answered.append(len(user))
+            return completion(self.answer)
+        finally:
+            self.in_flight -= 1
+
+
+@pytest.mark.parametrize("rate", [2.5, None], ids=["measured", "unmeasured"])
+async def test_a_retry_at_the_same_limit_sends_smaller_pieces(ledger: Ledger, rate):
+    # the limit is already 4096 and the refusal says 4096: the text runs at fewer than 3 characters a token
+    provider = CountingProvider(max_user=8_000, n_ctx=4096, rate=rate)
+    ctx = FakeContext(4096)
+    res = await fitted(provider, ledger, ctx).maybe_compact(transcript(120), BLOCK, bot_id="b", session_id="s")
+    assert res.compacted
+    assert provider.refused and max(provider.answered) < min(provider.refused)
+    e = ledger.tail(kind="compaction", session_id="s")[0]
+    assert e.data["retried"] is True and e.data["context"] == 4096
+
+
+async def test_a_single_text_that_shrinks_over_two_passes_is_folded():
+    # at 4096 tokens and no goal: pieces of 8,853 characters, a fold piece of 8,952, so each side under 4,476
+    provider = ScriptedProvider([completion("L" * 500), completion("a" * 4_500), completion("b" * 3_000),
+                                 completion("folded")])
+    out = await Generator(provider, context=FakeContext(4096)).compact_and_fold("one new turn\n", "p" * 8_800, goal=None)
+    assert out.summary == "folded" and out.folded is True
+    assert len(provider.calls) == 4
+    fold = provider.calls[-1][-1].content
+    assert "b" * 3_000 in fold and "L" * 500 in fold and "a" * 4_500 not in fold
+
+
+async def test_no_more_than_four_summary_requests_at_once():
+    big = render_transcript([m for i in range(1, 201) for m in turn(i)])
+    provider = CountingProvider(max_user=10**9, delay=0.01)
+    out = await Generator(provider, context=FakeContext(4096)).compact_and_fold(big, "", goal="g")
+    assert out.pieces > 4 and len(provider.calls) == out.pieces
+    assert provider.most_in_flight <= 4
+
+    # with the context unknown, every piece goes at once, as today
+    unknown = CountingProvider(max_user=10**9, delay=0.01)
+    out = await Generator(unknown, chunk_chars=4_000).compact_and_fold(big, "", goal="g")
+    assert out.pieces > 4 and unknown.most_in_flight == out.pieces
