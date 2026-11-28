@@ -2,6 +2,7 @@
 others only on the user's click, never from a private address."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import httpx
@@ -10,7 +11,7 @@ import pytest
 from src.harness.api import Harness, create_app
 from src.harness.bot import Bot
 from src.harness.config import HarnessConfig
-from src.harness.media import MediaProxy, host_trusted, trusted_hosts
+from src.harness.media import DEFAULT_TRUSTED, USER_AGENT, MediaProxy, host_trusted, trusted_hosts
 from src.memory.ledger import Ledger
 from src.skills.catalog import Catalog
 from src.skills.loader import load_skill
@@ -64,9 +65,26 @@ async def consent(client, url: str) -> str:
 
 
 def test_trusted_hosts_default_and_env():
-    assert trusted_hosts({}) == ("images.pexels.com", "videos.pexels.com")
-    assert trusted_hosts({"ZEN_MEDIA_TRUSTED_HOSTS": " cdn.example.com, ,Img.Other.org "}) == (
-        "images.pexels.com", "videos.pexels.com", "cdn.example.com", "img.other.org")
+    assert trusted_hosts({}) == DEFAULT_TRUSTED
+    assert DEFAULT_TRUSTED[:2] == ("images.pexels.com", "videos.pexels.com")
+    assert trusted_hosts({"ZEN_MEDIA_TRUSTED_HOSTS": " cdn.example.com, ,Img.Other.org, upload.wikimedia.org "}) == (
+        *DEFAULT_TRUSTED, "cdn.example.com", "img.other.org")
+
+
+def test_museum_pictures_load_without_a_click():
+    for url in ("https://images.metmuseum.org/CRDImages/ad/web-large/DP-29006-001.jpg",
+                "https://upload.wikimedia.org/wikipedia/commons/1/12/John_Singer_Sargent_001.jpg",
+                "https://www.artic.edu/iiif/2/abc/full/843,/0/default.jpg",
+                "https://iiif.micr.io/xyz/full/max/0/default.jpg"):
+        assert host_trusted(url, trusted_hosts({}))
+    assert not host_trusted("https://commons.wikimedia.org/wiki/File:X.jpg", trusted_hosts({}))  # pages are not pictures
+    assert not host_trusted("https://upload.wikimedia.org.evil.net/x.jpg", trusted_hosts({}))
+
+
+def test_the_gui_starts_with_the_same_trusted_list():
+    jsx = (Path(__file__).resolve().parents[1] / "src" / "gui" / "MediaCards.jsx").read_text("utf-8")
+    block = re.search(r"const DEFAULT_TRUSTED = \[(.*?)\];", jsx, re.S)
+    assert block and tuple(re.findall(r"'([^']+)'", block.group(1))) == DEFAULT_TRUSTED
 
 
 def test_host_trusted_matches_exact_and_subdomain_only():
@@ -233,3 +251,22 @@ async def test_non_http_scheme_is_400(client, harness):
 
 async def test_settings_lists_trusted_hosts(client):
     assert "images.pexels.com" in (await client.get("/settings")).json()["media_trusted_hosts"]
+
+
+async def test_every_fetch_names_the_app_not_the_http_library():
+    # upload.wikimedia.org answers 403 to a client's default User-Agent ("python-httpx/...") or none, so the
+    # museum server's Wikimedia Commons images failed even after the user's click.
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("user-agent", ""))
+        if request.url.path == "/hop":
+            return httpx.Response(302, headers={"Location": "https://upload.wikimedia.org/a.jpg"})
+        return jpeg(request)
+
+    p = proxy(handler, hosts=("upload.wikimedia.org",))
+    for url in ("https://upload.wikimedia.org/a.jpg", "https://upload.wikimedia.org/hop"):
+        stream = await p.open(url, clicked=False, range_header=None)
+        await stream.close()
+    assert seen == [USER_AGENT] * 3  # a redirect's next hop too
+    assert USER_AGENT.startswith("OpenZenBot/") and "python-httpx" not in USER_AGENT

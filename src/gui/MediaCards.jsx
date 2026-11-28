@@ -11,7 +11,11 @@ import { previewFrameUrl, previewUrl, saveUrl, viewerFrameUrl } from './media.js
 import { loadPdf, renderPage, usingPdf } from './pdf.js';
 import { createApi, harnessUrl } from './api';
 
-const DEFAULT_TRUSTED = ['images.pexels.com', 'videos.pexels.com'];
+// Until the harness's list (GET /settings media_trusted_hosts) arrives; equal to media.py DEFAULT_TRUSTED (tests/test_media.py).
+const DEFAULT_TRUSTED = ['images.pexels.com', 'videos.pexels.com', 'images.metmuseum.org', 'upload.wikimedia.org', 'www.artic.edu',
+  'openaccess-cdn.clevelandart.org', 'media.getty.edu', 'api.nga.gov', 'iiif.micr.io', 'api.smk.dk', 'art.thewalters.org',
+  'iiif.wellcomecollection.org', 'ids.si.edu', 'nrs.harvard.edu', 'ids.lib.harvard.edu', 'www.parismuseescollections.paris.fr',
+  'images.collections.yale.edu', 'api.europeana.eu'];
 const MAX_VIEWER_PAGES = 50;
 
 export const MediaContext = createContext(null);

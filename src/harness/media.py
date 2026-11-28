@@ -12,22 +12,60 @@ import ipaddress
 import os
 import secrets
 import socket
+import tomllib
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 import httpcore
 import httpx
 
-DEFAULT_TRUSTED: tuple[str, ...] = ("images.pexels.com", "videos.pexels.com")
+# Where the museum server's (open-museum-mcp) pictures live: each collection's own image host, never a page or an API
+# that takes a query of the bot's choosing to somewhere a stranger reads. Checked against live answers on 2026-11-27
+# (the keyless collections) or read from the server's fetchers (Smithsonian, Harvard, Paris Musees, Europeana and
+# Yale, which need keys or did not answer). Europeana's full-size images sit on each lending institution's own
+# host, so only its thumbnails (api.europeana.eu) load without a click.
+MUSEUM_IMAGE_HOSTS: tuple[str, ...] = (
+    "images.metmuseum.org",             # The Met
+    "upload.wikimedia.org",             # Wikimedia Commons
+    "www.artic.edu",                    # Art Institute of Chicago (IIIF under /iiif/)
+    "openaccess-cdn.clevelandart.org",  # Cleveland Museum of Art
+    "media.getty.edu",                  # Getty
+    "api.nga.gov",                      # National Gallery of Art (IIIF under /iiif/)
+    "iiif.micr.io",                     # Rijksmuseum (Micrio)
+    "api.smk.dk",                       # SMK, Copenhagen
+    "art.thewalters.org",               # The Walters
+    "iiif.wellcomecollection.org",      # Wellcome Collection
+    "ids.si.edu",                       # Smithsonian
+    "nrs.harvard.edu",                  # Harvard Art Museums: the image address...
+    "ids.lib.harvard.edu",              # ...and where it redirects
+    "www.parismuseescollections.paris.fr",  # Paris Musees
+    "images.collections.yale.edu",      # Yale Center for British Art
+    "api.europeana.eu",                 # Europeana thumbnails
+)
+DEFAULT_TRUSTED: tuple[str, ...] = ("images.pexels.com", "videos.pexels.com", *MUSEUM_IMAGE_HOSTS)
 MAX_REDIRECTS = 3
 ALLOWED_TYPES = ("image/", "video/", "application/pdf")
 PASSED_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges")
 
 
+def _version() -> str:
+    try:
+        data = tomllib.loads((Path(__file__).resolve().parents[2] / "pyproject.toml").read_text("utf-8"))
+        return str(data["project"]["version"])
+    except (OSError, KeyError, ValueError):
+        return "0.0.0"
+
+
+# Who is asking, on every fetch. Hosts with a robot policy refuse a client's default (upload.wikimedia.org answers
+# 403 to "python-httpx/..." and to none: https://w.wiki/4wJS). Names the app and its public repository only.
+USER_AGENT = f"OpenZenBot/{_version()} (+https://github.com/ServaboFidem/open-zenbot)"
+
+
 def trusted_hosts(env: Mapping[str, str] = os.environ) -> tuple[str, ...]:
-    """Pexels always, plus the comma-separated ZEN_MEDIA_TRUSTED_HOSTS, lower-cased."""
+    """Pexels and the museum image hosts always, plus the comma-separated ZEN_MEDIA_TRUSTED_HOSTS, lower-cased."""
     extra = [h.strip().lower() for h in env.get("ZEN_MEDIA_TRUSTED_HOSTS", "").split(",")]
     return tuple(dict.fromkeys([*DEFAULT_TRUSTED, *(h for h in extra if h)]))
 
@@ -156,7 +194,8 @@ class MediaProxy:
             raise MediaRefused(403, "click to load: that host is not on the trusted list")
         await self._check_hop(url)
         # identity: the bytes pass through as sent, so Content-Length and Content-Range stay true
-        headers = {"Accept-Encoding": "identity", **({"Range": range_header} if range_header else {})}
+        headers = {"User-Agent": USER_AGENT, "Accept-Encoding": "identity",
+                   **({"Range": range_header} if range_header else {})}
         for _ in range(MAX_REDIRECTS + 1):
             try:
                 response = await self.client.send(self.client.build_request("GET", url, headers=headers), stream=True)

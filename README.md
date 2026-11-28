@@ -400,7 +400,7 @@ Settings opens on a page of tiles with a search box over every setting: models a
 
 ![The Settings home page: a search box and a tile for each group of settings](docs/screenshots/settings.png)
 
-Images, video, PDFs, diagrams and files in a bot's reply show under it as preview cards, in rooms and in one-to-one chat. Each card has Save…, which opens the system save dialog in the last folder you saved to (Pictures or Downloads the first time); images and video also have Open and Copy link, and PDFs and diagrams open larger with View. Remote media loads through the harness: hosts on the trusted list (Pexels, plus `ZEN_MEDIA_TRUSTED_HOSTS`) load at once, and any other host waits until you click Load. A bot shares a file it made with `attach_file`.
+Images, video, PDFs, diagrams and files in a bot's reply show under it as preview cards, in rooms and in one-to-one chat. Each card has Save…, which opens the system save dialog in the last folder you saved to (Pictures or Downloads the first time); images and video also have Open and Copy link, and PDFs and diagrams open larger with View. Remote media loads through the harness: hosts on the trusted list (Pexels, the image hosts of the museum collections the `museum` server reads, plus `ZEN_MEDIA_TRUSTED_HOSTS`) load at once, and any other host waits until you click Load. A bot shares a file it made with `attach_file`.
 
 New in 0.3.0: **attach files to a message.** Use the paperclip, drag files onto the message box or paste a picture.
 A message takes up to 10 files, at most 4 of them pictures. Pictures can be PNG, JPEG, WebP or still GIF; they are

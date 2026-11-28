@@ -46,6 +46,22 @@ async def test_registry_connects_a_stdio_server_and_registers_its_tools(tmp_path
     assert "echo.echo" not in tools.names()
 
 
+async def test_a_stdio_server_starts_in_an_empty_folder_not_the_harness_folder(tmp_path: Path, monkeypatch):
+    # A server that loads `.env` from its working folder (open-museum-mcp calls dotenv.config()) must not find the
+    # harness's own `.env` there, which would hand back every key the scrubbed environment drops.
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-must-not-leak\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    where = ServerConfig(name="cwd", command=sys.executable, args=[str(Path(__file__).parent / "fixtures" / "mcp_cwd_server.py")])
+    reg = McpRegistry([where])
+    try:
+        await reg.connect(ToolRunner(cwd=tmp_path), Catalog())
+        seen = json.loads(await reg.call("cwd", "where", {}))
+    finally:
+        await reg.close()
+    assert Path(seen["cwd"]).resolve() != tmp_path.resolve()
+    assert seen["entries"] == []
+
+
 async def test_registry_reports_a_failed_server_and_keeps_the_rest(tmp_path: Path):
     bad = ServerConfig(name="bad", command="definitely-not-a-command-zen", args=[])
     reg = McpRegistry([bad, ECHO])
