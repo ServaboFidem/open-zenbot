@@ -274,3 +274,364 @@ def test_transcript_shows_file_blocks_as_a_size():
     out = render_transcript([Message("user", body)])
     assert "[content of a.pdf, " in out and "characters]" in out
     assert "zzzz" not in out and "look" in out
+
+
+# -- fitting to the summary model's context ---------------------------------
+
+import asyncio  # noqa: E402
+import math  # noqa: E402
+
+from src.context.fit import Overrun, piece_chars  # noqa: E402
+from src.generation.generator import SUMMARY_SYSTEM  # noqa: E402
+from src.providers.interface import ProviderError  # noqa: E402
+
+
+def refusal(n_ctx: int | None = 4096, n_prompt: int = 5726) -> ProviderError:
+    """LM Studio's length refusal, as the openai-compatible adapter raises it."""
+    if n_ctx is None:
+        sentence, ctx = f"request ({n_prompt} tokens) exceeds the available context size", ""
+    else:
+        sentence = f"request ({n_prompt} tokens) exceeds the available context size ({n_ctx} tokens), try increasing it"
+        ctx = f',"n_ctx":{n_ctx}'
+    body = (f'{{"error":{{"code":400,"message":"{sentence}","type":"exceed_context_size_error",'
+            f'"n_prompt_tokens":{n_prompt}{ctx}}}}}')
+    return ProviderError("openai-compatible HTTP 400: Engine protocol predict request returned 400: " + body, status=400)
+
+
+class RefusingProvider:
+    """Answers a short summary, or refuses for length any request whose user message passes `max_user`."""
+
+    kind = "mock"
+
+    def __init__(self, max_user: int = 9_000, n_ctx: int | None = 4096, answer: str = "short summary"):
+        self.max_user, self.n_ctx, self.answer = max_user, n_ctx, answer
+        self.calls: list[list[Message]] = []
+
+    async def complete(self, messages, *, tools=None, model=None, session_id=None):
+        self.calls.append(list(messages))
+        await asyncio.sleep(0)  # let concurrent callers interleave
+        user = messages[-1].content
+        if len(user) > self.max_user:
+            raise refusal(self.n_ctx, math.ceil(len(user) / 3))
+        return completion(self.answer)
+
+    async def probe(self) -> bool:
+        return True
+
+
+class FakeContext:
+    """A ContextSource: a fixed limit, and the overruns it was taught."""
+
+    def __init__(self, limit: int | None = None):
+        self._limit = limit
+        self.learned: list[Overrun] = []
+
+    async def limit(self) -> int | None:
+        return self._limit
+
+    def learn(self, o: Overrun) -> None:
+        self.learned.append(o)
+        if o.n_ctx is not None:
+            self._limit = o.n_ctx
+
+
+def goal_line(goal: str) -> str:
+    return f"The session goal: {goal}\n\n"
+
+
+# a goal sized so a summary request's overhead is 900 characters: pieces for a 4096-token context are 8,316
+LONG_GOAL = "g" * (900 - len(SUMMARY_SYSTEM) - len(goal_line("")))
+LONG_BLOCK = ProtectedBlock(task=LONG_GOAL, constraints=[])
+
+
+def fits(call: list[Message], context: int) -> bool:
+    """The request's text at 3 characters a token, plus the answer's reserve, fits the context."""
+    tokens = math.ceil(sum(len(m.content) for m in call) / 3)
+    return tokens + max(512, context // 4) <= context
+
+
+def fitted(provider, ledger, context=None, budget=1_000, keep=2, **hooks) -> Compactor:
+    return Compactor(Generator(provider, context=context), ledger,
+                     CompactionConfig(budget_chars=budget, keep_recent_turns=keep), **hooks)
+
+
+async def test_pieces_fit_a_known_context(ledger: Ledger):
+    assert piece_chars(4096, 900) == 8316
+    provider = RefusingProvider(max_user=10**9)
+    msgs = [SYSTEM, Message("user", LONG_GOAL)] + [m for i in range(1, 81) for m in turn(i)]
+    res = await fitted(provider, ledger, FakeContext(4096)).maybe_compact(msgs, LONG_BLOCK, bot_id="b", session_id="s")
+    assert res.compacted
+    assert len(provider.calls) > 1
+    for call in provider.calls:
+        user = call[-1].content
+        assert user.startswith(goal_line(LONG_GOAL))
+        assert len(user) - len(goal_line(LONG_GOAL)) <= 8316
+        assert fits(call, 4096)
+    e = ledger.tail(kind="compaction", session_id="s")[0]
+    assert e.data["ok"] is True and e.data["pieces"] > 1 and e.data["context"] == 4096
+    assert "retried" not in e.data
+
+
+async def test_unknown_context_keeps_16000(ledger: Ledger):
+    provider = RefusingProvider(max_user=10**9)
+    res = await fitted(provider, ledger).maybe_compact(transcript(120), BLOCK, bot_id="b", session_id="s")
+    assert res.compacted
+    head = len(goal_line(BLOCK.task))
+    sent = [c[-1].content[head:] for c in provider.calls]
+    assert max(len(s) for s in sent) > 9_000 and all(len(s) <= 16_000 for s in sent)
+    assert Generator(provider).chunk("".join(sent)) == sent  # the pieces today's compact() sends
+    e = ledger.tail(kind="compaction", session_id="s")[0]
+    assert e.data["context"] is None and e.data["pieces"] == len(sent) > 1
+
+
+async def test_a_refusal_is_learned_and_retried_once(ledger: Ledger):
+    provider = RefusingProvider(max_user=9_000, n_ctx=4096)
+    ctx = FakeContext(None)
+    res = await fitted(provider, ledger, ctx).maybe_compact(transcript(120), BLOCK, bot_id="b", session_id="s")
+    assert res.compacted and res.overrun is None
+    assert [o.n_ctx for o in ctx.learned] == [4096]
+    e = ledger.tail(kind="compaction", session_id="s")[0]
+    assert e.data["ok"] is True and e.data["retried"] is True and e.data["context"] == 4096
+
+
+async def test_a_refusal_without_a_context_source_is_still_retried(ledger: Ledger):
+    # as from a hosted provider: no context source, and the refusal's own n_ctx sizes the retry
+    provider = RefusingProvider(max_user=9_000, n_ctx=4096)
+    res = await fitted(provider, ledger).maybe_compact(transcript(120), BLOCK, bot_id="b", session_id="s")
+    assert res.compacted
+    e = ledger.tail(kind="compaction", session_id="s")[0]
+    assert e.data["retried"] is True and e.data["context"] == 4096
+
+
+async def test_a_retry_uses_the_refusals_context_when_the_source_learns_nothing(ledger: Ledger):
+    class Hosted(FakeContext):
+        def learn(self, o):  # a hosted source is told, but its limit() stays None
+            self.learned.append(o)
+
+    provider = RefusingProvider(max_user=9_000, n_ctx=4096)
+    ctx = Hosted(None)
+    res = await fitted(provider, ledger, ctx).maybe_compact(transcript(120), BLOCK, bot_id="b", session_id="s")
+    assert res.compacted and len(ctx.learned) == 1
+    assert ledger.tail(kind="compaction", session_id="s")[0].data["context"] == 4096
+
+
+async def test_a_refusal_without_n_ctx_is_not_retried(ledger: Ledger):
+    provider = RefusingProvider(max_user=9_000, n_ctx=None)
+    msgs = transcript(120)
+    res = await fitted(provider, ledger, FakeContext(None)).maybe_compact(msgs, BLOCK, bot_id="b", session_id="s")
+    assert res.messages is msgs and not res.compacted
+    assert res.overrun is not None and res.overrun.n_ctx is None
+    sizes = [len(c[-1].content) for c in provider.calls]
+    # only the first pass: its three pieces of up to 16,000 characters; a retry would send three more
+    assert max(sizes) > 9_000 and len(sizes) <= 3
+    e = ledger.tail(kind="compaction", session_id="s")[0]
+    assert e.data["ok"] is False and e.data["overrun"] is True and e.data["n_ctx"] is None
+
+
+async def test_a_server_error_is_not_an_overrun(ledger: Ledger):
+    provider = ScriptedProvider([ProviderError("openai-compatible HTTP 500: boom", status=500)])
+    ctx = FakeContext(None)
+    seen = []
+    msgs = transcript(6)
+    res = await fitted(provider, ledger, ctx, on_overrun=lambda *a: seen.append(a)).maybe_compact(
+        msgs, BLOCK, bot_id="b", session_id="s")
+    assert res.messages is msgs and not res.compacted and res.overrun is None and "boom" in res.error
+    assert len(provider.calls) == 1 and ctx.learned == [] and seen == []
+    e = ledger.tail(kind="compaction", session_id="s")[0]
+    assert e.data["ok"] is False and "overrun" not in e.data and "n_ctx" not in e.data
+
+
+async def test_a_second_refusal_keeps_the_history(ledger: Ledger):
+    provider = RefusingProvider(max_user=-1, n_ctx=4096)
+    seen = []
+    msgs = transcript(6)
+    c = fitted(provider, ledger, FakeContext(None), on_overrun=lambda *a: seen.append(a))
+    res = await c.maybe_compact(msgs, BLOCK, bot_id="b", session_id="s")
+    assert not res.compacted and res.messages is msgs and res.summary == ""
+    assert res.overrun is not None and res.overrun.n_ctx == 4096
+    e = ledger.tail(kind="compaction", session_id="s")[0]
+    assert e.data["ok"] is False and e.data["overrun"] is True and e.data["n_ctx"] == 4096
+    assert isinstance(e.data["n_prompt_tokens"], int)
+    assert len(seen) == 1 and seen[0][:2] == ("b", "s") and seen[0][2].n_ctx == 4096
+    assert len(provider.calls) == 2  # the first try and the one retry
+
+
+async def test_success_calls_on_success(ledger: Ledger):
+    done, seen = [], []
+    c = fitted(RefusingProvider(max_user=10**9), ledger, FakeContext(4096),
+               on_success=lambda: done.append(1), on_overrun=lambda *a: seen.append(a))
+    res = await c.maybe_compact(transcript(6), BLOCK, bot_id="b", session_id="s")
+    assert res.compacted and done == [1] and seen == []
+
+
+async def test_fold_input_is_fitted(ledger: Ledger):
+    provider = RefusingProvider(max_user=10**9)
+    previous = "".join(f"earlier fact {i}: " + "p" * 60 + "\n" for i in range(800))
+    assert len(previous) >= 60_000
+    res = await fitted(provider, ledger, FakeContext(4096)).maybe_compact(
+        transcript(6), BLOCK, bot_id="b", session_id="s", summary=previous)
+    assert res.compacted and res.summary == "short summary"
+    assert len(provider.calls) > 2
+    assert all(fits(call, 4096) for call in provider.calls)
+    fold_calls = [c for c in provider.calls if "EARLIER SUMMARY" in c[-1].content]
+    assert len(fold_calls) == 1 and fold_calls[0] is provider.calls[-1]
+    e = ledger.tail(kind="compaction", session_id="s")[0]
+    assert e.data["ok"] is True and e.data["folded"] is True
+
+
+async def test_context_too_small_fails_cleanly(ledger: Ledger):
+    provider = RefusingProvider(max_user=10**9)
+    seen = []
+    msgs = [SYSTEM, Message("user", LONG_GOAL)] + [m for i in range(1, 7) for m in turn(i)]
+    c = fitted(provider, ledger, FakeContext(900), on_overrun=lambda *a: seen.append(a))
+    res = await c.maybe_compact(msgs, LONG_BLOCK, bot_id="b", session_id="s")
+    assert not res.compacted and res.messages is msgs
+    assert len(provider.calls) <= 2
+    entries = ledger.tail(kind="compaction", session_id="s")
+    assert len(entries) == 1 and entries[0].data["ok"] is False and entries[0].data["overrun"] is True
+    assert entries[0].data["n_ctx"] == 900
+    assert len(seen) == 1
+
+
+async def test_a_refusal_naming_a_context_too_small_fails_cleanly(ledger: Ledger):
+    provider = RefusingProvider(max_user=-1, n_ctx=900)
+    msgs = [SYSTEM, Message("user", LONG_GOAL)] + [m for i in range(1, 7) for m in turn(i)]
+    res = await fitted(provider, ledger, FakeContext(None)).maybe_compact(msgs, LONG_BLOCK, bot_id="b", session_id="s")
+    assert not res.compacted and res.messages is msgs and res.overrun.n_ctx == 900
+    assert len(provider.calls) <= 2
+
+
+async def test_a_summary_that_will_not_shrink_fails_cleanly(ledger: Ledger):
+    # a model that answers as long as it is asked: the fold's input never comes under the context
+    provider = RefusingProvider(max_user=10**9, answer="w" * 7_000)
+    res = await fitted(provider, ledger, FakeContext(4096)).maybe_compact(
+        transcript(6), BLOCK, bot_id="b", session_id="s", summary="fact\n" * 12_000)
+    assert not res.compacted and res.overrun is not None and res.overrun.n_ctx == 4096
+    assert len(provider.calls) < 40
+
+
+async def test_concurrent_compactions_report_their_own_fit():
+    provider = RefusingProvider(max_user=9_000, n_ctx=4096)
+    gen = Generator(provider, context=FakeContext(None))
+    big = render_transcript([m for i in range(1, 121) for m in turn(i)])
+    small = render_transcript([m for i in range(1, 6) for m in turn(i)])
+    assert len(big) > 16_000 and len(small) < 5_000
+    a, b = await asyncio.gather(gen.compact_and_fold(big, "", goal="a"), gen.compact_and_fold(small, "", goal="b"))
+    assert a.retried is True and a.pieces > 1 and a.context == 4096
+    assert b.retried is False and b.pieces == 1
+    assert gen.chunk_chars == 16_000  # nothing per call is kept on the shared generator
+
+
+async def test_compact_and_fold_with_nothing_new_makes_no_call():
+    provider = RefusingProvider(max_user=10**9)
+    out = await Generator(provider, context=FakeContext(4096)).compact_and_fold("", "earlier", goal=None)
+    assert out.summary == "earlier" and out.folded is False and out.pieces == 0 and provider.calls == []
+
+
+# -- review round 1 ---------------------------------------------------------
+
+
+class CountingProvider(RefusingProvider):
+    """A RefusingProvider whose refusal reports the prompt at `rate` characters a token (or no
+    prompt size at all), and that records what it refused, what it answered and how many
+    requests were in flight at once."""
+
+    def __init__(self, *args, rate: float | None = 3.0, delay: float = 0.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rate, self.delay = rate, delay
+        self.refused: list[int] = []
+        self.answered: list[int] = []
+        self.in_flight = self.most_in_flight = 0
+
+    async def complete(self, messages, *, tools=None, model=None, session_id=None):
+        self.calls.append(list(messages))
+        self.in_flight += 1
+        self.most_in_flight = max(self.most_in_flight, self.in_flight)
+        try:
+            await asyncio.sleep(self.delay)
+            user = messages[-1].content
+            if len(user) > self.max_user:
+                self.refused.append(len(user))
+                if self.rate is None:
+                    body = ('{"error":{"code":400,"message":"the request exceeds the available context size, try '
+                            f'increasing it","type":"exceed_context_size_error","n_ctx":{self.n_ctx}}}}}')
+                    raise ProviderError("openai-compatible HTTP 400: " + body, status=400)
+                raise refusal(self.n_ctx, math.ceil(sum(len(m.content) for m in messages) / self.rate))
+            self.answered.append(len(user))
+            return completion(self.answer)
+        finally:
+            self.in_flight -= 1
+
+
+@pytest.mark.parametrize("rate", [2.5, None], ids=["measured", "unmeasured"])
+async def test_a_retry_at_the_same_limit_sends_smaller_pieces(ledger: Ledger, rate):
+    # the limit is already 4096 and the refusal says 4096: the text runs at fewer than 3 characters a token
+    provider = CountingProvider(max_user=8_000, n_ctx=4096, rate=rate)
+    ctx = FakeContext(4096)
+    res = await fitted(provider, ledger, ctx).maybe_compact(transcript(120), BLOCK, bot_id="b", session_id="s")
+    assert res.compacted
+    assert provider.refused and max(provider.answered) < min(provider.refused)
+    e = ledger.tail(kind="compaction", session_id="s")[0]
+    assert e.data["retried"] is True and e.data["context"] == 4096
+
+
+async def test_a_single_text_that_shrinks_over_two_passes_is_folded():
+    # at 4096 tokens and no goal: pieces of 8,853 characters, a fold piece of 8,952, so each side under 4,476
+    provider = ScriptedProvider([completion("L" * 500), completion("a" * 4_500), completion("b" * 3_000),
+                                 completion("folded")])
+    out = await Generator(provider, context=FakeContext(4096)).compact_and_fold("one new turn\n", "p" * 8_800, goal=None)
+    assert out.summary == "folded" and out.folded is True
+    assert len(provider.calls) == 4
+    fold = provider.calls[-1][-1].content
+    assert "b" * 3_000 in fold and "L" * 500 in fold and "a" * 4_500 not in fold
+
+
+async def test_no_more_than_four_summary_requests_at_once():
+    big = render_transcript([m for i in range(1, 201) for m in turn(i)])
+    provider = CountingProvider(max_user=10**9, delay=0.01)
+    out = await Generator(provider, context=FakeContext(4096)).compact_and_fold(big, "", goal="g")
+    assert out.pieces > 4 and len(provider.calls) == out.pieces
+    assert provider.most_in_flight <= 4
+
+    # with the context unknown, every piece goes at once, as today
+    unknown = CountingProvider(max_user=10**9, delay=0.01)
+    out = await Generator(unknown, chunk_chars=4_000).compact_and_fold(big, "", goal="g")
+    assert out.pieces > 4 and unknown.most_in_flight == out.pieces
+
+
+# -- final review -----------------------------------------------------------
+
+
+async def test_an_unknown_limit_folds_in_one_call_however_long_the_summary():
+    # before the context was read, a fold was one request whatever the size of `previous`
+    provider = ScriptedProvider([completion("new summary"), completion("folded")])
+    previous = "p" * 17_000
+    out = await Generator(provider, context=FakeContext(None)).compact_and_fold("one new turn\n", previous, goal=None)
+    assert out.summary == "folded" and out.folded is True
+    assert len(provider.calls) == 2  # the one piece, then the fold
+    assert previous in provider.calls[-1][-1].content
+
+
+class ShrinkingProvider:
+    """Answers a text a little shorter than the last answer it gave, starting from the size it was asked."""
+
+    kind = "mock"
+
+    def __init__(self, step: int):
+        self.step, self.size, self.calls = step, None, []
+
+    async def complete(self, messages, *, tools=None, model=None, session_id=None):
+        self.calls.append(list(messages))
+        self.size = (len(messages[-1].content) if self.size is None else self.size) - self.step
+        return completion("w" * self.size)
+
+
+async def test_fit_stops_after_six_passes():
+    from src.context.fit import ContextTooSmall
+    from src.generation.generator import MAX_FIT_PASSES
+
+    provider = ShrinkingProvider(step=10)
+    gen = Generator(provider, context=FakeContext(4096))
+    with pytest.raises(ContextTooSmall):
+        await gen._fit(["t" * 20_000], 30_000, 100, None)
+    assert len(provider.calls) == MAX_FIT_PASSES == 6

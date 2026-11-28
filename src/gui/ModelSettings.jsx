@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Field, Input, ProgressBar, Spinner } from '@fluentui/react-components';
 import { anchorId, providerAnchor } from './settings-index';
+import { cardLine, CARD_LINK } from './summary-context';
 import { KIND_LABELS, capabilityTags, choiceKey, probeReducer, probeStart, enabledByKind, filterModels, keepEdits, decisionHint, scorerNeeds, scorerProviderIds, summaryModels, fromPreset, keyLabel, modelLabel, parseChoice, presetOf } from './models.js';
 
 const SHOWN = 150;  // rows a model list renders at once; a search narrows the rest
@@ -202,7 +203,7 @@ function ModelBrowser({ ctx, provider, reload }) {
 
 // Settings > Models > Jobs: which enabled model the harness runs on for chat, summaries and the decider.
 // roles: GET /settings/models; openProviders opens the Providers tab.
-export function JobModels({ ctx, providers, roles, onSaved, openProviders }) {
+export function JobModels({ ctx, providers, roles, onSaved, openProviders, openContext }) {
   const { api, online, guard, notify, log } = ctx;
   const initial = r => ({ chat: choiceKey(r?.chat?.provider, r?.chat?.model), summary: choiceKey(r?.summary?.provider, r?.summary?.model),
     decision: choiceKey(r?.decision?.provider, r?.decision?.model), scorer: r?.scorer || '',
@@ -210,6 +211,8 @@ export function JobModels({ ctx, providers, roles, onSaved, openProviders }) {
   const [form, setForm] = useState(initial(roles));
   const shown = useRef(roles);  // the roles the form was last brought up to date with
   useEffect(() => { const prev = initial(shown.current); shown.current = roles; setForm(f => keepEdits(f, prev, initial(roles))); }, [roles]);
+  const [ctxStatus, setCtxStatus] = useState(null);  // GET /settings/models/summary/context, for the warning under the summary picker
+  useEffect(() => { let live = true; if (online) api.summaryContext().then(s => { if (live) setCtxStatus(s); }).catch(() => { if (live) setCtxStatus(null); }); return () => { live = false; }; }, [online, roles]);
   if (!roles || !providers) return <div className="resource-row"><p>{online ? 'Loading…' : 'The harness is offline.'}</p></div>;
   const dirty = JSON.stringify(form) !== JSON.stringify(initial(roles));
 
@@ -241,6 +244,7 @@ export function JobModels({ ctx, providers, roles, onSaved, openProviders }) {
       <p className="field-hint">Choose from the models enabled on the Providers tab. Saving switches the harness over at once; running tasks finish on the model they started with.</p>
       {picker('chat', "Runs your bots' tasks.")}
       {picker('summary', 'Compacts long tasks, folds old conversation turns, and summarizes imported documents.')}
+      {cardLine(ctxStatus) && <p className="field-hint" role="status">⚠ {cardLine(ctxStatus)} <button type="button" className="text-link" onClick={openContext}>{CARD_LINK}</button></p>}
       <Field label="Decider scorer" hint="Chooses skills and MCP servers per task, and watches long tasks. Without one, every skill and tool is offered.">
         <select aria-label="Decider scorer" value={form.scorer} disabled={!online} onChange={e => setForm(f => ({ ...f, scorer: e.target.value }))}><option value="">None</option>{roles.scorer_kinds.map(k => <option key={k} value={k}>{k}</option>)}</select>
       </Field>

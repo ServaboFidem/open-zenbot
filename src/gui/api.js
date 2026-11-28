@@ -120,6 +120,7 @@ export function createApi({ baseUrl = harnessUrl(), fetch: fetchImpl, EventSourc
     probeEvents: (id, probeId, onEvent) => stream(`/settings/providers/${enc(id)}/models/probe/${enc(probeId)}/events`, onEvent),
     stopProbe: (id, probeId) => post(`/settings/providers/${enc(id)}/models/probe/${enc(probeId)}/stop`),
     modelRoles: () => get('/settings/models'),
+    summaryContext: fresh => get('/settings/models/summary/context' + (fresh ? '?fresh=1' : '')),
     setModelRoles: roles => put('/settings/models', roles),
     setTool: (id, patch) => put(`/settings/tools/${enc(id)}`, patch),
     // a reply read aloud: the harness answers frames of WAV pieces (speech.js); yields a Blob for each, as it arrives

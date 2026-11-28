@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..context.compaction import fit_fields, notify
+from ..context.fit import ContextOverrun, Overrun
 from ..context.render import render_transcript
 from ..memory.exclusion import exclusion
 from ..providers.interface import Message
@@ -63,6 +66,7 @@ class Exchange:
     set_aside: bool = False  # a helper's change the user sent back to the owner
     answers_to: str = ""  # the session id of the reply whose question form this message answers
     files: list[dict[str, str]] = field(default_factory=list)  # {id, name, kind, path}: files the user sent with the message; path (vault-relative) never leaves the harness
+    context_overrun: bool = False  # the summary model's context was too small while this exchange ran: the chat says so, once
 
 
 def reply_text(ex: Exchange) -> str:
@@ -118,6 +122,7 @@ class Conversation:
     design_system: str = ""  # slug of the design system the user picked for this conversation; empty for none
     design_system_source: str = ""  # where the picked system came from ("shipped" or "yours"); empty on older records
     design_folder: str = ""  # a studio bot's conversation: the slug of its own `<vault>/designs/<slug>/`, picked by the harness
+    overrun_noticed: bool = False  # an exchange already carries the context notice: no second one
     note: str = ""  # the owner bot's turn note: what its last task found, made and left (src/harness/turn_notes.py)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
@@ -310,6 +315,20 @@ class Conversations:
                 self._touch(c)
                 return
 
+    def mark_overrun(self, conv_id: str, session_id: str) -> bool:
+        """Flag the exchange of this session as the one that met a summary model with too small a context.
+        Once a conversation, and only a one-to-one one. Says whether it marked."""
+        c = self._by_id.get(conv_id)
+        if c is None or c.kind != "bot" or c.overrun_noticed or not session_id:
+            return False
+        for ex in c.exchanges:
+            if ex.session_id == session_id:
+                ex.context_overrun = True
+                c.overrun_noticed = True
+                self.store.save(c)
+                return True
+        return False
+
     def set_note(self, conv_id: str, note: str) -> None:
         """Keep the owner bot's turn note. Saved without touching `updated_at`: a note is not a new message."""
         c = self._by_id.get(conv_id)
@@ -354,7 +373,16 @@ class Conversations:
         self._touch(c)
         return ex
 
-    async def fold_if_needed(self, conv: Conversation, generator: Any, *, budget_chars: int, keep: int) -> bool:
+    async def fold_if_needed(
+        self,
+        conv: Conversation,
+        generator: Any,
+        *,
+        budget_chars: int,
+        keep: int,
+        on_overrun: Callable[[Overrun], None] | None = None,
+        on_success: Callable[[], None] | None = None,
+    ) -> bool:
         """When the unfolded exchanges pass `budget_chars`, fold the oldest of
         them into the summary until what stays unfolded is at or under half
         the budget. The last `keep` exchanges stay unfolded only while they
@@ -363,9 +391,11 @@ class Conversations:
         and costs a cache miss) comes rarely and in a large step, never one
         exchange per message. A pending exchange and everything after it
         is never folded, nor is the newest exchange. One compact and fold
-        call per fold. The exchanges stay in the record for display; only
-        the history drops them. On a generator error the history is kept
-        as it was and the failure goes to the ledger."""
+        call per fold, each request sized to the summary model's context.
+        The exchanges stay in the record for display; only the history
+        drops them. On a generator error the history is kept as it was and
+        the failure goes to the ledger; a context too small is also told to
+        `on_overrun`, and a fold that worked to `on_success`."""
         sizes = [len(edit_note(ex) if ex.outcome == "edit" else user_text(ex)) + len(reply_text(ex)) for ex in conv.exchanges]
         unfolded = sum(sizes[conv.folded :])
         if unfolded <= budget_chars:
@@ -387,19 +417,28 @@ class Conversations:
         old = conv.exchanges[conv.folded : end]
         msgs = [m for ex in old for m in (Message("user", edit_note(ex) if ex.outcome == "edit" else user_text(ex)), Message("assistant", reply_text(ex)))]
         try:
-            latest = await generator.compact(render_transcript(msgs), goal=conv.title or None)
-            summary = await generator.fold(conv.summary, latest)
+            fitted = await generator.compact_and_fold(render_transcript(msgs), conv.summary, goal=conv.title or None)
+        except ContextOverrun as e:  # the summary model's context is too small: kept, and said so
+            o = e.overrun
+            self.ledger.append(
+                "conversation_fold", conv.owner, "", conversation_id=conv.id, ok=False,
+                error=f"{type(e).__name__}: {e}", folded=conv.folded, chars_before=before,
+                overrun=True, n_ctx=o.n_ctx, n_prompt_tokens=o.n_prompt_tokens,
+            )
+            notify(on_overrun, o)
+            return False
         except Exception as e:  # noqa: BLE001 - a failed fold must not fail the task
             self.ledger.append(
                 "conversation_fold", conv.owner, "", conversation_id=conv.id, ok=False,
                 error=f"{type(e).__name__}: {e}", folded=conv.folded, chars_before=before,
             )
             return False
-        conv.summary, conv.folded = summary, end
+        conv.summary, conv.folded = fitted.summary, end
         self.store.save(conv)  # not a touch: folding is not activity, the conversation's order stays
         after = history_chars(conv.history())
         self.ledger.append(
             "conversation_fold", conv.owner, "", conversation_id=conv.id, ok=True,
-            folded=end, step=len(old), chars_before=before, chars_after=after,
+            folded=end, step=len(old), chars_before=before, chars_after=after, **fit_fields(fitted),
         )
+        notify(on_success)
         return True

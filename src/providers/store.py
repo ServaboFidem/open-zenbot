@@ -132,6 +132,10 @@ class ProviderEntry:
         host = urlsplit(self.base_url).hostname or ""
         return host in FREE_HOSTS or _nearby(host)
 
+    def local(self) -> bool:
+        """A self-hosted server on this machine, the local network or the tailnet (never a hosted one)."""
+        return self.kind == "openai-compatible" and _nearby(urlsplit(self.base_url).hostname or "")
+
     def model_out(self, m: ModelInfo) -> dict[str, Any]:
         """A model for the Settings pages; one on a free provider that reports no price costs `FREE`."""
         out = m.public()

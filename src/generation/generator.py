@@ -15,8 +15,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.context.fit import CHARS_PER_TOKEN, ContextOverrun, ContextSource, ContextTooSmall, Overrun, parse_overrun, piece_chars
 from src.providers import tracing
-from src.providers.interface import Message, Provider
+from src.providers.interface import Message, Provider, ProviderError
 
 SUMMARY_SYSTEM = (
     "You write compact, faithful summaries of agent transcripts for later reuse as context. "
@@ -117,38 +118,108 @@ class PageLearning:
     parsed: bool = True  # False when the model did not return clean JSON
 
 
+@dataclass
+class Fitted:
+    """One compact-and-fold: its summary, and how it was fitted to the model's context.
+    Returned per call, so two sessions on the shared generator never see each other's."""
+
+    summary: str
+    folded: bool  # a fold request merged the earlier summary with the new one
+    pieces: int  # how many pieces the transcript was split into
+    context: int | None  # the tokens the split was sized for, None when unknown
+    retried: bool  # a length refusal was learned and the step done again
+
+
+def _goal_line(goal: str | None) -> str:
+    return f"The session goal: {goal}\n\n" if goal else ""
+
+
+def _fold_user(previous: str, latest: str) -> str:
+    return f"EARLIER SUMMARY:\n{previous}\n\nNEWER SUMMARY:\n{latest}"
+
+
+def _overrun(e: ProviderError) -> Overrun:
+    """The length refusal in a provider error; any other error is raised again as it is."""
+    o = parse_overrun(str(e))
+    if o is None:
+        raise e
+    return o
+
+
+AT_ONCE = 4  # summary requests in flight at once to a model whose context is known (a local server)
+MAX_FIT_PASSES = 6  # re-summarising passes `_fit` may make before the context counts as too small
+RETRY_RATE = 2.0  # characters a token for a retry the refusal did not measure, when the limit is unchanged
+
+
+async def _all(coros: list[Any], at_once: int | None = None) -> list[Any]:
+    """Run in parallel, at most `at_once` at a time when given; when one fails, cancel the
+    rest so no more of them is sent."""
+    if at_once is not None:
+        gate = asyncio.Semaphore(at_once)
+
+        async def gated(c: Any) -> Any:
+            try:
+                async with gate:
+                    return await c
+            finally:
+                c.close()  # a request cancelled before its turn is never started
+
+        coros = [gated(c) for c in coros]
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
+def _parts(summaries: list[str]) -> list[str]:
+    if len(summaries) == 1:
+        return summaries
+    n = len(summaries)
+    return [f"Part {i} of {n}\n{p}" for i, p in enumerate(summaries, 1)]
+
+
 class Generator:
     kind = "generator"
 
-    def __init__(self, provider: Provider, *, model: str | None = None, chunk_chars: int = 16_000) -> None:
+    def __init__(self, provider: Provider, *, model: str | None = None, chunk_chars: int = 16_000,
+                 context: ContextSource | None = None) -> None:
         self.provider = provider
         self.model = model
         self.chunk_chars = chunk_chars
+        self.context = context
 
     async def _ask(self, system: str, user: str, step: str) -> str:
         """`step` names the Langfuse generation unless a caller already named the work (compaction does)."""
         with tracing.llm_step(tracing.step_name(step)):
-            c = await self.provider.complete([Message("system", system), Message("user", user)], model=self.model)
+            try:
+                c = await self.provider.complete([Message("system", system), Message("user", user)], model=self.model)
+            except ProviderError as e:
+                e.sent_chars = len(system) + len(user)  # what a length refusal was sent, to measure its rate
+                raise
         return c.message.content.strip()
 
     # -- compaction -------------------------------------------------------
 
     async def summarize(self, text: str, *, goal: str | None = None) -> str:
-        prefix = f"The session goal: {goal}\n\n" if goal else ""
-        return await self._ask(SUMMARY_SYSTEM, prefix + text, "summarize-text")
+        return await self._ask(SUMMARY_SYSTEM, _goal_line(goal) + text, "summarize-text")
 
-    def chunk(self, text: str) -> list[str]:
-        """Split near `chunk_chars`, preferring line boundaries."""
-        if len(text) <= self.chunk_chars:
+    def chunk(self, text: str, size: int | None = None) -> list[str]:
+        """Split near `size` (default `chunk_chars`), preferring line boundaries."""
+        size = size or self.chunk_chars
+        if len(text) <= size:
             return [text] if text else []
         out, buf = [], ""
         for line in text.splitlines(keepends=True):
-            if len(buf) + len(line) > self.chunk_chars and buf:
+            if len(buf) + len(line) > size and buf:
                 out.append(buf)
                 buf = ""
-            while len(line) > self.chunk_chars:
-                out.append(line[: self.chunk_chars])
-                line = line[self.chunk_chars :]
+            while len(line) > size:
+                out.append(line[:size])
+                line = line[size:]
             buf += line
         if buf:
             out.append(buf)
@@ -170,7 +241,95 @@ class Generator:
         """Carry a summary forward: merge the previous fold with the newest summary."""
         if not previous:
             return latest
-        return await self._ask(FOLD_SYSTEM, f"EARLIER SUMMARY:\n{previous}\n\nNEWER SUMMARY:\n{latest}", "fold-summaries")
+        return await self._ask(FOLD_SYSTEM, _fold_user(previous, latest), "fold-summaries")
+
+    # -- fitted to the summary model's context ---------------------------------
+
+    async def compact_and_fold(self, rendered: str, previous: str, *, goal: str | None) -> Fitted:
+        """Summarise `rendered` and fold it into `previous`, with every request sized to the
+        summary model's context. A length refusal is learned (`context.learn`) and the whole
+        step done once more, sized by the refusal's own `n_ctx` and always in smaller pieces
+        than the first try; a second refusal, a refusal that names no context, or a context
+        too small for any piece raises ContextOverrun. Any other provider error is raised as
+        it is."""
+        first = await self.context.limit() if self.context is not None else None
+        try:
+            return await self._fitted(rendered, previous, goal, first, retried=False)
+        except ProviderError as e:
+            o, sent = _overrun(e), getattr(e, "sent_chars", None)
+        if self.context is not None:
+            self.context.learn(o)
+        if o.n_ctx is None:
+            raise ContextOverrun(o)
+        known = await self.context.limit() if self.context is not None else None
+        limit = o.n_ctx if known is None else min(known, o.n_ctx)
+        # the rate the refused request really had, never above the usual; with the limit unchanged
+        # and no lower rate measured, the same pieces would be refused again, so assume 2
+        rate = float(CHARS_PER_TOKEN)
+        if o.n_prompt_tokens and sent:
+            rate = min(rate, sent / o.n_prompt_tokens)
+        if limit == first and rate >= CHARS_PER_TOKEN:
+            rate = RETRY_RATE
+        try:
+            return await self._fitted(rendered, previous, goal, limit, retried=True, rate=rate)
+        except ProviderError as e:
+            raise ContextOverrun(_overrun(e)) from None
+
+    async def _fitted(self, rendered: str, previous: str, goal: str | None, limit: int | None, *, retried: bool,
+                      rate: float = CHARS_PER_TOKEN) -> Fitted:
+        """One try: pieces sized for `limit` tokens at `rate` characters a token (unknown: 16,000
+        characters at most), summarised in parallel (at most AT_ONCE at a time when the limit is
+        known) and joined as Part N of M, then folded into `previous` in a request that fits."""
+        at_once = AT_ONCE if limit is not None else None
+        try:
+            piece = min(self.chunk_chars, piece_chars(limit, len(SUMMARY_SYSTEM) + len(_goal_line(goal)), rate))
+            fold_piece = piece_chars(limit, len(FOLD_SYSTEM) + len(_fold_user("", "")), rate)
+            chunks = self.chunk(rendered, piece)
+            parts = _parts(await _all([self.summarize(c, goal=goal) for c in chunks], at_once)) if chunks else []
+            latest = "\n\n".join(parts)
+            if not latest or not previous:
+                return Fitted(latest or previous, False, len(chunks), limit, retried)
+            if limit is not None and len(previous) + len(latest) > fold_piece:
+                # (an unknown limit folds in one call, as before) each brought under half a fold piece, so the two together fit one
+                previous = await self._fit([previous], piece, fold_piece // 2, goal, at_once)
+                latest = await self._fit(parts, piece, fold_piece // 2, goal, at_once)
+            summary = await self._ask(FOLD_SYSTEM, _fold_user(previous, latest), "fold-summaries")
+            return Fitted(summary, True, len(chunks), limit, retried)
+        except ContextTooSmall:
+            raise ContextOverrun(Overrun(limit, None)) from None
+
+    async def _fit(self, texts: list[str], piece: int, target: int, goal: str | None,
+                   at_once: int | None = None) -> str:
+        """Summarise `texts` again, adjacent ones packed into requests of at most `piece`
+        characters, until they join to at most `target`. Raises ContextTooSmall when a pass
+        does not shorten the joined text: the length falls on every pass that goes on, so a
+        model that will not shrink its input cannot loop for ever."""
+        last: int | None = None
+        for passes in range(MAX_FIT_PASSES + 1):
+            joined = "\n\n".join(texts)
+            if len(joined) <= target:
+                return joined
+            if last is not None and len(joined) >= last:
+                raise ContextTooSmall("the summaries do not shrink below the context")
+            if passes == MAX_FIT_PASSES:
+                break
+            last = len(joined)
+            texts = await _all([self.summarize(g, goal=goal) for g in self._pack(texts, piece)], at_once)
+        raise ContextTooSmall("the summaries need too many passes to fit the context")
+
+    def _pack(self, texts: list[str], piece: int) -> list[str]:
+        """Adjacent texts joined into groups of at most `piece` characters; a longer text is split first."""
+        groups, buf = [], ""
+        for text in texts:
+            for c in self.chunk(text, piece):
+                if buf and len(buf) + 2 + len(c) > piece:
+                    groups.append(buf)
+                    buf = c
+                else:
+                    buf = f"{buf}\n\n{c}" if buf else c
+        if buf:
+            groups.append(buf)
+        return groups
 
     async def turn_note(self, previous: str, rendered: str, outcome: str, max_chars: int) -> str:
         """A bot's note to its next turn: the previous note folded with this turn's tool calls and results."""

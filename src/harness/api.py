@@ -132,6 +132,8 @@ from src.providers.models import ModelInfo, ModelLister, guess_kinds
 from src.providers.probe import ProbeFailed, ProbeJobs
 from src.providers.openrouter import OpenRouterHttp
 from src.providers.secrets import Secret
+from src.providers import lmstudio
+from .summary_context import SummaryContext
 from src.providers.store import KINDS as PROVIDER_KINDS, OPENROUTER_BASE, PRESETS as PROVIDER_PRESETS, ProviderStore, ProviderStoreError
 from .model_roles import OPTIONAL_ROLES, ROLE_LABELS, ROLES, Choice, ModelRoles, load_bot_models, pick_other_models, save_bot_models
 from .models_setup import (DREAM_TIMEOUT_S, build as build_models, check_choice, default_models, dream_extras, dream_provider,
@@ -262,6 +264,7 @@ class Harness:
     # held for each check-and-act on uploads: a send's claim, DELETE's check and removal, the sweep's per folder
     uploads_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     part_turns: dict[str, PartTurn] = field(default_factory=dict)  # session id -> a helper's turn on a design: its worksheet and changes
+    summary_context: SummaryContext | None = None  # the summary model's window; made once, kept across a rebind
     _warm_tasks: set = field(default_factory=set, init=False, repr=False)
     _last_routed_at: datetime | None = field(default=None, init=False)  # last /orchestrate that put a message in a room
 
@@ -287,7 +290,13 @@ class Harness:
             )
             self.fit = self.fit or FitEngine(self.scorer, self.ledger, FitConfig(c.fit_tie_width, max_per_bot=c.max_skills_per_bot))
             self.supervisor = self.supervisor or LoopSupervisor(self.scorer, self.ledger, self.pause)
-        self.compactor = self.compactor or Compactor(Generator(summaries, model=c.summary_model), self.ledger)
+        if self.summary_context is None:
+            self.summary_context = SummaryContext(
+                entry=self._summary_entry(self.model_roles()), model=c.summary_model,
+                key=self._summary_key, client=lmstudio.new_client())
+        self.compactor = self.compactor or Compactor(
+            Generator(summaries, model=c.summary_model, context=self.summary_context), self.ledger,
+            on_overrun=self._compaction_overrun, on_success=self.summary_context.record_success)
         selector = self.router or InjectAllSelector()
         self.memory = self.memory or MemoryGraph(make_store(c.vault_root / 'memory'), self.ledger)
         summarizer = self.ingestor.generator if self.ingestor else Generator(summaries, model=c.summary_model)
@@ -668,6 +677,40 @@ class Harness:
             return False
         return True
 
+    def _summary_entry(self, roles: ModelRoles) -> Any:
+        """The provider entry the summary model runs on, or None when none is chosen or it is gone."""
+        if roles.summary is None or self.provider_store is None:
+            return None
+        try:
+            return self.provider_store.get(roles.summary.provider)
+        except ProviderStoreError:
+            return None
+
+    def _summary_key(self) -> str | None:
+        ctx = self.summary_context
+        entry = ctx.entry if ctx is not None else None
+        secret = self.provider_store.secret(entry.id) if entry is not None and self.provider_store is not None else None
+        return secret.reveal() if secret is not None else None
+
+    def _flag_overrun(self, where: str, o: Any, conv_id: str, session_id: str) -> None:
+        """Tell the summary context, and flag the exchange once when the summary model is local and the chat is one-to-one."""
+        ctx = self.summary_context
+        if ctx is None:
+            return
+        ctx.record_overrun(where, o, conv_id)
+        entry = ctx.entry
+        if entry is not None and entry.local() and conv_id and self.conversations is not None:
+            self.conversations.mark_overrun(conv_id, session_id)
+
+    def _compaction_overrun(self, bot_id: str, session_id: str, o: Any) -> None:
+        session = self.sessions.get(session_id)
+        conv_id = session.conversation_id if session is not None and not session.room_id else None
+        self._flag_overrun("task", o, conv_id or "", session_id)
+
+    async def close_summary_context(self) -> None:
+        if self.summary_context is not None:
+            await self.summary_context.aclose()
+
     def _tuner_client(self) -> Any:
         """The CaseMark connector's client: no proxy from the environment, no redirect followed; closed at shutdown."""
         if self._tuner_http is None:
@@ -829,6 +872,8 @@ class Harness:
         c.scorer_kind = roles.scorer or c.scorer_kind
         c.decision_model = b.decision.model if b.decision else c.decision_model
         self.summary_provider, self.openrouter_ref = b.summary_provider, b.openrouter_ref
+        if self.summary_context is not None:
+            self.summary_context.rebind(self._summary_entry(roles), c.summary_model)
         self.rebind(b.provider, b.scorer)
 
     def bind_saved_key(self) -> bool:
@@ -1311,7 +1356,9 @@ class Harness:
                         cfg = self.compactor.config
                         with telemetry.span("conversation.fold"):
                             await self.conversations.fold_if_needed(
-                                conv, self.compactor.generator, budget_chars=cfg.conversation_budget_chars, keep=cfg.conversation_keep)
+                                conv, self.compactor.generator, budget_chars=cfg.conversation_budget_chars, keep=cfg.conversation_keep,
+                                on_overrun=lambda o: self._flag_overrun("fold", o, conv.id, session.id),
+                                on_success=self.summary_context.record_success if self.summary_context else None)
                     history = conv.history(exclude=session.id)
                 try:
                     # the bot reads the comments after the task; the pinned task stays the user's words alone, and
@@ -1962,6 +2009,7 @@ def create_app(h: Harness) -> FastAPI:
             await h.telnyx.close()
             await h.sonos.close()
             await h.speakers.close()
+            await h.close_summary_context()
             await h.close_tuner()  # after the dreamer: its pass may still be reading from CaseMark
             if h.speech is not None:
                 if h.speech.local is not None:
@@ -2382,6 +2430,13 @@ def create_app(h: Harness) -> FastAPI:
     async def get_model_roles() -> dict[str, Any]:
         return models_out()
 
+    @app.get("/settings/models/summary/context")
+    async def summary_context_status(fresh: bool = False) -> dict[str, Any]:
+        ctx = h.summary_context
+        entry = ctx.entry if ctx is not None else None
+        enabled = {m.id for m in entry.models} if entry is not None else set()
+        return await ctx.status(fresh=fresh, enabled=enabled)
+
     @app.put("/settings/models")
     async def set_model_roles(body: ModelRolesIn) -> dict[str, Any]:
         cur = h.model_roles()
@@ -2430,6 +2485,8 @@ def create_app(h: Harness) -> FastAPI:
             c.decision_model = body.decision_model
         c.scorer_kind = scorer_kind or c.scorer_kind
         h.summary_provider, h.openrouter_ref = None, None
+        if h.summary_context is not None:
+            h.summary_context.rebind(None, c.summary_model)  # the summary now runs on the chat provider: no local entry to read
         h.rebind(provider, scorer)
         h.ledger.append(Kind.settings, "", "", event="provider", provider=body.kind, model=body.model, scorer=scorer_kind, key_ref=ref)
         return h.settings()

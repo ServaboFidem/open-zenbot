@@ -150,6 +150,12 @@ class FakeGenerator:
     async def fold(self, previous, latest):
         return f"{previous}+{latest}" if previous else latest
 
+    async def compact_and_fold(self, rendered, previous, *, goal=None):
+        from src.generation.generator import Fitted
+
+        latest = await self.compact(rendered, goal=goal)
+        return Fitted(await self.fold(previous, latest), bool(previous), 1, None, False)
+
 
 def _fill(convs, n):
     conv = None
@@ -389,3 +395,88 @@ async def test_a_fold_keeps_the_attached_lines_of_a_files_only_exchange(tmp_path
     assert await convs.fold_if_needed(conv, gen, budget_chars=1000, keep=2) is True
     rendered, _ = gen.compacted[0]
     assert f"Attached: report.pdf (uploads/chat/{'b' * 32}/report.pdf)" in rendered
+
+
+# -- fitting folds to the summary model's context ---------------------------
+
+LENGTH_REFUSAL = (
+    'openai-compatible HTTP 400: Engine protocol predict request returned 400: {"error":{"code":400,'
+    '"message":"request (5726 tokens) exceeds the available context size (4096 tokens), try increasing it",'
+    '"type":"exceed_context_size_error","n_prompt_tokens":5726,"n_ctx":4096}}'
+)
+
+
+class _SummaryModel:
+    """Refuses every request for length, or answers a short summary."""
+
+    kind = "mock"
+
+    def __init__(self, refuse: bool):
+        self.refuse = refuse
+        self.calls = []
+
+    async def complete(self, messages, *, tools=None, model=None, session_id=None):
+        from src.providers.interface import ProviderError
+
+        from .conftest import completion
+
+        self.calls.append(list(messages))
+        if self.refuse:
+            raise ProviderError(LENGTH_REFUSAL, status=400)
+        return completion("short summary")
+
+
+class _Context:
+    def __init__(self, limit):
+        self._limit = limit
+        self.learned = []
+
+    async def limit(self):
+        return self._limit
+
+    def learn(self, o):
+        self.learned.append(o)
+        self._limit = o.n_ctx
+
+
+async def test_fold_overrun_calls_back(tmp_path, ledger):
+    from src.generation.generator import Generator
+
+    convs = make(tmp_path, ledger)
+    conv = _fill(convs, 20)
+    seen, done = [], []
+    gen = Generator(_SummaryModel(refuse=True), context=_Context(None))
+    assert await convs.fold_if_needed(conv, gen, budget_chars=6000, keep=6,
+                                      on_overrun=seen.append, on_success=lambda: done.append(1)) is False
+    assert conv.folded == 0 and conv.summary == ""
+    assert len(seen) == 1 and seen[0].n_ctx == 4096 and seen[0].n_prompt_tokens == 5726 and done == []
+    entry = ledger.tail(kind="conversation_fold")[-1]
+    assert entry.data["ok"] is False and entry.data["overrun"] is True
+    assert entry.data["n_ctx"] == 4096 and entry.data["n_prompt_tokens"] == 5726
+
+
+async def test_a_fitted_fold_records_its_pieces(tmp_path, ledger):
+    from src.generation.generator import Generator
+
+    convs = make(tmp_path, ledger)
+    conv = _fill(convs, 40)
+    seen, done = [], []
+    model = _SummaryModel(refuse=False)
+    gen = Generator(model, context=_Context(4096))
+    assert await convs.fold_if_needed(conv, gen, budget_chars=6000, keep=6,
+                                      on_overrun=seen.append, on_success=lambda: done.append(1)) is True
+    assert len(model.calls) > 1 and done == [1] and seen == []
+    assert conv.summary.startswith("Part 1 of ") and conv.summary.endswith("short summary")
+    entry = ledger.tail(kind="conversation_fold")[-1]
+    assert entry.data["ok"] is True and entry.data["pieces"] == len(model.calls) and entry.data["context"] == 4096
+    assert "retried" not in entry.data
+
+
+async def test_a_fold_error_that_is_not_an_overrun_does_not_call_back(tmp_path, ledger):
+    convs = make(tmp_path, ledger)
+    conv = _fill(convs, 20)
+    seen = []
+    assert await convs.fold_if_needed(conv, FakeGenerator(fail=True), budget_chars=1000, keep=6, on_overrun=seen.append) is False
+    assert seen == []
+    entry = ledger.tail(kind="conversation_fold")[-1]
+    assert entry.data["ok"] is False and "overrun" not in entry.data
