@@ -59,9 +59,9 @@ class SummaryContext:
         if self._hosted():
             return None
         await self._read(False)
-        if self._models is not None:
-            bound = self._bound()
-            return bound.loaded_context if bound else None
+        bound = self._bound()
+        if bound is not None and bound.loaded_context is not None:
+            return bound.loaded_context
         return self._learned
 
     def learn(self, o: Overrun) -> None:
