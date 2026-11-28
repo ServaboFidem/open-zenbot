@@ -27,6 +27,8 @@ import asyncio
 import json
 import os
 import re
+import shutil
+import tempfile
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -180,6 +182,15 @@ class _Server:
     deps: list[dict] = field(default_factory=list)  # host_deps.check results for config.requires
 
 
+def child_cwd() -> Path:
+    """A new, empty working folder for one stdio server, private to this user; the caller removes it when that
+    server stops. Never the harness's own folder, which may hold the `.env` the scrubbed environment keeps from
+    children: a server that loads `.env` from its working folder (open-museum-mcp calls `dotenv.config()`) would
+    read it back. Never shared between servers either, so a file one server leaves there (a `.env` holding a key
+    mapped only to it) is never read by another."""
+    return Path(tempfile.mkdtemp(prefix="zen-mcp-"))
+
+
 def _text_of(result: Any) -> str:
     """The text a model gets back: text blocks joined, else the structured content as JSON."""
     parts = [c.text for c in getattr(result, "content", []) or [] if getattr(c, "type", "") == "text"]
@@ -259,7 +270,9 @@ class McpRegistry:
             from mcp.client.stdio import StdioServerParameters, stdio_client
 
             assert c.command is not None
-            params = StdioServerParameters(command=c.command, args=c.args, env={**scrubbed_env(), **c.env})
+            cwd = child_cwd()
+            s.stack.callback(shutil.rmtree, cwd, ignore_errors=True)  # registered first, so it runs after the server exits
+            params = StdioServerParameters(command=c.command, args=c.args, env={**scrubbed_env(), **c.env}, cwd=cwd)
             read, write = await s.stack.enter_async_context(stdio_client(params))
         session = await s.stack.enter_async_context(ClientSession(read, write, read_timeout_seconds=c.timeout))
         await asyncio.wait_for(session.initialize(), c.timeout)

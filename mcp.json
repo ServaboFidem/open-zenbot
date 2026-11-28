@@ -81,6 +81,52 @@
       },
       "use": "Free stock photos and videos from Pexels: search photos or videos by subject, colour, orientation and size, browse curated photos, popular videos and featured collections, and get a photo or video by id with its download links and photographer credit."
     },
+    "museum": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "open-museum-mcp@0.22.0"
+      ],
+      "env": {
+        "EUROPEANA_API_KEY": "${EUROPEANA_API_KEY}",
+        "SMITHSONIAN_API_KEY": "${SMITHSONIAN_API_KEY}",
+        "HARVARD_API_KEY": "${HARVARD_API_KEY}",
+        "PARISMUSEES_API_KEY": "${PARISMUSEES_API_KEY}"
+      },
+      "requires": [
+        {
+          "bin": "node",
+          "min_version": "22.13",
+          "install": {"brew": "node", "winget": "OpenJS.NodeJS", "scoop": "nodejs", "apt": "nodejs", "dnf": "nodejs", "pacman": "nodejs", "choco": "nodejs"},
+          "manual": {
+            "linux": "Node.js 22.13 or newer (node:sqlite without a flag): https://nodejs.org/en/download",
+            "darwin": "Node.js 22.13 or newer (node:sqlite without a flag): https://nodejs.org/en/download",
+            "windows": "Node.js 22.13 or newer (node:sqlite without a flag): https://nodejs.org/en/download"
+          }
+        }
+      ],
+      "timeout": 120,
+      "use": "Artworks from open-access museum collections (The Met, Rijksmuseum, Smithsonian, Cleveland, Art Institute of Chicago, National Gallery of Art, Getty, Harvard, Wellcome, Wikimedia Commons, Europeana and more), only those whose public-domain or open-access rights it has verified: search by subject, artist, medium, colour or date range, fetch an artwork by id with its image and details, pick a random work by region or period, and cite it as a caption, footnote or inline reference; art and art history, not stock photos."
+    },
+    "paddleocr": {
+      "command": "uvx",
+      "args": [
+        "--python",
+        "3.12",
+        "--from",
+        "paddleocr-mcp[local-cpu]==0.8.5",
+        "--with",
+        "paddlepaddle==3.2.2",
+        "paddleocr_mcp"
+      ],
+      "env": {
+        "PADDLEOCR_MCP_PPOCR_SOURCE": "local",
+        "PADDLEOCR_MCP_MODEL": "PP-OCRv6"
+      },
+      "guard": "paddleocr",
+      "timeout": 300,
+      "use": "Read the text in an image or a scanned PDF on this computer with PaddleOCR (screenshots, photos of documents, scans, receipts, signs, small print, handwriting, Chinese and other languages): plain text, or each line with its confidence and position; runs locally, nothing is uploaded. For text a page or PDF already carries, read the file instead."
+    },
     "magick": {
       "command": "magick-mcp",
       "args": [

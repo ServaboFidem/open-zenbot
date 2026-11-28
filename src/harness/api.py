@@ -78,6 +78,7 @@ from . import telemetry
 from . import allowed_folders, tracing_settings
 from .allowed_folders import AllowedFolders
 from .magick_guard import Folders as GuardFolders, MagickGuard, MagickRunner
+from .ocr_guard import OcrGuard
 from .write_guard import ShellWriteCheck
 from . import (agent_clis, design_images, design_parts, design_studio, design_systems, studio_edits, studio_help,
                studio_helpers, tool_paths)
@@ -1834,7 +1835,7 @@ def create_app(h: Harness) -> FastAPI:
         return {"ZEN_VAULT_ROOT": str(h.config.vault_root), **AllowedFolders.load(h.config.vault_root).server_args()}
 
     def guard_folders() -> GuardFolders:
-        """The folders a guarded server (magick) may reach: the files server's, read fresh on each call."""
+        """The folders a guarded server (magick, paddleocr) may reach: the files server's, read fresh on each call."""
         return allowed_folders.reachable(h.config.vault_root)
 
     def known_bins() -> dict[str, str]:
@@ -1885,7 +1886,7 @@ def create_app(h: Harness) -> FastAPI:
         # magick runs from the path in Settings > Programs (install-deps fills it in), else PATH
         runner = MagickRunner(settings_dir(vault) / "magick",
                               binary=lambda: [p] if (p := tool_paths.path_for(vault, "imagemagick")) else None)
-        h.mcps = McpRegistry(servers, guards={"magick": MagickGuard(guard_folders, runner)}, known_bins=known_bins)
+        h.mcps = McpRegistry(servers, guards={"magick": MagickGuard(guard_folders, runner), "paddleocr": OcrGuard(guard_folders)}, known_bins=known_bins)
         await h.mcps.connect(h.tools, h.catalog)
         for name, st in h.mcps.status().items():
             h.ledger.append(Kind.mcp, "", "", event=st["state"], server=name, transport=st["transport"], tools=st["tools"], error=st["error"])
