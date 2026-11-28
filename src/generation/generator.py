@@ -15,8 +15,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.context.fit import ContextOverrun, ContextSource, ContextTooSmall, Overrun, parse_overrun, piece_chars
 from src.providers import tracing
-from src.providers.interface import Message, Provider
+from src.providers.interface import Message, Provider, ProviderError
 
 SUMMARY_SYSTEM = (
     "You write compact, faithful summaries of agent transcripts for later reuse as context. "
@@ -117,13 +118,62 @@ class PageLearning:
     parsed: bool = True  # False when the model did not return clean JSON
 
 
+@dataclass
+class Fitted:
+    """One compact-and-fold: its summary, and how it was fitted to the model's context.
+    Returned per call, so two sessions on the shared generator never see each other's."""
+
+    summary: str
+    folded: bool  # a fold request merged the earlier summary with the new one
+    pieces: int  # how many pieces the transcript was split into
+    context: int | None  # the tokens the split was sized for, None when unknown
+    retried: bool  # a length refusal was learned and the step done again
+
+
+def _goal_line(goal: str | None) -> str:
+    return f"The session goal: {goal}\n\n" if goal else ""
+
+
+def _fold_user(previous: str, latest: str) -> str:
+    return f"EARLIER SUMMARY:\n{previous}\n\nNEWER SUMMARY:\n{latest}"
+
+
+def _overrun(e: ProviderError) -> Overrun:
+    """The length refusal in a provider error; any other error is raised again as it is."""
+    o = parse_overrun(str(e))
+    if o is None:
+        raise e
+    return o
+
+
+async def _all(coros: list[Any]) -> list[Any]:
+    """Run in parallel; when one fails, cancel the rest so no more of them is sent."""
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
+def _parts(summaries: list[str]) -> list[str]:
+    if len(summaries) == 1:
+        return summaries
+    n = len(summaries)
+    return [f"Part {i} of {n}\n{p}" for i, p in enumerate(summaries, 1)]
+
+
 class Generator:
     kind = "generator"
 
-    def __init__(self, provider: Provider, *, model: str | None = None, chunk_chars: int = 16_000) -> None:
+    def __init__(self, provider: Provider, *, model: str | None = None, chunk_chars: int = 16_000,
+                 context: ContextSource | None = None) -> None:
         self.provider = provider
         self.model = model
         self.chunk_chars = chunk_chars
+        self.context = context
 
     async def _ask(self, system: str, user: str, step: str) -> str:
         """`step` names the Langfuse generation unless a caller already named the work (compaction does)."""
@@ -134,21 +184,21 @@ class Generator:
     # -- compaction -------------------------------------------------------
 
     async def summarize(self, text: str, *, goal: str | None = None) -> str:
-        prefix = f"The session goal: {goal}\n\n" if goal else ""
-        return await self._ask(SUMMARY_SYSTEM, prefix + text, "summarize-text")
+        return await self._ask(SUMMARY_SYSTEM, _goal_line(goal) + text, "summarize-text")
 
-    def chunk(self, text: str) -> list[str]:
-        """Split near `chunk_chars`, preferring line boundaries."""
-        if len(text) <= self.chunk_chars:
+    def chunk(self, text: str, size: int | None = None) -> list[str]:
+        """Split near `size` (default `chunk_chars`), preferring line boundaries."""
+        size = size or self.chunk_chars
+        if len(text) <= size:
             return [text] if text else []
         out, buf = [], ""
         for line in text.splitlines(keepends=True):
-            if len(buf) + len(line) > self.chunk_chars and buf:
+            if len(buf) + len(line) > size and buf:
                 out.append(buf)
                 buf = ""
-            while len(line) > self.chunk_chars:
-                out.append(line[: self.chunk_chars])
-                line = line[self.chunk_chars :]
+            while len(line) > size:
+                out.append(line[:size])
+                line = line[size:]
             buf += line
         if buf:
             out.append(buf)
@@ -170,7 +220,81 @@ class Generator:
         """Carry a summary forward: merge the previous fold with the newest summary."""
         if not previous:
             return latest
-        return await self._ask(FOLD_SYSTEM, f"EARLIER SUMMARY:\n{previous}\n\nNEWER SUMMARY:\n{latest}", "fold-summaries")
+        return await self._ask(FOLD_SYSTEM, _fold_user(previous, latest), "fold-summaries")
+
+    # -- fitted to the summary model's context ---------------------------------
+
+    async def compact_and_fold(self, rendered: str, previous: str, *, goal: str | None) -> Fitted:
+        """Summarise `rendered` and fold it into `previous`, with every request sized to the
+        summary model's context. A length refusal is learned (`context.learn`) and the whole
+        step done once more, sized by the refusal's own `n_ctx`; a second refusal, a refusal
+        that names no context, or a context too small for any piece raises ContextOverrun.
+        Any other provider error is raised as it is."""
+        limit = await self.context.limit() if self.context is not None else None
+        try:
+            return await self._fitted(rendered, previous, goal, limit, retried=False)
+        except ProviderError as e:
+            o = _overrun(e)
+        if self.context is not None:
+            self.context.learn(o)
+        if o.n_ctx is None:
+            raise ContextOverrun(o)
+        known = await self.context.limit() if self.context is not None else None
+        limit = o.n_ctx if known is None else min(known, o.n_ctx)
+        try:
+            return await self._fitted(rendered, previous, goal, limit, retried=True)
+        except ProviderError as e:
+            raise ContextOverrun(_overrun(e)) from None
+
+    async def _fitted(self, rendered: str, previous: str, goal: str | None, limit: int | None, *, retried: bool) -> Fitted:
+        """One try: pieces sized for `limit` tokens (unknown: 16,000 characters at most), summarised
+        in parallel and joined as Part N of M, then folded into `previous` in a request that fits."""
+        try:
+            piece = min(self.chunk_chars, piece_chars(limit, len(SUMMARY_SYSTEM) + len(_goal_line(goal))))
+            fold_piece = piece_chars(limit, len(FOLD_SYSTEM) + len(_fold_user("", "")))
+            chunks = self.chunk(rendered, piece)
+            parts = _parts(await _all([self.summarize(c, goal=goal) for c in chunks])) if chunks else []
+            latest = "\n\n".join(parts)
+            if not latest or not previous:
+                return Fitted(latest or previous, False, len(chunks), limit, retried)
+            if len(previous) + len(latest) > fold_piece:
+                # each brought under half a fold piece, so the two together fit one
+                previous = await self._fit([previous], piece, fold_piece // 2, goal)
+                latest = await self._fit(parts, piece, fold_piece // 2, goal)
+            summary = await self._ask(FOLD_SYSTEM, _fold_user(previous, latest), "fold-summaries")
+            return Fitted(summary, True, len(chunks), limit, retried)
+        except ContextTooSmall:
+            raise ContextOverrun(Overrun(limit, None)) from None
+
+    async def _fit(self, texts: list[str], piece: int, target: int, goal: str | None) -> str:
+        """Summarise `texts` again, adjacent ones packed into requests of at most `piece`
+        characters, until they join to at most `target`. Raises ContextTooSmall when a pass
+        does not lower the number of requests, so a model that will not shrink its input
+        cannot loop for ever."""
+        last: int | None = None
+        while True:
+            joined = "\n\n".join(texts)
+            if len(joined) <= target:
+                return joined
+            groups = self._pack(texts, piece)
+            if last is not None and len(groups) >= last:
+                raise ContextTooSmall("the summaries do not shrink below the context")
+            last = len(groups)
+            texts = await _all([self.summarize(g, goal=goal) for g in groups])
+
+    def _pack(self, texts: list[str], piece: int) -> list[str]:
+        """Adjacent texts joined into groups of at most `piece` characters; a longer text is split first."""
+        groups, buf = [], ""
+        for text in texts:
+            for c in self.chunk(text, piece):
+                if buf and len(buf) + 2 + len(c) > piece:
+                    groups.append(buf)
+                    buf = c
+                else:
+                    buf = f"{buf}\n\n{c}" if buf else c
+        if buf:
+            groups.append(buf)
+        return groups
 
     async def turn_note(self, previous: str, rendered: str, outcome: str, max_chars: int) -> str:
         """A bot's note to its next turn: the previous note folded with this turn's tool calls and results."""
