@@ -121,3 +121,67 @@ def test_file_kind_knows_the_formats_paddleocr_reads():
     assert file_kind(PNG) == "image/png" and file_kind(PDF) == "application/pdf"
     assert file_kind(b"RIFF\x00\x00\x00\x00WEBPVP8 ") == "image/webp" and file_kind(b"GIF89a") == "image/gif"
     assert file_kind(b"<svg") is None and file_kind(b"") is None
+
+
+def test_a_file_swapped_between_the_check_and_the_read_is_refused(w, monkeypatch):
+    # A bot can write the vault, so it can replace the checked file before the guard opens it.
+    from src.harness import ocr_guard
+
+    real_stat = os.stat
+    other = w.vault / "other.png"
+    other.write_bytes(PNG + b"swapped")
+
+    def stat_then_swap(path, *a, **k):
+        st = real_stat(path, *a, **k)
+        if Path(path).name == "a.png":
+            os.replace(other, w.vault / "a.png")  # a different file (inode) now holds the name
+        return st
+
+    monkeypatch.setattr(ocr_guard.os, "stat", stat_then_swap)
+    with pytest.raises(Refused, match="changed while it was being read"):
+        w.guard.input(str(w.vault / "a.png"))
+
+
+def test_a_link_put_at_the_name_after_the_check_is_not_followed(w, monkeypatch):
+    from src.harness import ocr_guard
+
+    probe = w.vault / "probe.png"
+    try:
+        probe.symlink_to(w.settings / "keys.png")
+    except OSError:
+        pytest.skip("symlinks need extra rights here")
+    probe.unlink()
+    real_stat = os.stat
+
+    def stat_then_link(path, *a, **k):
+        st = real_stat(path, *a, **k)
+        if Path(path).name == "a.png":
+            (w.vault / "a.png").unlink()
+            (w.vault / "a.png").symlink_to(w.settings / "keys.png")
+        return st
+
+    monkeypatch.setattr(ocr_guard.os, "stat", stat_then_link)
+    with pytest.raises(Refused, match="changed while it was being read"):
+        w.guard.input(str(w.vault / "a.png"))
+
+
+def test_input_over_the_limit_is_refused_before_it_is_decoded(w, monkeypatch):
+    from src.harness import ocr_guard
+
+    # the real limit fits a whole MAX_BYTES file as a data: URL
+    assert ocr_guard.MAX_INPUT >= len("data:image/png;base64,") + len(base64.b64encode(bytes(MAX_BYTES)))
+    monkeypatch.setattr(ocr_guard, "MAX_INPUT", 64)
+    monkeypatch.setattr(ocr_guard, "_is_base64", lambda v: pytest.fail("decoded an input over the limit"))
+    for v in ["A" * 68, "data:image/png;base64," + "A" * 64, "https://example.com/" + "a" * 64]:
+        with pytest.raises(Refused, match="larger than"):
+            w.guard.input(v)
+
+
+async def test_the_file_is_read_off_the_event_loop(w, monkeypatch):
+    import threading
+
+    seen: list[int] = []
+    real_input = w.guard.input
+    monkeypatch.setattr(w.guard, "input", lambda v: (seen.append(threading.get_ident()), real_input(v))[1])
+    await w.guard("ocr", {"input_data": str(w.vault / "a.png")}, w.server)
+    assert seen and seen[0] != threading.get_ident()

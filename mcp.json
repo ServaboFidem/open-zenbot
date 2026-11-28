@@ -96,12 +96,12 @@
       "requires": [
         {
           "bin": "node",
-          "min_version": "22.5",
+          "min_version": "22.13",
           "install": {"brew": "node", "winget": "OpenJS.NodeJS", "scoop": "nodejs", "apt": "nodejs", "dnf": "nodejs", "pacman": "nodejs", "choco": "nodejs"},
           "manual": {
-            "linux": "Node.js 22.5 or newer: https://nodejs.org/en/download",
-            "darwin": "Node.js 22.5 or newer: https://nodejs.org/en/download",
-            "windows": "Node.js 22.5 or newer: https://nodejs.org/en/download"
+            "linux": "Node.js 22.13 or newer (node:sqlite without a flag): https://nodejs.org/en/download",
+            "darwin": "Node.js 22.13 or newer (node:sqlite without a flag): https://nodejs.org/en/download",
+            "windows": "Node.js 22.13 or newer (node:sqlite without a flag): https://nodejs.org/en/download"
           }
         }
       ],

@@ -14,5 +14,12 @@ def where() -> str:
     return json.dumps({"cwd": here, "entries": sorted(os.listdir(here))})
 
 
+@server.tool(description="Leave a file named `name` in the working folder.")
+def leave(name: str) -> str:
+    with open(os.path.join(os.getcwd(), name), "w", encoding="utf-8") as f:
+        f.write("left behind")
+    return "ok"
+
+
 if __name__ == "__main__":
     server.run("stdio")

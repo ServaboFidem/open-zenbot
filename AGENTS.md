@@ -61,9 +61,10 @@ rotated.
      get a scrubbed environment that drops every `*_API_KEY`, `*_TOKEN`,
      `*_SECRET`, `*_PASSWORD` suffix and every `VAULT_*` prefix plus
      `ZEN_GUI_KEY`, so a key in `.env` alone never reaches the server. Stdio children also start in an
-     empty folder the harness makes (`mcp_client.child_cwd`), never the harness's own folder, because some
-     servers load a `.env` from their working folder (`open-museum-mcp` calls `dotenv.config()`) and would
-     read the harness's `.env` back; keep it so.
+     empty folder the harness makes (`mcp_client.child_cwd`), one per server and removed when that server
+     stops, never the harness's own folder, because some servers load a `.env` from their working folder
+     (`open-museum-mcp` calls `dotenv.config()`) and would read the harness's `.env` back, or one another
+     server left there; keep it so.
    - HTTP server, key via header: `"headers": {"Authorization": "Bearer ${TOOLSMONK_API_KEY}"}`
      or `{"x-api-key": "${EXA_API_KEY}"}`.
    - HTTP server, key in the URL: `"url": "https://host/mcp?key=${SERVICE_API_KEY}"`.
@@ -2764,7 +2765,13 @@ gives `pp_structurev3` and the PaddleOCR-VL models `paddleocr_vl` (Markdown with
 The server reads any absolute path it is given, so its entry carries `"guard": "paddleocr"` and every call goes
 through `src/harness/ocr_guard.py` (`OcrGuard`) first. The server never gets a path from a bot: the gate reads a path
 itself (absolute, resolved inside a folder bots may read and outside `private_folders`, a regular file with one hard
-link, at most 20,000,000 bytes, an image or a PDF by its first bytes) and hands it the bytes as a `data:` URL; an
+link, at most 20,000,000 bytes, an image or a PDF by its first bytes) and hands it the bytes as a `data:` URL. It
+opens the file once without following a link at the name and makes every check after the folder check on the file it
+opened, which must be the one the resolved path named (device and inode) at a path that still resolves the same way,
+so a bot that swaps the file between the check and the read is refused; a parent folder swapped for a link and back
+inside that window is not caught (a known limit, as Windows is for `chat_files`). The read runs in a worker thread
+(`asyncio.to_thread`), and any input longer than `MAX_INPUT` (20,000,000 bytes as Base64, plus a `data:` prefix) is
+refused before it is decoded; an
 http(s) URL, a `data:` URL and valid Base64 go through unchanged, since the server tries those before a path (a JPEG's
 Base64 starts `/9j/`, an absolute POSIX path, and stays Base64). Unknown tools and arguments are refused, and
 `return_images` is always off (`_text_of` keeps only text). A URL is fetched by the server itself, as `hound` and

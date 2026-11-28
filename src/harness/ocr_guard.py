@@ -6,9 +6,16 @@ read the harness's own settings, ledger and calendar folders. So the server neve
 
 - a path is read here, once: it must be absolute, resolve (links followed) inside a folder bots may read (Full
   Access or Read-Only) and outside the private folders, be a regular file with one hard link, at most
-  MAX_BYTES, and an image or a PDF by its first bytes. Its bytes go to the server as a `data:` URL.
+  MAX_BYTES, and an image or a PDF by its first bytes. Its bytes go to the server as a `data:` URL. The file is
+  opened once, without following a link at the name, and every check after the folder check is made on what was
+  opened, which must be the very file (device and inode) the resolved path named, at a path that still resolves
+  the same way: a bot that swaps the file for a link between the check and the read (it can write the vault) gets
+  a refusal. Swapping a parent folder for a link and back inside that window is not caught (no `dir_fd` walk, as
+  in `chat_files`): a known limit.
 - an http(s) URL, a `data:` URL and valid Base64 go through as they are: the server reads no file for them
-  (`classify_input` tries a URL, then `data:`, then Base64, before it ever tries a path).
+  (`classify_input` tries a URL, then `data:`, then Base64, before it ever tries a path). Any input longer than
+  MAX_INPUT (MAX_BYTES as Base64, plus room for a `data:` prefix) is refused before it is decoded.
+- the file is read off the event loop (`asyncio.to_thread`), so a slow folder cannot stall the harness.
 - anything else is refused, and so are tools and arguments the harness does not know.
 - `return_images` is always off: a model gets only the text of an MCP answer (`mcp_client._text_of`).
 
@@ -16,6 +23,7 @@ A URL is fetched by the server itself, as `hound` and `browser` fetch any URL a 
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import os
@@ -32,6 +40,8 @@ Next = Callable[[str, dict[str, Any]], Awaitable[str]]
 TOOLS = {"ocr", "pp_structurev3", "paddleocr_vl"}  # one is listed, chosen by the server's model setting
 ARGS = {"input_data", "output_mode", "file_type", "return_images", "runtime_params"}
 MAX_BYTES = 20_000_000
+MAX_INPUT = 4 * ((MAX_BYTES + 2) // 3) + 100  # MAX_BYTES as Base64, plus a data: prefix
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")  # the server's own test (paddleocr_mcp.utils.is_base64)
 
 
@@ -87,10 +97,13 @@ class OcrGuard:
         raw = args.get("input_data")
         if not isinstance(raw, str) or not raw.strip():
             raise Refused("input_data must be a file path, an http(s) URL, a data: URL or Base64")
-        return await call(tool, {**args, "input_data": self.input(raw.strip()), "return_images": False})
+        prepared = await asyncio.to_thread(self.input, raw.strip())  # a read of up to 20 MB stays off the loop
+        return await call(tool, {**args, "input_data": prepared, "return_images": False})
 
     def input(self, v: str) -> str:
         """What the server gets for `v`: never a path."""
+        if len(v) > MAX_INPUT:
+            raise Refused(f"input_data is larger than {MAX_BYTES // 1_000_000} MB")
         if v.startswith(("http://", "https://", "data:")):
             return v
         if _is_base64(v):  # a JPEG's Base64 starts '/9j/', which is also an absolute POSIX path
@@ -111,13 +124,26 @@ class OcrGuard:
             raise Refused(f"{raw}: outside the allowed folders (Settings > Allowed Folders)")
         try:
             st = os.stat(real)
-            if not stat.S_ISREG(st.st_mode):
+            if not stat.S_ISREG(st.st_mode):  # checked before the open, so a FIFO is never opened
                 raise Refused(f"{raw}: not a file")
-            if st.st_nlink > 1:
-                raise Refused(f"{raw}: a file with more than one hard link is not read")
-            if st.st_size > MAX_BYTES:
-                raise Refused(f"{raw}: larger than {MAX_BYTES // 1_000_000} MB")
-            with open(real, "rb") as fh:
+            if not _NOFOLLOW and os.path.islink(real):  # Windows: no O_NOFOLLOW, so look first
+                raise Refused(f"{raw}: changed while it was being read")
+            try:
+                fd = os.open(real, os.O_RDONLY | _NOFOLLOW | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+            except FileNotFoundError:
+                raise
+            except OSError:  # a link put at the name since the check is refused here (ELOOP), never followed
+                raise Refused(f"{raw}: changed while it was being read") from None
+            with os.fdopen(fd, "rb") as fh:  # every check from here on is on the file that was opened
+                got = os.fstat(fh.fileno())
+                if (got.st_dev, got.st_ino) != (st.st_dev, st.st_ino) or _real(p) != real:
+                    raise Refused(f"{raw}: changed while it was being read")
+                if not stat.S_ISREG(got.st_mode):
+                    raise Refused(f"{raw}: not a file")
+                if got.st_nlink > 1:
+                    raise Refused(f"{raw}: a file with more than one hard link is not read")
+                if got.st_size > MAX_BYTES:
+                    raise Refused(f"{raw}: larger than {MAX_BYTES // 1_000_000} MB")
                 data = fh.read(MAX_BYTES + 1)
         except FileNotFoundError:
             raise Refused(f"{raw}: no such file") from None
