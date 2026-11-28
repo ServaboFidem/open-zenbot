@@ -1,10 +1,10 @@
-// The Briefings section's decisions (BriefingsSection.jsx, BriefingDialog.jsx). Pure, so they test without a DOM
+// The Spoken briefing tab's decisions (BriefingsSection.jsx, BriefingDialog.jsx). Pure, so they test without a DOM
 // (tests/gui/briefings.test.mjs). Speaker names come from Sonos: shown as plain text, never as markup.
 // The sentences in `validate` and `READINESS` are the harness's own (src/briefing/settings.py `check`,
 // src/briefing/routes.py `NOT_READY`): keep them equal. `validate` mirrors only the sentences this form can trigger
 // (not "Only the morning briefing exists." or "Enabled must be on or off.").
 
-export const POLL_MS = 15000;  // the status is read again this often while the Routines page is open
+export const POLL_MS = 15000;  // the status is read again this often while the Spoken briefing tab is open
 export const MAX_SLOTS = 7;
 export const MAX_SPEAKERS = 32;
 export const VOLUME_MAX = 100;
@@ -12,8 +12,8 @@ export const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];  // 
 
 export const SECTION_LINE = 'ZenBot speaks to you on your Sonos speakers.';
 export const SAYS_LINE = "What it says: a good-morning greeting, a new joke, the weather, today's birthdays and today's calendar.";
-export const WEATHER_SET = 'Uses the city from Morning digest settings';
-export const WEATHER_UNSET = 'Set a weather city in Settings > Calendar > Morning digest to hear the forecast';
+export const WEATHER_SET = 'Uses the weather city from Settings > Notifications > Morning digest';
+export const WEATHER_UNSET = 'Set a weather city in Settings > Notifications > Morning digest to hear the forecast';
 export const KEEPER_LINUX = 'Keep this computer from sleeping overnight, or the briefing will be skipped.';
 export const KEEPER_WAKE = 'Windows wakes the computer for a briefing only when "Allow wake timers" is on in the power plan. Some laptops ignore wake timers.';
 export const LOGIN_LABEL = 'Start ZenBot when I sign in to this computer';

@@ -44,6 +44,9 @@ function EmailSettings({ bridge, refreshStatus, notify }) {
   </form>;
 }
 
+// Settings > Notifications > Morning digest: two sections, Weather (the city and unit every morning edition uses: the
+// digest in chat, the daily email and the spoken briefing) and Daily email (desktop app only). One component, since a
+// weather save answers the email's delivery status too.
 export function MorningSettings({ api, online, notify }) {
   const [weather, setWeather] = useState(null), [delivery, setDelivery] = useState('');
   const [query, setQuery] = useState(''), [choices, setChoices] = useState(null);
@@ -85,8 +88,10 @@ export function MorningSettings({ api, online, notify }) {
   };
   const refreshStatus = () => api.morning.settings().then(value => setDelivery(value.delivery?.status))
     .catch(() => setDelivery('unavailable'));
-  return <section className="resource-row editor-form morning-settings" id={anchorId('calendar', 'Morning digest')}>
-    <h3>Morning digest</h3>
+  return <>
+  <section className="resource-row editor-form morning-settings" id={anchorId('notifications', 'Weather')}>
+    <h3>Weather</h3>
+    <p>The morning digest in chat, the daily email and the spoken briefing all use this city.</p>
     <form className="editor-form" onSubmit={find}>
       <Field label="Weather city" hint="Search for a city, choose a match, then save your weather settings.">
         <Input value={query} disabled={!online || !weather || busy === 'save'} onChange={(_, d) => {
@@ -109,9 +114,12 @@ export function MorningSettings({ api, online, notify }) {
     </select></Field>
     {error && <p role="alert" className="form-error">{error}</p>}
     <Button appearance="outline" disabled={locked} onClick={saveWeather}>Save weather settings</Button>
+  </section>
+  <section className="resource-row editor-form morning-settings" id={anchorId('notifications', 'Daily email')}>
     <h3>Daily email</h3>
     <p>The email includes your agenda and up to five local recommendations when event discovery is on. Connect AgentMail and choose an inbox in Settings → Connected apps.</p>
     {delivery && <p role="status">{deliveryLabel[delivery] || deliveryLabel.unavailable}</p>}
     <EmailSettings bridge={window.openzenbot?.morningEmail} refreshStatus={refreshStatus} notify={notify}/>
-  </section>;
+  </section>
+  </>;
 }

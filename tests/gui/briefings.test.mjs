@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  scheduleLabel, overlap, validate, lastRunLine, readinessLine, hostedNote, defaultForm, canPlay, skippedLate, formBlocker, saveBlocked, ceilingLow, speakerChoices, loginTook, LOGIN_FAILED, KEEPER_LINUX, KEEPER_WAKE, keeperOf, offersSignIn, signInStart, keeperSentence, wakeWarning, toggleBody, readinessFix,
+  scheduleLabel, overlap, validate, lastRunLine, readinessLine, hostedNote, defaultForm, canPlay, skippedLate, formBlocker, saveBlocked, ceilingLow, speakerChoices, loginTook, LOGIN_FAILED, KEEPER_LINUX, KEEPER_WAKE, keeperOf, offersSignIn, signInStart, keeperSentence, wakeWarning, toggleBody, readinessFix, WEATHER_SET, WEATHER_UNSET,
 } from '../../src/gui/briefings.js';
 
 const wk = { days: [0, 1, 2, 3, 4], time: '06:45' };
@@ -190,4 +190,9 @@ test('the no-voice fix opens the Read aloud card on Settings > Models > Jobs', a
   assert.equal(anchorId(fix.panel, fix.title), toolAnchor('speech'));
   assert.equal(tabOf(fix.panel, anchorId(fix.panel, fix.title)), 'jobs');
   for (const r of ['sonos_off', 'no_speakers', 'ceiling_zero']) assert.deepEqual(readinessFix(r), { panel: 'speakers', title: 'Sonos' });
+});
+
+test('the weather lines name where the city is set', () => {
+  assert.equal(WEATHER_SET, 'Uses the weather city from Settings > Notifications > Morning digest');
+  assert.equal(WEATHER_UNSET, 'Set a weather city in Settings > Notifications > Morning digest to hear the forecast');
 });

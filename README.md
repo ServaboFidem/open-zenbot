@@ -238,10 +238,10 @@ Good to know:
 
 Start a new chat with ZenBot to see **Today** above the conversation. It shows the local forecast,
 today’s known birthdays, and commitments from My Calendar. Starting another chat reads the latest
-calendar, including appointments added after breakfast. In **Settings > Calendar > Morning digest**,
+calendar, including appointments added after breakfast. In **Settings > Notifications > Morning digest**,
 choose a weather city and °F or °C. Forecasts come from [Open-Meteo](https://open-meteo.com/).
 
-For the email edition, connect AgentMail, then use **Morning digest** in the desktop app to save
+For the email edition, connect AgentMail, then use **Daily email** on the same tab in the desktop app to save
 your recipient address and a morning delivery time. The default is 7 a.m. on this computer. If the
 harness was closed or the computer asleep, it can send on waking before noon. Clear the recipient to
 turn email off. With event discovery enabled, the email also includes up to five local events
@@ -278,7 +278,8 @@ before each timed event (10, 15, 30, 60 or 120 minutes before), and each evening
 2. In OpenZenBot open Settings > Connected apps and paste the key under **Telnyx**. The harness checks it with Telnyx
    before saving it, keeps it in `vault-settings/telnyx_keys.json` (readable by you only) and never sends it back to
    the app. Then pick the number ZenBot sends from.
-3. In the desktop app, enter your own phone number and choose which texts you want and when. Only the desktop app can
+3. In the desktop app, open Settings > Notifications > **Text reminders**, enter your own phone number and choose which
+   texts you want and when. Only the desktop app can
    set where texts go, so nothing else on your computer can point them at another number.
 4. **Send a test text** to check it works.
 
@@ -325,7 +326,7 @@ every speaker stops what it is playing. A voice says good morning by name, tells
 gives the weather, says whose birthday it is and what is on your calendar today. Then each speaker goes back to
 exactly what it was doing: its group, its volume and its music.
 
-Open the **Routines** page and choose **Add a morning briefing** under Briefings. Set one or more lines of days and a
+Open **Settings > Notifications** and choose **Add a morning briefing** on the Spoken briefing tab. Set one or more lines of days and a
 time (weekdays at 6:45, weekends at 8:30), the speakers (all of them, or the ones you pick) and the volume. **Play
 now** plays one straight away.
 

@@ -1,7 +1,7 @@
 // Telnyx's decisions for the settings section.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ERRORS, LEADS, REGISTER_URL, TELNYX_LINE, canTest, createReads, errorLine, leadLabel, statusLine } from '../../src/gui/telnyx.js';
+import { ACCOUNT_POINTER, ERRORS, LEADS, REGISTER_URL, TELNYX_LINE, TEXTS_POINTER, canTest, createReads, errorLine, leadLabel, needsAccount, statusLine } from '../../src/gui/telnyx.js';
 
 const ready = {
   key_set: true, key_hint: '6789', number: '+15550001111', last_sent_at: null, last_error: '', sent_today: 0,
@@ -57,4 +57,13 @@ test('a read that started before a key or number change is dropped', () => {
   const test = reads.start();  // a test text changes neither, so it drops nothing
   assert.equal(reads.current(save), true);
   assert.equal(reads.current(test), true);
+});
+
+test('Text reminders asks for the account only once the status says it is missing', () => {
+  assert.equal(needsAccount(null), false);
+  assert.equal(needsAccount({ key_set: false }), true);
+  assert.equal(needsAccount({ key_set: true, number: '' }), true);
+  assert.equal(needsAccount({ key_set: true, number: '+15550001111' }), false);
+  assert.equal(ACCOUNT_POINTER, 'Texts need a Telnyx key and the number ZenBot sends from. Set them up in Settings > Connected apps > Telnyx.');
+  assert.equal(TEXTS_POINTER, 'Your phone number and which texts you get are in Settings > Notifications > Text reminders.');
 });
