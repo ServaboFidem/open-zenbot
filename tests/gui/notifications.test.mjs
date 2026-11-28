@@ -34,3 +34,8 @@ test('the texts are on Text reminders, and Connected apps keeps the Telnyx accou
 test('the daily email still says it is set in the desktop app when there is no bridge', () => {
   assert.ok(read('MorningSettings.jsx').includes('Manage the daily email recipient and delivery time in the desktop app.'));
 });
+test('the spoken briefing is laid out as a settings card like the other sections', () => {
+  const src = read('BriefingsSection.jsx');
+  assert.ok(src.includes('className="resource-row editor-form briefings-section"'));
+  assert.ok(src.includes('<h3>Spoken briefing</h3>') && !src.includes('section-heading'));
+});

@@ -67,12 +67,10 @@ export default function BriefingsSection({ api, online, notify, openSettings }) 
   const lastAt = morning?.last_run?.at || morning?.last_skip?.at;
   const notReady = morning && !morning.ready;
   const fix = readinessFix(morning?.reason);
-  return <section className="briefings-section" id={anchorId('notifications', 'Spoken briefing')} aria-label="Spoken briefing">
-    <div className="section-heading od-row"><h2>Spoken briefing</h2></div>
-    <div className="od-row">
-      <p className="od-fill">{SECTION_LINE}</p>
-      {!morning && <Button appearance="primary" icon={<Add24Regular/>} disabled={!online || !status} onClick={() => setDialog({})}>Add a morning briefing</Button>}
-    </div>
+  return <section className="resource-row editor-form briefings-section" id={anchorId('notifications', 'Spoken briefing')} aria-label="Spoken briefing">
+    <h3>Spoken briefing</h3>
+    <p>{SECTION_LINE}</p>
+    {!morning && <div><Button appearance="primary" icon={<Add24Regular/>} disabled={!online || !status} onClick={() => setDialog({})}>Add a morning briefing</Button></div>}
     {error && <div className="form-error" role="alert">{error}</div>}
     {status?.error && <div className="form-error" role="alert">{status.error}</div>}
     {morning && <div className="list-panel"><article className="resource-row od-row-top">
