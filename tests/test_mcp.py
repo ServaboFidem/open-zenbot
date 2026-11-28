@@ -4,8 +4,10 @@ enters the catalog as an `mcp` entry so the decider can route to it."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -77,6 +79,54 @@ async def test_each_stdio_server_gets_its_own_folder_removed_when_it_stops(tmp_p
         await reg.close()
     assert a["cwd"] != b["cwd"] and a["entries"] == [".env"] and b["entries"] == []
     assert not Path(a["cwd"]).exists() and not Path(b["cwd"]).exists()
+
+
+def _slow(name: str, delay: float) -> ServerConfig:
+    fixture = str(Path(__file__).parent / "fixtures" / "mcp_cwd_server.py")
+    return ServerConfig(name=name, command=sys.executable, args=[fixture], env={"ZEN_TEST_START_DELAY": str(delay)})
+
+
+async def test_servers_connect_at_once_and_register_in_config_order(tmp_path: Path):
+    # One after another, three 3 s starters took over 9 s; at once they take about as long as one. The first is the
+    # slowest, so it answers last, and its tools still come first: the tool list is the same on every start.
+    reg = McpRegistry([_slow("a", 4.0), _slow("b", 3.0), _slow("c", 3.0)])
+    tools, catalog = ToolRunner(cwd=tmp_path), Catalog()
+    t = time.monotonic()
+    try:
+        await reg.connect(tools, catalog)
+        took = time.monotonic() - t
+        assert {n: st["state"] for n, st in reg.status().items()} == {"a": "connected", "b": "connected", "c": "connected"}
+    finally:
+        await reg.close()
+    assert took < 8.5, took
+    assert [e.name for e in catalog.mcps()] == ["a", "b", "c"]
+
+
+async def test_a_server_reconnected_from_another_task_closes_cleanly(tmp_path: Path, monkeypatch):
+    # The MCP clients must be closed by the task that opened them. A reconnect runs in a request's task and the
+    # close at shutdown in another; closed there, the stdio client's cancel scope refused to exit.
+    from src.harness import mcp_client
+
+    failures: list[str] = []
+
+    class Recording(mcp_client.AsyncExitStack):
+        async def aclose(self) -> None:
+            try:
+                await super().aclose()
+            except BaseException as e:
+                failures.append(f"{type(e).__name__}: {e}")
+                raise
+
+    monkeypatch.setattr(mcp_client, "AsyncExitStack", Recording)
+    reg = McpRegistry([_slow("a", 0), _slow("b", 0)])
+    try:
+        await reg.connect(ToolRunner(cwd=tmp_path), Catalog())
+        await asyncio.create_task(reg.reconnect(_slow("b", 0)))  # as from a request handler
+        assert json.loads(await reg.call("b", "where", {}))["entries"] == []
+    finally:
+        await reg.close()
+    assert failures == []
+    assert {n: st["state"] for n, st in reg.status().items()} == {"a": "closed", "b": "closed"}
 
 
 async def test_registry_reports_a_failed_server_and_keeps_the_rest(tmp_path: Path):
