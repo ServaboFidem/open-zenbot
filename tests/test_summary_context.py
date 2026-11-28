@@ -141,3 +141,12 @@ async def test_learned_limit_when_listed_but_not_loaded():
     assert await ctx.limit() is None
     ctx.learn(Overrun(4096, 5726))
     assert await ctx.limit() == 4096
+
+
+async def test_rebind_to_the_same_model_keeps_the_state():
+    ctx = make(Server(None))
+    ctx.learn(Overrun(4096, 5000))
+    ctx.record_overrun("task", Overrun(4096, 5000))
+    ctx.rebind(entry(), "m")
+    st = await ctx.status(fresh=False, enabled=set())
+    assert st["last_overrun"] is not None and st["learned_context"] == 4096

@@ -32,6 +32,13 @@ class SummaryContext:
         self._ttl = ttl
         self._reset()
 
+    @property
+    def entry(self) -> ProviderEntry | None:
+        return self._entry
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
     def _reset(self) -> None:
         self._models: list[LmModel] | None = None
         self._read_at: float | None = None
@@ -85,7 +92,11 @@ class SummaryContext:
             self._recovered = datetime.now(timezone.utc).isoformat()
 
     def rebind(self, entry: ProviderEntry | None, model: str) -> None:
+        """A new model or provider drops what was read and learned; the same one keeps it."""
+        same = model == self._model and (entry.id if entry else None) == (self._entry.id if self._entry else None)
         self._entry = entry
+        if same:
+            return
         self._model = model
         self._reset()
 
