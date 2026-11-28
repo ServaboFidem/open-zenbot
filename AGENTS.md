@@ -2728,7 +2728,9 @@ The harness only reads LM Studio (GET); it never loads, reloads or changes a set
   and kept across a rebind, closed at shutdown by `close_summary_context`; the compactor's `Generator` takes it as
   `context=`). `limit()` is the loaded context when the read gives one, else the context learned from a refusal, else
   None; it reads again when the cached read is 300 s old (`ttl`). `learn(overrun)` keeps the refusal's `n_ctx` for a
-  local provider (no-op for a hosted one). `rebind(entry, model)` (called by `Harness.apply_models`, the only path that
+  local provider (no-op for a hosted one) and drops the cached read, so a model reloaded smaller is read again on the
+  next `limit()`. `rebind(entry, model)` (called by `Harness.apply_models` and by `POST /settings/provider`, which gives it
+  no entry since the summary then runs on the chat provider; `apply_models` is the only path that
   changes the summary role) drops what was read, learned and recorded when the provider or model changes, and keeps it
   when they are the same. `record_overrun(where, overrun)` and `record_success()` keep, in memory only (lost at
   restart), the newest overrun (`at` as an ISO UTC time, `where` `task` or `fold`, `n_ctx`, `n_prompt_tokens`) and when
@@ -2745,7 +2747,8 @@ The harness only reads LM Studio (GET); it never loads, reloads or changes a set
   not flooded; unlimited when unknown, as before), then folded into `previous`. The fold request must fit too: when the
   previous summary and the new one together pass what one fold request holds, each is first brought under half of it
   (`_fit`: adjacent texts packed into requests of at most one piece and summarised again, pass after pass while the
-  joined length keeps falling). A context too small for any piece, or a model whose answers stop shrinking, is a
+  joined length keeps falling, at most `MAX_FIT_PASSES` = 6, then `ContextTooSmall`; with an unknown limit, a hosted
+  provider's, the fold is one request as before, whatever the size of the previous summary). A context too small for any piece, or a model whose answers stop shrinking, is a
   `ContextOverrun` (a failure: the full history is kept, as for every compaction failure).
 - **The retry.** A `ProviderError` whose text `parse_overrun` reads as a length refusal (LM Studio's and llama.cpp's
   `exceed_context_size_error` JSON with `n_ctx` and `n_prompt_tokens`, or the sentence "request (N tokens) exceeds the
@@ -2761,9 +2764,9 @@ The harness only reads LM Studio (GET); it never loads, reloads or changes a set
   failure that was a length problem, `overrun: true` with `n_ctx` and `n_prompt_tokens` (either may be none). Numbers
   only: never a message, a summary or a model answer.
 - **Telling the harness's own state.** `Compactor` takes `on_overrun(bot_id, session_id, overrun)` and `on_success`;
-  `ConversationStore.fold_if_needed` takes `on_overrun(overrun)` and `on_success`. `Harness._flag_overrun` records the
+  `Conversations.fold_if_needed` takes `on_overrun(overrun)` and `on_success`. `Harness._flag_overrun` records the
   overrun in the `SummaryContext` and, only when the summary provider is local and the conversation is a one-to-one
-  one, flags the exchange of the running session (`ConversationStore.mark_overrun`: `Exchange.context_overrun`, saved
+  one, flags the exchange of the running session (`Conversations.mark_overrun`: `Exchange.context_overrun`, saved
   with the conversation, only the first one per conversation, kept by `Conversation.overrun_noticed`, returned by
   `_conversation_view`). A fold runs before the task's session starts and writes no session id, so the flag is set by
   the hook with the task's own session id. A recovered retry flags nothing. A room turn or a routine run records the
@@ -2789,8 +2792,8 @@ The harness only reads LM Studio (GET); it never loads, reloads or changes a set
     warning shows before anything fails and goes when the next compaction works and the read no longer finds the
     context small.
   - *The dialog* ("Summary model context"): reads the route fresh when it opens and shows `advice`: the facts (Context
-    loaded, Most it supports, Last refused as "a 5,726-token request in a task", Learned limit when only a refusal
-    taught it), then one of: a model loaded at its own maximum ("This model cannot take more than N tokens, so no LM
+    loaded, Most it supports, Last refused as "a 5,726-token request, 28 Nov 03:11, in a task", Learned limit when only a refusal
+    taught it), then one of: a model at its own maximum (loaded at it, or, with the model not loaded, its maximum or the recommended size no more than the context learned or last refused at; "This model cannot take more than N tokens, so no LM
     Studio setting will help." and "Pick a summary model that supports more."); a model that supports more ("In LM
     Studio, open the model's load settings, set Context Length to N, and load it again."); or, for a server that is not
     LM Studio, the refused size and context and "give the model a larger context on that server, or pick another summary
@@ -2808,15 +2811,13 @@ The harness only reads LM Studio (GET); it never loads, reloads or changes a set
     read.
   - Only compaction and conversation folds are fitted: the other summary jobs can still be refused for length, and
     their refusals are not learned from or retried.
-  - `_fit` has no minimum shrink per pass: a model that shortens its input by one character a pass could make many
-    calls before it stops. A retry from an unknown limit whose refusal has `n_ctx` but no `n_prompt_tokens` may send
+  - A retry from an unknown limit whose refusal has `n_ctx` but no `n_prompt_tokens` may send
     pieces as large as the first try's and end in `ContextOverrun`; one for a model that will not shrink has an
     overrun with no numbers, and a retry too small for any piece loses `n_prompt_tokens`.
-  - `POST /settings/provider` rebinds the harness without calling `SummaryContext.rebind`, so the summary context
-    follows the summary role only through `PUT /settings/models` (`apply_models`). At shutdown the context's client
+  - At shutdown the context's client
     may be closed while a read is in flight: `read_models` does not catch the `RuntimeError` of a closed client, so the
     compaction then fails as an ordinary failure (the full history is kept).
-  - The dialog's "Last refused" row has no date and the dialog names no server address; a failed read shows a sentence
+  - The dialog names no server address; a failed read shows a sentence
     with no retry button (closing and reopening reads again).
   - No test starts the harness without an injected context, closes it, or loads a conversation saved before the new
     fields (they default to false).
@@ -2830,7 +2831,7 @@ The harness only reads LM Studio (GET); it never loads, reloads or changes a set
   the card line and the dialog have not been seen on screen, in Electron or in the dark theme: only `npm test` and the
   build have run them, and the components have no unit tests.
 
-Rules for contributors: LM Studio's own API is reached only through `src/providers/lmstudio.py`, GET only, with
+Rules for contributors: `tests/conftest.py` `_lmstudio_inert` makes the client a harness builds answer 404 to everything, so no test reaches a real LM Studio; tests that need one pass their own client. LM Studio's own API is reached only through `src/providers/lmstudio.py`, GET only, with
 `trust_env=False`, no redirect followed and a short timeout, and only on a provider `local()` accepts; a failure there
 makes the context unknown and never fails a compaction. The harness never loads, unloads or configures a model. Size
 every request of `compact_and_fold` (pieces, fold, re-summarised parts) with `piece_chars`; never send a piece over

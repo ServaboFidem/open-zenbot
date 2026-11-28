@@ -150,3 +150,20 @@ async def test_rebind_to_the_same_model_keeps_the_state():
     ctx.rebind(entry(), "m")
     st = await ctx.status(fresh=False, enabled=set())
     assert st["last_overrun"] is not None and st["learned_context"] == 4096
+
+
+async def test_a_learned_limit_makes_the_next_limit_read_the_server_again():
+    body = {"v": v1(("m", "llm", 40960, 8192))}
+
+    def server(request):
+        server.calls += 1
+        return httpx.Response(200, json=body["v"])
+
+    server.calls = 0
+    ctx = make(server)
+    assert await ctx.limit() == 8192
+    n = server.calls
+    body["v"] = v1(("m", "llm", 40960, 2048))  # reloaded smaller; the clock has not moved
+    ctx.learn(Overrun(2048, 5000))
+    assert await ctx.limit() == 2048
+    assert server.calls > n

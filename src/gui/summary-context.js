@@ -24,15 +24,34 @@ export function cardLine(s) {
 
 const altNote = a => `${a.enabled ? 'enabled' : 'enable it on the Providers tab first'}${a.loaded ? '' : ' (not loaded)'}`;
 
+// The context the model was last seen at: loaded, else learned from a refusal, else the refused request's.
+const seenContext = s => [s.loaded_context, s.learned_context, s.last_overrun?.n_ctx].find(known);
+
+// True when the model cannot be given more: its maximum, or the recommended size, is no more than what it has.
+function atMaximum(s) {
+  const seen = seenContext(s);
+  if (!known(seen)) return false;
+  return (known(s.max_context) && s.max_context <= seen) || (known(s.recommended_context) && s.recommended_context <= seen);
+}
+
 // The dialog's label/value rows, advice lines and the models that could replace this one.
-export function advice(s) {
+const stamp = at => {
+  const d = new Date(at);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+};
+
+// `format` turns an ISO time into the text shown (tests pass their own; the default is local time).
+export function advice(s, format = stamp) {
   if (hosted(s)) return { facts: [], lines: [HOSTED_LINE], alternatives: [] };
   const o = s.last_overrun;
   const facts = [
-    ['Context loaded', known(s.loaded_context) ? tokens(s.loaded_context) : 'not loaded'],
+    ['Context loaded', known(s.loaded_context) ? tokens(s.loaded_context) : (s.server === 'lmstudio' ? 'not loaded' : 'unknown')],
     ['Most it supports', known(s.max_context) ? tokens(s.max_context) : 'unknown'],
   ];
-  if (o) facts.push(['Last refused', `${known(o.n_prompt_tokens) ? `a ${num(o.n_prompt_tokens)}-token request` : 'a request'}${o.where === 'fold' ? ' in a conversation summary' : ' in a task'}`]);
+  if (o) {
+    const when = o.at ? format(o.at) : '';
+    facts.push(['Last refused', `${known(o.n_prompt_tokens) ? `a ${num(o.n_prompt_tokens)}-token request` : 'a request'}${when ? `, ${when},` : ''}${o.where === 'fold' ? ' in a conversation summary' : ' in a task'}`]);
+  }
   if (known(s.learned_context) && !known(s.loaded_context)) facts.push(['Learned limit', tokens(s.learned_context)]);
 
   const lines = [];
@@ -40,8 +59,8 @@ export function advice(s) {
   if (s.server === 'other') {
     if (o && known(o.n_prompt_tokens) && known(o.n_ctx)) lines.push(`The server refused a request of ${num(o.n_prompt_tokens)} tokens with a context of ${num(o.n_ctx)}. Give the model a larger context on that server, or pick another summary model.`);
     else if (known(s.learned_context)) lines.push(`The server's learned limit is ${num(s.learned_context)} tokens. Give the model a larger context on that server, or pick another summary model.`);
-  } else if (known(s.loaded_context) && known(s.max_context) && s.loaded_context >= s.max_context) {
-    lines.push(`This model cannot take more than ${num(s.max_context)} tokens, so no LM Studio setting will help.`, 'Pick a summary model that supports more.');
+  } else if (atMaximum(s)) {
+    lines.push(`This model cannot take more than ${num(s.max_context ?? s.recommended_context)} tokens, so no LM Studio setting will help.`, 'Pick a summary model that supports more.');
   } else if (known(s.recommended_context) && (s.warning || o)) {
     lines.push(`In LM Studio, open the model's load settings, set Context Length to ${num(s.recommended_context)}, and load it again.`);
   }

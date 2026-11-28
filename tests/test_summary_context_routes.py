@@ -193,3 +193,18 @@ async def test_changing_the_summary_model_clears_the_state(vault, tmp_path, monk
         assert r.status_code == 200, r.text
         body = (await c.get("/settings/models/summary/context")).json()
     assert body["last_overrun"] is None and body["model"] == "other"
+
+
+async def test_saving_the_chat_provider_drops_a_stale_local_summary_entry(vault, tmp_path, monkeypatch):
+    handler, paths = lm_studio()
+    h = build(vault, tmp_path, local_entry(), handler)
+    monkeypatch.setitem(registry._factories, "mock", lambda **kw: ScriptedProvider())
+    assert (await h.summary_context.status(fresh=True, enabled=set()))["server"] == "lmstudio"
+    async with api(h) as c:
+        r = await c.post("/settings/provider", json={"kind": "mock", "key": "k-123456789", "model": "m"})
+        assert r.status_code == 200, r.text
+        n = len(paths)
+        body = (await c.get("/settings/models/summary/context?fresh=1")).json()
+    assert h.summary_context.entry is None
+    assert body["server"] == "hosted" and body["warning"] == ""
+    assert len(paths) == n  # nothing reads LM Studio any more

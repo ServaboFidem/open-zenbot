@@ -147,6 +147,7 @@ def _overrun(e: ProviderError) -> Overrun:
 
 
 AT_ONCE = 4  # summary requests in flight at once to a model whose context is known (a local server)
+MAX_FIT_PASSES = 6  # re-summarising passes `_fit` may make before the context counts as too small
 RETRY_RATE = 2.0  # characters a token for a retry the refusal did not measure, when the limit is unchanged
 
 
@@ -288,8 +289,8 @@ class Generator:
             latest = "\n\n".join(parts)
             if not latest or not previous:
                 return Fitted(latest or previous, False, len(chunks), limit, retried)
-            if len(previous) + len(latest) > fold_piece:
-                # each brought under half a fold piece, so the two together fit one
+            if limit is not None and len(previous) + len(latest) > fold_piece:
+                # (an unknown limit folds in one call, as before) each brought under half a fold piece, so the two together fit one
                 previous = await self._fit([previous], piece, fold_piece // 2, goal, at_once)
                 latest = await self._fit(parts, piece, fold_piece // 2, goal, at_once)
             summary = await self._ask(FOLD_SYSTEM, _fold_user(previous, latest), "fold-summaries")
@@ -304,14 +305,17 @@ class Generator:
         does not shorten the joined text: the length falls on every pass that goes on, so a
         model that will not shrink its input cannot loop for ever."""
         last: int | None = None
-        while True:
+        for passes in range(MAX_FIT_PASSES + 1):
             joined = "\n\n".join(texts)
             if len(joined) <= target:
                 return joined
             if last is not None and len(joined) >= last:
                 raise ContextTooSmall("the summaries do not shrink below the context")
+            if passes == MAX_FIT_PASSES:
+                break
             last = len(joined)
             texts = await _all([self.summarize(g, goal=goal) for g in self._pack(texts, piece)], at_once)
+        raise ContextTooSmall("the summaries need too many passes to fit the context")
 
     def _pack(self, texts: list[str], piece: int) -> list[str]:
         """Adjacent texts joined into groups of at most `piece` characters; a longer text is split first."""

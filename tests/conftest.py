@@ -59,6 +59,18 @@ def _speakers_inert(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _lmstudio_inert(monkeypatch):
+    """A harness built in a test makes a SummaryContext whose client would read a real LM Studio when the summary
+    model is local. No test may reach one: the default client answers 404 to everything.
+    Tests that need LM Studio pass their own client."""
+    import httpx
+    from src.providers import lmstudio
+
+    monkeypatch.setattr(lmstudio, "new_client",
+                        lambda: httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(404))))
+
+
+@pytest.fixture(autouse=True)
 def _kokoro_inert(monkeypatch):
     """No test may load the real Kokoro model. tests/kokoro/ passes its own fake library."""
     from src.kokoro import engine

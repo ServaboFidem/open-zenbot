@@ -75,6 +75,7 @@ class SummaryContext:
         if self._hosted() or o.n_ctx is None:
             return
         self._learned = o.n_ctx
+        self._read_at = None  # the model may have been reloaded smaller: read it again on the next limit()
 
     def record_overrun(self, where: str, o: Overrun | None, conversation_id: str = "") -> None:
         if self._hosted():

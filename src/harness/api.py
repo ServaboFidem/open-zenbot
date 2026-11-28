@@ -2484,6 +2484,8 @@ def create_app(h: Harness) -> FastAPI:
             c.decision_model = body.decision_model
         c.scorer_kind = scorer_kind or c.scorer_kind
         h.summary_provider, h.openrouter_ref = None, None
+        if h.summary_context is not None:
+            h.summary_context.rebind(None, c.summary_model)  # the summary now runs on the chat provider: no local entry to read
         h.rebind(provider, scorer)
         h.ledger.append(Kind.settings, "", "", event="provider", provider=body.kind, model=body.model, scorer=scorer_kind, key_ref=ref)
         return h.settings()

@@ -597,3 +597,41 @@ async def test_no_more_than_four_summary_requests_at_once():
     unknown = CountingProvider(max_user=10**9, delay=0.01)
     out = await Generator(unknown, chunk_chars=4_000).compact_and_fold(big, "", goal="g")
     assert out.pieces > 4 and unknown.most_in_flight == out.pieces
+
+
+# -- final review -----------------------------------------------------------
+
+
+async def test_an_unknown_limit_folds_in_one_call_however_long_the_summary():
+    # before the context was read, a fold was one request whatever the size of `previous`
+    provider = ScriptedProvider([completion("new summary"), completion("folded")])
+    previous = "p" * 17_000
+    out = await Generator(provider, context=FakeContext(None)).compact_and_fold("one new turn\n", previous, goal=None)
+    assert out.summary == "folded" and out.folded is True
+    assert len(provider.calls) == 2  # the one piece, then the fold
+    assert previous in provider.calls[-1][-1].content
+
+
+class ShrinkingProvider:
+    """Answers a text a little shorter than the last answer it gave, starting from the size it was asked."""
+
+    kind = "mock"
+
+    def __init__(self, step: int):
+        self.step, self.size, self.calls = step, None, []
+
+    async def complete(self, messages, *, tools=None, model=None, session_id=None):
+        self.calls.append(list(messages))
+        self.size = (len(messages[-1].content) if self.size is None else self.size) - self.step
+        return completion("w" * self.size)
+
+
+async def test_fit_stops_after_six_passes():
+    from src.context.fit import ContextTooSmall
+    from src.generation.generator import MAX_FIT_PASSES
+
+    provider = ShrinkingProvider(step=10)
+    gen = Generator(provider, context=FakeContext(4096))
+    with pytest.raises(ContextTooSmall):
+        await gen._fit(["t" * 20_000], 30_000, 100, None)
+    assert len(provider.calls) == MAX_FIT_PASSES == 6
