@@ -218,7 +218,9 @@ test('the harness status line is on About', () => {
 
 test('no message, comment, prompt or setup doc names a Settings page that is gone', () => {
   const repo = new URL('../../', import.meta.url);
-  const gone = [/Harness Tools/, /Harness settings/, /Model providers page/, /Settings (>|&gt;) Model providers/, /Settings (>|&gt;) Coding agents/, /Connected apps (>|&gt;) Sonos/, /Settings (>|&gt;) Wi-Fi speakers/, /Switch it on in Settings (>|&gt;) Connected apps/];
+  const gone = [/Harness Tools/, /Harness settings/, /Model providers page/, /Settings (>|&gt;) Model providers/, /Settings (>|&gt;) Coding agents/, /Connected apps (>|&gt;) Sonos/, /Settings (>|&gt;) Wi-Fi speakers/, /Switch it on in Settings (>|&gt;) Connected apps/,
+    /Settings (>|&gt;) Calendar (>|&gt;) Morning digest/, /Morning digest settings/, /top of the Routines page/, /while the Routines page is open/,
+    /Routines\*\* page and choose \*\*Add a morning briefing/];
   const walk = (dir, ext) => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(new URL(`${e.name}/`, dir), ext) : ext.test(e.name) ? [new URL(e.name, dir)] : []);
   const files = [
     ...walk(new URL('src/', repo), /\.(py|js|jsx|cjs)$/), ...walk(new URL('bot-prompts/', repo), /\.md$/), ...walk(new URL('skills/', repo), /\.md$/),

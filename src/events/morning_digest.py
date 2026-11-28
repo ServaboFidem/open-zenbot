@@ -29,7 +29,7 @@ def email_text(today: dict, forecast: dict, recommendations: list[dict]) -> tupl
     if forecast["status"] == "ready":
         lines.append(f"{forecast['location']} · {forecast['summary']} (Open-Meteo, https://open-meteo.com/)")
     elif forecast["status"] == "unconfigured":
-        lines.append("Choose a weather city in Morning digest settings to include a forecast.")
+        lines.append("Choose a weather city in Settings > Notifications > Morning digest to include a forecast.")
     else:
         lines.append("Weather forecast unavailable.")
     lines.extend(["", "Birthdays"])

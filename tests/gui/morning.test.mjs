@@ -62,5 +62,5 @@ test('city search encodes its query and weather saves exclude email fields', asy
     ['/morning/locations?q=A+%26+B', 'GET', undefined],
     ['/morning/settings', 'PUT', '{"location":null,"unit":"F"}'],
   ]);
-  assert.ok(searchSettings('weather').some(r => r.anchor === 'settings-calendar-morning-digest'));
+  assert.ok(searchSettings('weather').some(r => r.anchor === 'settings-notifications-weather' && r.tab === 'digest'));
 });
