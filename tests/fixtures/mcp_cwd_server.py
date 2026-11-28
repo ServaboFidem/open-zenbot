@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 
 from mcp.server.mcpserver import MCPServer
 
@@ -22,4 +23,5 @@ def leave(name: str) -> str:
 
 
 if __name__ == "__main__":
+    time.sleep(float(os.environ.get("ZEN_TEST_START_DELAY", "0")))  # a slow starter, as paddleocr loading its models
     server.run("stdio")

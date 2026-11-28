@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -39,6 +40,8 @@ from src.skills.catalog import Catalog, CatalogEntry
 
 from .host_deps import Requirement, check, current_host, parse_requires
 from .tools import ToolRunner, scrubbed_env
+
+log = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 60.0
 
@@ -180,6 +183,9 @@ class _Server:
     session: Any = None
     stack: AsyncExitStack | None = None
     deps: list[dict] = field(default_factory=list)  # host_deps.check results for config.requires
+    listed: list[Any] = field(default_factory=list)  # the tools as the server listed them, until they are registered
+    owner: asyncio.Task | None = None  # the task that opened the connection: the only one that may close it
+    stop: asyncio.Event | None = None  # set by _close_one; the owner then closes the connection itself
 
 
 def child_cwd() -> Path:
@@ -214,10 +220,14 @@ class McpRegistry:
     # -- lifecycle --------------------------------------------------------
 
     async def connect(self, tools: ToolRunner, catalog: Catalog) -> None:
-        """Connect every server; failures are recorded, not raised."""
+        """Connect every server at once; failures are recorded, not raised. Start-up then takes as long as the
+        slowest server (paddleocr loads its models first, about 50 s), not the sum of them all. The tools are
+        registered once every server has answered, in mcp.json's order, so the tool list is the same each start."""
         self._tools, self._catalog = tools, catalog
-        for s in self._servers.values():
-            await self._connect_safely(s)
+        servers = list(self._servers.values())
+        await asyncio.gather(*(self._start(s) for s in servers))
+        for s in servers:
+            self._register_safely(s)
 
     async def reconnect(self, config: ServerConfig) -> None:
         """Swap one server for a new config (a key saved on the MCP servers page): close it, drop its
@@ -229,7 +239,56 @@ class McpRegistry:
                 self._catalog.remove_mcp(config.name)
         s = self._servers[config.name] = _Server(config)
         if self._tools is not None:
+            await self._start(s)
+            self._register_safely(s)
+
+    async def _start(self, s: _Server) -> None:
+        """Open `s` in a task of its own and wait until it is connected or has failed. The MCP library's stdio
+        and HTTP clients hold anyio cancel scopes, which must be exited by the task that entered them: closed from
+        any other task (a server reconnected from a request, then closed at shutdown) the close fails part-way. So
+        the owner task keeps the connection open until `_close_one` sets `stop`, and then closes it itself."""
+        ready = asyncio.get_running_loop().create_future()
+        s.stop = asyncio.Event()
+        s.owner = asyncio.create_task(self._own(s, ready), name=f"mcp:{s.config.name}")
+        await ready
+
+    async def _own(self, s: _Server, ready: asyncio.Future) -> None:
+        try:
             await self._connect_safely(s)
+        finally:
+            if not ready.done():
+                ready.set_result(None)
+        if s.stack is None:  # failed or needs install: nothing is open
+            return
+        assert s.stop is not None
+        try:
+            await s.stop.wait()
+        finally:  # also when the owner itself is cancelled, as at loop shutdown
+            stack, s.stack, s.session = s.stack, None, None
+            try:
+                await stack.aclose()
+            except Exception as e:  # noqa: BLE001 - a server that died mid-close is still closed
+                log.warning("mcp %s: close failed (%s)", s.config.name, type(e).__name__)
+
+    def _register_safely(self, s: _Server) -> None:
+        """Give a connected server's tools to the tool runner and its entry to the catalog."""
+        if s.state != "connected":
+            return
+        c, listed, s.listed = s.config, s.listed, []
+        assert self._tools is not None and self._catalog is not None
+        try:
+            for t in listed:
+                self._tools.register(f"{c.name}.{t.name}", t.description or t.name,
+                                     t.input_schema or {"type": "object", "properties": {}},
+                                     self._caller(c.name, t.name), group=c.name)
+            s.use = c.use or "; ".join(f"{t.name}: {t.description}" for t in listed if t.description) or f"Tools from the {c.name} MCP server."
+            self._catalog.add_mcp(CatalogEntry(kind="mcp", name=c.name, use=s.use, inputs=list(s.tools), ref=c.name))
+        except Exception as e:  # noqa: BLE001 - one bad server must not stop the rest
+            for t in s.tools:
+                self._tools.unregister(f"{c.name}.{t}")
+            s.state, s.error, s.session = "failed", f"{type(e).__name__}: {e}"[:500], None
+            if s.stop is not None:
+                s.stop.set()  # the owner closes the connection
 
     async def _connect_safely(self, s: _Server) -> None:
         try:
@@ -279,13 +338,8 @@ class McpRegistry:
         listed = (await session.list_tools()).tools
         s.session = session
         s.tools = sorted(t.name for t in listed)
+        s.listed = list(listed)
         s.state, s.error = "connected", None
-        assert self._tools is not None and self._catalog is not None
-        for t in listed:
-            self._tools.register(f"{c.name}.{t.name}", t.description or t.name, t.input_schema or {"type": "object", "properties": {}},
-                                 self._caller(c.name, t.name), group=c.name)
-        s.use = c.use or "; ".join(f"{t.name}: {t.description}" for t in listed if t.description) or f"Tools from the {c.name} MCP server."
-        self._catalog.add_mcp(CatalogEntry(kind="mcp", name=c.name, use=s.use, inputs=list(s.tools), ref=c.name))
 
     def _caller(self, server: str, tool: str):
         async def call(**arguments: Any) -> str:
@@ -322,11 +376,11 @@ class McpRegistry:
         if self._tools is not None:
             for t in s.tools:
                 self._tools.unregister(f"{s.config.name}.{t}")
-        if s.stack is not None:
-            try:
-                await s.stack.aclose()
-            except Exception:  # noqa: BLE001 - a server that died mid-close is still closed
-                pass
+        if s.owner is not None:
+            assert s.stop is not None
+            s.stop.set()
+            await asyncio.wait({s.owner})  # the owner closes what it opened; wait() never raises its outcome
+            s.owner = None
         s.stack = s.session = None
         if s.state == "connected":
             s.state = "closed"

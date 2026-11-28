@@ -42,7 +42,11 @@ for the GUI tests. See `README.md` for the full start sequence.
 ## Adding an MCP server that needs a key
 
 MCP servers live in `mcp.json` at the repo root (Claude Desktop shape). The
-harness connects them at start (`src/harness/mcp_client.py`); the GUI's MCP
+harness connects them at start (`src/harness/mcp_client.py`), all at once, and `/health` answers only after
+that, so a start takes as long as the slowest server (`paddleocr`, about 50 s loading its models), not the sum of
+them (`scripts/dev.ps1` waits 60 s). Each server's connection is opened, held and closed by a task of its own
+(`McpRegistry._own`): the MCP library's clients must be closed by the task that opened them, so never close one
+from another task. Tools are registered once every server has answered, in `mcp.json`'s order; the GUI's MCP
 servers page (Settings > MCP servers) lists them and asks the user for any keys. **`mcp.json` is
 committed: never write a real key, token or password into it**, not even
 temporarily. A key that lands there is public in git history and must be
