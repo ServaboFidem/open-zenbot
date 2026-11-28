@@ -46,6 +46,10 @@ export function statusLine(status) {
 
 /** A test text needs a saved key, a sending number and a phone saved in the desktop app. */
 export const canTest = status => !!(status?.key_set && status.number && status.texts?.phone_hint);
+// Text reminders (Settings > Notifications) says the account is missing once the status says so, not while it loads.
+export const needsAccount = status => !!status && !(status.key_set && status.number);
+export const ACCOUNT_POINTER = 'Texts need a Telnyx key and the number ZenBot sends from. Set them up in Settings > Connected apps > Telnyx.';
+export const TEXTS_POINTER = 'Your phone number and which texts you get are in Settings > Notifications > Text reminders.';
 
 /** The harness's sentence from a failed call (HarnessError carries it as `message`); never raw JSON. */
 export function errorLine(err) {
