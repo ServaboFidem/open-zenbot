@@ -10,8 +10,6 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
-
 from src.context.fit import MAX_PIECE, RECOMMENDED_CONTEXT, ContextTooSmall, Overrun, piece_chars
 from src.generation.generator import SUMMARY_SYSTEM
 from src.providers.lmstudio import LmModel, find, read_models
@@ -22,7 +20,7 @@ ALTERNATIVES_MAX = 8
 
 class SummaryContext:
     def __init__(self, *, entry: ProviderEntry | None, model: str, key: Callable[[], str | None],
-                 client: httpx.AsyncClient, clock: Callable[[], float] = time.monotonic,
+                 client: Any, clock: Callable[[], float] = time.monotonic,
                  ttl: float = 300.0) -> None:
         self._entry = entry
         self._model = model
