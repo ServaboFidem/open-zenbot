@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NOTICE, NOTICE_LINK, cardLine, advice, tokens } from '../../src/gui/summary-context.js';
+import { NOTICE, NOTICE_LINK, cardLine, advice, tokens, stamp } from '../../src/gui/summary-context.js';
 
 const fmt = at => (at === 'x' ? '' : '28 Nov 03:11');
 const slim = {
@@ -71,4 +71,27 @@ test('a model not loaded but known to be at its maximum is not told to raise the
 test('the last-refused row carries a date, and none when the time is unreadable', () => {
   assert.equal(advice(slim, () => '28 Nov 03:11').facts[2][1], 'a 5,726-token request, 28 Nov 03:11, in a task');
   assert.equal(advice({ ...slim, last_overrun: { ...slim.last_overrun, at: 'garbage' } }).facts[2][1], 'a 5,726-token request in a task');
+});
+
+const noMore = a => !a.lines.some(l => l.includes('cannot take more') || l.includes('set Context Length'));
+
+test('a model loaded above the recommended size and below its maximum gets no change advice', () => {
+  const a = advice({ ...slim, loaded_context: 16384, max_context: 40960, recommended_context: 16384, warning: null, last_overrun: null, alternatives: [] }, fmt);
+  assert.ok(noMore(a));
+  assert.deepEqual(a.lines, []);
+  assert.equal(a.facts[0][1], '16,384 tokens');
+  assert.equal(a.facts[1][1], '40,960 tokens');
+});
+
+test('an old overrun at a smaller context gives no advice once the model is loaded larger', () => {
+  const a = advice({ ...slim, loaded_context: 32768, max_context: 131072, recommended_context: 16384, warning: null,
+    last_overrun: { at: '2026-11-28T03:11:00', where: 'task', n_ctx: 4096, n_prompt_tokens: 5726 }, alternatives: [] }, fmt);
+  assert.ok(noMore(a));
+  assert.equal(a.facts.length, 3);
+});
+
+test('the default time format has no comma', () => {
+  assert.equal(stamp('2026-11-28T03:11:00Z', 'UTC'), '28 Nov 03:11');
+  assert.match(stamp('2026-11-28T03:11:00'), /^\d{1,2} [A-Z][a-z]{2} \d{2}:\d{2}$/);
+  assert.equal(stamp('garbage'), '');
 });

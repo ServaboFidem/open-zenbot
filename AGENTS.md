@@ -2793,9 +2793,9 @@ The harness only reads LM Studio (GET); it never loads, reloads or changes a set
     context small.
   - *The dialog* ("Summary model context"): reads the route fresh when it opens and shows `advice`: the facts (Context
     loaded, Most it supports, Last refused as "a 5,726-token request, 28 Nov 03:11, in a task", Learned limit when only a refusal
-    taught it), then one of: a model at its own maximum (loaded at it, or, with the model not loaded, its maximum or the recommended size no more than the context learned or last refused at; "This model cannot take more than N tokens, so no LM
+    taught it), then one of: a model at its own maximum (its known maximum no more than the context it was loaded, learned or last refused at; the recommended size stands in for the maximum only while the maximum is unknown; "This model cannot take more than N tokens, so no LM
     Studio setting will help." and "Pick a summary model that supports more."); a model that supports more ("In LM
-    Studio, open the model's load settings, set Context Length to N, and load it again."); or, for a server that is not
+    Studio, open the model's load settings, set Context Length to N, and load it again.", not when the model is loaded at or above the recommended size, which gets no change advice, and never a Context Length lower than it is loaded with); or, for a server that is not
     LM Studio, the refused size and context and "give the model a larger context on that server, or pick another summary
     model"; a hosted model gets one line saying its context is not read. The models that would fit are listed with
     their maximum and whether each is enabled (else "enable it on the Providers tab first") or not loaded, with "A

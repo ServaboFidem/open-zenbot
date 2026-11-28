@@ -27,21 +27,29 @@ const altNote = a => `${a.enabled ? 'enabled' : 'enable it on the Providers tab 
 // The context the model was last seen at: loaded, else learned from a refusal, else the refused request's.
 const seenContext = s => [s.loaded_context, s.learned_context, s.last_overrun?.n_ctx].find(known);
 
-// True when the model cannot be given more: its maximum, or the recommended size, is no more than what it has.
+// True when the model cannot be given more: its maximum is no more than what it has seen; the recommended size
+// stands in for the maximum only while the maximum is unknown.
 function atMaximum(s) {
   const seen = seenContext(s);
   if (!known(seen)) return false;
-  return (known(s.max_context) && s.max_context <= seen) || (known(s.recommended_context) && s.recommended_context <= seen);
+  if (known(s.max_context)) return s.max_context <= seen;
+  return known(s.recommended_context) && s.recommended_context <= seen;
 }
 
+// True when the model is loaded at or above the recommended size, so no LM Studio change is advised.
+const loadedEnough = s => known(s.loaded_context) && known(s.recommended_context) && s.loaded_context >= s.recommended_context;
+
 // The dialog's label/value rows, advice lines and the models that could replace this one.
-const stamp = at => {
+// Shown as "28 Nov 03:11" (no comma). `timeZone` is for tests; the default is local time.
+export const stamp = (at, timeZone) => {
   const d = new Date(at);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  if (Number.isNaN(d.getTime())) return '';
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone }).formatToParts(d).map(x => [x.type, x.value]));
+  return `${p.day} ${p.month} ${p.hour}:${p.minute}`;
 };
 
 // `format` turns an ISO time into the text shown (tests pass their own; the default is local time).
-export function advice(s, format = stamp) {
+export function advice(s, format = at => stamp(at)) {
   if (hosted(s)) return { facts: [], lines: [HOSTED_LINE], alternatives: [] };
   const o = s.last_overrun;
   const facts = [
@@ -61,7 +69,7 @@ export function advice(s, format = stamp) {
     else if (known(s.learned_context)) lines.push(`The server's learned limit is ${num(s.learned_context)} tokens. Give the model a larger context on that server, or pick another summary model.`);
   } else if (atMaximum(s)) {
     lines.push(`This model cannot take more than ${num(s.max_context ?? s.recommended_context)} tokens, so no LM Studio setting will help.`, 'Pick a summary model that supports more.');
-  } else if (known(s.recommended_context) && (s.warning || o)) {
+  } else if (!loadedEnough(s) && known(s.recommended_context) && (s.warning || o)) {
     lines.push(`In LM Studio, open the model's load settings, set Context Length to ${num(s.recommended_context)}, and load it again.`);
   }
   if (lines.length) {
