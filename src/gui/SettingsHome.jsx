@@ -1,11 +1,11 @@
 import React from 'react';
 import { Field, Input } from '@fluentui/react-components';
-import { Apps24Regular, CalendarLtr24Regular, BrainCircuit24Regular, Code24Regular, Database24Regular, Document24Regular, Folder24Regular, Info24Regular, PlugConnected24Regular, Pulse24Regular, Search24Regular, Sparkle24Regular, Speaker224Regular } from '@fluentui/react-icons';
+import { Alert24Regular, Apps24Regular, CalendarLtr24Regular, BrainCircuit24Regular, Code24Regular, Database24Regular, Document24Regular, Folder24Regular, Info24Regular, PlugConnected24Regular, Pulse24Regular, Search24Regular, Sparkle24Regular, Speaker224Regular } from '@fluentui/react-icons';
 import { PANELS, searchSettings } from './settings-index';
 
 export const PANEL_ICONS = {
   models: <BrainCircuit24Regular/>, mcps: <PlugConnected24Regular/>, skills: <Sparkle24Regular/>, programs: <Code24Regular/>, folders: <Folder24Regular/>, calendar: <CalendarLtr24Regular/>,
-  tracing: <Pulse24Regular/>, ledger: <Document24Regular/>, memory: <Database24Regular/>, apps: <Apps24Regular/>, speakers: <Speaker224Regular/>, about: <Info24Regular/>,
+  tracing: <Pulse24Regular/>, ledger: <Document24Regular/>, memory: <Database24Regular/>, notifications: <Alert24Regular/>, apps: <Apps24Regular/>, speakers: <Speaker224Regular/>, about: <Info24Regular/>,
 };
 
 // The Settings home screen: a tile per panel, and a search that lists the panels and sections holding the words typed.

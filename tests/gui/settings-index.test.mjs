@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PANELS, SECTIONS, anchorId, liveSections, providerAnchor, searchSettings, tabOf, toolAnchor } from '../../src/gui/settings-index.js';
 
-test('panels are the twelve, in order', () => {
-  assert.deepEqual(PANELS.map(p => p.id), ['models', 'mcps', 'skills', 'programs', 'folders', 'calendar', 'tracing', 'ledger', 'memory', 'apps', 'speakers', 'about']);
+test('panels are the thirteen, in order', () => {
+  assert.deepEqual(PANELS.map(p => p.id), ['models', 'mcps', 'skills', 'programs', 'folders', 'calendar', 'tracing', 'ledger', 'memory', 'notifications', 'apps', 'speakers', 'about']);
   for (const p of PANELS) assert.ok(p.name && p.description);
 });
 test('every section belongs to a panel and its anchor is anchorId', () => {
@@ -85,6 +85,21 @@ test('Sonos is on the Speakers page, above Wi-Fi speakers, and the connected-app
   assert.deepEqual(onSpeakers.slice(0, 2), ['Sonos', 'Wi-Fi speakers']);
   assert.deepEqual(SECTIONS.filter(s => s.panel === 'apps').map(s => s.title), ['AgentMail', 'Telnyx']);
   assert.deepEqual(searchSettings('mockup'), []);
+});
+test('Notifications holds the briefing, the morning digest and the texts, each on its tab', () => {
+  assert.deepEqual(SECTIONS.filter(s => s.panel === 'notifications').map(s => [s.title, s.tab]),
+    [['Spoken briefing', 'briefing'], ['Weather', 'digest'], ['Daily email', 'digest'], ['Text reminders', 'texts']]);
+  assert.deepEqual(SECTIONS.filter(s => s.panel === 'calendar').map(s => s.title),
+    ['Your Google app', 'Google Calendar', 'Calendars to bring in', 'Send events to Google', 'Event discovery', 'Facebook helper', 'Facebook sign-in']);
+  assert.equal(tabOf('notifications', ''), 'briefing');
+  assert.equal(tabOf('notifications', anchorId('notifications', 'Weather')), 'digest');
+  assert.equal(tabOf('notifications', anchorId('notifications', 'Text reminders')), 'texts');
+  for (const [q, tab, title] of [['joke', 'briefing', 'Spoken briefing'], ['temperature unit', 'digest', 'Weather'],
+    ['delivery time', 'digest', 'Daily email'], ['evening rundown', 'texts', 'Text reminders']]) {
+    const hit = searchSettings(q)[0];
+    assert.deepEqual([hit.panel, hit.tab, hit.section], ['notifications', tab, title], q);
+  }
+  assert.equal(searchSettings('sending number')[0].panel, 'apps');
 });
 test('the matched text holds a word that was typed', () => { for (const m of searchSettings('secret langfuse')) assert.match(m.text, /secret|langfuse/i); });
 

@@ -4,6 +4,7 @@
 // has no entry and reaches the search as `extra` instead.
 
 import { APP_STEPS } from './calendar-settings.js';
+import { SAYS_LINE, SECTION_LINE as BRIEFING_LINE } from './briefings.js';
 import { PRIVACY } from './dream.js';
 import { PRIVACY as TUNER_PRIVACY } from './skilltuner.js';
 import { FACEBOOK_LOGIN_LOSS } from './discovery-settings.js';
@@ -22,7 +23,8 @@ export const PANELS = [
   { id: 'tracing', name: 'Tracing', description: 'Where errors and traces go: Sentry, GlitchTip and Langfuse.' },
   { id: 'ledger', name: 'Ledger', description: 'Everything on the record: model calls, tool calls, decider scores, approvals, memory and settings changes.' },
   { id: 'memory', name: 'Memory', description: 'Your name in memory, dreaming (learning from your conversations while the computer is idle), and rebuilding what the bots have learned.' },
-  { id: 'apps', name: 'Connected apps', description: "Outside services ZenBot works through: AgentMail, its own email address, and Telnyx text reminders." },
+  { id: 'notifications', name: 'Notifications', description: 'What ZenBot sends you and when: the spoken morning briefing on your speakers, the morning digest email and text reminders.' },
+  { id: 'apps', name: 'Connected apps', description: 'Outside services ZenBot works through: AgentMail, its own email address, and Telnyx, the number it texts you from.' },
   { id: 'speakers', name: 'Speakers', description: 'Sonos speakers, and the AirPlay, Chromecast and DLNA speakers on your network with the default speaker ZenBot will use.' },
   { id: 'about', name: 'About', description: 'The harness and its status, the version, what this app does, and its license.' },
 ];
@@ -41,6 +43,8 @@ const onProviders = (title, words) => ({ ...section('models', title, words), tab
 // A panel whose sections are all headed by data: found by its words, opened at the top.
 // A section on the Skills page's SkillTuner tab: a search hit for it opens that tab (`tabOf`).
 const tuner = (title, words) => ({ ...section('skills', title, words), tab: 'tuner' });
+// A section of the Notifications page, on its tab: 'briefing', 'digest' or 'texts' (`tabOf`).
+const onNotifications = (tab, title, words) => ({ ...section('notifications', title, words), tab });
 const whole = (panel, words) => ({ panel, anchor: '', title: PANELS.find(p => p.id === panel).name, words });
 
 export const SECTIONS = [
@@ -96,7 +100,6 @@ export const SECTIONS = [
   section('calendar', 'Your Google app', [
     ...APP_STEPS, 'Redirect address', 'Client ID', 'Client secret',
   ]),
-  section('calendar', 'Morning digest', ['Today', 'weather location', 'Open-Meteo forecast', 'temperature unit', 'daily email recipient', 'delivery time', 'birthdays', 'agenda']),
   section('calendar', 'Google Calendar', ['Connect Google Calendar', 'Reconnect', 'Disconnect', 'OpenZenBot asks to see your calendars and their events. It does not ask to change anything yet.', 'Google sign-in has expired.']),
   section('calendar', 'Calendars to bring in', ['Choose which of your Google calendars show their events here.', 'view only']),
   section('calendar', 'Send events to Google', ['Send events made here to Google', 'Destination calendar', 'Allow sending to Google']),
@@ -137,8 +140,15 @@ export const SECTIONS = [
     PRIVACY,
     'Dreaming model', 'Start after', 'minutes idle', 'Dream now', 'What was learned', 'Forget', 'learn', 'idle', 'conversations', 'local model',
   ]),
+  onNotifications('briefing', 'Spoken briefing', [
+    'briefing', 'morning briefing', 'spoken', 'Sonos', 'speakers', 'joke', 'greeting', 'Play now', 'wake the computer',
+    'Start ZenBot when I sign in to this computer', BRIEFING_LINE, SAYS_LINE,
+  ]),
+  onNotifications('digest', 'Weather', ['weather city', 'weather location', 'Open-Meteo forecast', 'temperature unit', 'Fahrenheit', 'Celsius', 'Today', 'Morning digest']),
+  onNotifications('digest', 'Daily email', ['daily email recipient', 'delivery time', 'Morning digest', 'email', 'AgentMail', 'agenda', 'birthdays']),
+  onNotifications('texts', 'Text reminders', ['text reminders', 'text messages', 'SMS', 'reminders', 'phone number', 'before each event', 'evening rundown', 'Send a test text']),
   section('apps', 'AgentMail', ['AgentMail', 'email', 'inbox', 'address', 'API key', 'newsletter', MAIL_LINE]),
-  section('apps', 'Telnyx', ['Telnyx', 'text messages', 'SMS', 'reminders', 'phone number', 'evening rundown', 'API key', TELNYX_LINE]),
+  section('apps', 'Telnyx', ['Telnyx', 'API key', 'sending number', 'messaging profile', '10DLC', TELNYX_LINE]),
   section('speakers', 'Sonos', ['Sonos', 'speakers', 'play music', 'Favorites', 'playlists', 'volume', 'volume limit', 'Highest volume ZenBot may set', 'Look again', SONOS_LINE]),
   section('speakers', 'Wi-Fi speakers', ['AirPlay', 'Chromecast', 'DLNA', 'speakers', 'default speaker', 'No default', 'Look again', SPEAKERS_LINE]),
   section('about', 'Harness', ['Harness address and status: online or offline', 'Scorer', 'Memory']),
@@ -198,11 +208,12 @@ export function searchSettings(query, extra = []) {
 
 // Which tab of a panel to open for a section (`anchor`, '' for the panel itself). Skills: 'tuner' for a SkillTuner-tab
 // section, or for the page itself while `waiting` suggestions wait, so a badged Skills tile opens where they are; else
-// 'main'. Models: 'providers' for a Providers-tab section or a provider's card; else 'jobs'. Every other panel has no
-// tabs: 'main'.
+// 'main'. Models: 'providers' for a Providers-tab section or a provider's card; else 'jobs'. Notifications: the tab its
+// section is on, else 'briefing'. Every other panel has no tabs: 'main'.
 export function tabOf(panel, anchor, waiting = 0) {
   const marked = SECTIONS.find(s => s.panel === panel && s.anchor && s.anchor === anchor)?.tab;
   if (panel === 'skills') return marked === 'tuner' || (!anchor && waiting > 0) ? 'tuner' : 'main';
+  if (panel === 'notifications') return marked || 'briefing';
   if (panel === 'models') return marked === 'providers' || String(anchor ?? '').startsWith(providerAnchor('')) ? 'providers' : 'jobs';
   return 'main';
 }

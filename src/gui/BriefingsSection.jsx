@@ -4,9 +4,10 @@ import { Add24Regular, Play24Regular, WeatherSunny24Regular } from '@fluentui/re
 import BriefingDialog from './BriefingDialog.jsx';
 import { LOGIN_FAILED, POLL_MS, SECTION_LINE, loginTook, canPlay, keeperOf, lastRunLine, readinessFix, readinessLine, scheduleLabel, skippedLate, toggleBody, wakeWarning } from './briefings.js';
 import { formatWhen } from './routine-schedule.js';
+import { anchorId } from './settings-index.js';
 
-// The Briefings section at the top of the Routines page: ZenBot speaking on the Sonos speakers. The status is read
-// again every 15 s while the page is open, as the routines are. Speaker names come from Sonos: plain text only.
+// The Spoken briefing tab of Settings > Notifications: ZenBot speaking on the Sonos speakers. The status is read again
+// every 15 s while the tab is open. Speaker names come from Sonos: plain text only.
 // Props: { api, online, notify, openSettings(panel, title) }
 export default function BriefingsSection({ api, online, notify, openSettings }) {
   const [status, setStatus] = useState(null);   // GET /briefings
@@ -66,8 +67,8 @@ export default function BriefingsSection({ api, online, notify, openSettings }) 
   const lastAt = morning?.last_run?.at || morning?.last_skip?.at;
   const notReady = morning && !morning.ready;
   const fix = readinessFix(morning?.reason);
-  return <section className="briefings-section" aria-label="Briefings">
-    <div className="section-heading od-row"><h2>Briefings</h2></div>
+  return <section className="briefings-section" id={anchorId('notifications', 'Spoken briefing')} aria-label="Spoken briefing">
+    <div className="section-heading od-row"><h2>Spoken briefing</h2></div>
     <div className="od-row">
       <p className="od-fill">{SECTION_LINE}</p>
       {!morning && <Button appearance="primary" icon={<Add24Regular/>} disabled={!online || !status} onClick={() => setDialog({})}>Add a morning briefing</Button>}
