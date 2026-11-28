@@ -39,3 +39,9 @@ test('the spoken briefing is laid out as a settings card like the other sections
   assert.ok(src.includes('className="resource-row editor-form briefings-section"'));
   assert.ok(src.includes('<h3>Spoken briefing</h3>') && !src.includes('section-heading'));
 });
+test("a status read neither drops a test text's answer nor clears its error, as on Connected apps before the split", () => {
+  const src = read('TextReminders.jsx');
+  const refresh = src.slice(src.indexOf('async function refresh()'), src.indexOf('useEffect(', src.indexOf('async function refresh()')));
+  assert.ok(!refresh.includes("setError('')"), 'a status read keeps the error of a failed test');
+  assert.ok(!src.includes('seq.current'), 'no counter lets a later status read drop the test answer');
+});

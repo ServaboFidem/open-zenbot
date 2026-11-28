@@ -51,7 +51,7 @@ export default function MailPage({ api, online, email }) {
   const messages = page?.messages || [];
   return <div className="mail-page">
     <section className="page-heading"><div className="eyebrow">ZENBOT'S OWN EMAIL ADDRESS</div><h1>AgentMail</h1>
-      <p>Read messages delivered to ZenBot’s address. To receive a daily morning digest, set a recipient in Settings → Calendar.</p></section>
+      <p>Read messages delivered to ZenBot’s address. To receive a daily morning digest, set a recipient in Settings → Notifications → Morning digest.</p></section>
     <div className="mail-head">
       <code className="mail-address" aria-label="ZenBot's email address">{email}</code>
       <Button appearance="outline" icon={<Copy24Regular/>} disabled={!email} onClick={copy}>{copied || 'Copy'}</Button>

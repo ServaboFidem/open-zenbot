@@ -220,6 +220,7 @@ test('no message, comment, prompt or setup doc names a Settings page that is gon
   const repo = new URL('../../', import.meta.url);
   const gone = [/Harness Tools/, /Harness settings/, /Model providers page/, /Settings (>|&gt;) Model providers/, /Settings (>|&gt;) Coding agents/, /Connected apps (>|&gt;) Sonos/, /Settings (>|&gt;) Wi-Fi speakers/, /Switch it on in Settings (>|&gt;) Connected apps/,
     /Settings (>|&gt;) Calendar (>|&gt;) Morning digest/, /Morning digest settings/, /top of the Routines page/, /while the Routines page is open/,
+    /recipient in Settings (>|&gt;|→) Calendar/, /the Routines section, the form/,
     /Routines\*\* page and choose \*\*Add a morning briefing/];
   const walk = (dir, ext) => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(new URL(`${e.name}/`, dir), ext) : ext.test(e.name) ? [new URL(e.name, dir)] : []);
   const files = [

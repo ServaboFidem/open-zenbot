@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button, Checkbox, Field, Input } from '@fluentui/react-components';
 import { anchorId } from './settings-index';
 import { ACCOUNT_POINTER, LEADS, canTest, errorLine, leadLabel, needsAccount, statusLine } from './telnyx.js';
@@ -64,23 +64,17 @@ export function TextReminders({ api, online, notify, openSettings }) {
   const [status, setStatus] = useState(null);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState('');
-  const seq = useRef(0);  // only the newest status read or test answer is kept
-
+  // Whichever answer comes last is shown, a status read's or a test text's, as on Connected apps before the split; a read
+  // leaves the error of a failed test in place.
   async function refresh() {
-    const mine = ++seq.current;
-    try {
-      const st = await telnyx.status();
-      if (mine === seq.current) { setStatus(st); setError(''); }
-    } catch (e) { if (mine === seq.current) setError(errorLine(e)); }
+    try { setStatus(await telnyx.status()); } catch (e) { setError(errorLine(e)); }
   }
   useEffect(() => { if (online) refresh(); }, [online]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function sendTest() {
-    const mine = ++seq.current;
     setTesting(true); setError('');
     try {
-      const st = await telnyx.test();
-      if (mine === seq.current) setStatus(st);
+      setStatus(await telnyx.test());
       notify('Test text sent');
     } catch (e) { setError(errorLine(e)); }
     finally { setTesting(false); }

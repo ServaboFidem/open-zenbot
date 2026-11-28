@@ -2164,7 +2164,7 @@ on; the plan is beside it in `docs/superpowers/plans/`).
   reach.
 - **Unverified** (the spec's "To check by hand once built", plus what the build never ran for real). Nothing has played
   on a real speaker: the tests use `FakeSpeakers` and a fake clip server, so no briefing has been heard, and nothing
-  here has been seen on screen (the Routines section, the form, the tray, the warnings). To check by hand: an album or
+  here has been seen on screen (the Spoken briefing tab, the form, the tray, the warnings). To check by hand: an album or
   playlist resuming mid-song; a full 60 to 90 second briefing on all five speakers; a speaker playing from a phone
   (Spotify Connect or AirPlay) and what the briefing leaves behind; the installed app's first briefing and the Windows
   firewall prompt for the clip listener (it has never run in the installed app); a laptop-class CPU making the speech
